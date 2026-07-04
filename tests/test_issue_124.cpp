@@ -23,8 +23,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -33,7 +33,6 @@ import aura.diag;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_124_detail {
@@ -68,8 +67,7 @@ bool test_try_catch_parses() {
     std::println("\n--- Test: simple try/catch/raise parses ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(try (raise \"err\") (catch e (display \"caught\") (display e)))");
+    auto root = parse(e, "(try (raise \"err\") (catch e (display \"caught\") (display e)))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "try/catch/raise parses + typechecks");
@@ -82,8 +80,7 @@ bool test_safe_div_parses() {
     std::println("\n--- Test: safe-div pattern ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(define (safe-div a b) (try (/ a b) (catch e -1)))");
+    auto root = parse(e, "(define (safe-div a b) (try (/ a b) (catch e -1)))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "safe-div parses + typechecks");
@@ -96,9 +93,8 @@ bool test_nested_try_catch_parses() {
     std::println("\n--- Test: nested try/catch ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(try (try (raise \"inner\") (catch e1 (display \"inner-caught\"))) "
-        "     (catch e2 (display \"outer-caught\")))");
+    auto root = parse(e, "(try (try (raise \"inner\") (catch e1 (display \"inner-caught\"))) "
+                         "     (catch e2 (display \"outer-caught\")))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "nested try/catch parses + typechecks");
@@ -124,9 +120,8 @@ bool test_end_to_end() {
     std::println("\n--- Test: end-to-end smoke ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(begin (try (raise \"err\") (catch e (display \"caught\"))) "
-        "        (display \"after\"))");
+    auto root = parse(e, "(begin (try (raise \"err\") (catch e (display \"caught\"))) "
+                         "        (display \"after\"))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "end-to-end smoke parses + typechecks");
@@ -140,12 +135,12 @@ int run_tests() {
     test_nested_try_catch_parses();
     test_try_no_catch();
     test_end_to_end();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_124_detail
+} // namespace aura_issue_124_detail
 
-int aura_issue_124_run() { return aura_issue_124_detail::run_tests(); }
-
+int aura_issue_124_run() {
+    return aura_issue_124_detail::run_tests();
+}

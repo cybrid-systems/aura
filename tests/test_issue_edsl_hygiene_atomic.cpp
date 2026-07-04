@@ -54,7 +54,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -80,8 +80,10 @@ static EvalResult try_run(aura::compiler::CompilerService& cs, std::string_view 
 // computes its length via Aura. Returns -1 on error.
 static std::int64_t length_of(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(std::format("(let ((lst {})) (length lst))", src));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -104,14 +106,10 @@ bool test_hygiene_filter_drops_macro() {
     run_on(cs, "(set-code \"(define x 1) (define y 2) (define z 3)\")");
     // Mark node 5 (one of the Define nodes) as MacroIntroduced.
     run_on(cs, "(syntax:set-marker 5 1)");
-    auto without_hygiene = length_of(cs,
-        "(query:filter (cons :node-type \"Define\"))");
-    auto with_hygiene = length_of(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
-    expect_true("baseline filter returns all 3 Define nodes",
-                without_hygiene == 3);
-    expect_true("hygiene filter drops the marked node (3 -> 2)",
-                with_hygiene == 2);
+    auto without_hygiene = length_of(cs, "(query:filter (cons :node-type \"Define\"))");
+    auto with_hygiene = length_of(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    expect_true("baseline filter returns all 3 Define nodes", without_hygiene == 3);
+    expect_true("hygiene filter drops the marked node (3 -> 2)", with_hygiene == 2);
     return true;
 }
 
@@ -123,10 +121,8 @@ bool test_hygiene_default_off() {
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1) (define y 2) (define z 3)\")");
     run_on(cs, "(syntax:set-marker 5 1)");
-    auto n_hygiene_off = length_of(cs,
-        "(query:filter :hygiene #f (cons :node-type \"Define\"))");
-    expect_true(":hygiene #f still returns all 3 nodes",
-                n_hygiene_off == 3);
+    auto n_hygiene_off = length_of(cs, "(query:filter :hygiene #f (cons :node-type \"Define\"))");
+    expect_true(":hygiene #f still returns all 3 nodes", n_hygiene_off == 3);
     return true;
 }
 
@@ -138,10 +134,8 @@ bool test_skip_macro_introduced_alias() {
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1) (define y 2) (define z 3)\")");
     run_on(cs, "(syntax:set-marker 5 1)");
-    auto n = length_of(cs,
-        "(query:filter :skip-macro-introduced #t (cons :node-type \"Define\"))");
-    expect_true(":skip-macro-introduced #t drops 1 macro node (3 -> 2)",
-                n == 2);
+    auto n = length_of(cs, "(query:filter :skip-macro-introduced #t (cons :node-type \"Define\"))");
+    expect_true(":skip-macro-introduced #t drops 1 macro node (3 -> 2)", n == 2);
     return true;
 }
 
@@ -159,14 +153,10 @@ bool test_hygiene_composes_with_marker_predicate() {
     // sees it; the remaining User nodes survive the second filter.
     // The exact count depends on the workspace shape, but it
     // must be > 0 and <= the without-hygiene count.
-    auto without = length_of(cs,
-        "(query:filter (cons :marker \"User\"))");
-    auto with_hygiene = length_of(cs,
-        "(query:filter :hygiene #t (cons :marker \"User\"))");
-    expect_true("hygiene + :marker 'User' returns subset (>= 1)",
-                with_hygiene >= 1);
-    expect_true("hygiene + :marker is <= without-hygiene count",
-                with_hygiene <= without);
+    auto without = length_of(cs, "(query:filter (cons :marker \"User\"))");
+    auto with_hygiene = length_of(cs, "(query:filter :hygiene #t (cons :marker \"User\"))");
+    expect_true("hygiene + :marker 'User' returns subset (>= 1)", with_hygiene >= 1);
+    expect_true("hygiene + :marker is <= without-hygiene count", with_hygiene <= without);
     return true;
 }
 
@@ -177,8 +167,7 @@ bool test_filter_no_nodes() {
     std::println("\n--- AC5: query:filter with no matches returns void ---");
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1)\")");
-    auto n = length_of(cs,
-        "(query:filter (cons :node-type \"NoSuchTag\"))");
+    auto n = length_of(cs, "(query:filter (cons :node-type \"NoSuchTag\"))");
     expect_true("no matches → 0 length", n == 0);
     return true;
 }
@@ -191,13 +180,10 @@ bool test_all_macro_workspace_hygiene() {
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1) (define y 2)\")");
     // Mark ALL Define nodes as MacroIntroduced
-    run_on(cs,
-        "(map (lambda (n) (syntax:set-marker n 1)) "
-        "(query:filter (cons :node-type \"Define\")))");
-    auto n = length_of(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
-    expect_true("all-macro workspace + hygiene returns 0",
-                n == 0);
+    run_on(cs, "(map (lambda (n) (syntax:set-marker n 1)) "
+               "(query:filter (cons :node-type \"Define\")))");
+    auto n = length_of(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    expect_true("all-macro workspace + hygiene returns 0", n == 0);
     return true;
 }
 
@@ -209,8 +195,7 @@ bool test_unknown_top_level_keyword() {
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1)\")");
     // Should not crash; should produce an error pair or empty result.
-    auto r = try_run(cs,
-        "(query:filter :not-a-real-keyword (cons :node-type \"Define\"))");
+    auto r = try_run(cs, "(query:filter :not-a-real-keyword (cons :node-type \"Define\"))");
     if (r.ok) {
         // Graceful path: returned a value (error or empty list).
         // Both are acceptable; we just need no crash.
@@ -229,21 +214,17 @@ bool test_hygiene_with_atomic_batch_rollback() {
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1) (define y 2)\")");
     // Baseline: hygiene filter works.
-    auto before = length_of(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    auto before = length_of(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
     // Atomic batch: try a successful op, then a failing op. The
     // batch rolls back; the workspace returns to the pre-batch
     // state. The :hygiene filter should still work on the
     // restored state.
-    auto rr = try_run(cs,
-        "(mutate:atomic-batch "
-        "  (mutate:replace-pattern \"(define z 99)\" \"(define z 100)\") "
-        "  (error \"trigger-rollback\"))");
+    auto rr = try_run(cs, "(mutate:atomic-batch "
+                          "  (mutate:replace-pattern \"(define z 99)\" \"(define z 100)\") "
+                          "  (error \"trigger-rollback\"))");
     (void)rr;
-    auto after = length_of(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
-    expect_true("hygiene filter still works after rollback",
-                after == before);
+    auto after = length_of(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    expect_true("hygiene filter still works after rollback", after == before);
     return true;
 }
 
@@ -256,8 +237,7 @@ bool test_by_marker_still_works() {
     run_on(cs, "(set-code \"(define x 1) (define y 2) (define z 3)\")");
     run_on(cs, "(syntax:set-marker 5 1)");
     auto n = length_of(cs, "(query:by-marker \"MacroIntroduced\")");
-    expect_true("by-marker 'MacroIntroduced' returns the 1 marked node",
-                n == 1);
+    expect_true("by-marker 'MacroIntroduced' returns the 1 marked node", n == 1);
     return true;
 }
 
@@ -269,8 +249,7 @@ bool test_empty_workspace() {
     aura::compiler::CompilerService cs;
     // No set-code; workspace is empty. query:filter should
     // return void / no-workspace error gracefully — not crash.
-    auto r = try_run(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    auto r = try_run(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
     // Either ok=false (eval error) or ok=true with a value
     // (error pair or void). All paths are non-crash. The
     // important guarantee is that the primitive doesn't
@@ -288,21 +267,17 @@ bool test_round_trip_marker_persistence() {
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define x 1) (define y 2) (define z 3)\")");
     run_on(cs, "(syntax:set-marker 5 1)");
-    auto before = length_of(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    auto before = length_of(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
     // Mutate: replace one Define's value. After the replace, the
     // workspace is re-parsed — id 5 (the macro marker) may shift
     // to a different node id. The hygiene filter still works
     // correctly (returns the new "non-macro" Define count), but
     // exact equality is not guaranteed. We assert the filter
     // doesn't crash + returns a sane count (>= 1) post-mutate.
-    auto rr = try_run(cs,
-        "(mutate:replace-pattern \"(define y 2)\" \"(define y 99)\")");
+    auto rr = try_run(cs, "(mutate:replace-pattern \"(define y 2)\" \"(define y 99)\")");
     (void)rr;
-    auto after = length_of(cs,
-        "(query:filter :hygiene #t (cons :node-type \"Define\"))");
-    expect_true("hygiene filter returns >=1 Define post-mutate",
-                after >= 1);
+    auto after = length_of(cs, "(query:filter :hygiene #t (cons :node-type \"Define\"))");
+    expect_true("hygiene filter returns >=1 Define post-mutate", after >= 1);
     (void)before;
     return true;
 }
@@ -320,13 +295,12 @@ bool test_size_mismatch_counter_no_normal_bump() {
     // it yet (deferred to a follow-up). For now, just verify
     // the normal flow works.
     run_on(cs, "(set-code \"(define x 1)\")");
-    auto rr = try_run(cs,
-        "(mutate:replace-pattern \"(define x 1)\" \"(define x 99)\")");
+    auto rr = try_run(cs, "(mutate:replace-pattern \"(define x 1)\" \"(define x 99)\")");
     expect_true("normal mutate doesn't crash", rr.ok);
     return true;
 }
 
-}  // namespace aura_edsl_hygiene_atomic_detail
+} // namespace aura_edsl_hygiene_atomic_detail
 
 int main() {
     using namespace aura_edsl_hygiene_atomic_detail;

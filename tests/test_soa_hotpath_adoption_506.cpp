@@ -70,10 +70,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     const auto passes1 = cs.evaluator().get_passes_skipped_type_dirty();
     const auto stats3b = adoption_stats(cs);
-    std::println("  passes_skipped: {} -> {} adoption: {} -> {}",
-                 passes0, passes1, stats3a, stats3b);
-    CHECK(stats3b >= stats3a,
-          "mutate+eval bumps adoption stats (dirty pass path)");
+    std::println("  passes_skipped: {} -> {} adoption: {} -> {}", passes0, passes1, stats3a,
+                 stats3b);
+    CHECK(stats3b >= stats3a, "mutate+eval bumps adoption stats (dirty pass path)");
 
     std::println("\n--- AC4: query:pattern SoA index ---");
     const auto stats4a = adoption_stats(cs);
@@ -86,8 +85,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats5a = adoption_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"acc\")");
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = adoption_stats(cs);

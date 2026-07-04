@@ -106,8 +106,7 @@ private:
 
         [[nodiscard]] std::uint32_t size() const noexcept { return count; }
 
-        template <typename F>
-        void for_each(F&& f) const {
+        template <typename F> void for_each(F&& f) const {
             if (count == 0)
                 return;
             if (count < slots.size()) {

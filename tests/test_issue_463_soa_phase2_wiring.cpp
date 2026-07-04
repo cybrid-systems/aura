@@ -58,8 +58,8 @@ import aura.compiler.service;
 
 namespace aura_issue_463_detail {
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── AC1: IRFunctionSoA has name + local_count fields ──────────
 bool test_ir_function_soa_fields() {
@@ -91,13 +91,11 @@ bool test_ir_module_v2_add_instruction() {
     std::println("\n--- AC3: IRModuleV2::add_instruction ---");
     aura::compiler::IRModuleV2 m;
     m.add_function("f", 2);
-    m.add_instruction(0, aura::ir::IROpcode::ConstI64,
-                      {0u, 42u, 0u, 0u},
+    m.add_instruction(0, aura::ir::IROpcode::ConstI64, {0u, 42u, 0u, 0u},
                       /*source_node_id*/ 0, /*type_id*/ 0, /*shape_id*/ 0,
                       /*linear_state*/ 1, /*adt_variant_id*/ 0,
                       /*narrow_evidence*/ 0);
-    m.add_instruction(0, aura::ir::IROpcode::Return,
-                      {0u, 0u, 0u, 0u});
+    m.add_instruction(0, aura::ir::IROpcode::Return, {0u, 0u, 0u, 0u});
     auto& fn = m.functions[0];
     CHECK(fn.opcodes_.size() == 2, "2 opcodes");
     CHECK(fn.operand0_.size() == 2, "2 operand0 entries");
@@ -114,8 +112,7 @@ bool test_ir_instruction_view() {
     std::println("\n--- AC4: IRInstructionView accessors ---");
     aura::compiler::IRModuleV2 m;
     m.add_function("f", 2);
-    m.add_instruction(0, aura::ir::IROpcode::Add,
-                      {0u, 1u, 2u, 0u}, 0, 0, 0, 0, 0, 0);
+    m.add_instruction(0, aura::ir::IROpcode::Add, {0u, 1u, 2u, 0u}, 0, 0, 0, 0, 0, 0);
     auto v = m.view_at(0, 0);
     CHECK(v.opcode() == aura::ir::IROpcode::Add, "view opcode");
     CHECK(v.operand(0) == 0, "view operand 0");
@@ -130,10 +127,8 @@ bool test_to_aos_view_roundtrip() {
     aura::compiler::IRModuleV2 m;
     m.add_function("roundtrip", 2);
     auto bid = m.add_block(0);
-    m.add_instruction(0, aura::ir::IROpcode::ConstI64,
-                      {0u, 100u, 0u, 0u}, 0, 0, 0, 1, 0, 0);
-    m.add_instruction(0, aura::ir::IROpcode::Return,
-                      {0u, 0u, 0u, 0u});
+    m.add_instruction(0, aura::ir::IROpcode::ConstI64, {0u, 100u, 0u, 0u}, 0, 0, 0, 1, 0, 0);
+    m.add_instruction(0, aura::ir::IROpcode::Return, {0u, 0u, 0u, 0u});
     m.seal_block(0, bid);
 
     auto aos = aura::compiler::to_aos_view(m.functions[0]);
@@ -143,8 +138,7 @@ bool test_to_aos_view_roundtrip() {
     CHECK(aos.blocks[0].instructions.size() == 2, "round-trip preserves instruction count");
     CHECK(aos.blocks[0].instructions[0].opcode == aura::ir::IROpcode::ConstI64,
           "round-trip preserves opcode");
-    CHECK(aos.blocks[0].instructions[0].operands[1] == 100,
-          "round-trip preserves operand1");
+    CHECK(aos.blocks[0].instructions[0].operands[1] == 100, "round-trip preserves operand1");
     CHECK(aos.blocks[0].instructions[0].linear_ownership_state == 1,
           "round-trip preserves linear_ownership_state");
     return true;
@@ -203,18 +197,14 @@ bool test_edsl_stats_returns_hash() {
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v),
-          "(query:soa-adoption-stats) returns a hash");
-    for (auto key : {"soa-functions-visited", "soa-instructions-visited",
-                     "aos-view-built-count"}) {
-        auto rr = cs.eval(std::format(
-            "(hash-ref (query:soa-adoption-stats) '{}')", key));
+    CHECK(aura::compiler::types::is_hash(v), "(query:soa-adoption-stats) returns a hash");
+    for (auto key : {"soa-functions-visited", "soa-instructions-visited", "aos-view-built-count"}) {
+        auto rr = cs.eval(std::format("(hash-ref (query:soa-adoption-stats) '{}')", key));
         if (!rr) {
             CHECK(false, std::format("hash-ref for '{}' failed", key));
             continue;
         }
-        CHECK(aura::compiler::types::is_int(*rr),
-              std::format("hash-ref '{}' returns int", key));
+        CHECK(aura::compiler::types::is_int(*rr), std::format("hash-ref '{}' returns int", key));
     }
     return true;
 }
@@ -248,7 +238,7 @@ bool test_stats_list_includes() {
     return true;
 }
 
-}  // namespace aura_issue_463_detail
+} // namespace aura_issue_463_detail
 
 int main() {
     using namespace aura_issue_463_detail;

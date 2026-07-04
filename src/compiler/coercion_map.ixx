@@ -96,8 +96,7 @@ public:
     void add(aura::ast::NodeId parent, std::uint32_t child_index, aura::ast::NodeId original_child,
              std::uint32_t type_tag, std::uint32_t type_id, std::uint32_t src_line,
              std::uint32_t src_col, std::uint32_t predicate_cond_node,
-             std::uint64_t source_mutation_id,
-             std::uint32_t narrow_evidence = 0) {
+             std::uint64_t source_mutation_id, std::uint32_t narrow_evidence = 0) {
         entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
                                          static_cast<std::uint32_t>(original_child), type_tag,
                                          type_id, src_line, src_col, predicate_cond_node,

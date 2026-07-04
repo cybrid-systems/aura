@@ -67,10 +67,8 @@ bool aura_reload_aot_module(const char* path, std::uint64_t version);
 // indices and runs the AOT pipeline for just those functions.
 typedef bool (*aura_is_define_dirty_fn_t)(void* userdata, const char* name);
 void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn, void* userdata);
-int aura_filter_dirty_flat_functions(const void* functions,
-                                     unsigned int num_functions,
-                                     unsigned int* out_dirty_indices,
-                                     unsigned int max_out);
+int aura_filter_dirty_flat_functions(const void* functions, unsigned int num_functions,
+                                     unsigned int* out_dirty_indices, unsigned int max_out);
 
 // Issue #461: read-only accessor for the JIT fallback counter
 // (defined in aura_jit_bridge.cpp). Exposed as C linkage so

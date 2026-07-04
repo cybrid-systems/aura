@@ -43,7 +43,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
 static int k_expected_min_stats() {
-    return 30;  // baseline minimum from pre-existing primitives
+    return 30; // baseline minimum from pre-existing primitives
 }
 
 // ── AC1: (stats:list) returns list with 38+ entries
@@ -63,9 +63,7 @@ bool test_stats_list_size() {
         const auto n = aura::compiler::types::as_int(*r2);
         std::println("  (stats:list) length: {}", n);
         CHECK(n >= static_cast<std::int64_t>(k_expected_min_stats()),
-              "(stats:list) length >= " +
-                  std::to_string(k_expected_min_stats()) +
-                  " (baseline)");
+              "(stats:list) length >= " + std::to_string(k_expected_min_stats()) + " (baseline)");
     }
     return true;
 }
@@ -77,13 +75,11 @@ bool test_stats_count() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(stats:count)");
-    CHECK(r.has_value() && aura::compiler::types::is_int(*r),
-          "(stats:count) returns int");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r), "(stats:count) returns int");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  (stats:count) = {}", v);
-        CHECK(v >= static_cast<std::int64_t>(k_expected_min_stats()),
-              "(stats:count) >= baseline");
+        CHECK(v >= static_cast<std::int64_t>(k_expected_min_stats()), "(stats:count) >= baseline");
     }
     return true;
 }
@@ -128,8 +124,7 @@ bool test_stats_list_delegates() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(length (stats:list))");
-    CHECK(r.has_value() && aura::compiler::types::is_int(*r),
-          "(length (stats:list)) returns int");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r), "(length (stats:list)) returns int");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto n = aura::compiler::types::as_int(*r);
         std::println("  (stats:list) length: {}", n);
@@ -147,12 +142,10 @@ bool test_stats_count_matches() {
     (void)cs.eval("(eval-current)");
     auto r1 = cs.eval("(stats:count)");
     auto r2 = cs.eval("(length (stats:list))");
-    CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(stats:count) returns int");
+    CHECK(r1.has_value() && aura::compiler::types::is_int(*r1), "(stats:count) returns int");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(length (stats:list)) returns int");
-    if (r1 && r2 && aura::compiler::types::is_int(*r1) &&
-        aura::compiler::types::is_int(*r2)) {
+    if (r1 && r2 && aura::compiler::types::is_int(*r1) && aura::compiler::types::is_int(*r2)) {
         const auto c1 = aura::compiler::types::as_int(*r1);
         const auto c2 = aura::compiler::types::as_int(*r2);
         std::println("  (stats:count) = {} (length (stats:list)) = {}", c1, c2);
@@ -167,8 +160,7 @@ bool test_stdlib_stats_file_present() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/stats.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/stats.aura exists on disk");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     const bool has_get = content.find("(stats:get") != std::string::npos;
     const bool has_list = content.find("(stats:list") != std::string::npos;
@@ -200,12 +192,13 @@ bool test_stats_prefix_filter() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/stats.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/stats.aura exists");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // (stats:prefix) should be defined with a (filter ...) call.
     const bool has_prefix_def = content.find("(stats:prefix") != std::string::npos;
-    const bool has_filter_def = content.find("(filter (lambda (n) (string-contains? n p)) stats-registry)") != std::string::npos;
+    const bool has_filter_def =
+        content.find("(filter (lambda (n) (string-contains? n p)) stats-registry)") !=
+        std::string::npos;
     std::println("  (stats:prefix) defined + uses filter over stats-registry");
     CHECK(has_prefix_def, "std/stats.aura defines (stats:prefix)");
     CHECK(has_filter_def, "std/stats.aura (stats:prefix) uses filter over stats-registry");
@@ -238,8 +231,7 @@ bool test_stats_count_baseline() {
     if (r && aura::compiler::types::is_int(*r)) {
         const auto n = aura::compiler::types::as_int(*r);
         std::println("  (stats:count) = {}", n);
-        CHECK(n >= static_cast<std::int64_t>(k_expected_min_stats()),
-              "(stats:count) >= baseline");
+        CHECK(n >= static_cast<std::int64_t>(k_expected_min_stats()), "(stats:count) >= baseline");
     }
     return true;
 }
@@ -296,8 +288,12 @@ int run_tests() {
 
 } // namespace aura_issue_560_detail
 
-int aura_issue_560_run() { return aura_issue_560_detail::run_tests(); }
+int aura_issue_560_run() {
+    return aura_issue_560_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_560_run(); }
+int main() {
+    return aura_issue_560_run();
+}
 #endif

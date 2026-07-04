@@ -29,24 +29,26 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
 #include "reflect/tag_dispatch.hh"
 
 namespace aura_issue_310_detail {
-#define CHECK_EQ_LOCAL(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ_LOCAL(a, b, msg)                                                                  \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════
 // AC2: new tags are usable as enum values
@@ -63,9 +65,9 @@ bool test_new_tags_usable() {
     CHECK(iface != mport, "Interface is distinct from Modport");
     // Tag values per the issue spec.
     CHECK_EQ_LOCAL(static_cast<std::uint32_t>(iface), std::uint32_t{0x1B},
-             "Interface tag value is 0x1B");
+                   "Interface tag value is 0x1B");
     CHECK_EQ_LOCAL(static_cast<std::uint32_t>(mport), std::uint32_t{0x1C},
-             "Modport tag value is 0x1C");
+                   "Modport tag value is 0x1C");
     return true;
 }
 
@@ -81,23 +83,18 @@ bool test_kNodeMeta_consistency() {
     // Array size matches the highest tag value: tags go from
     // 0x01 to 0x1C, so the array should have 0x1C = 28
     // entries.
-    CHECK_EQ_LOCAL(kNodeMeta.size(), std::size_t{28},
-             "kNodeMeta has 28 entries (tags 0x01-0x1C)");
+    CHECK_EQ_LOCAL(kNodeMeta.size(), std::size_t{28}, "kNodeMeta has 28 entries (tags 0x01-0x1C)");
     // meta() returns the correct entries for both new tags.
     auto mi = meta(NodeTag::Interface);
-    CHECK_EQ_LOCAL(mi.name, std::string_view{"Interface"},
-             "meta(Interface).name is \"Interface\"");
+    CHECK_EQ_LOCAL(mi.name, std::string_view{"Interface"}, "meta(Interface).name is \"Interface\"");
     CHECK_EQ_LOCAL(static_cast<std::uint32_t>(mi.tag), std::uint32_t{0x1B},
-             "meta(Interface).tag is 0x1B");
-    CHECK(mi.has_var_children,
-          "Interface has var_children (declarative body)");
+                   "meta(Interface).tag is 0x1B");
+    CHECK(mi.has_var_children, "Interface has var_children (declarative body)");
     auto mm = meta(NodeTag::Modport);
-    CHECK_EQ_LOCAL(mm.name, std::string_view{"Modport"},
-             "meta(Modport).name is \"Modport\"");
+    CHECK_EQ_LOCAL(mm.name, std::string_view{"Modport"}, "meta(Modport).name is \"Modport\"");
     CHECK_EQ_LOCAL(static_cast<std::uint32_t>(mm.tag), std::uint32_t{0x1C},
-             "meta(Modport).tag is 0x1C");
-    CHECK(mm.has_var_children,
-          "Modport has var_children (port direction list)");
+                   "meta(Modport).tag is 0x1C");
+    CHECK(mm.has_var_children, "Modport has var_children (port direction list)");
     return true;
 }
 
@@ -109,12 +106,12 @@ bool test_tag_dispatch_mirror() {
     std::println("\n--- AC3 (bonus): tag_dispatch.hh mirror ---");
     using aura::reflect::tag_dispatch::Tag;
     CHECK_EQ_LOCAL(static_cast<std::uint8_t>(Tag::Interface), std::uint8_t{0x1B},
-             "tag_dispatch::Tag::Interface is 0x1B");
+                   "tag_dispatch::Tag::Interface is 0x1B");
     CHECK_EQ_LOCAL(static_cast<std::uint8_t>(Tag::Modport), std::uint8_t{0x1C},
-             "tag_dispatch::Tag::Modport is 0x1C");
+                   "tag_dispatch::Tag::Modport is 0x1C");
     // TAG_COUNT is one past the highest tag value.
     CHECK_EQ_LOCAL(static_cast<std::uint8_t>(Tag::TAG_COUNT), std::uint8_t{0x1D},
-             "tag_dispatch::TAG_COUNT is 0x1D (one past max)");
+                   "tag_dispatch::TAG_COUNT is 0x1D (one past max)");
     return true;
 }
 
@@ -128,10 +125,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_310_detail
+} // namespace aura_issue_310_detail
 
-int aura_issue_310_run() { return aura_issue_310_detail::run_tests(); }
+int aura_issue_310_run() {
+    return aura_issue_310_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_310_run(); }
+int main() {
+    return aura_issue_310_run();
+}
 #endif

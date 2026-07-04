@@ -15,8 +15,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -31,12 +31,9 @@ bool test_impact_metrics_zero_on_fresh() {
     std::println("\n--- AC1: impact metrics start at 0 ---");
     aura::compiler::CompilerService cs;
     auto& ev = cs.evaluator();
-    CHECK(ev.get_partial_relower_count() == 0,
-          "partial_relower_count == 0 on fresh service");
-    CHECK(ev.get_impact_scope_calls() == 0,
-          "impact_scope_calls == 0 on fresh service");
-    CHECK(ev.get_total_affected_blocks() == 0,
-          "total_affected_blocks == 0 on fresh service");
+    CHECK(ev.get_partial_relower_count() == 0, "partial_relower_count == 0 on fresh service");
+    CHECK(ev.get_impact_scope_calls() == 0, "impact_scope_calls == 0 on fresh service");
+    CHECK(ev.get_total_affected_blocks() == 0, "total_affected_blocks == 0 on fresh service");
     return true;
 }
 
@@ -49,15 +46,14 @@ bool test_impact_metrics_bump() {
     ev.bump_partial_relower_count();
     auto after = ev.get_partial_relower_count();
     CHECK(after == before + 1,
-          "bump_partial_relower_count: " + std::to_string(before) +
-              " -> " + std::to_string(after));
+          "bump_partial_relower_count: " + std::to_string(before) + " -> " + std::to_string(after));
 
     auto calls_before = ev.get_impact_scope_calls();
     auto affected_before = ev.get_total_affected_blocks();
     ev.bump_impact_scope_calls(3); // 3 affected blocks
     CHECK(ev.get_impact_scope_calls() == calls_before + 1,
-          "bump_impact_scope_calls: " + std::to_string(calls_before) +
-              " -> " + std::to_string(calls_before + 1));
+          "bump_impact_scope_calls: " + std::to_string(calls_before) + " -> " +
+              std::to_string(calls_before + 1));
     CHECK(ev.get_total_affected_blocks() == affected_before + 3,
           "bump_impact_scope_calls(3) bumps total_affected_blocks by 3");
     return true;
@@ -72,8 +68,7 @@ bool test_query_compiler_incremental_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:compiler-incremental-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:compiler-incremental-stats returns an integer");
     return true;
 }
 
@@ -104,12 +99,10 @@ bool test_per_block_dirty_regression() {
     // primitive name is `compile:block-dirty?` (not
     // `compile:is-block-dirty?` — see the #196 ship).
     auto r2 = cs.eval(R"aur((compile:block-dirty? "a" 0 0))aur");
-    CHECK(r2.has_value(),
-          "compile:block-dirty? returns a value (has_value)");
+    CHECK(r2.has_value(), "compile:block-dirty? returns a value (has_value)");
 
     auto r3 = cs.eval(R"aur((compile:clear-block-dirty! "a" 0 0))aur");
-    CHECK(r3.has_value(),
-          "compile:clear-block-dirty! returns a value (has_value)");
+    CHECK(r3.has_value(), "compile:clear-block-dirty! returns a value (has_value)");
     return true;
 }
 
@@ -126,24 +119,21 @@ bool test_per_instruction_dirty_callable() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r1),
-          "compile:is-instruction-dirty? returns a bool");
+    CHECK(aura::compiler::types::is_bool(*r1), "compile:is-instruction-dirty? returns a bool");
 
     auto r2 = cs.eval(R"aur((compile:mark-instruction-dirty! "c" 0 0 0))aur");
     if (!r2) {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r2),
-          "compile:mark-instruction-dirty! returns a bool");
+    CHECK(aura::compiler::types::is_bool(*r2), "compile:mark-instruction-dirty! returns a bool");
 
     auto r3 = cs.eval(R"aur((compile:clear-instruction-dirty! "c" 0 0 0))aur");
     if (!r3) {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r3),
-          "compile:clear-instruction-dirty! returns a bool");
+    CHECK(aura::compiler::types::is_bool(*r3), "compile:clear-instruction-dirty! returns a bool");
     return true;
 }
 
@@ -197,8 +187,12 @@ int run_tests() {
 
 } // namespace aura_issue_460_detail
 
-int aura_issue_460_run() { return aura_issue_460_detail::run_tests(); }
+int aura_issue_460_run() {
+    return aura_issue_460_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_460_run(); }
+int main() {
+    return aura_issue_460_run();
+}
 #endif

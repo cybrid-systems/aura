@@ -20,8 +20,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
@@ -41,8 +41,7 @@ struct ThreeDefines {
     aura::ast::NodeId val_c;
 };
 
-ThreeDefines build_three_defines(aura::ast::FlatAST& flat,
-                                  aura::ast::StringPool& pool) {
+ThreeDefines build_three_defines(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
     ThreeDefines r{};
     r.pool = &pool;
     auto sym_a = pool.intern("a");
@@ -79,10 +78,8 @@ bool test_subtree_bump_is_scoped() {
     flat.bump_generation_subtree(t.val_a);
     CHECK(flat.subtree_generation(t.def_a) == 1,
           "def_a subtree_gen bumped to 1 (val_a was scoped)");
-    CHECK(flat.subtree_generation(t.def_b) == 0,
-          "def_b subtree_gen UNCHANGED (unrelated subtree)");
-    CHECK(flat.subtree_generation(t.def_c) == 0,
-          "def_c subtree_gen UNCHANGED (unrelated subtree)");
+    CHECK(flat.subtree_generation(t.def_b) == 0, "def_b subtree_gen UNCHANGED (unrelated subtree)");
+    CHECK(flat.subtree_generation(t.def_c) == 0, "def_c subtree_gen UNCHANGED (unrelated subtree)");
     // bump from inside def_b
     flat.bump_generation_subtree(t.val_b);
     CHECK(flat.subtree_generation(t.def_a) == 1, "def_a unchanged after def_b bump");
@@ -115,8 +112,7 @@ bool test_subtree_generation_accessor() {
     // Top-level Define ancestor walk: top_define_of(val_a) == def_a.
     CHECK(flat.top_define_of(t.val_a) == t.def_a,
           "top_define_of(val_a) returns def_a (walk-up works)");
-    CHECK(flat.top_define_of(t.val_b) == t.def_b,
-          "top_define_of(val_b) returns def_b");
+    CHECK(flat.top_define_of(t.val_b) == t.def_b, "top_define_of(val_b) returns def_b");
     CHECK(flat.top_define_of(t.def_a) == t.def_a,
           "top_define_of(def_a) is self (Define is its own top)");
     return true;
@@ -141,8 +137,7 @@ bool test_subtree_bump_count() {
     CHECK(flat.subtree_bump_count() == base + 3, "third bump increments count");
     // No-op bump on NULL_NODE must NOT increment count.
     flat.bump_generation_subtree(aura::ast::NULL_NODE);
-    CHECK(flat.subtree_bump_count() == base + 3,
-          "NULL_NODE no-op does NOT increment count");
+    CHECK(flat.subtree_bump_count() == base + 3, "NULL_NODE no-op does NOT increment count");
     return true;
 }
 
@@ -164,11 +159,9 @@ bool test_is_valid_subtree_untouched_subtree() {
     // Scoped bump ONLY def_b's subtree.
     flat.bump_generation_subtree(t.val_b);
     // ref_b is in the bumped subtree → invalid.
-    CHECK(!flat.is_valid_subtree(ref_b),
-          "ref_b INVALID after scoped bump of its own subtree");
+    CHECK(!flat.is_valid_subtree(ref_b), "ref_b INVALID after scoped bump of its own subtree");
     // ref_a is in the UNTOUCHED subtree → STILL valid (the win).
-    CHECK(flat.is_valid_subtree(ref_a),
-          "ref_a STILL VALID after scoped bump of UNRELATED subtree");
+    CHECK(flat.is_valid_subtree(ref_a), "ref_a STILL VALID after scoped bump of UNRELATED subtree");
     return true;
 }
 
@@ -188,24 +181,18 @@ bool test_multi_subtree_isolation() {
     // Sequence: bump def_b twice.
     flat.bump_generation_subtree(t.val_b);
     flat.bump_generation_subtree(t.val_b);
-    CHECK(!flat.is_valid_subtree(ref_b),
-          "ref_b INVALID after 2 scoped bumps to its subtree");
-    CHECK(flat.is_valid_subtree(ref_a),
-          "ref_a STILL VALID — def_a untouched by def_b bumps");
-    CHECK(flat.is_valid_subtree(ref_c),
-          "ref_c STILL VALID — def_c untouched by def_b bumps");
+    CHECK(!flat.is_valid_subtree(ref_b), "ref_b INVALID after 2 scoped bumps to its subtree");
+    CHECK(flat.is_valid_subtree(ref_a), "ref_a STILL VALID — def_a untouched by def_b bumps");
+    CHECK(flat.is_valid_subtree(ref_c), "ref_c STILL VALID — def_c untouched by def_b bumps");
     // Now bump def_a once — ref_a invalidates, ref_c still valid.
     flat.bump_generation_subtree(t.val_a);
-    CHECK(!flat.is_valid_subtree(ref_a),
-          "ref_a INVALID after its own scoped bump");
-    CHECK(flat.is_valid_subtree(ref_c),
-          "ref_c STILL VALID — only def_a and def_b bumped");
+    CHECK(!flat.is_valid_subtree(ref_a), "ref_a INVALID after its own scoped bump");
+    CHECK(flat.is_valid_subtree(ref_c), "ref_c STILL VALID — only def_a and def_b bumped");
     // Final: bump def_c — all three refs now invalid.
     flat.bump_generation_subtree(t.val_c);
     CHECK(!flat.is_valid_subtree(ref_a), "ref_a invalid (def_a bumped earlier)");
     CHECK(!flat.is_valid_subtree(ref_b), "ref_b invalid (def_b bumped earlier)");
-    CHECK(!flat.is_valid_subtree(ref_c),
-          "ref_c invalid after its own scoped bump");
+    CHECK(!flat.is_valid_subtree(ref_c), "ref_c invalid after its own scoped bump");
     return true;
 }
 
@@ -225,8 +212,7 @@ bool test_subtree_gen_at_capture_serialization_roundtrip() {
     // round-trips through the wire format.
     flat.bump_generation_subtree(t.val_a);
     auto ref = flat.make_ref(t.val_a);
-    CHECK(ref.subtree_gen_at_capture == 1,
-          "captured subtree_gen_at_capture == 1 (after one bump)");
+    CHECK(ref.subtree_gen_at_capture == 1, "captured subtree_gen_at_capture == 1 (after one bump)");
     std::uint8_t buf[24] = {};
     auto n = flat.serialize_stable_ref(ref, buf);
     CHECK(static_cast<std::size_t>(n) == flat.kStableRefSerializedSize,
@@ -234,8 +220,7 @@ bool test_subtree_gen_at_capture_serialization_roundtrip() {
     CHECK(flat.kStableRefSerializedSize == static_cast<std::size_t>(24),
           "kStableRefSerializedSize == 24 (unchanged wire size)");
     aura::ast::FlatAST::StableNodeRef round{};
-    CHECK(flat.deserialize_stable_ref(buf, n, round),
-          "deserialize_stable_ref succeeds");
+    CHECK(flat.deserialize_stable_ref(buf, n, round), "deserialize_stable_ref succeeds");
     CHECK(round.subtree_gen_at_capture == ref.subtree_gen_at_capture,
           "subtree_gen_at_capture round-trips through serialize/deserialize");
     CHECK(round.gen == ref.gen, "gen round-trips");
@@ -243,8 +228,7 @@ bool test_subtree_gen_at_capture_serialization_roundtrip() {
     // The round-tripped ref should still pass is_valid_subtree
     // on a sibling node (same FlatAST — nothing has been
     // bumped since the round-trip).
-    CHECK(flat.is_valid_subtree(round),
-          "round-tripped ref is still valid in same FlatAST");
+    CHECK(flat.is_valid_subtree(round), "round-tripped ref is still valid in same FlatAST");
     return true;
 }
 

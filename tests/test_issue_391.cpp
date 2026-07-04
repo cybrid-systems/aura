@@ -26,8 +26,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -45,8 +45,7 @@ bool test_query_stale_ref_policy() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_string(*r),
-          "query:stale-ref-policy returns a string");
+    CHECK(aura::compiler::types::is_string(*r), "query:stale-ref-policy returns a string");
     return true;
 }
 
@@ -59,8 +58,7 @@ bool test_query_stale_ref_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:stale-ref-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:stale-ref-stats returns an integer");
     return true;
 }
 
@@ -73,16 +71,14 @@ bool test_set_strict_policy() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
           "mutate:set-stale-ref-policy \"strict\" returns #t");
     auto rp = cs.eval("(query:stale-ref-policy)");
     if (!rp) {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_string(*rp),
-          "query:stale-ref-policy reachable after set");
+    CHECK(aura::compiler::types::is_string(*rp), "query:stale-ref-policy reachable after set");
     return true;
 }
 
@@ -95,8 +91,7 @@ bool test_set_disabled_policy() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
           "mutate:set-stale-ref-policy \"disabled\" returns #t");
     return true;
 }
@@ -110,8 +105,7 @@ bool test_set_warn_policy() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
           "mutate:set-stale-ref-policy \"warn\" returns #t");
     return true;
 }
@@ -126,8 +120,7 @@ bool test_set_invalid_policy() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              !aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "mutate:set-stale-ref-policy \"nonsense\" returns #f");
     return true;
 }
@@ -156,10 +149,8 @@ bool test_warn_warned_counter_bumps() {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r_stats));
-    CHECK(count >= 0,
-          "query:stale-ref-stats count >= 0 after set-policy + set-code");
+    const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_stats));
+    CHECK(count >= 0, "query:stale-ref-stats count >= 0 after set-policy + set-code");
     return true;
 }
 
@@ -177,8 +168,7 @@ bool test_regression_prior_primitives() {
     // across the #426 follow-ups that may flatten the
     // tuple into a single count.
     CHECK(r1.has_value() &&
-          (aura::compiler::types::is_int(*r1) ||
-           aura::compiler::types::is_pair(*r1)),
+              (aura::compiler::types::is_int(*r1) || aura::compiler::types::is_pair(*r1)),
           "query:compiler-cache-stats (regression for #426)");
     auto r2 = cs.eval("(query:stable-ref-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
@@ -206,8 +196,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 13 29) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 13 29) == 42 (regression)");
     return true;
 }
 
@@ -228,8 +217,12 @@ int run_tests() {
 
 } // namespace aura_issue_391_detail
 
-int aura_issue_391_run() { return aura_issue_391_detail::run_tests(); }
+int aura_issue_391_run() {
+    return aura_issue_391_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_391_run(); }
+int main() {
+    return aura_issue_391_run();
+}
 #endif

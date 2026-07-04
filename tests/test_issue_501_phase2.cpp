@@ -24,23 +24,34 @@ import aura.core.concepts;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} == {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} == {})", msg, _a, _b);                                   \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // Helper: build a 2-child let node. add_let sets children[0]
 // (val) and children[1] (body). Returns the let id.
-static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat,
-                                    aura::ast::StringPool& pool,
-                                    const char* name,
-                                    std::int64_t val,
+static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                    const char* name, std::int64_t val,
                                     aura::ast::NodeId body = aura::ast::NULL_NODE) {
     auto name_sym = pool.intern(name);
     auto val_node = flat.add_literal(val);
@@ -52,11 +63,11 @@ static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat,
 // ── AC1: Strategy classes satisfy Mutator concept ─────────
 bool test_strategy_classes_satisfy_mutator() {
     std::println("\n--- AC1: strategy classes satisfy Mutator<FlatAST> ---");
-    using aura::ast::mutators::ReplaceChildMutator;
-    using aura::ast::mutators::InsertChildMutator;
-    using aura::ast::mutators::RemoveChildMutator;
-    using aura::ast::mutators::NoOpMutator;
     using aura::ast::FlatAST;
+    using aura::ast::mutators::InsertChildMutator;
+    using aura::ast::mutators::NoOpMutator;
+    using aura::ast::mutators::RemoveChildMutator;
+    using aura::ast::mutators::ReplaceChildMutator;
 
     static_assert(aura::core::Mutator<ReplaceChildMutator, FlatAST>,
                   "ReplaceChildMutator must satisfy Mutator<FlatAST>");
@@ -84,7 +95,7 @@ bool test_replace_child_success() {
     CHECK_EQ(kids_before.size(), 2u, "let has 2 children before replace");
     CHECK(kids_before[0] != NULL_NODE, "child[0] is the val node (not NULL)");
 
-    ReplaceChildMutator r{/*index*/0, /*new_child*/NULL_NODE};
+    ReplaceChildMutator r{/*index*/ 0, /*new_child*/ NULL_NODE};
     auto result = apply_mutation(flat, let_id, r);
     CHECK(result.has_value(), "apply_mutation returned success");
     CHECK_EQ(result.value(), let_id, "result is the target node id");
@@ -103,7 +114,7 @@ bool test_replace_child_invalid_target() {
 
     FlatAST flat;
     ReplaceChildMutator r{0, NULL_NODE};
-    auto result = apply_mutation(flat, /*target*/NULL_NODE, r);
+    auto result = apply_mutation(flat, /*target*/ NULL_NODE, r);
     CHECK(!result.has_value(), "invalid target returns AuraError");
     CHECK_EQ(static_cast<int>(result.error().kind),
              static_cast<int>(aura::core::AuraErrorKind::MutationInvalidTarget),
@@ -123,7 +134,7 @@ bool test_replace_child_out_of_range() {
     StringPool pool;
     auto let_id = make_let_2(flat, pool, "a", 1);
 
-    ReplaceChildMutator r{/*index*/5, NULL_NODE};
+    ReplaceChildMutator r{/*index*/ 5, NULL_NODE};
     auto result = apply_mutation(flat, let_id, r);
     CHECK(!result.has_value(), "out-of-range index returns AuraError");
     CHECK_EQ(static_cast<int>(result.error().kind),
@@ -146,7 +157,7 @@ bool test_insert_child_happy_path() {
     auto original_first = flat.children(let_id)[0];
 
     auto two = flat.add_literal(2);
-    InsertChildMutator ins{/*index*/0, two};
+    InsertChildMutator ins{/*index*/ 0, two};
     auto result = apply_mutation(flat, let_id, ins);
     CHECK(result.has_value(), "insert succeeds");
     const auto& kids = flat.children(let_id);
@@ -168,7 +179,7 @@ bool test_remove_child_happy_path() {
     const auto kids_before = flat.children(let_id);
     auto original_body = kids_before[1];
 
-    RemoveChildMutator rem{/*index*/0};
+    RemoveChildMutator rem{/*index*/ 0};
     auto result = apply_mutation(flat, let_id, rem);
     CHECK(result.has_value(), "remove succeeds");
     const auto& kids = flat.children(let_id);
@@ -192,10 +203,8 @@ bool test_no_op_mutator() {
     auto result = apply_mutation(flat, let_id, noop);
     CHECK(result.has_value(), "noop returns success");
     CHECK_EQ(result.value(), let_id, "noop returns the target unchanged");
-    CHECK_EQ(flat.children(let_id).size(), kids_before.size(),
-             "noop doesn't modify child count");
-    CHECK_EQ(flat.children(let_id)[0], kids_before[0],
-             "noop doesn't modify child[0]");
+    CHECK_EQ(flat.children(let_id).size(), kids_before.size(), "noop doesn't modify child count");
+    CHECK_EQ(flat.children(let_id)[0], kids_before[0], "noop doesn't modify child[0]");
     return true;
 }
 
@@ -209,8 +218,7 @@ bool test_generic_dispatch_lvalue_and_rvalue() {
     StringPool pool;
     auto let_id = make_let_2(flat, pool, "a", 1);
 
-    auto r1 = apply_mutation(flat, let_id,
-                              ReplaceChildMutator{0, NULL_NODE});
+    auto r1 = apply_mutation(flat, let_id, ReplaceChildMutator{0, NULL_NODE});
     CHECK(r1.has_value(), "rvalue ReplaceChildMutator dispatches");
 
     // Use a fresh node for the lvalue test (generation was bumped
@@ -234,25 +242,21 @@ bool test_monadic_chaining() {
     auto two = flat.add_literal(2);
 
     // Happy path: chain succeeds.
-    auto chained_ok = apply_mutation(flat, let_id,
-                                      ReplaceChildMutator{0, two})
-        .and_then([&](NodeId id) -> aura::core::AuraResult<NodeId> {
-            return apply_mutation(flat, id, NoOpMutator{});
-        });
+    auto chained_ok = apply_mutation(flat, let_id, ReplaceChildMutator{0, two})
+                          .and_then([&](NodeId id) -> aura::core::AuraResult<NodeId> {
+                              return apply_mutation(flat, id, NoOpMutator{});
+                          });
     CHECK(chained_ok.has_value(), "happy-path chain returns success");
     CHECK_EQ(chained_ok.value(), let_id, "chain returns the original target");
 
     // Failure path: bad index on first step short-circuits.
     // Use a freshly-built let to avoid generation invalidation.
     auto let_id_err = make_let_2(flat, pool, "b", 2);
-    auto chained_err = apply_mutation(flat, let_id_err,
-                                        ReplaceChildMutator{99, NULL_NODE})
-        .and_then([&](NodeId /*id*/) -> aura::core::AuraResult<NodeId> {
-            return aura::core::AuraResult<NodeId>{
-                std::in_place, NULL_NODE};
-        });
-    CHECK(!chained_err.has_value(),
-          "monadic chain short-circuits on first error");
+    auto chained_err = apply_mutation(flat, let_id_err, ReplaceChildMutator{99, NULL_NODE})
+                           .and_then([&](NodeId /*id*/) -> aura::core::AuraResult<NodeId> {
+                               return aura::core::AuraResult<NodeId>{std::in_place, NULL_NODE};
+                           });
+    CHECK(!chained_err.has_value(), "monadic chain short-circuits on first error");
     CHECK_EQ(static_cast<int>(chained_err.error().kind),
              static_cast<int>(aura::core::AuraErrorKind::MutationOutOfRange),
              "preserved error kind is MutationOutOfRange");
@@ -326,7 +330,7 @@ bool test_apply_by_kind() {
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
         auto r = apply_by_kind(flat, let_id, StrategyKind::ReplaceChild,
-                               StrategyParams{/*index*/0, /*new_child*/NULL_NODE});
+                               StrategyParams{/*index*/ 0, /*new_child*/ NULL_NODE});
         CHECK(r.has_value(), "ReplaceChild returns success");
         CHECK_EQ(flat.children(let_id)[0], NULL_NODE, "child[0] replaced");
     }
@@ -338,7 +342,7 @@ bool test_apply_by_kind() {
         auto let_id = make_let_2(flat, pool, "a", 1);
         auto two = flat.add_literal(2);
         auto r = apply_by_kind(flat, let_id, StrategyKind::InsertChild,
-                               StrategyParams{/*index*/0, /*new_child*/two});
+                               StrategyParams{/*index*/ 0, /*new_child*/ two});
         CHECK(r.has_value(), "InsertChild returns success");
         CHECK_EQ(flat.children(let_id).size(), 3u, "child count grew to 3");
         CHECK_EQ(flat.children(let_id)[0], two, "child[0] is the inserted two");
@@ -350,8 +354,8 @@ bool test_apply_by_kind() {
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
         const auto expected_remaining = flat.children(let_id)[1];
-        auto r = apply_by_kind(flat, let_id, StrategyKind::RemoveChild,
-                               StrategyParams{/*index*/0});
+        auto r =
+            apply_by_kind(flat, let_id, StrategyKind::RemoveChild, StrategyParams{/*index*/ 0});
         CHECK(r.has_value(), "RemoveChild returns success");
         CHECK_EQ(flat.children(let_id).size(), 1u, "child count shrank to 1");
         CHECK_EQ(flat.children(let_id)[0], expected_remaining,
@@ -364,7 +368,7 @@ bool test_apply_by_kind() {
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
         auto r = apply_by_kind(flat, let_id, StrategyKind::ReplaceChild,
-                               StrategyParams{/*index*/99, /*new_child*/NULL_NODE});
+                               StrategyParams{/*index*/ 99, /*new_child*/ NULL_NODE});
         CHECK(!r.has_value(), "bad index returns AuraError");
         CHECK_EQ(static_cast<int>(r.error().kind),
                  static_cast<int>(aura::core::AuraErrorKind::MutationOutOfRange),
@@ -383,14 +387,13 @@ bool test_apply_by_name() {
     using namespace aura::ast::mutators;
 
     // Round-trip: every kind_name must parse back via kind_from_name.
-    for (auto k : {StrategyKind::NoOp, StrategyKind::ReplaceChild,
-                   StrategyKind::InsertChild, StrategyKind::RemoveChild}) {
+    for (auto k : {StrategyKind::NoOp, StrategyKind::ReplaceChild, StrategyKind::InsertChild,
+                   StrategyKind::RemoveChild}) {
         auto name = kind_name(k);
         auto parsed = kind_from_name(name);
         CHECK(parsed.has_value(), "kind_from_name parses its own kind_name");
         if (parsed) {
-            CHECK_EQ(static_cast<int>(*parsed), static_cast<int>(k),
-                     "round-trip preserves kind");
+            CHECK_EQ(static_cast<int>(*parsed), static_cast<int>(k), "round-trip preserves kind");
         }
     }
 
@@ -404,11 +407,9 @@ bool test_apply_by_name() {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
-        auto r = apply_by_name(flat, let_id, "replace-child",
-                                StrategyParams{0, NULL_NODE});
+        auto r = apply_by_name(flat, let_id, "replace-child", StrategyParams{0, NULL_NODE});
         CHECK(r.has_value(), "apply_by_name('replace-child') succeeds");
-        CHECK_EQ(flat.children(let_id)[0], NULL_NODE,
-                 "child[0] replaced via name");
+        CHECK_EQ(flat.children(let_id)[0], NULL_NODE, "child[0] replaced via name");
     }
 
     // apply_by_name unknown returns MutationInvalidField.

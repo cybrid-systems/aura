@@ -65,7 +65,7 @@ import aura.compiler.service;
 
 namespace aura_issue_224_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -90,10 +90,8 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 bool test_metrics_exposed() {
     std::println("\n--- Test 1.1: relower metrics are exposed ---");
     aura::compiler::CompilerService cs;
-    auto skipped = cs.metrics().relower_skipped_entirely_count.load(
-        std::memory_order_relaxed);
-    auto full = cs.metrics().relower_full_called_count.load(
-        std::memory_order_relaxed);
+    auto skipped = cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed);
+    auto full = cs.metrics().relower_full_called_count.load(std::memory_order_relaxed);
     CHECK(skipped == 0, "relower_skipped_entirely_count starts at 0");
     CHECK(full == 0, "relower_full_called_count starts at 0");
     return true;
@@ -115,11 +113,9 @@ bool test_relower_unknown_entry_returns_false() {
     bool ok = cs.relower_define_blocks("nope", "(define (nope) 0)", flat, pool, 0);
     // (the dup below)
     CHECK(ok == false, "relower_define_blocks(unknown) returns false");
-    CHECK(cs.metrics().relower_full_called_count.load(
-              std::memory_order_relaxed) == 0,
+    CHECK(cs.metrics().relower_full_called_count.load(std::memory_order_relaxed) == 0,
           "relower_full_called_count not bumped on unknown entry");
-    CHECK(cs.metrics().relower_skipped_entirely_count.load(
-              std::memory_order_relaxed) == 0,
+    CHECK(cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed) == 0,
           "relower_skipped_entirely_count not bumped on unknown entry");
     return true;
 }
@@ -134,28 +130,23 @@ bool test_relower_skips_when_clean() {
     // Manually populate a v2 entry with 0 IRs (bitmask = 0
     // blocks = clean). The helper should skip and bump
     // relower_skipped_entirely_count.
-    cs.store_define_v2("g", "(define (g x) (* x 2))",
-                       std::vector<aura::ir::IRFunction>{},
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
-    auto skipped_before = cs.metrics().relower_skipped_entirely_count.load(
-        std::memory_order_relaxed);
-    auto full_before = cs.metrics().relower_full_called_count.load(
-        std::memory_order_relaxed);
+    cs.store_define_v2("g", "(define (g x) (* x 2))", std::vector<aura::ir::IRFunction>{},
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
+    auto skipped_before =
+        cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed);
+    auto full_before = cs.metrics().relower_full_called_count.load(std::memory_order_relaxed);
     // Use a throwaway flat / pool / node since the helper
     // will skip before touching them.
     aura::ast::ASTArena arena(4096);
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
     aura::ast::StringPool pool(a);
-    bool ok = cs.relower_define_blocks("g", "(define (g x) (* x 2))",
-                                        flat, pool, 0);
+    bool ok = cs.relower_define_blocks("g", "(define (g x) (* x 2))", flat, pool, 0);
     CHECK(ok == true, "relower_define_blocks(clean) returns true");
-    CHECK(cs.metrics().relower_skipped_entirely_count.load(
-              std::memory_order_relaxed) == skipped_before + 1,
+    CHECK(cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed) ==
+              skipped_before + 1,
           "relower_skipped_entirely_count bumps by 1");
-    CHECK(cs.metrics().relower_full_called_count.load(
-              std::memory_order_relaxed) == full_before,
+    CHECK(cs.metrics().relower_full_called_count.load(std::memory_order_relaxed) == full_before,
           "relower_full_called_count does NOT bump (we skipped)");
     return true;
 }
@@ -171,10 +162,8 @@ bool test_relower_does_full_when_dirty() {
     // Pre-populate a v2 entry with 0 IRs (clean). Then
     // mark a block dirty. The helper should do a full
     // re-lower and bump relower_full_called_count.
-    cs.store_define_v2("h", "(define (h x) (* x 2))",
-                       std::vector<aura::ir::IRFunction>{},
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("h", "(define (h x) (* x 2))", std::vector<aura::ir::IRFunction>{},
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // To make the re-lower do real work, we need the bitmask
     // to report at least one dirty block. With 0 IRs the
     // bitmask is 0-sized and reports 0 dirty — so we need
@@ -189,19 +178,16 @@ bool test_relower_does_full_when_dirty() {
     fn.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(fn);
-    cs.store_define_v2("h", "(define (h x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("h", "(define (h x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Now the bitmask is sized 1 (one block in function 0).
     // Mark block 0 dirty → bitmask reports 1 dirty block.
     cs.mark_block_dirty_v2("h", 0, 0);
     CHECK(cs.dirty_block_count_v2("h") == 1,
           "pre-condition: 1 dirty block after mark_block_dirty_v2");
-    auto skipped_before = cs.metrics().relower_skipped_entirely_count.load(
-        std::memory_order_relaxed);
-    auto full_before = cs.metrics().relower_full_called_count.load(
-        std::memory_order_relaxed);
+    auto skipped_before =
+        cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed);
+    auto full_before = cs.metrics().relower_full_called_count.load(std::memory_order_relaxed);
     // The re-lower will fail (no real flat/define), but the
     // helper will still bump relower_full_called_count and
     // attempt the lower. We only verify the counter bump
@@ -216,13 +202,11 @@ bool test_relower_does_full_when_dirty() {
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
     aura::ast::StringPool pool(a);
-    bool ok = cs.relower_define_blocks("h", "(define (h x) (* x 2))",
-                                        flat, pool, 0);
-    CHECK(cs.metrics().relower_full_called_count.load(
-              std::memory_order_relaxed) >= full_before + 1,
+    bool ok = cs.relower_define_blocks("h", "(define (h x) (* x 2))", flat, pool, 0);
+    CHECK(cs.metrics().relower_full_called_count.load(std::memory_order_relaxed) >= full_before + 1,
           "relower_full_called_count bumps by ≥ 1 (full re-lower attempted)");
-    CHECK(cs.metrics().relower_skipped_entirely_count.load(
-              std::memory_order_relaxed) == skipped_before,
+    CHECK(cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed) ==
+              skipped_before,
           "relower_skipped_entirely_count does NOT bump (we did full re-lower)");
     return true;
 }
@@ -242,29 +226,24 @@ bool test_bitmask_clears_after_full_relower() {
     fn.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(fn);
-    cs.store_define_v2("k", "(define (k x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("k", "(define (k x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Mark block 0 dirty.
     cs.mark_block_dirty_v2("k", 0, 0);
-    CHECK(cs.dirty_block_count_v2("k") == 1,
-          "pre: 1 dirty block");
+    CHECK(cs.dirty_block_count_v2("k") == 1, "pre: 1 dirty block");
     // Trigger the re-lower path (counter bump is what we
     // care about, not the actual lowering result).
     aura::ast::ASTArena arena(4096);
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
     aura::ast::StringPool pool(a);
-    cs.relower_define_blocks("k", "(define (k x) (* x 2))",
-                              flat, pool, 0);
+    cs.relower_define_blocks("k", "(define (k x) (* x 2))", flat, pool, 0);
     // After the full re-lower (even with empty input), the
     // helper calls store_define_v2 which rebuilds the
     // bitmask and clears all bits. The new bitmask is sized
     // to the new (possibly empty) irs[].
     // After the re-lower: dirty count must be 0.
-    CHECK(cs.dirty_block_count_v2("k") == 0,
-          "post-full-relower: 0 dirty blocks (bitmask cleared)");
+    CHECK(cs.dirty_block_count_v2("k") == 0, "post-full-relower: 0 dirty blocks (bitmask cleared)");
     return true;
 }
 
@@ -284,19 +263,15 @@ bool test_v2_bitmask_via_aura_primitives() {
     fn.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(fn);
-    cs.store_define_v2("p", "(define (p x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("p", "(define (p x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // (compile:func-block-dirty-count "p" 0) → 0 (clean)
     int64_t clean_count = run_int(cs, "(compile:func-block-dirty-count \"p\" 0)");
-    CHECK(clean_count == 0,
-          "(compile:func-block-dirty-count \"p\" 0) = 0 when clean");
+    CHECK(clean_count == 0, "(compile:func-block-dirty-count \"p\" 0) = 0 when clean");
     // Mark dirty.
     cs.mark_block_dirty_v2("p", 0, 0);
     int64_t dirty_count = run_int(cs, "(compile:func-block-dirty-count \"p\" 0)");
-    CHECK(dirty_count == 1,
-          "(compile:func-block-dirty-count \"p\" 0) = 1 after mark");
+    CHECK(dirty_count == 1, "(compile:func-block-dirty-count \"p\" 0) = 1 after mark");
     // (compile:block-dirty? "p" 0 0) → #t
     int64_t is_dirty = run_int(cs, "(if (compile:block-dirty? \"p\" 0 0) 1 0)");
     CHECK(is_dirty == 1, "(compile:block-dirty? \"p\" 0 0) = #t when dirty");
@@ -311,26 +286,18 @@ bool test_v2_bitmask_via_aura_primitives() {
 bool test_repeat_skip_bumps_counter() {
     std::println("\n--- Test 7.1: repeat skip → counter bumps each time ---");
     aura::compiler::CompilerService cs;
-    cs.store_define_v2("q", "(define (q x) (* x 2))",
-                       std::vector<aura::ir::IRFunction>{},
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
-    auto before = cs.metrics().relower_skipped_entirely_count.load(
-        std::memory_order_relaxed);
+    cs.store_define_v2("q", "(define (q x) (* x 2))", std::vector<aura::ir::IRFunction>{},
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
+    auto before = cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed);
     aura::ast::ASTArena arena(4096);
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
     aura::ast::StringPool pool(a);
-    cs.relower_define_blocks("q", "(define (q x) (* x 2))",
-                              flat, pool, 0);
-    cs.relower_define_blocks("q", "(define (q x) (* x 2))",
-                              flat, pool, 0);
-    cs.relower_define_blocks("q", "(define (q x) (* x 2))",
-                              flat, pool, 0);
-    auto after = cs.metrics().relower_skipped_entirely_count.load(
-        std::memory_order_relaxed);
-    CHECK(after == before + 3,
-          "3 consecutive skips → relower_skipped_entirely_count bumps by 3");
+    cs.relower_define_blocks("q", "(define (q x) (* x 2))", flat, pool, 0);
+    cs.relower_define_blocks("q", "(define (q x) (* x 2))", flat, pool, 0);
+    cs.relower_define_blocks("q", "(define (q x) (* x 2))", flat, pool, 0);
+    auto after = cs.metrics().relower_skipped_entirely_count.load(std::memory_order_relaxed);
+    CHECK(after == before + 3, "3 consecutive skips → relower_skipped_entirely_count bumps by 3");
     return true;
 }
 
@@ -341,8 +308,7 @@ bool test_repeat_skip_bumps_counter() {
 bool test_per_function_metric_exposed() {
     std::println("\n--- Test 9.1: relower_per_function_called_count is exposed ---");
     aura::compiler::CompilerService cs;
-    auto n = cs.metrics().relower_per_function_called_count.load(
-        std::memory_order_relaxed);
+    auto n = cs.metrics().relower_per_function_called_count.load(std::memory_order_relaxed);
     CHECK(n == 0, "relower_per_function_called_count starts at 0");
     return true;
 }
@@ -356,8 +322,7 @@ bool test_relower_define_function_unknown_entry() {
     aura::ast::StringPool pool(a);
     bool ok = cs.relower_define_function("nope", 1, flat, pool, 0);
     CHECK(ok == false, "relower_define_function(unknown) returns false");
-    CHECK(cs.metrics().relower_per_function_called_count.load(
-              std::memory_order_relaxed) == 0,
+    CHECK(cs.metrics().relower_per_function_called_count.load(std::memory_order_relaxed) == 0,
           "relower_per_function_called_count not bumped on unknown entry");
     return true;
 }
@@ -373,10 +338,8 @@ bool test_relower_define_function_out_of_range_func_idx() {
     fn.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(fn);
-    cs.store_define_v2("r", "(define (r x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("r", "(define (r x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     aura::ast::ASTArena arena(4096);
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
@@ -392,28 +355,24 @@ bool test_relower_define_function_replaces_irs() {
     aura::compiler::CompilerService cs;
     // Populate a v2 entry with 1 function / 1 block.
     aura::ir::IRFunction fn;
-    fn.id = 7;  // Use a distinctive id
+    fn.id = 7; // Use a distinctive id
     fn.name = "s_inner";
     fn.entry_block = 0;
     fn.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(fn);
-    cs.store_define_v2("s", "(define (s x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("s", "(define (s x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Re-lower with invalid lambda_node_id (NULL_NODE) —
     // the helper should return false (empty function).
     aura::ast::ASTArena arena(4096);
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
     aura::ast::StringPool pool(a);
-    bool ok = cs.relower_define_function("s", 0, flat, pool,
-                                          aura::ast::NULL_NODE);
+    bool ok = cs.relower_define_function("s", 0, flat, pool, aura::ast::NULL_NODE);
     // NULL_NODE is invalid → lower_function_at returns empty
     // function → helper returns false.
-    CHECK(ok == false,
-          "relower_define_function(invalid lambda_node_id) returns false");
+    CHECK(ok == false, "relower_define_function(invalid lambda_node_id) returns false");
     return true;
 }
 
@@ -422,16 +381,14 @@ bool test_relower_define_function_preserves_func_id() {
     aura::compiler::CompilerService cs;
     // Populate a v2 entry with 1 function / 1 block.
     aura::ir::IRFunction fn;
-    fn.id = 42;  // Distinctive id
+    fn.id = 42; // Distinctive id
     fn.name = "t_inner";
     fn.entry_block = 0;
     fn.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(fn);
-    cs.store_define_v2("t", "(define (t x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("t", "(define (t x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Mark block 0 dirty and try per-function re-lower with
     // a non-Lambda node (a LiteralInt at idx 0). This will
     // fail in the Lambda case inside lowering and return
@@ -442,7 +399,7 @@ bool test_relower_define_function_preserves_func_id() {
     auto a = arena.allocator();
     aura::ast::FlatAST flat(a);
     aura::ast::StringPool pool(a);
-    aura::ast::NodeId fake_lambda = 0;  // likely a literal, not a lambda
+    aura::ast::NodeId fake_lambda = 0; // likely a literal, not a lambda
     bool ok = cs.relower_define_function("t", 0, flat, pool, fake_lambda);
     // The per-function re-lower failed (fake node is not a
     // Lambda) → returns false. The bitmask is still dirty
@@ -460,10 +417,8 @@ bool test_relower_define_function_preserves_func_id() {
 bool test_cascade_metrics_exposed() {
     std::println("\n--- Test 10.1: cascade metrics are exposed ---");
     aura::compiler::CompilerService cs;
-    auto body = cs.metrics().cascade_body_only_count.load(
-        std::memory_order_relaxed);
-    auto full = cs.metrics().cascade_full_count.load(
-        std::memory_order_relaxed);
+    auto body = cs.metrics().cascade_body_only_count.load(std::memory_order_relaxed);
+    auto full = cs.metrics().cascade_full_count.load(std::memory_order_relaxed);
     CHECK(body == 0, "cascade_body_only_count starts at 0");
     CHECK(full == 0, "cascade_full_count starts at 0");
     return true;
@@ -489,10 +444,8 @@ bool test_mark_define_dirty_cascade_targets_body() {
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(entry_fn);
     irs.push_back(body_fn);
-    cs.store_define_v2("f", "(define (f x) (* x 2))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("f", "(define (f x) (* x 2))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Mark "f" dirty. The cascade has no dependents (f's
     // called_by is empty), so the cascade metrics don't
     // bump. The "f" entry itself gets full mark (entry
@@ -519,10 +472,8 @@ bool test_cascade_uses_targeted_path() {
     std::vector<aura::ir::IRFunction> f_irs;
     f_irs.push_back(f_entry);
     f_irs.push_back(f_body);
-    cs.store_define_v2("f", "(define (f x) (* x 2))",
-                       std::move(f_irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("f", "(define (f x) (* x 2))", std::move(f_irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Populate v2 entry for "g" (the dependent).
     aura::ir::IRFunction g_entry;
     g_entry.id = 0;
@@ -534,16 +485,14 @@ bool test_cascade_uses_targeted_path() {
     g_body.blocks.push_back({0, {}, {}});
     aura::ir::IRFunction g_nested;
     g_nested.id = 2;
-    g_nested.name = "__lambda__";  // nested lambda, generic name
+    g_nested.name = "__lambda__"; // nested lambda, generic name
     g_nested.blocks.push_back({0, {}, {}});
     std::vector<aura::ir::IRFunction> g_irs;
     g_irs.push_back(g_entry);
     g_irs.push_back(g_body);
     g_irs.push_back(g_nested);
-    cs.store_define_v2("g", "(define (g x) (f x))",
-                       std::move(g_irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("g", "(define (g x) (f x))", std::move(g_irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // Manually record dep_graph_ edge g → f via the
     // record_dependency helper (or use the public path).
     // The simplest is to set it directly via the public
@@ -559,18 +508,14 @@ bool test_cascade_uses_targeted_path() {
     // We can't easily test the cascade without dep_graph_
     // wire-up, so we just verify the metrics are exposed
     // and don't bump on direct mark_define_dirty calls.
-    auto body_before = cs.metrics().cascade_body_only_count.load(
-        std::memory_order_relaxed);
-    auto full_before = cs.metrics().cascade_full_count.load(
-        std::memory_order_relaxed);
+    auto body_before = cs.metrics().cascade_body_only_count.load(std::memory_order_relaxed);
+    auto full_before = cs.metrics().cascade_full_count.load(std::memory_order_relaxed);
     // mark_define_dirty on "g" with no dependents in the
     // dep_graph_ → cascade is a no-op, no metric bumps.
     cs.mark_define_dirty("g");
-    CHECK(cs.metrics().cascade_body_only_count.load(
-              std::memory_order_relaxed) == body_before,
+    CHECK(cs.metrics().cascade_body_only_count.load(std::memory_order_relaxed) == body_before,
           "mark_define_dirty with no dependents: cascade_body_only_count not bumped");
-    CHECK(cs.metrics().cascade_full_count.load(
-              std::memory_order_relaxed) == full_before,
+    CHECK(cs.metrics().cascade_full_count.load(std::memory_order_relaxed) == full_before,
           "mark_define_dirty with no dependents: cascade_full_count not bumped");
     return true;
 }
@@ -603,10 +548,8 @@ bool test_cascade_body_only_marks_only_body() {
     std::vector<aura::ir::IRFunction> irs;
     irs.push_back(entry_fn);
     irs.push_back(body_fn);
-    cs.store_define_v2("h", "(define (h x) (g x))",
-                       std::move(irs),
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("h", "(define (h x) (g x))", std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // mark_define_dirty("h") with no dependents in
     // dep_graph_ → cascade is no-op. The "h" entry
     // itself gets mark_all_blocks_dirty.
@@ -669,7 +612,8 @@ int run_tests() {
 
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_224_detail
+} // namespace aura_issue_224_detail
 
-int aura_issue_224_run() { return aura_issue_224_detail::run_tests(); }
-
+int aura_issue_224_run() {
+    return aura_issue_224_detail::run_tests();
+}

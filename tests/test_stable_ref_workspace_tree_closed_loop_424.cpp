@@ -70,31 +70,28 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: resolve-stable-ref bumps resolves ---");
     const auto stats3a = workspace_tree_stats(cs);
     const auto res3a = ev.get_stable_ref_workspace_resolves();
-    auto resolved = cs.eval(
-        "(begin "
-        "  (workspace:switch 0) "
-        "  (define rx (ast:stable-ref 1)) "
-        "  (workspace:switch 1) "
-        "  (mutate:rebind \"x\" \"(quote 9)\" \"mut\") "
-        "  (define r (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
-        "  (if r 1 0))");
+    auto resolved = cs.eval("(begin "
+                            "  (workspace:switch 0) "
+                            "  (define rx (ast:stable-ref 1)) "
+                            "  (workspace:switch 1) "
+                            "  (mutate:rebind \"x\" \"(quote 9)\" \"mut\") "
+                            "  (define r (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
+                            "  (if r 1 0))");
     CHECK(resolved && is_int(*resolved) && as_int(*resolved) == 1,
           "workspace:resolve-stable-ref succeeds across COW child");
     const auto res3b = ev.get_stable_ref_workspace_resolves();
     const auto stats3b = workspace_tree_stats(cs);
-    std::println("  resolves: {} -> {}, stats: {} -> {}",
-                 res3a, res3b, stats3a, stats3b);
+    std::println("  resolves: {} -> {}, stats: {} -> {}", res3a, res3b, stats3a, stats3b);
     CHECK(res3b > res3a, "resolve bumps workspace resolve counter");
     CHECK(stats3b > stats3a, "workspace tree stats grow");
 
     std::println("\n--- AC4: ref-valid? on resolved ref ---");
-    auto valid = cs.eval(
-        "(begin "
-        "  (workspace:switch 0) "
-        "  (define rx (ast:stable-ref 1)) "
-        "  (workspace:switch 1) "
-        "  (define r (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
-        "  (if r (query:ref-valid? r) #f))");
+    auto valid = cs.eval("(begin "
+                         "  (workspace:switch 0) "
+                         "  (define rx (ast:stable-ref 1)) "
+                         "  (workspace:switch 1) "
+                         "  (define r (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
+                         "  (if r (query:ref-valid? r) #f))");
     CHECK(valid && is_bool(*valid) && as_bool(*valid),
           "resolved ref valid in child layer after mutate");
 
@@ -107,12 +104,11 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = workspace_tree_stats(cs);
     const auto res6a = ev.get_stable_ref_workspace_resolves();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval(
-            "(begin "
-            "  (workspace:switch 0) "
-            "  (define rx (ast:stable-ref 1)) "
-            "  (workspace:switch 1) "
-            "  (workspace:resolve-stable-ref 0 (car rx) (cdr rx)))");
+        (void)cs.eval("(begin "
+                      "  (workspace:switch 0) "
+                      "  (define rx (ast:stable-ref 1)) "
+                      "  (workspace:switch 1) "
+                      "  (workspace:resolve-stable-ref 0 (car rx) (cdr rx)))");
     }
     const auto res6b = ev.get_stable_ref_workspace_resolves();
     const auto stats6b = workspace_tree_stats(cs);

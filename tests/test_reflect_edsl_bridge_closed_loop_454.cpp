@@ -67,8 +67,7 @@ static void run_matrix(CompilerService& cs) {
     auto ms = cs.eval("(query:marker-stats)");
     CHECK(ms && is_pair(*ms), "marker-stats returns list");
     auto total = cs.eval("(car (cdr (cdr (cdr (query:marker-stats)))))");
-    CHECK(total && is_int(*total) && as_int(*total) > 0,
-          "marker-stats total > 0");
+    CHECK(total && is_int(*total) && as_int(*total) > 0, "marker-stats total > 0");
 
     std::println("\n--- AC5: reflect-type (static reflection bridge) ---");
     auto rt = cs.eval("(reflect-type \"Int\")");
@@ -84,14 +83,13 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(query:pattern \"acc\")");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     for (int i = 0; i < 3; ++i) {
-        CHECK(cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(10 + i) + "\")")
-                  .has_value(),
+        CHECK(cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(10 + i) + "\")").has_value(),
               "mutate:rebind ok");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = bridge_stats(cs);
-    std::println("  bridge-stats: {} -> {} hygiene_skips: {} -> {}",
-                 stats6a, stats6b, skips0, skips1);
+    std::println("  bridge-stats: {} -> {} hygiene_skips: {} -> {}", stats6a, stats6b, skips0,
+                 skips1);
     CHECK(stats6b >= stats6a, "bridge-stats monotonic after mutate");
     CHECK(skips1 >= skips0, "marker introspection skips monotonic");
 

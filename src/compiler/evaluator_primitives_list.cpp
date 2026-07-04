@@ -4,7 +4,6 @@
 module;
 
 
-
 module aura.compiler.evaluator;
 
 import std;
@@ -20,11 +19,11 @@ using namespace types;
 
 namespace {
 
-bool is_end_of_list(const EvalValue& v) {
-    return is_void(v) || (is_int(v) && as_int(v) == 0);
-}
+    bool is_end_of_list(const EvalValue& v) {
+        return is_void(v) || (is_int(v) && as_int(v) == 0);
+    }
 
-}  // namespace
+} // namespace
 
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
@@ -63,7 +62,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return false;
     };
-    auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg) -> EvalValue {
+    auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc,
+                              const EvalValue& arg) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
             if (slot >= ev.primitives_.slot_count())
@@ -126,14 +126,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("list-ref", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
         auto* counter = ev.primitive_error_counter_ptr();
         if (a.size() < 2) {
-            return make_primitive_error(string_heap, error_values, "list-ref: too few args", counter);
+            return make_primitive_error(string_heap, error_values, "list-ref: too few args",
+                                        counter);
         }
         auto v = a[0];
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         for (std::size_t i = 0; i < pos; ++i) {
             if (!is_pair(v)) {
-                return make_primitive_error(string_heap, error_values, "list-ref: index out of bounds",
-                                            counter);
+                return make_primitive_error(string_heap, error_values,
+                                            "list-ref: index out of bounds", counter);
             }
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size()) {
@@ -391,7 +392,6 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return acc;
     });
-
 }
 
-}  // namespace aura::compiler::primitives_detail
+} // namespace aura::compiler::primitives_detail

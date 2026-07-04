@@ -144,14 +144,16 @@ bool test_multithreaded_hot_swap_stress() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < K_THREADS; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < K_THREADS; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
     auto t1 = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     int total = K_THREADS * K_ITERS;
     auto snap = cs.snapshot();
-    std::println("  {} cycles in {}ms, final jit_compilations: {}",
-                 total, ms, snap.jit_compilations);
+    std::println("  {} cycles in {}ms, final jit_compilations: {}", total, ms,
+                 snap.jit_compilations);
     CHECK(cycles_done.load() == total, "all cycles completed");
     CHECK(ms < 30000, "completed within 30s budget");
     return true;

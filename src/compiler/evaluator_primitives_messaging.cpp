@@ -22,33 +22,33 @@ using namespace types;
 
 namespace {
 
-struct FiberResult {
-    std::shared_ptr<std::optional<EvalValue>> value;
-    bool ready = false;
-};
-std::unordered_map<int64_t, FiberResult> s_fiber_results;
-std::mutex s_fiber_results_mtx;
-std::condition_variable s_fiber_results_cv;
+    struct FiberResult {
+        std::shared_ptr<std::optional<EvalValue>> value;
+        bool ready = false;
+    };
+    std::unordered_map<int64_t, FiberResult> s_fiber_results;
+    std::mutex s_fiber_results_mtx;
+    std::condition_variable s_fiber_results_cv;
 
 } // namespace
 
 void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
 
-// ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
 
-// P14: Inter-Agent Messaging (P0)
+    // P14: Inter-Agent Messaging (P0)
 
-// ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
 
-// ── Messaging primitives ───────────────────────────────────
+    // ── Messaging primitives ───────────────────────────────────
 
-//
+    //
 
-// send: global bridge (pushing to a target is session-independent)
+    // send: global bridge (pushing to a target is session-independent)
 
-// recv: uses compiler_service_ + g_mailbox_read (per-service mailbox access)
+    // recv: uses compiler_service_ + g_mailbox_read (per-service mailbox access)
 
-// my-id: uses compiler_service_ + g_session_id (per-service identity)
+    // my-id: uses compiler_service_ + g_session_id (per-service identity)
 
     // (send target-id message) → #t on success
     add("send", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -307,7 +307,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_string(sidx);
             }
             return ev.make_merr("create-failed",
-                             std::string("could not create session \"") + name + "\"");
+                                std::string("could not create session \"") + name + "\"");
         }
 
         // Stdin/pipe mode: lightweight in-process agent via Aura-level *agents* registry
@@ -709,7 +709,6 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return result;
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

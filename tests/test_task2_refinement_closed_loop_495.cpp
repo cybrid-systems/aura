@@ -68,11 +68,9 @@ static void test_constraint_pillar_unit() {
     TypeRegistry reg;
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) == SolveResult::CONFLICT,
           "T~String conflicts via touched_roots reverify");
 }
 
@@ -90,15 +88,13 @@ static void run_integration_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: occurrence pillar ---");
     const auto stats4a = cs.eval("(query:occurrence-stats)");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
-        "\"issue-495-occ\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
+                  "\"issue-495-occ\")");
     auto stats4b = cs.eval("(query:occurrence-stats)");
     CHECK(stats4a && is_int(*stats4a), "occurrence-stats before mutate");
     CHECK(stats4b && is_int(*stats4b), "occurrence-stats after mutate");
     if (stats4a && stats4b && is_int(*stats4a) && is_int(*stats4b))
-        CHECK(as_int(*stats4b) >= as_int(*stats4a),
-              "occurrence-stats monotonic after if mutate");
+        CHECK(as_int(*stats4b) >= as_int(*stats4a), "occurrence-stats monotonic after if mutate");
 
     std::println("\n--- AC5: JIT elision pillar ---");
     auto zos = cs.eval("(query:coercion-zerooverhead-stats)");
@@ -117,10 +113,8 @@ static void run_integration_matrix(CompilerService& cs) {
     std::println("\n--- AC8: multi-round mutate stats monotonic ---");
     const auto stats8a = task2_refinement_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
-            std::to_string(round + 10) + ") 0))\" \"r" + std::to_string(round) +
-            "\")");
+        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+                      std::to_string(round + 10) + ") 0))\" \"r" + std::to_string(round) + "\")");
         auto ev = cs.eval("(f 2)");
         CHECK(ev && is_int(*ev), "eval ok round " + std::to_string(round));
     }

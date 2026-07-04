@@ -11,15 +11,16 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 namespace test_295_detail {
 
 static std::string run_aura(const std::string& src) {
     char tmpl[] = "/tmp/test_295_aura_XXXXXX.aura";
     int fd = mkstemps(tmpl, 5);
-    if (fd < 0) return "<mkstemps-fail>";
+    if (fd < 0)
+        return "<mkstemps-fail>";
     write(fd, src.data(), src.size());
     close(fd);
     // Path resolution: tests are launched from build/ so a
@@ -41,7 +42,8 @@ static std::string run_aura(const std::string& src) {
     // marker so the test works from either cwd. AURA_SRC_ROOT
     // env var overrides (used by CI).
     static const std::string aura_bin = []() -> std::string {
-        if (auto* env = std::getenv("AURA_BIN")) return env;
+        if (auto* env = std::getenv("AURA_BIN"))
+            return env;
         // Default: readlink /proc/self/exe → .../build/test_issue_NNN
         // and resolve aura as the sibling binary at .../build/aura.
         char buf[4096] = {0};
@@ -55,23 +57,32 @@ static std::string run_aura(const std::string& src) {
     // Compute the repo root: walk up from cwd looking for the
     // lib/std/eda.aura marker (works from build/ or repo root).
     static const std::string repo_root = []() -> std::string {
-        if (auto* env = std::getenv("AURA_SRC_ROOT")) return env;
+        if (auto* env = std::getenv("AURA_SRC_ROOT"))
+            return env;
         namespace fs = std::filesystem;
         fs::path p = fs::current_path();
         while (!p.empty()) {
-            if (fs::exists(p / "lib/std/eda.aura")) return p.string();
-            if (p == p.root_path()) break;
+            if (fs::exists(p / "lib/std/eda.aura"))
+                return p.string();
+            if (p == p.root_path())
+                break;
             p = p.parent_path();
         }
         return "..";
     }();
-    std::string cmd = std::string("(cd ") + repo_root + " && timeout 10 " +
-                      aura_bin + " < " + tmpl + " 2>&1)";
+    std::string cmd =
+        std::string("(cd ") + repo_root + " && timeout 10 " + aura_bin + " < " + tmpl + " 2>&1)";
     FILE* p = popen(cmd.c_str(), "r");
-    if (!p) { unlink(tmpl); return "<popen-fail>"; }
-    char buf[4096]; std::string out;
-    while (std::fgets(buf, sizeof(buf), p)) out += buf;
-    int rc = pclose(p); unlink(tmpl);
+    if (!p) {
+        unlink(tmpl);
+        return "<popen-fail>";
+    }
+    char buf[4096];
+    std::string out;
+    while (std::fgets(buf, sizeof(buf), p))
+        out += buf;
+    int rc = pclose(p);
+    unlink(tmpl);
     if (rc != 0 && out.find("error:") == std::string::npos) {
         return "<non-zero exit: rc=" + std::to_string(rc) + ">";
     }
@@ -105,8 +116,7 @@ bool test_coverage_holes() {
     auto out = run_aura(src);
     auto line = first_line(out);
     // clk_i, err are un-asserted (2 holes); q is asserted (not a hole)
-    CHECK(line == "2",
-          "2 un-asserted signals (got \"" + line + "\")");
+    CHECK(line == "2", "2 un-asserted signals (got \"" + line + "\")");
     return true;
 }
 
@@ -132,8 +142,7 @@ bool test_coverage_holes_full() {
 )AU";
     auto out = run_aura(src);
     auto line = first_line(out);
-    CHECK(line == "0",
-          "no coverage holes when all signals asserted (got \"" + line + "\")");
+    CHECK(line == "0", "no coverage holes when all signals asserted (got \"" + line + "\")");
     return true;
 }
 
@@ -150,11 +159,9 @@ bool test_ws_try_success() {
     auto lines = out;
     auto first_nl = lines.find('\n');
     auto first = lines.substr(0, first_nl);
-    auto second = lines.substr(first_nl+1, lines.find('\n', first_nl+1) - first_nl - 1);
-    CHECK(first == "is-pair=#t",
-          "ws:try-mutation returns a pair (got \"" + first + "\")");
-    CHECK(second == "car=3",
-          "car is the result (got \"" + second + "\")");
+    auto second = lines.substr(first_nl + 1, lines.find('\n', first_nl + 1) - first_nl - 1);
+    CHECK(first == "is-pair=#t", "ws:try-mutation returns a pair (got \"" + first + "\")");
+    CHECK(second == "car=3", "car is the result (got \"" + second + "\")");
     return true;
 }
 
@@ -167,8 +174,7 @@ bool test_ws_try_rollback() {
 )AU";
     auto out = run_aura(src);
     auto line = first_line(out);
-    CHECK(line == "r=#f",
-          "parse failure returns #f (got \"" + line + "\")");
+    CHECK(line == "r=#f", "parse failure returns #f (got \"" + line + "\")");
     return true;
 }
 
@@ -181,8 +187,7 @@ bool test_ws_try_bad_arg() {
 )AU";
     auto out = run_aura(src);
     auto line = first_line(out);
-    CHECK(line == "r=#f",
-          "non-string arg returns #f (got \"" + line + "\")");
+    CHECK(line == "r=#f", "non-string arg returns #f (got \"" + line + "\")");
     return true;
 }
 
@@ -193,14 +198,19 @@ int run_tests() {
     test_ws_try_success();
     test_ws_try_rollback();
     test_ws_try_bad_arg();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══\n", g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══\n", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_295_detail
+
+int aura_issue_295_run() {
+    return test_295_detail::run_tests();
 }
 
-int aura_issue_295_run() { return test_295_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_295_run(); }
+int main() {
+    return aura_issue_295_run();
+}
 #endif

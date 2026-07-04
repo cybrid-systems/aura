@@ -28,6 +28,6 @@ void start_health_server(int port, const HealthConfig& cfg);
 // Request shutdown (joins background thread).
 void stop_health_server();
 
-}  // namespace aura::serve::http
+} // namespace aura::serve::http
 
-#endif  // AURA_SERVE_HTTP_HEALTH_H
+#endif // AURA_SERVE_HTTP_HEALTH_H

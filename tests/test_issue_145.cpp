@@ -36,15 +36,14 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.evaluator;
 import aura.compiler.value;
-
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -57,7 +56,7 @@ bool test_closure_params_is_symid() {
     // Build a Closure with empty params — type is now SymId[]
     aura::compiler::Closure cl;
     cl.name = "test";
-    cl.params = {};  // empty vector
+    cl.params = {}; // empty vector
     CHECK(cl.params.empty(), "Closure::params is empty by default");
     // The type compiles as std::vector<SymId>. Verify with a
     // static_assert-style runtime check via make_closure_view.
@@ -69,15 +68,16 @@ bool test_closure_params_is_symid() {
 bool test_closure_params_push_symid() {
     std::println("\n--- Test 1.2: Closure::params pushes SymId values ---");
     aura::compiler::Closure cl;
-    cl.params.push_back(42);  // SymId
-    cl.params.push_back(99);  // SymId
+    cl.params.push_back(42); // SymId
+    cl.params.push_back(99); // SymId
     CHECK(cl.params.size() == 2, "two SymIds pushed");
     CHECK(cl.params[0] == 42, "first SymId preserved");
     CHECK(cl.params[1] == 99, "second SymId preserved");
     auto view = aura::compiler::make_closure_view(cl);
     CHECK(view.param_at(0) == 42, "ClosureView::param_at(0) returns SymId");
     CHECK(view.param_at(1) == 99, "ClosureView::param_at(1) returns SymId");
-    CHECK(view.param_at(2) == aura::ast::SymId{}, "ClosureView::param_at(2) returns empty SymId for OOB");
+    CHECK(view.param_at(2) == aura::ast::SymId{},
+          "ClosureView::param_at(2) returns empty SymId for OOB");
     return true;
 }
 
@@ -111,7 +111,8 @@ bool test_bind_symid_shadowing() {
     auto v = env.lookup_by_symid(42);
     CHECK(v.has_value(), "shadowed binding found");
     if (v) {
-        CHECK(aura::compiler::types::as_int(*v) == 200, "most-recent binding wins (got 200, not 100)");
+        CHECK(aura::compiler::types::as_int(*v) == 200,
+              "most-recent binding wins (got 200, not 100)");
     }
     return true;
 }
@@ -214,18 +215,15 @@ bool test_bind_symid_without_pool() {
 bool test_env_id_null_semantics() {
     std::println("\n--- Test 7.1: EnvId NULL semantics ---");
     using aura::compiler::NULL_ENV_ID;
-    CHECK(NULL_ENV_ID == std::numeric_limits<std::uint32_t>::max(),
-          "NULL_ENV_ID == uint32_t max");
+    CHECK(NULL_ENV_ID == std::numeric_limits<std::uint32_t>::max(), "NULL_ENV_ID == uint32_t max");
     aura::compiler::Evaluator ev;
-    CHECK(!ev.is_valid_env_id(NULL_ENV_ID),
-          "is_valid_env_id(NULL_ENV_ID) returns false");
+    CHECK(!ev.is_valid_env_id(NULL_ENV_ID), "is_valid_env_id(NULL_ENV_ID) returns false");
     // Phase 2.2: Evaluator constructor pre-registers top_ env
     // in env_frames_ (so SoA walk path is always exercisable
     // for the root scope). Fresh Evaluator now has 1 frame.
     CHECK(ev.is_valid_env_id(0),
           "is_valid_env_id(0) returns true on fresh evaluator (top_ pre-registered)");
-    CHECK(ev.env_frames_size() == 1,
-          "fresh evaluator has 1 frame (top_)");
+    CHECK(ev.env_frames_size() == 1, "fresh evaluator has 1 frame (top_)");
     return true;
 }
 
@@ -238,7 +236,7 @@ bool test_alloc_env_frame_returns_valid_id() {
     CHECK(id != aura::compiler::NULL_ENV_ID, "alloc returns non-null id");
     CHECK(ev.is_valid_env_id(id), "is_valid_env_id(id) returns true");
     CHECK(ev.env_frames_size() == 2, "env_frames_size() == 2 after first alloc (top_ + new)");
-    auto id2 = ev.alloc_env_frame(id, nullptr);  // child of id
+    auto id2 = ev.alloc_env_frame(id, nullptr); // child of id
     CHECK(id2 != aura::compiler::NULL_ENV_ID, "second alloc returns non-null id");
     CHECK(id2 != id, "second id != first id");
     CHECK(ev.env_frames_size() == 3, "env_frames_size() == 3 after second alloc");
@@ -263,15 +261,13 @@ bool test_env_frame_roundtrip() {
 bool test_env_frame_parent_chain_index() {
     std::println("\n--- Test 7.4: env_frame parent_id is stored as index ---");
     aura::compiler::Evaluator ev;
-    auto root = ev.alloc_env_frame();  // parent = NULL_ENV_ID
+    auto root = ev.alloc_env_frame(); // parent = NULL_ENV_ID
     auto child = ev.alloc_env_frame(root, nullptr);
     auto grandchild = ev.alloc_env_frame(child, nullptr);
     CHECK(ev.env_frame(root).parent_id == aura::compiler::NULL_ENV_ID,
           "root frame parent_id == NULL_ENV_ID");
-    CHECK(ev.env_frame(child).parent_id == root,
-          "child frame parent_id == root");
-    CHECK(ev.env_frame(grandchild).parent_id == child,
-          "grandchild frame parent_id == child");
+    CHECK(ev.env_frame(child).parent_id == root, "child frame parent_id == root");
+    CHECK(ev.env_frame(grandchild).parent_id == child, "grandchild frame parent_id == child");
     return true;
 }
 
@@ -284,7 +280,7 @@ bool test_walk_env_frames_visits_all() {
     std::vector<aura::compiler::EnvId> visited;
     ev.walk_env_frames(grandchild, [&](aura::compiler::EnvId id, const aura::compiler::EnvFrame&) {
         visited.push_back(id);
-        return true;  // keep walking
+        return true; // keep walking
     });
     CHECK(visited.size() == 3, "walk visits all 3 frames");
     CHECK(visited[0] == grandchild, "first visited is grandchild (start)");
@@ -302,7 +298,7 @@ bool test_walk_env_frames_early_exit() {
     int count = 0;
     ev.walk_env_frames(grandchild, [&](aura::compiler::EnvId, const aura::compiler::EnvFrame&) {
         ++count;
-        return count < 2;  // stop after second visit
+        return count < 2; // stop after second visit
     });
     CHECK(count == 2, "walk stops after 2 frames (early exit)");
     return true;
@@ -334,15 +330,13 @@ bool test_lookup_by_symid_chain_shadowing() {
     auto v = ev.lookup_by_symid_chain(child, 7);
     CHECK(v.has_value(), "lookup finds x in chain");
     if (v) {
-        CHECK(aura::compiler::types::as_int(*v) == 200,
-              "closest frame wins (200, not 100)");
+        CHECK(aura::compiler::types::as_int(*v) == 200, "closest frame wins (200, not 100)");
     }
     // Lookup from root finds the root binding only.
     auto v_root = ev.lookup_by_symid_chain(root, 7);
     CHECK(v_root.has_value(), "lookup from root finds x");
     if (v_root) {
-        CHECK(aura::compiler::types::as_int(*v_root) == 100,
-              "root lookup returns 100");
+        CHECK(aura::compiler::types::as_int(*v_root) == 100, "root lookup returns 100");
     }
     return true;
 }
@@ -369,10 +363,8 @@ bool test_env_frame_bind_symid_no_pool() {
     if (v) {
         CHECK(aura::compiler::types::as_int(*v) == 99, "value is 99");
     }
-    CHECK(fr.bindings_.empty(),
-          "string bindings empty (no pool to mirror)");
-    CHECK(!fr.bindings_symid_.empty(),
-          "SymId bindings has the entry");
+    CHECK(fr.bindings_.empty(), "string bindings empty (no pool to mirror)");
+    CHECK(!fr.bindings_symid_.empty(), "SymId bindings has the entry");
     return true;
 }
 
@@ -391,8 +383,7 @@ bool test_env_frames_survive_multiple_alloc() {
           "env_frames_size() == N+1 after N allocs (top_ pre-registered)");
     // Spot-check: every id is still valid and distinct.
     for (std::size_t i = 0; i < N; ++i) {
-        CHECK(ev.is_valid_env_id(ids[i]),
-              "all N ids remain valid after bulk alloc");
+        CHECK(ev.is_valid_env_id(ids[i]), "all N ids remain valid after bulk alloc");
         if (i > 0) {
             CHECK(ids[i] != ids[i - 1], "consecutive ids are distinct");
         }
@@ -423,16 +414,17 @@ bool test_alloc_env_frame_from_env_mirrors_bindings() {
     // direct pool access here, so bind via string-only path
     // and verify the string bindings_ roundtrip.)
     e.bind("alpha", aura::compiler::types::make_int(1));
-    e.bind("beta",  aura::compiler::types::make_int(2));
+    e.bind("beta", aura::compiler::types::make_int(2));
     auto id = ev.alloc_env_frame_from_env(e);
     CHECK(id != aura::compiler::NULL_ENV_ID, "alloc_env_frame_from_env returns valid id");
     CHECK(ev.is_valid_env_id(id), "is_valid_env_id(id) is true");
     const auto& fr = ev.env_frame(id);
-    CHECK(fr.bindings_.size() == 2,
-          "frame bindings_ size == source env bindings_ size");
-    CHECK(fr.bindings_[0].first == "alpha" && fr.bindings_[0].second == aura::compiler::types::make_int(1),
+    CHECK(fr.bindings_.size() == 2, "frame bindings_ size == source env bindings_ size");
+    CHECK(fr.bindings_[0].first == "alpha" &&
+              fr.bindings_[0].second == aura::compiler::types::make_int(1),
           "frame bindings_[0] mirrors ('alpha', 1)");
-    CHECK(fr.bindings_[1].first == "beta" && fr.bindings_[1].second == aura::compiler::types::make_int(2),
+    CHECK(fr.bindings_[1].first == "beta" &&
+              fr.bindings_[1].second == aura::compiler::types::make_int(2),
           "frame bindings_[1] mirrors ('beta', 2)");
     return true;
 }
@@ -449,8 +441,7 @@ bool test_alloc_env_frame_from_env_inherits_parent() {
           "parent_id defaults to source env's parent_id (NULL_ENV_ID)");
     // Explicit parent_id override.
     auto id2 = ev.alloc_env_frame_from_env(e, /*parent_id=*/0);
-    CHECK(ev.env_frame(id2).parent_id == 0,
-          "explicit parent_id overrides default");
+    CHECK(ev.env_frame(id2).parent_id == 0, "explicit parent_id overrides default");
     return true;
 }
 
@@ -469,10 +460,9 @@ bool test_closure_has_env_id_field_default() {
 bool test_closure_view_mirrors_env_id() {
     std::println("\n--- Test 8.4: ClosureView mirrors env_id ---");
     aura::compiler::Closure cl;
-    cl.env_id = 7;  // simulate a registered closure
+    cl.env_id = 7; // simulate a registered closure
     auto v = aura::compiler::make_closure_view(cl);
-    CHECK(v.env_id == 7,
-          "ClosureView mirrors Closure::env_id (SoA capture index)");
+    CHECK(v.env_id == 7, "ClosureView mirrors Closure::env_id (SoA capture index)");
     // Phase 2.3: ClosureView.env pointer also removed.
     return true;
 }
@@ -542,12 +532,12 @@ int run_tests() {
     test_closure_view_mirrors_env_id();
     test_materialize_call_env_with_env_id();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_145_detail
+} // namespace aura_issue_145_detail
 
-int aura_issue_145_run() { return aura_issue_145_detail::run_tests(); }
-
+int aura_issue_145_run() {
+    return aura_issue_145_detail::run_tests();
+}

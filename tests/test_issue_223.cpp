@@ -36,8 +36,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // Mirror of production ClosureBridgeData (from src/compiler/ir.ixx).
 // We can't import the .ixx module from a standalone TU (it would
@@ -46,11 +46,11 @@ using aura::test::g_failed;
 // changes, this stub must be kept in sync — the test serves as
 // a contract reminder.
 struct ClosureBridgeData {
-    const void* flat = nullptr;       // ast::FlatAST* in prod
-    const void* pool = nullptr;       // ast::StringPool* in prod
-    std::uint32_t body_id = ~0u;      // ast::NULL_NODE in prod
-    std::string body_source;          // serialized source for fallback re-parse
-    std::uint64_t bridge_epoch = 0;   // Issue #223: epoch at construction
+    const void* flat = nullptr;     // ast::FlatAST* in prod
+    const void* pool = nullptr;     // ast::StringPool* in prod
+    std::uint32_t body_id = ~0u;    // ast::NULL_NODE in prod
+    std::string body_source;        // serialized source for fallback re-parse
+    std::uint64_t bridge_epoch = 0; // Issue #223: epoch at construction
 };
 
 // Mirror of production IRClosure bridge-related fields.
@@ -58,7 +58,7 @@ struct IRClosureBridgeFields {
     const void* flat = nullptr;
     const void* pool = nullptr;
     std::uint32_t body_id = ~0u;
-    std::uint64_t bridge_epoch = 0;   // Issue #223: carried from bridge
+    std::uint64_t bridge_epoch = 0; // Issue #223: carried from bridge
 };
 
 // The CompilerService epoch tracker is in service.ixx. For
@@ -68,12 +68,8 @@ struct MockEpochTracker {
     std::uint64_t bridge_epoch() const noexcept {
         return mutation_epoch_.load(std::memory_order_relaxed);
     }
-    void bump_bridge_epoch() noexcept {
-        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
-    }
-    void reset() noexcept {
-        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
-    }
+    void bump_bridge_epoch() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_relaxed); }
+    void reset() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_relaxed); }
 };
 
 // Issue #223 helper: returns true if the IRClosure's bridge
@@ -86,10 +82,10 @@ struct MockEpochTracker {
 // closures that pre-date the tracking). New code paths should
 // set bridge_epoch to the current epoch at construction.
 static bool is_bridge_stale(uint64_t bridge_epoch, uint64_t current_epoch) {
-    if (bridge_epoch == 0) return false;  // legacy / unset: trust
+    if (bridge_epoch == 0)
+        return false; // legacy / unset: trust
     return bridge_epoch != current_epoch;
 }
-
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -118,7 +114,7 @@ void test_2_bridge_capture() {
     // Pretend we have a FlatAST/StringPool; we just use void* in the test.
     int fake_flat = 0;
     int fake_pool = 0;
-    uint64_t epoch_at_construction = svc.bridge_epoch();  // 0
+    uint64_t epoch_at_construction = svc.bridge_epoch(); // 0
 
     // Construct a bridge at epoch 0
     ClosureBridgeData bd;
@@ -147,11 +143,11 @@ void test_2_bridge_capture() {
           "bridge captured at epoch 0 stays legacy (not stale) after reset");
 
     // But a bridge with an EXPLICIT epoch IS stale after reset
-    bd.bridge_epoch = 0;  // start fresh
-    bd.bridge_epoch = 1;  // captured at epoch 1 (current is 1)
+    bd.bridge_epoch = 0; // start fresh
+    bd.bridge_epoch = 1; // captured at epoch 1 (current is 1)
     CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
           "bridge captured at epoch 1 is not stale at epoch 1");
-    svc.reset();  // service → 2
+    svc.reset(); // service → 2
     CHECK(svc.bridge_epoch() == 2, "service epoch bumped to 2");
     CHECK(is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
           "bridge captured at epoch 1 is stale after reset to epoch 2");
@@ -162,7 +158,7 @@ void test_2_bridge_capture() {
     bd2.pool = &fake_pool;
     bd2.body_id = 42;
     bd2.body_source = "(lambda (x) x)";
-    bd2.bridge_epoch = svc.bridge_epoch();  // 2
+    bd2.bridge_epoch = svc.bridge_epoch(); // 2
     CHECK(bd2.bridge_epoch == 2, "new bridge captured epoch 2");
     CHECK(!is_bridge_stale(bd2.bridge_epoch, svc.bridge_epoch()),
           "new bridge at epoch 2 is not stale");
@@ -190,7 +186,7 @@ void test_3_irclosure_carry() {
           "IRClosure captured at epoch 0 stays legacy (not stale) after reset");
 
     // Re-capture at a tracked epoch
-    cl.bridge_epoch = svc.bridge_epoch();  // 1
+    cl.bridge_epoch = svc.bridge_epoch(); // 1
     CHECK(!is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
           "IRClosure re-captured at current epoch is not stale");
     svc.bump_bridge_epoch();
@@ -214,7 +210,7 @@ void test_4_monotonicity() {
     }
     // The bridge that captured at last_epoch is now stale
     ClosureBridgeData bd;
-    bd.bridge_epoch = 0;  // legacy / not tracked
+    bd.bridge_epoch = 0; // legacy / not tracked
     CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
           "zero-epoch bridge is legacy (not stale) after 200 epoch bumps");
     bd.bridge_epoch = last_epoch;
@@ -222,8 +218,8 @@ void test_4_monotonicity() {
           "fresh bridge at current epoch is not stale");
     // A bridge captured BEFORE the bumps is now stale
     ClosureBridgeData old_bd;
-    old_bd.bridge_epoch = 0;  // start clean
-    old_bd.bridge_epoch = 1;  // captured at epoch 1
+    old_bd.bridge_epoch = 0; // start clean
+    old_bd.bridge_epoch = 1; // captured at epoch 1
     CHECK(is_bridge_stale(old_bd.bridge_epoch, svc.bridge_epoch()),
           "old bridge captured at epoch 1 is stale after 200 epoch bumps");
 }
@@ -239,40 +235,38 @@ void test_5_apply_closure_invalidation() {
 
     // Build a closure that captures the current epoch
     struct SimulatedClosure {
-        void* flat = (void*)0xdeadbeef;  // pretend arena-allocated
+        void* flat = (void*)0xdeadbeef; // pretend arena-allocated
         void* pool = (void*)0xcafebabe;
         std::uint32_t body_id = 42;
         std::uint64_t bridge_epoch = 0;
     };
     SimulatedClosure cl;
-    cl.bridge_epoch = svc.bridge_epoch();  // 0
+    cl.bridge_epoch = svc.bridge_epoch(); // 0
     CHECK(cl.bridge_epoch == 0, "closure captured epoch 0 (no service bound yet)");
 
     // Simulate the apply_closure check: is_bridge_stale returns
     // false for legacy / unset epoch (the safe default — don't
     // break existing closures that don't track).
     bool would_invalidate = is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch());
-    CHECK(!would_invalidate,
-          "legacy closure (epoch 0) is not invalidated");
+    CHECK(!would_invalidate, "legacy closure (epoch 0) is not invalidated");
 
     // Now set the closure to a tracked epoch (e.g. via a bridge
     // construction that captured the service's epoch)
     cl.bridge_epoch = 1;
-    svc.bump_bridge_epoch();  // service is now at 1 (legacy + bump)
+    svc.bump_bridge_epoch(); // service is now at 1 (legacy + bump)
     // The closure was captured at 0, service is at 1.
     // Wait — if the closure was captured at 1 and service is at 1,
     // they're equal. Let's reset to see staleness.
-    svc.reset();  // service bumps to 2
+    svc.reset(); // service bumps to 2
     would_invalidate = is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch());
     CHECK(would_invalidate,
           "closure captured at epoch 1 is invalidated after service reset (epoch 2)");
 
     // Re-bridge: build a new closure at the new epoch
     SimulatedClosure cl2;
-    cl2.bridge_epoch = svc.bridge_epoch();  // 2
+    cl2.bridge_epoch = svc.bridge_epoch(); // 2
     would_invalidate = is_bridge_stale(cl2.bridge_epoch, svc.bridge_epoch());
-    CHECK(!would_invalidate,
-          "fresh closure at current epoch is not invalidated");
+    CHECK(!would_invalidate, "fresh closure at current epoch is not invalidated");
 }
 
 // ── Test 6: body_source re-parse fallback (schema) ──────────
@@ -301,7 +295,7 @@ void test_6_body_source_fallback() {
         void* pool = nullptr;
         std::uint32_t body_id = 0;
         std::uint64_t bridge_epoch = 0;
-        std::string body_source;  // NEW: Issue #223
+        std::string body_source; // NEW: Issue #223
     };
 
     // Case 1: closure with empty body_source, stale bridge
@@ -339,7 +333,7 @@ void test_6_body_source_fallback() {
     {
         SimulatedClosure cl;
         cl.body_source = "(lambda (x) (* x x))";
-        cl.bridge_epoch = 2;  // matches current
+        cl.bridge_epoch = 2; // matches current
         bool stale = is_bridge_stale(cl.bridge_epoch, 2);
         bool has_fallback = !cl.body_source.empty();
         CHECK(!stale, "fresh bridge: not stale");

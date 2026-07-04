@@ -8,8 +8,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -20,8 +20,7 @@ import aura.compiler.sv_ir;
 
 namespace aura_issue_435_phase1_detail {
 
-static std::string run_string(aura::compiler::CompilerService& cs,
-                              const std::string& src) {
+static std::string run_string(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = cs.eval(src);
     if (!r)
         return "";
@@ -41,10 +40,8 @@ bool test_cpp_interface_ir_direct() {
     using aura::compiler::sv_ir::InterfaceIR;
     using aura::compiler::sv_ir::make_interface;
 
-    InterfaceIR bus = make_interface(
-        "bus_if",
-        std::vector<std::string>{"clk", "data", "valid"},
-        std::vector<std::string>{"master", "slave"});
+    InterfaceIR bus = make_interface("bus_if", std::vector<std::string>{"clk", "data", "valid"},
+                                     std::vector<std::string>{"master", "slave"});
     CHECK(bus.name == "bus_if", "InterfaceIR.name == 'bus_if'");
     CHECK(bus.ports.size() == 3, "3 ports");
     CHECK(bus.ports[0] == "clk", "first port == clk");
@@ -66,26 +63,17 @@ bool test_cpp_emit_interface() {
 
     std::string s;
 
-    s = emit_interface(make_interface("bus_if",
-        std::vector<std::string>{"clk", "data"},
-        std::vector<std::string>{"master"}));
-    CHECK(s.find("interface bus_if") != std::string::npos,
-          "starts with 'interface bus_if'");
-    CHECK(s.find("clk, data") != std::string::npos,
-          "contains 'clk, data'");
-    CHECK(s.find("modport master();") != std::string::npos,
-          "contains 'modport master();'");
-    CHECK(s.find("endinterface") != std::string::npos,
-          "ends with 'endinterface'");
+    s = emit_interface(make_interface("bus_if", std::vector<std::string>{"clk", "data"},
+                                      std::vector<std::string>{"master"}));
+    CHECK(s.find("interface bus_if") != std::string::npos, "starts with 'interface bus_if'");
+    CHECK(s.find("clk, data") != std::string::npos, "contains 'clk, data'");
+    CHECK(s.find("modport master();") != std::string::npos, "contains 'modport master();'");
+    CHECK(s.find("endinterface") != std::string::npos, "ends with 'endinterface'");
 
-    s = emit_interface(make_interface("simple",
-        std::vector<std::string>{"a"}, {}));
-    CHECK(s.find("interface simple") != std::string::npos,
-          "simple interface starts");
-    CHECK(s.find("endinterface") != std::string::npos,
-          "simple interface ends");
-    CHECK(s.find("modport") == std::string::npos,
-          "no modport line when none");
+    s = emit_interface(make_interface("simple", std::vector<std::string>{"a"}, {}));
+    CHECK(s.find("interface simple") != std::string::npos, "simple interface starts");
+    CHECK(s.find("endinterface") != std::string::npos, "simple interface ends");
+    CHECK(s.find("modport") == std::string::npos, "no modport line when none");
 
     return true;
 }
@@ -93,11 +81,10 @@ bool test_cpp_emit_interface() {
 // ── AC3: C++ ModportIR direct construction + accessors ──
 bool test_cpp_modport_ir_direct() {
     std::println("\n--- AC3: C++ ModportIR direct construction ---");
-    using aura::compiler::sv_ir::ModportIR;
     using aura::compiler::sv_ir::make_modport;
+    using aura::compiler::sv_ir::ModportIR;
 
-    ModportIR m = make_modport("master",
-        std::vector<std::string>{"input clk", "output data"});
+    ModportIR m = make_modport("master", std::vector<std::string>{"input clk", "output data"});
     CHECK(m.name == "master", "ModportIR.name == 'master'");
     CHECK(m.port_names.size() == 2, "2 port_names");
 
@@ -115,19 +102,14 @@ bool test_cpp_emit_modport() {
 
     std::string s;
 
-    s = emit_modport(make_modport("master",
-        std::vector<std::string>{"input clk", "output data"}));
-    CHECK(s.find("modport master") != std::string::npos,
-          "starts with 'modport master'");
-    CHECK(s.find("input clk") != std::string::npos,
-          "contains 'input clk'");
-    CHECK(s.find("output data") != std::string::npos,
-          "contains 'output data'");
+    s = emit_modport(make_modport("master", std::vector<std::string>{"input clk", "output data"}));
+    CHECK(s.find("modport master") != std::string::npos, "starts with 'modport master'");
+    CHECK(s.find("input clk") != std::string::npos, "contains 'input clk'");
+    CHECK(s.find("output data") != std::string::npos, "contains 'output data'");
     CHECK(s.back() == ';', "ends with ';'");
 
     s = emit_modport(make_modport("empty", {}));
-    CHECK(s == "modport empty();",
-          "empty modport → 'modport empty();'");
+    CHECK(s == "modport empty();", "empty modport → 'modport empty();'");
 
     return true;
 }
@@ -141,16 +123,13 @@ bool test_list_ir_still_works() {
         return false;
     }
 
-    auto s = run_string(cs,
-        "(eda:emit-interface "
-        "  (make-eda:interface 'bus_if "
-        "    (list (make-eda:port 'clk 'input 1)) "
-        "    (list (make-eda:modport 'master '(clk)))))");
+    auto s = run_string(cs, "(eda:emit-interface "
+                            "  (make-eda:interface 'bus_if "
+                            "    (list (make-eda:port 'clk 'input 1)) "
+                            "    (list (make-eda:modport 'master '(clk)))))");
     CHECK(!s.empty(), "list-based emit returns non-empty");
-    CHECK(s.find("bus_if") != std::string::npos,
-          "list-based emit contains 'bus_if'");
-    CHECK(s.find("endinterface") != std::string::npos,
-          "list-based emit ends with endinterface");
+    CHECK(s.find("bus_if") != std::string::npos, "list-based emit contains 'bus_if'");
+    CHECK(s.find("endinterface") != std::string::npos, "list-based emit ends with endinterface");
 
     return true;
 }
@@ -168,8 +147,12 @@ int run_tests() {
 
 } // namespace aura_issue_435_phase1_detail
 
-int aura_issue_435_phase1_run() { return aura_issue_435_phase1_detail::run_tests(); }
+int aura_issue_435_phase1_run() {
+    return aura_issue_435_phase1_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_435_phase1_run(); }
+int main() {
+    return aura_issue_435_phase1_run();
+}
 #endif

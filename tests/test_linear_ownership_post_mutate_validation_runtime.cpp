@@ -82,12 +82,11 @@ static void test_post_mutate_invariant_catches_leak() {
     rec.operator_name = "issue-610";
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    const auto status = aura::compiler::post_mutation_invariant_check(
-        *flat, *pool, reg, rec, notes, &metrics);
+    const auto status =
+        aura::compiler::post_mutation_invariant_check(*flat, *pool, reg, rec, notes, &metrics);
     const auto reval =
         metrics.linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
-    const auto leaks =
-        metrics.linear_leak_prevented_total.load(std::memory_order_relaxed);
+    const auto leaks = metrics.linear_leak_prevented_total.load(std::memory_order_relaxed);
     std::println("  status={} notes={} revalidations={} leak_prevented={}",
                  static_cast<int>(status), notes.size(), reval, leaks);
     CHECK(reval > 0, "post_mutate_revalidations bumped on linear dirty scope");
@@ -134,18 +133,16 @@ static void run_matrix(CompilerService& cs) {
     rec.target_node = root;
     rec.mutation_id = 6103;
     std::vector<aura::compiler::OwnershipNote> notes;
-    const auto status = aura::compiler::post_mutation_invariant_check(
-        *flat, *str_pool, reg, rec, notes, &metrics);
+    const auto status =
+        aura::compiler::post_mutation_invariant_check(*flat, *str_pool, reg, rec, notes, &metrics);
     CHECK(status == aura::ast::InvariantStatus::Ok,
           "moved linear binding passes post-mutate revalidate");
-    CHECK(count_kind(notes, "leaked-linear") == 0,
-          "no leaked-linear for properly moved binding");
+    CHECK(count_kind(notes, "leaked-linear") == 0, "no leaked-linear for properly moved binding");
 
     std::println("\n--- AC4: post-mutate revalidate on linear mutate → stats grow ---");
     const auto stats4a = linear_mutation_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
-        "\"issue-610-leak\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
+                  "\"issue-610-leak\")");
     auto* ws = cs.evaluator().workspace_flat();
     auto* ws_pool = cs.evaluator().workspace_pool();
     CHECK(ws != nullptr && ws_pool != nullptr && !ws->all_mutations().empty(),
@@ -153,14 +150,13 @@ static void run_matrix(CompilerService& cs) {
     if (ws && ws_pool && !ws->all_mutations().empty()) {
         TypeRegistry reg;
         std::vector<aura::compiler::OwnershipNote> notes;
-        (void)aura::compiler::post_mutation_invariant_check(
-            *ws, *ws_pool, reg, ws->all_mutations().back(), notes,
-            cs.evaluator().compiler_metrics());
+        (void)aura::compiler::post_mutation_invariant_check(*ws, *ws_pool, reg,
+                                                            ws->all_mutations().back(), notes,
+                                                            cs.evaluator().compiler_metrics());
     }
     const auto stats4b = linear_mutation_stats(cs);
     std::println("  linear-ownership-mutation-stats: {} -> {}", stats4a, stats4b);
-    CHECK(stats4b > stats4a,
-          "linear-mutation-stats grew after post-mutate linear revalidate");
+    CHECK(stats4b > stats4a, "linear-mutation-stats grew after post-mutate linear revalidate");
 
     std::println("\n--- AC5: closure-env-safety-stats regression ---");
     auto ces = cs.eval("(query:closure-env-safety-stats)");
@@ -172,17 +168,14 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(eval-current)");
     const auto stats6b = linear_mutation_stats(cs);
     std::println("  linear-ownership-mutation-stats: {} -> {}", stats6a, stats6b);
-    CHECK(stats6b >= stats6a,
-          "deopt_on_linear contributes to stats after invalidate path");
+    CHECK(stats6b >= stats6a, "deopt_on_linear contributes to stats after invalidate path");
 
     std::println("\n--- AC7: multi-round linear mutate matrix ---");
     const auto stats7a = linear_mutation_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string body =
-            "(lambda () (let ((x (Linear " + std::to_string(round + 10) +
-            "))) (move x)))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" +
-                      std::to_string(round) + "\")");
+            "(lambda () (let ((x (Linear " + std::to_string(round + 10) + "))) (move x)))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) + "\")");
         auto r = cs.eval("(f)");
         CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
     }
@@ -191,9 +184,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats7b >= stats7a, "linear-mutation-stats monotonic over matrix");
 
     std::println("\n--- AC8: gc-heap + linear mutation integration ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
-        "\"issue-610-gc\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
+                  "\"issue-610-gc\")");
     auto gc = cs.eval("(gc-heap)");
     CHECK(gc.has_value(), "(gc-heap) callable after linear mutate");
 }

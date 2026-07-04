@@ -30,8 +30,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.ir;
 import aura.compiler.constant_folding;
@@ -44,9 +44,8 @@ import aura.core.type;
 import aura.diag;
 
 
-
 namespace aura_issue_212_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Helper: build a ConstI64 instruction ──
 //
@@ -55,16 +54,13 @@ namespace aura_issue_212_detail {
 static aura::ir::IRInstruction mk_const_i64(uint32_t slot, int64_t val) {
     aura::ir::IRInstruction instr;
     instr.opcode = aura::ir::IROpcode::ConstI64;
-    instr.operands = {slot,
-                      static_cast<uint32_t>(val & 0xFFFFFFFF),
-                      static_cast<uint32_t>((val >> 32) & 0xFFFFFFFF),
-                      0};
+    instr.operands = {slot, static_cast<uint32_t>(val & 0xFFFFFFFF),
+                      static_cast<uint32_t>((val >> 32) & 0xFFFFFFFF), 0};
     return instr;
 }
 
 // ── Helper: build a binary op instruction (Add/Sub/Mul/...) ──
-static aura::ir::IRInstruction mk_bin(aura::ir::IROpcode op,
-                                       uint32_t dst, uint32_t a, uint32_t b) {
+static aura::ir::IRInstruction mk_bin(aura::ir::IROpcode op, uint32_t dst, uint32_t a, uint32_t b) {
     aura::ir::IRInstruction instr;
     instr.opcode = op;
     instr.operands = {dst, a, b, 0};
@@ -80,8 +76,7 @@ static aura::ir::IRInstruction mk_local(uint32_t dst, uint32_t src) {
 }
 
 // ── Helper: build a unary op instruction (Not, Neg, ...) ──
-static aura::ir::IRInstruction mk_unary(aura::ir::IROpcode op,
-                                         uint32_t dst, uint32_t a) {
+static aura::ir::IRInstruction mk_unary(aura::ir::IROpcode op, uint32_t dst, uint32_t a) {
     aura::ir::IRInstruction instr;
     instr.opcode = op;
     instr.operands = {dst, a, 0, 0};
@@ -95,8 +90,7 @@ static aura::ir::IRInstruction mk_unary(aura::ir::IROpcode op,
 // mis-parsed as something other than an `initializer_list`
 // (the GCC 16 ICE we hit). The cleanest workaround is
 // `clear() + push_back()` per instruction.
-template <typename... Inits>
-static void set_block(aura::ir::BasicBlock& block, Inits&&... inits) {
+template <typename... Inits> static void set_block(aura::ir::BasicBlock& block, Inits&&... inits) {
     block.instructions.clear();
     (block.instructions.push_back(std::forward<Inits>(inits)), ...);
 }
@@ -105,7 +99,8 @@ static void set_block(aura::ir::BasicBlock& block, Inits&&... inits) {
 static int count_opcode(const aura::ir::BasicBlock& block, aura::ir::IROpcode op) {
     int n = 0;
     for (auto& instr : block.instructions)
-        if (instr.opcode == op) ++n;
+        if (instr.opcode == op)
+            ++n;
     return n;
 }
 
@@ -122,9 +117,8 @@ bool test_pure_function_folds_simple_add() {
     func.local_count = 4;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 1),
-        mk_const_i64(1, 2),
-        mk_bin(aura::ir::IROpcode::Add, 2, 0, 1));
+    set_block(block, mk_const_i64(0, 1), mk_const_i64(1, 2),
+              mk_bin(aura::ir::IROpcode::Add, 2, 0, 1));
     auto r = aura::compiler::constant_fold_function(func);
     CHECK(r.folded_count == 1, "folded_count == 1 (the Add)");
     CHECK(r.has_error == false, "no error");
@@ -151,10 +145,8 @@ bool test_wrap_thin_wrapper_parity() {
     func.local_count = 4;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 1),
-        mk_const_i64(1, 2),
-        mk_bin(aura::ir::IROpcode::Add, 2, 0, 1)
-    );
+    set_block(block, mk_const_i64(0, 1), mk_const_i64(1, 2),
+              mk_bin(aura::ir::IROpcode::Add, 2, 0, 1));
     aura::compiler::ConstantFoldingWrap wrap;
     auto n = wrap.fold_function(func);
     CHECK(n == 1, "fold_function returns 1 (same as pure)");
@@ -183,14 +175,11 @@ bool test_multiple_ops_fold() {
     func.local_count = 8;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 10),
-        mk_const_i64(1, 20),
-        mk_bin(aura::ir::IROpcode::Add, 2, 0, 1),   // 30
-        mk_bin(aura::ir::IROpcode::Sub, 3, 2, 0),   // 20
-        mk_bin(aura::ir::IROpcode::Mul, 4, 1, 0),   // 200
-        mk_const_i64(5, 5),
-        mk_bin(aura::ir::IROpcode::Div, 6, 4, 5)
-    );
+    set_block(block, mk_const_i64(0, 10), mk_const_i64(1, 20),
+              mk_bin(aura::ir::IROpcode::Add, 2, 0, 1), // 30
+              mk_bin(aura::ir::IROpcode::Sub, 3, 2, 0), // 20
+              mk_bin(aura::ir::IROpcode::Mul, 4, 1, 0), // 200
+              mk_const_i64(5, 5), mk_bin(aura::ir::IROpcode::Div, 6, 4, 5));
     auto r = aura::compiler::constant_fold_function(func);
     CHECK(r.folded_count == 4, "folded_count == 4 (Add, Sub, Mul, Div)");
     // The original Add is now a ConstI64(30).
@@ -218,10 +207,8 @@ bool test_idempotence() {
     func.local_count = 4;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 1),
-        mk_const_i64(1, 2),
-        mk_bin(aura::ir::IROpcode::Add, 2, 0, 1)
-    );
+    set_block(block, mk_const_i64(0, 1), mk_const_i64(1, 2),
+              mk_bin(aura::ir::IROpcode::Add, 2, 0, 1));
     auto r1 = aura::compiler::constant_fold_function(func);
     CHECK(r1.folded_count == 1, "first fold: 1 instruction folded");
     auto r2 = aura::compiler::constant_fold_function(func);
@@ -243,26 +230,20 @@ bool test_span_matches_function() {
     func.local_count = 4;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 7),
-        mk_const_i64(1, 8),
-        mk_bin(aura::ir::IROpcode::Mul, 2, 0, 1),   // 56
-        mk_bin(aura::ir::IROpcode::Sub, 3, 2, 0)
-    );
+    set_block(block, mk_const_i64(0, 7), mk_const_i64(1, 8),
+              mk_bin(aura::ir::IROpcode::Mul, 2, 0, 1), // 56
+              mk_bin(aura::ir::IROpcode::Sub, 3, 2, 0));
     // First, fold via the function-level API.
     auto r_func = aura::compiler::constant_fold_function(func);
     // Reset the function for the second variant.
-    set_block(block, mk_const_i64(0, 7),
-        mk_const_i64(1, 8),
-        mk_bin(aura::ir::IROpcode::Mul, 2, 0, 1),
-        mk_bin(aura::ir::IROpcode::Sub, 3, 2, 0)
-    );
+    set_block(block, mk_const_i64(0, 7), mk_const_i64(1, 8),
+              mk_bin(aura::ir::IROpcode::Mul, 2, 0, 1), mk_bin(aura::ir::IROpcode::Sub, 3, 2, 0));
     // Then, fold via the block-level API with a fresh known map.
     aura::compiler::ConstantKnownMap known;
     auto n_block = aura::compiler::constant_fold_block(block, known);
     CHECK(r_func.folded_count == 2, "function-fold: 2 instructions");
     CHECK(n_block == 2, "block-fold: 2 instructions");
-    CHECK(r_func.folded_count == n_block,
-          "function-fold count matches block-fold count");
+    CHECK(r_func.folded_count == n_block, "function-fold count matches block-fold count");
     return true;
 }
 
@@ -281,10 +262,7 @@ bool test_non_constants_dont_fold() {
     auto& block = func.blocks.back();
     // Two Local reads, no ConstI64 entries — known map is empty
     // for the Add, so the Add does NOT fold.
-    set_block(block, mk_local(0, 1),
-        mk_local(1, 2),
-        mk_bin(aura::ir::IROpcode::Add, 3, 0, 1)
-    );
+    set_block(block, mk_local(0, 1), mk_local(1, 2), mk_bin(aura::ir::IROpcode::Add, 3, 0, 1));
     auto r = aura::compiler::constant_fold_function(func);
     CHECK(r.folded_count == 0, "no folds (no constants)");
     CHECK(block.instructions[2].opcode == aura::ir::IROpcode::Add,
@@ -304,10 +282,8 @@ bool test_div_by_zero_safe() {
     func.local_count = 4;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 10),
-        mk_const_i64(1, 0),
-        mk_bin(aura::ir::IROpcode::Div, 2, 0, 1)
-    );
+    set_block(block, mk_const_i64(0, 10), mk_const_i64(1, 0),
+              mk_bin(aura::ir::IROpcode::Div, 2, 0, 1));
     auto r = aura::compiler::constant_fold_function(func);
     CHECK(r.folded_count == 0, "no fold (div by zero is preserved)");
     CHECK(block.instructions[2].opcode == aura::ir::IROpcode::Div,
@@ -331,29 +307,23 @@ bool test_tagged_bool_through_and_or_not() {
     // t1 = 0 (falsy fixnum)
     // t2 = And(t0, t1) → #f (3)
     // t3 = Or(t0, t1)  → #t (7)
-    set_block(block, mk_const_i64(0, 1),
-        mk_const_i64(1, 0),
-        mk_bin(aura::ir::IROpcode::And, 2, 0, 1),
-        mk_bin(aura::ir::IROpcode::Or, 3, 0, 1),
-        mk_local(4, 0),  // copy t0 to t4 for Not
-        mk_unary(aura::ir::IROpcode::Not, 5, 4)
-    );
+    set_block(block, mk_const_i64(0, 1), mk_const_i64(1, 0),
+              mk_bin(aura::ir::IROpcode::And, 2, 0, 1), mk_bin(aura::ir::IROpcode::Or, 3, 0, 1),
+              mk_local(4, 0), // copy t0 to t4 for Not
+              mk_unary(aura::ir::IROpcode::Not, 5, 4));
     auto r = aura::compiler::constant_fold_function(func);
     // 3 folds: And, Or, Not. (The Local fold is blocked — t0 is
     // 1 (a fixnum), not a tagged bool 3/7, so it propagates as
     // ConstI64 instead of being blocked.)
     CHECK(r.folded_count == 4, "4 folds: And, Or, Local, Not");
     // And should now be ConstBool(0) = #f.
-    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::ConstBool,
-          "And is ConstBool");
+    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::ConstBool, "And is ConstBool");
     CHECK(block.instructions[2].operands[1] == 0, "And result is 0 (#f)");
     // Or should be ConstBool(1) = #t.
-    CHECK(block.instructions[3].opcode == aura::ir::IROpcode::ConstBool,
-          "Or is ConstBool");
+    CHECK(block.instructions[3].opcode == aura::ir::IROpcode::ConstBool, "Or is ConstBool");
     CHECK(block.instructions[3].operands[1] == 1, "Or result is 1 (#t)");
     // Not(t0) where t0=1 (truthy fixnum) → #f.
-    CHECK(block.instructions[5].opcode == aura::ir::IROpcode::ConstBool,
-          "Not is ConstBool");
+    CHECK(block.instructions[5].opcode == aura::ir::IROpcode::ConstBool, "Not is ConstBool");
     CHECK(block.instructions[5].operands[1] == 0, "Not result is 0 (#f)");
     return true;
 }
@@ -376,11 +346,8 @@ bool test_local_propagation_blocks_tagged_bools() {
     func.local_count = 4;
     func.blocks.push_back({0});
     auto& block = func.blocks.back();
-    set_block(block, mk_const_i64(0, 1),
-        mk_local(1, 0),
-        mk_unary(aura::ir::IROpcode::Not, 2, 0),
-        mk_local(3, 2)
-    );
+    set_block(block, mk_const_i64(0, 1), mk_local(1, 0), mk_unary(aura::ir::IROpcode::Not, 2, 0),
+              mk_local(3, 2));
     auto r = aura::compiler::constant_fold_function(func);
     // 2 folds: the first Local(0) propagates (t0=1 is a fixnum),
     // and the Not folds. The second Local(2) is BLOCKED.
@@ -389,8 +356,7 @@ bool test_local_propagation_blocks_tagged_bools() {
     CHECK(block.instructions[1].opcode == aura::ir::IROpcode::ConstI64,
           "Local(t0) propagates as ConstI64 (t0 is fixnum)");
     // t2 (was Not) should be ConstBool(0).
-    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::ConstBool,
-          "Not folds to ConstBool");
+    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::ConstBool, "Not folds to ConstBool");
     // t3 (was Local 2) should STILL be Local (not propagated).
     CHECK(block.instructions[3].opcode == aura::ir::IROpcode::Local,
           "Local(t2) is blocked (t2 is tagged bool)");
@@ -409,9 +375,8 @@ bool test_wrap_runs_module() {
         f.name = "f1";
         f.local_count = 4;
         f.blocks.push_back({0});
-        set_block(f.blocks.back(), mk_const_i64(0, 1),
-            mk_const_i64(1, 1),
-            mk_bin(aura::ir::IROpcode::Add, 2, 0, 1));
+        set_block(f.blocks.back(), mk_const_i64(0, 1), mk_const_i64(1, 1),
+                  mk_bin(aura::ir::IROpcode::Add, 2, 0, 1));
         mod.functions.push_back(std::move(f));
     }
     {
@@ -419,15 +384,13 @@ bool test_wrap_runs_module() {
         f.name = "f2";
         f.local_count = 4;
         f.blocks.push_back({0});
-        set_block(f.blocks.back(), mk_const_i64(0, 5),
-            mk_const_i64(1, 3),
-            mk_bin(aura::ir::IROpcode::Sub, 2, 0, 1));
+        set_block(f.blocks.back(), mk_const_i64(0, 5), mk_const_i64(1, 3),
+                  mk_bin(aura::ir::IROpcode::Sub, 2, 0, 1));
         mod.functions.push_back(std::move(f));
     }
     aura::compiler::ConstantFoldingWrap wrap;
     wrap.run(mod);
-    CHECK(wrap.folded_count() == 2,
-          "wrap counter is 2 (one fold per function)");
+    CHECK(wrap.folded_count() == 2, "wrap counter is 2 (one fold per function)");
     return true;
 }
 
@@ -462,12 +425,9 @@ bool test_pure_typecheck_int_literal() {
     flat.root = lit;
 
     auto r = aura::compiler::type_check_flat_pure(flat, pool, lit, types, diag);
-    CHECK(r.inferred_type.valid(),
-          "inferred_type is valid (not zero TypeId)");
-    CHECK(r.inferred_type.index == types.int_type().index,
-          "inferred_type is Int");
-    CHECK(diag.diagnostics().empty(),
-          "no diagnostics for a simple Int literal");
+    CHECK(r.inferred_type.valid(), "inferred_type is valid (not zero TypeId)");
+    CHECK(r.inferred_type.index == types.int_type().index, "inferred_type is Int");
+    CHECK(diag.diagnostics().empty(), "no diagnostics for a simple Int literal");
     return true;
 }
 
@@ -520,8 +480,7 @@ bool test_result_struct_bundles_coercions() {
     flat.root = lit;
 
     auto r = aura::compiler::type_check_flat_pure(flat, pool, lit, types, diag);
-    CHECK(r.coercions.empty(),
-          "coercions map is empty for a simple Int literal");
+    CHECK(r.coercions.empty(), "coercions map is empty for a simple Int literal");
     return true;
 }
 
@@ -547,8 +506,7 @@ bool test_result_struct_bundles_stats() {
     // Per-call stats are populated. The exact values
     // depend on the engine's behavior; what matters is
     // that the fields are accessible.
-    CHECK(r.cache_hits == 0 || r.cache_misses == 0,
-          "stats are accessible from the result struct");
+    CHECK(r.cache_hits == 0 || r.cache_misses == 0, "stats are accessible from the result struct");
     return true;
 }
 
@@ -663,8 +621,7 @@ bool test_arithmetic_div_pure() {
         std::vector<aura::compiler::types::EvalValue> args = {};
         auto r = aura::compiler::pure::arithmetic_div_pure(args, {});
         CHECK(!r.has_value(), "(div) is an error");
-        CHECK(r.error().kind == aura::diag::ErrorKind::TypeError,
-              "empty args → TypeError");
+        CHECK(r.error().kind == aura::diag::ErrorKind::TypeError, "empty args → TypeError");
     }
     // (div 100 2 5) → 10
     {
@@ -710,6 +667,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_212_detail
+} // namespace aura_issue_212_detail
 
-int aura_issue_212_run() { return aura_issue_212_detail::run_tests(); }
+int aura_issue_212_run() {
+    return aura_issue_212_detail::run_tests();
+}

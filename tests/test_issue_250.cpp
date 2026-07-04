@@ -46,20 +46,34 @@ struct EvalResult {
 };
 static EvalResult try_run(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return {false, aura::compiler::types::make_void()};
+    if (!r)
+        return {false, aura::compiler::types::make_void()};
     return {true, *r};
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ_INT(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ_INT(a, b, msg)                                                                    \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 static bool set_source(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = try_run(cs, std::string("(set-code \"") + src + "\")");
@@ -73,101 +87,115 @@ static bool set_source(aura::compiler::CompilerService& cs, const std::string& s
 bool test_3op_batch() {
     std::println("\n--- AC1: 3-op batch successfully commits ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
-    auto r = try_run(cs,
-        std::string("(mutate:atomic-batch (list ")
-        + "  (list \"mutate:rebind\" \"x\" \"10\" \"a\") "
-        + "  (list \"mutate:rebind\" \"x\" \"20\" \"b\") "
-        + "  (list \"mutate:rebind\" \"x\" \"30\" \"c\")"
-        + ") \"three rebinds\")");
-    if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
-        std::println("  FAIL: batch eval failed (ok={} val={})",
-                     r.ok, r.v.val);
-        ++g_failed; return false;
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
     }
-    CHECK(aura::compiler::types::as_bool(r.v),
-          "3-op atomic-batch returns #t");
+    auto r =
+        try_run(cs, std::string("(mutate:atomic-batch (list ") +
+                        "  (list \"mutate:rebind\" \"x\" \"10\" \"a\") " +
+                        "  (list \"mutate:rebind\" \"x\" \"20\" \"b\") " +
+                        "  (list \"mutate:rebind\" \"x\" \"30\" \"c\")" + ") \"three rebinds\")");
+    if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
+        std::println("  FAIL: batch eval failed (ok={} val={})", r.ok, r.v.val);
+        ++g_failed;
+        return false;
+    }
+    CHECK(aura::compiler::types::as_bool(r.v), "3-op atomic-batch returns #t");
     return true;
 }
 
 bool test_5op_batch() {
     std::println("\n--- AC2: 5-op batch successfully commits ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
-    auto r = try_run(cs,
-        std::string("(mutate:atomic-batch (list ")
-        + "  (list \"mutate:rebind\" \"x\" \"1\" \"a\") "
-        + "  (list \"mutate:rebind\" \"x\" \"2\" \"b\") "
-        + "  (list \"mutate:rebind\" \"x\" \"3\" \"c\") "
-        + "  (list \"mutate:rebind\" \"x\" \"4\" \"d\") "
-        + "  (list \"mutate:rebind\" \"x\" \"5\" \"e\")"
-        + ") \"five\")");
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
+    auto r = try_run(cs, std::string("(mutate:atomic-batch (list ") +
+                             "  (list \"mutate:rebind\" \"x\" \"1\" \"a\") " +
+                             "  (list \"mutate:rebind\" \"x\" \"2\" \"b\") " +
+                             "  (list \"mutate:rebind\" \"x\" \"3\" \"c\") " +
+                             "  (list \"mutate:rebind\" \"x\" \"4\" \"d\") " +
+                             "  (list \"mutate:rebind\" \"x\" \"5\" \"e\")" + ") \"five\")");
     if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
         std::println("  FAIL: batch eval failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
-    CHECK(aura::compiler::types::as_bool(r.v),
-          "5-op atomic-batch returns #t");
+    CHECK(aura::compiler::types::as_bool(r.v), "5-op atomic-batch returns #t");
     return true;
 }
 
 bool test_successful_batch() {
     std::println("\n--- AC3: successful batch returns #t ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
-    auto r = try_run(cs,
-        std::string("(mutate:atomic-batch (list ")
-        + "  (list \"mutate:rebind\" \"x\" \"42\" \"test\")"
-        + ") \"set x to 42\")");
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
+    auto r =
+        try_run(cs, std::string("(mutate:atomic-batch (list ") +
+                        "  (list \"mutate:rebind\" \"x\" \"42\" \"test\")" + ") \"set x to 42\")");
     if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
         std::println("  FAIL: batch failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
-    CHECK(aura::compiler::types::as_bool(r.v),
-          "successful batch returns #t");
+    CHECK(aura::compiler::types::as_bool(r.v), "successful batch returns #t");
     return true;
 }
 
 bool test_failed_batch_rollback() {
     std::println("\n--- AC4: failed batch returns error pair ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
-    auto r = try_run(cs,
-        std::string("(mutate:atomic-batch (list ")
-        + "  (list \"mutate:rebind\" \"x\" \"42\" \"test\") "
-        + "  (list \"mutate:insert-child\" 0 0 0 \"bad\")"
-        + ") \"bad batch\")");
-    if (!r.ok) { std::println("  FAIL: bad-batch eval failed"); ++g_failed; return false; }
-    CHECK(aura::compiler::types::is_pair(r.v),
-          "bad batch returns a pair (error)");
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
+    auto r = try_run(cs, std::string("(mutate:atomic-batch (list ") +
+                             "  (list \"mutate:rebind\" \"x\" \"42\" \"test\") " +
+                             "  (list \"mutate:insert-child\" 0 0 0 \"bad\")" + ") \"bad batch\")");
+    if (!r.ok) {
+        std::println("  FAIL: bad-batch eval failed");
+        ++g_failed;
+        return false;
+    }
+    CHECK(aura::compiler::types::is_pair(r.v), "bad batch returns a pair (error)");
     return true;
 }
 
 bool test_empty_batch() {
     std::println("\n--- AC5: empty batch is a no-op ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     auto r = try_run(cs, "(mutate:atomic-batch (list) \"empty\")");
     if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
         std::println("  FAIL: empty batch failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
-    CHECK(aura::compiler::types::as_bool(r.v),
-          "empty batch returns #t (vacuous success)");
+    CHECK(aura::compiler::types::as_bool(r.v), "empty batch returns #t (vacuous success)");
     return true;
 }
 
 bool test_bad_args() {
     std::println("\n--- AC6: bad arg types return error ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     auto r1 = try_run(cs, "(if (pair? (mutate:atomic-batch)) 1 0)");
     if (!r1.ok || !aura::compiler::types::is_int(r1.v)) {
         std::println("  FAIL: no-arg result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
-    CHECK_EQ_INT(aura::compiler::types::as_int(r1.v), 1,
-                 "no-arg returns a pair (error)");
+    CHECK_EQ_INT(aura::compiler::types::as_int(r1.v), 1, "no-arg returns a pair (error)");
     return true;
 }
 
@@ -181,12 +209,12 @@ int run_tests() {
     test_5op_batch();
     test_failed_batch_rollback();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_250_detail
+} // namespace aura_issue_250_detail
 
-int aura_issue_250_run() { return aura_issue_250_detail::run_tests(); }
-
+int aura_issue_250_run() {
+    return aura_issue_250_detail::run_tests();
+}

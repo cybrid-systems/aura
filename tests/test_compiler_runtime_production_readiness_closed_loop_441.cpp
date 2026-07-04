@@ -61,13 +61,11 @@ static void run_matrix(CompilerService& cs) {
           "gc-safepoint-stats bumped after mutate:request-gc-safepoint");
 
     std::println("\n--- AC4: P0 #440 EDSL workspace mutate + query ---");
-    CHECK(cs.eval("(set-code \"(define acc 0)\")").has_value(),
-          "EDSL workspace setup");
+    CHECK(cs.eval("(set-code \"(define acc 0)\")").has_value(), "EDSL workspace setup");
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
     (void)cs.eval("(query:pattern \"acc\")");
-    CHECK(cs.eval("(mutate:rebind \"acc\" \"42\")").has_value(),
-          "mutate:rebind under Guard");
+    CHECK(cs.eval("(mutate:rebind \"acc\" \"42\")").has_value(), "mutate:rebind under Guard");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     CHECK(impact1 > impact0, "mutation_impact bumped after Guard mutate");
     auto eds = cs.eval("(query:edsl-stability-stats)");
@@ -84,8 +82,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = prod_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"acc\")");
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(100 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(100 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate:request-gc-safepoint 10)");
     }

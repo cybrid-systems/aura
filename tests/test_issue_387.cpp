@@ -37,30 +37,39 @@ namespace aura_387_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++aura_387_detail::g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++aura_387_detail::g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++aura_387_detail::g_passed;                                                           \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++aura_387_detail::g_failed;                                                           \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → all 4 type-dep-graph fields == 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: type-dep-graph counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.type_dep_graph_lookups, 0u,
-             "type_dep_graph_lookups == 0");
-    CHECK_EQ(snap.type_dep_graph_hits, 0u,
-             "type_dep_graph_hits == 0");
-    CHECK_EQ(snap.type_dep_graph_size, 0u,
-             "type_dep_graph_size == 0");
-    CHECK_EQ(snap.type_dep_graph_hit_rate_bp, 0u,
-             "type_dep_graph_hit_rate_bp == 0");
+    CHECK_EQ(snap.type_dep_graph_lookups, 0u, "type_dep_graph_lookups == 0");
+    CHECK_EQ(snap.type_dep_graph_hits, 0u, "type_dep_graph_hits == 0");
+    CHECK_EQ(snap.type_dep_graph_size, 0u, "type_dep_graph_size == 0");
+    CHECK_EQ(snap.type_dep_graph_hit_rate_bp, 0u, "type_dep_graph_hit_rate_bp == 0");
     return true;
 }
 
@@ -87,14 +96,10 @@ bool test_primitive_returns_hash() {
     // is exercised by other integration tests in
     // tests/run-tests.sh.
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.type_dep_graph_lookups, 0u,
-             "primitive-equivalent surface: lookups == 0");
-    CHECK_EQ(snap.type_dep_graph_hits, 0u,
-             "primitive-equivalent surface: hits == 0");
-    CHECK_EQ(snap.type_dep_graph_size, 0u,
-             "primitive-equivalent surface: size == 0");
-    CHECK_EQ(snap.type_dep_graph_hit_rate_bp, 0u,
-             "primitive-equivalent surface: hit_rate == 0");
+    CHECK_EQ(snap.type_dep_graph_lookups, 0u, "primitive-equivalent surface: lookups == 0");
+    CHECK_EQ(snap.type_dep_graph_hits, 0u, "primitive-equivalent surface: hits == 0");
+    CHECK_EQ(snap.type_dep_graph_size, 0u, "primitive-equivalent surface: size == 0");
+    CHECK_EQ(snap.type_dep_graph_hit_rate_bp, 0u, "primitive-equivalent surface: hit_rate == 0");
     return true;
 }
 
@@ -107,12 +112,9 @@ bool test_record_query_round_trip() {
     aura::compiler::TypeChecker tc(reg);
 
     // Initially empty
-    CHECK_EQ(tc.type_dep_graph_size(), 0u,
-             "fresh TypeChecker has empty graph");
-    CHECK_EQ(tc.type_dep_graph_lookups(), 0u,
-             "fresh TypeChecker has 0 lookups");
-    CHECK_EQ(tc.type_dep_graph_hits(), 0u,
-             "fresh TypeChecker has 0 hits");
+    CHECK_EQ(tc.type_dep_graph_size(), 0u, "fresh TypeChecker has empty graph");
+    CHECK_EQ(tc.type_dep_graph_lookups(), 0u, "fresh TypeChecker has 0 lookups");
+    CHECK_EQ(tc.type_dep_graph_hits(), 0u, "fresh TypeChecker has 0 hits");
 
     // Record (TypeId=42, NodeId=100), (TypeId=42, NodeId=200),
     // (TypeId=42, NodeId=300), (TypeId=99, NodeId=400)
@@ -122,29 +124,23 @@ bool test_record_query_round_trip() {
     tc.record_type_dependency(99, 400);
 
     // type_dep_graph_size should be 2 (two distinct TypeIds)
-    CHECK_EQ(tc.type_dep_graph_size(), 2u,
-             "graph tracks 2 distinct TypeIds");
+    CHECK_EQ(tc.type_dep_graph_size(), 2u, "graph tracks 2 distinct TypeIds");
 
     // Query TypeId=42 → should return 3 nodes (hit)
     auto nodes_42 = tc.affected_nodes_for_type(42);
-    CHECK_EQ(nodes_42.size(), 3u,
-             "TypeId=42 has 3 dependent nodes");
+    CHECK_EQ(nodes_42.size(), 3u, "TypeId=42 has 3 dependent nodes");
 
     // Query TypeId=99 → should return 1 node (hit)
     auto nodes_99 = tc.affected_nodes_for_type(99);
-    CHECK_EQ(nodes_99.size(), 1u,
-             "TypeId=99 has 1 dependent node");
+    CHECK_EQ(nodes_99.size(), 1u, "TypeId=99 has 1 dependent node");
 
     // Query TypeId=1234 (never recorded) → should return empty (no hit)
     auto nodes_none = tc.affected_nodes_for_type(1234);
-    CHECK_EQ(nodes_none.size(), 0u,
-             "TypeId=1234 (never recorded) returns empty");
+    CHECK_EQ(nodes_none.size(), 0u, "TypeId=1234 (never recorded) returns empty");
 
     // Counters: 3 lookups, 2 hits (TypeId=42 + TypeId=99; not 1234)
-    CHECK_EQ(tc.type_dep_graph_lookups(), 3u,
-             "3 lookups recorded");
-    CHECK_EQ(tc.type_dep_graph_hits(), 2u,
-             "2 of 3 lookups were hits");
+    CHECK_EQ(tc.type_dep_graph_lookups(), 3u, "3 lookups recorded");
+    CHECK_EQ(tc.type_dep_graph_hits(), 2u, "2 of 3 lookups were hits");
     return true;
 }
 
@@ -158,12 +154,10 @@ bool test_hit_rate_derivation() {
 
     // All hits: record one TypeId, query it 2x → rate = 10000
     tc.record_type_dependency(7, 50);
-    tc.affected_nodes_for_type(7);  // hit
-    tc.affected_nodes_for_type(7);  // hit
-    CHECK_EQ(tc.type_dep_graph_lookups(), 2u,
-             "all-hit case: 2 lookups");
-    CHECK_EQ(tc.type_dep_graph_hits(), 2u,
-             "all-hit case: 2 hits");
+    tc.affected_nodes_for_type(7); // hit
+    tc.affected_nodes_for_type(7); // hit
+    CHECK_EQ(tc.type_dep_graph_lookups(), 2u, "all-hit case: 2 lookups");
+    CHECK_EQ(tc.type_dep_graph_hits(), 2u, "all-hit case: 2 hits");
     // hit_rate_bp is on the snapshot, not TypeChecker. We
     // need to surface it via CompilerMetrics which is only
     // done in CompilerService. Skip direct assertion here —
@@ -173,10 +167,8 @@ bool test_hit_rate_derivation() {
     // 2 above. Total: 4 lookups (3 hits + 1 miss) → rate = 7500.
     tc.affected_nodes_for_type(7);   // hit (3rd)
     tc.affected_nodes_for_type(999); // miss (1st)
-    CHECK_EQ(tc.type_dep_graph_lookups(), 4u,
-             "mixed case: 4 lookups total");
-    CHECK_EQ(tc.type_dep_graph_hits(), 3u,
-             "mixed case: 3 hits of 4");
+    CHECK_EQ(tc.type_dep_graph_lookups(), 4u, "mixed case: 4 lookups total");
+    CHECK_EQ(tc.type_dep_graph_hits(), 3u, "mixed case: 3 hits of 4");
     return true;
 }
 
@@ -187,20 +179,14 @@ bool test_clear_resets_graph() {
     aura::compiler::TypeChecker tc(reg);
     tc.record_type_dependency(1, 10);
     tc.record_type_dependency(2, 20);
-    tc.affected_nodes_for_type(1);  // bumps lookups + hits
-    CHECK_EQ(tc.type_dep_graph_size(), 2u,
-             "before clear: 2 TypeIds");
-    CHECK_EQ(tc.type_dep_graph_lookups(), 1u,
-             "before clear: 1 lookup");
-    CHECK_EQ(tc.type_dep_graph_hits(), 1u,
-             "before clear: 1 hit");
+    tc.affected_nodes_for_type(1); // bumps lookups + hits
+    CHECK_EQ(tc.type_dep_graph_size(), 2u, "before clear: 2 TypeIds");
+    CHECK_EQ(tc.type_dep_graph_lookups(), 1u, "before clear: 1 lookup");
+    CHECK_EQ(tc.type_dep_graph_hits(), 1u, "before clear: 1 hit");
     tc.clear_type_dep_graph();
-    CHECK_EQ(tc.type_dep_graph_size(), 0u,
-             "after clear: 0 TypeIds");
-    CHECK_EQ(tc.type_dep_graph_lookups(), 0u,
-             "after clear: 0 lookups");
-    CHECK_EQ(tc.type_dep_graph_hits(), 0u,
-             "after clear: 0 hits");
+    CHECK_EQ(tc.type_dep_graph_size(), 0u, "after clear: 0 TypeIds");
+    CHECK_EQ(tc.type_dep_graph_lookups(), 0u, "after clear: 0 lookups");
+    CHECK_EQ(tc.type_dep_graph_hits(), 0u, "after clear: 0 hits");
     return true;
 }
 
@@ -209,14 +195,13 @@ bool test_zero_typeid_ignored() {
     std::println("\n--- AC7: TypeId=0 ignored ---");
     aura::core::TypeRegistry reg;
     aura::compiler::TypeChecker tc(reg);
-    tc.record_type_dependency(0, 100);  // should be skipped
-    tc.record_type_dependency(0, 200);  // should be skipped
-    CHECK_EQ(tc.type_dep_graph_size(), 0u,
-             "TypeId=0 records are not stored");
+    tc.record_type_dependency(0, 100); // should be skipped
+    tc.record_type_dependency(0, 200); // should be skipped
+    CHECK_EQ(tc.type_dep_graph_size(), 0u, "TypeId=0 records are not stored");
     return true;
 }
 
-}  // namespace aura_387_detail
+} // namespace aura_387_detail
 
 int main() {
     using namespace aura_387_detail;
@@ -243,7 +228,6 @@ int main() {
     test_zero_typeid_ignored();
 
     std::println("\n════════════════════════════════════════");
-    std::println("Total: {} passed, {} failed",
-                 g_passed, g_failed);
+    std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

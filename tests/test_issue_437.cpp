@@ -15,8 +15,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -32,8 +32,7 @@ bool test_verify_dirty_reason_enum() {
           "kAssertionDirty == 0x01");
     CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kCoverageDirty) == 0x02,
           "kCoverageDirty == 0x02");
-    CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kSvaDirty) == 0x04,
-          "kSvaDirty == 0x04");
+    CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kSvaDirty) == 0x04, "kSvaDirty == 0x04");
     CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kFormalCounterexampleDirty) == 0x08,
           "kFormalCounterexampleDirty == 0x08");
     return true;
@@ -59,8 +58,7 @@ bool test_query_verify_dirty_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:verify-dirty-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:verify-dirty-stats returns an integer");
     return true;
 }
 
@@ -79,16 +77,14 @@ bool test_verify_primitives() {
         ++g_failed;
         return false;
     }
-    CHECK(r1.has_value(),
-          "verify:assertion-failed returns a value (has_value)");
+    CHECK(r1.has_value(), "verify:assertion-failed returns a value (has_value)");
 
     auto r2 = cs.eval("(verify:report-coverage 1)");
     if (!r2) {
         ++g_failed;
         return false;
     }
-    CHECK(r2.has_value(),
-          "verify:report-coverage returns a value (has_value)");
+    CHECK(r2.has_value(), "verify:report-coverage returns a value (has_value)");
     return true;
 }
 
@@ -105,8 +101,7 @@ bool test_compile_verify_dirty() {
         ++g_failed;
         return false;
     }
-    CHECK(r.has_value(),
-          "compile:verify-dirty? returns a value (has_value)");
+    CHECK(r.has_value(), "compile:verify-dirty? returns a value (has_value)");
     return true;
 }
 
@@ -127,8 +122,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 123,
-          "smoke: (+ 100 23) == 123 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 123, "smoke: (+ 100 23) == 123 (regression)");
     return true;
 }
 
@@ -176,8 +170,12 @@ int run_tests() {
 
 } // namespace aura_issue_437_detail
 
-int aura_issue_437_run() { return aura_issue_437_detail::run_tests(); }
+int aura_issue_437_run() {
+    return aura_issue_437_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_437_run(); }
+int main() {
+    return aura_issue_437_run();
+}
 #endif

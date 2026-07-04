@@ -80,8 +80,8 @@ export enum class AuraErrorKind : std::uint8_t {
     TypeError,
     CoercionError,
     OccurrenceTypingError,
-    OwnershipError,           // use-after-move / double-borrow
-    LinearOwnershipError,     // sub-category of Ownership
+    OwnershipError,       // use-after-move / double-borrow
+    LinearOwnershipError, // sub-category of Ownership
     PatternMatchExhaustiveness,
 
     // ── Mutation (aura::ast::MutationError) ──
@@ -142,10 +142,8 @@ export struct AuraError {
 
     AuraError() = default;
 
-    AuraError(AuraErrorKind k,
-              std::string msg,
-              std::source_location loc = std::source_location::current(),
-              std::uint64_t gen = 0)
+    AuraError(AuraErrorKind k, std::string msg,
+              std::source_location loc = std::source_location::current(), std::uint64_t gen = 0)
         : kind(k)
         , message(std::move(msg))
         , location(loc)
@@ -156,9 +154,7 @@ export struct AuraError {
     static std::string_view kind_name(AuraErrorKind k) noexcept;
 
     // Convenience: human-readable name of THIS error's kind.
-    std::string_view kind_name() const noexcept {
-        return kind_name(kind);
-    }
+    std::string_view kind_name() const noexcept { return kind_name(kind); }
 };
 
 // ── AuraResult<T> = std::expected<T, AuraError> ──────────────
@@ -173,8 +169,7 @@ export struct AuraError {
 // etc.). AuraError is core-side and can be used by
 // aura::ast, aura::core, downstream crates. The two
 // can interconvert (see from_diagnostic below).
-export template <typename T>
-using AuraResult = std::expected<T, AuraError>;
+export template <typename T> using AuraResult = std::expected<T, AuraError>;
 
 // ── VoidResult — for operations that don't produce a value ───
 export using VoidResult = AuraResult<void>;
@@ -188,10 +183,8 @@ export using VoidResult = AuraResult<void>;
 // expects as the error alternative. Using this helper keeps
 // the call site readable.
 export std::unexpected<AuraError>
-make_unexpected(AuraErrorKind k,
-                std::string msg,
-                std::source_location loc = std::source_location::current(),
-                std::uint64_t gen = 0);
+make_unexpected(AuraErrorKind k, std::string msg,
+                std::source_location loc = std::source_location::current(), std::uint64_t gen = 0);
 
 } // namespace aura::core
 
@@ -204,52 +197,81 @@ namespace aura::core {
 
 inline std::string_view AuraError::kind_name(AuraErrorKind k) noexcept {
     switch (k) {
-        case AuraErrorKind::ParseError:                  return "ParseError";
-        case AuraErrorKind::UnexpectedToken:             return "UnexpectedToken";
-        case AuraErrorKind::UnterminatedSExpr:           return "UnterminatedSExpr";
-        case AuraErrorKind::UnboundVariable:             return "UnboundVariable";
-        case AuraErrorKind::DivisionByZero:              return "DivisionByZero";
-        case AuraErrorKind::InvalidClosure:              return "InvalidClosure";
-        case AuraErrorKind::ArityMismatch:               return "ArityMismatch";
-        case AuraErrorKind::TypeError:                   return "TypeError";
-        case AuraErrorKind::CoercionError:               return "CoercionError";
-        case AuraErrorKind::OccurrenceTypingError:       return "OccurrenceTypingError";
-        case AuraErrorKind::OwnershipError:              return "OwnershipError";
-        case AuraErrorKind::LinearOwnershipError:        return "LinearOwnershipError";
-        case AuraErrorKind::PatternMatchExhaustiveness:  return "PatternMatchExhaustiveness";
-        case AuraErrorKind::MutationNotCommitted:        return "MutationNotCommitted";
-        case AuraErrorKind::MutationNoRollbackData:      return "MutationNoRollbackData";
-        case AuraErrorKind::MutationInvalidTarget:       return "MutationInvalidTarget";
-        case AuraErrorKind::MutationInvalidParent:      return "MutationInvalidParent";
-        case AuraErrorKind::MutationInvalidField:        return "MutationInvalidField";
-        case AuraErrorKind::MutationUnknownStructuralOp: return "MutationUnknownStructuralOp";
-        case AuraErrorKind::MutationOutOfRange:          return "MutationOutOfRange";
-        case AuraErrorKind::ArenaOutOfMemory:            return "ArenaOutOfMemory";
-        case AuraErrorKind::ArenaDefragFailed:           return "ArenaDefragFailed";
-        case AuraErrorKind::ArenaInvalidAllocator:       return "ArenaInvalidAllocator";
-        case AuraErrorKind::EvalError:                   return "EvalError";
-        case AuraErrorKind::EvalTypeMismatch:            return "EvalTypeMismatch";
-        case AuraErrorKind::EvalDivisionByZero:          return "EvalDivisionByZero";
-        case AuraErrorKind::EvalStackOverflow:           return "EvalStackOverflow";
-        case AuraErrorKind::ConcurrencyFiberCanceled:    return "ConcurrencyFiberCanceled";
-        case AuraErrorKind::ConcurrencyLockFailed:       return "ConcurrencyLockFailed";
+        case AuraErrorKind::ParseError:
+            return "ParseError";
+        case AuraErrorKind::UnexpectedToken:
+            return "UnexpectedToken";
+        case AuraErrorKind::UnterminatedSExpr:
+            return "UnterminatedSExpr";
+        case AuraErrorKind::UnboundVariable:
+            return "UnboundVariable";
+        case AuraErrorKind::DivisionByZero:
+            return "DivisionByZero";
+        case AuraErrorKind::InvalidClosure:
+            return "InvalidClosure";
+        case AuraErrorKind::ArityMismatch:
+            return "ArityMismatch";
+        case AuraErrorKind::TypeError:
+            return "TypeError";
+        case AuraErrorKind::CoercionError:
+            return "CoercionError";
+        case AuraErrorKind::OccurrenceTypingError:
+            return "OccurrenceTypingError";
+        case AuraErrorKind::OwnershipError:
+            return "OwnershipError";
+        case AuraErrorKind::LinearOwnershipError:
+            return "LinearOwnershipError";
+        case AuraErrorKind::PatternMatchExhaustiveness:
+            return "PatternMatchExhaustiveness";
+        case AuraErrorKind::MutationNotCommitted:
+            return "MutationNotCommitted";
+        case AuraErrorKind::MutationNoRollbackData:
+            return "MutationNoRollbackData";
+        case AuraErrorKind::MutationInvalidTarget:
+            return "MutationInvalidTarget";
+        case AuraErrorKind::MutationInvalidParent:
+            return "MutationInvalidParent";
+        case AuraErrorKind::MutationInvalidField:
+            return "MutationInvalidField";
+        case AuraErrorKind::MutationUnknownStructuralOp:
+            return "MutationUnknownStructuralOp";
+        case AuraErrorKind::MutationOutOfRange:
+            return "MutationOutOfRange";
+        case AuraErrorKind::ArenaOutOfMemory:
+            return "ArenaOutOfMemory";
+        case AuraErrorKind::ArenaDefragFailed:
+            return "ArenaDefragFailed";
+        case AuraErrorKind::ArenaInvalidAllocator:
+            return "ArenaInvalidAllocator";
+        case AuraErrorKind::EvalError:
+            return "EvalError";
+        case AuraErrorKind::EvalTypeMismatch:
+            return "EvalTypeMismatch";
+        case AuraErrorKind::EvalDivisionByZero:
+            return "EvalDivisionByZero";
+        case AuraErrorKind::EvalStackOverflow:
+            return "EvalStackOverflow";
+        case AuraErrorKind::ConcurrencyFiberCanceled:
+            return "ConcurrencyFiberCanceled";
+        case AuraErrorKind::ConcurrencyLockFailed:
+            return "ConcurrencyLockFailed";
         case AuraErrorKind::ConcurrencyGenerationInvalidated:
-                                                          return "ConcurrencyGenerationInvalidated";
-        case AuraErrorKind::InternalInvariantViolation:  return "InternalInvariantViolation";
-        case AuraErrorKind::InternalNotImplemented:      return "InternalNotImplemented";
-        case AuraErrorKind::InternalContractFailure:     return "InternalContractFailure";
-        case AuraErrorKind::Sentinel_COUNT_:             return "Sentinel_COUNT_";
+            return "ConcurrencyGenerationInvalidated";
+        case AuraErrorKind::InternalInvariantViolation:
+            return "InternalInvariantViolation";
+        case AuraErrorKind::InternalNotImplemented:
+            return "InternalNotImplemented";
+        case AuraErrorKind::InternalContractFailure:
+            return "InternalContractFailure";
+        case AuraErrorKind::Sentinel_COUNT_:
+            return "Sentinel_COUNT_";
     }
     return "UnknownErrorKind";
 }
 
-inline std::unexpected<AuraError>
-make_unexpected(AuraErrorKind k,
-                std::string msg,
-                std::source_location loc,
-                std::uint64_t gen) {
-    return std::unexpected<AuraError>(
-        AuraError{k, std::move(msg), loc, gen});
+inline std::unexpected<AuraError> make_unexpected(AuraErrorKind k, std::string msg,
+                                                  std::source_location loc, std::uint64_t gen) {
+    return std::unexpected<AuraError>(AuraError{k, std::move(msg), loc, gen});
 }
 
 } // namespace aura::core

@@ -243,10 +243,9 @@ void run_serve_async(int num_workers) {
             // Debug: log to stderr so the skip is visible in CI.
             // In release builds the warning the old code emitted
             // is replaced by an info-level skip notice.
-            std::fprintf(stderr,
-                "[#362] yield_mutation_boundary skipped: "
-                "MutationBoundaryGuard is alive (yield would "
-                "deadlock under workspace_mtx_)\n");
+            std::fprintf(stderr, "[#362] yield_mutation_boundary skipped: "
+                                 "MutationBoundaryGuard is alive (yield would "
+                                 "deadlock under workspace_mtx_)\n");
             return;
         }
         if (aura::serve::g_current_fiber) {

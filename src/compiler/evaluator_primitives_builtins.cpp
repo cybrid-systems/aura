@@ -18,21 +18,21 @@ using namespace types;
 
 namespace {
 
-std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
-    auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-    if (r)
-        return *r;
-    if (v.val != 3 && is_string(v) && !heap.empty()) {
-        auto idx = as_string_idx(v);
-        if (idx < heap.size()) {
-            std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
-                         heap[idx]);
+    std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
+        auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
+        if (r)
+            return *r;
+        if (v.val != 3 && is_string(v) && !heap.empty()) {
+            auto idx = as_string_idx(v);
+            if (idx < heap.size()) {
+                std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
+                             heap[idx]);
+            }
         }
+        return 0;
     }
-    return 0;
-}
 
-}  // namespace
+} // namespace
 
 Primitives::Primitives() {
     // ── Variadic arithmetic ────────────────────────────────────────

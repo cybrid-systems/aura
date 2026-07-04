@@ -43,8 +43,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -55,14 +55,12 @@ namespace aura_issue_340_detail {
 
 // Build a workspace with a few if-expressions so
 // the predicate_memo_ has something to memoize.
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define x 0) "
-        "  (if (> x 0) 'pos 'neg) "
-        "  (if (< x 100) 'low 'high) "
-        "  (if (= x 0) 'zero 'other))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define x 0) "
+                       "  (if (> x 0) 'pos 'neg) "
+                       "  (if (< x 100) 'low 'high) "
+                       "  (if (= x 0) 'zero 'other))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -78,10 +76,12 @@ bool test_occ_cache_stats_primitive() {
     std::println("\n--- AC1: (compile:occ-cache-stats) returns 3-tuple ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto r = cs.eval("(compile:occ-cache-stats)");
-    CHECK(r.has_value(),
-          "(compile:occ-cache-stats) returns a value");
+    CHECK(r.has_value(), "(compile:occ-cache-stats) returns a value");
     CHECK(aura::compiler::types::is_pair(*r),
           "(compile:occ-cache-stats) returns a pair (outer of the 3-tuple)");
     // The 3-tuple is encoded as (hits . (misses . evictions))
@@ -114,12 +114,14 @@ bool test_memo_infrastructure_exists() {
     // are wired via a follow-up).
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // The primitive should still return a value
     // after the workspace is built.
     auto r = cs.eval("(compile:occ-cache-stats)");
-    CHECK(r.has_value(),
-          "post-build: (compile:occ-cache-stats) returns a value");
+    CHECK(r.has_value(), "post-build: (compile:occ-cache-stats) returns a value");
     return true;
 }
 
@@ -138,19 +140,16 @@ bool test_end_to_end_primitive_callable() {
     // return a value (with 0/0/0 — there's no
     // memo to observe).
     auto r1 = cs.eval("(compile:occ-cache-stats)");
-    CHECK(r1.has_value(),
-          "no-workspace: primitive returns a value");
+    CHECK(r1.has_value(), "no-workspace: primitive returns a value");
     // With a workspace.
     build_workspace(cs);
     auto r2 = cs.eval("(compile:occ-cache-stats)");
-    CHECK(r2.has_value(),
-          "with-workspace: primitive returns a value");
+    CHECK(r2.has_value(), "with-workspace: primitive returns a value");
     // Call the primitive multiple times —
     // should be idempotent (stats-only).
     for (int i = 0; i < 3; ++i) {
         auto r = cs.eval("(compile:occ-cache-stats)");
-        CHECK(r.has_value(),
-              "repeat call: primitive returns a value");
+        CHECK(r.has_value(), "repeat call: primitive returns a value");
     }
     return true;
 }
@@ -165,10 +164,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_340_detail
+} // namespace aura_issue_340_detail
 
-int aura_issue_340_run() { return aura_issue_340_detail::run_tests(); }
+int aura_issue_340_run() {
+    return aura_issue_340_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_340_run(); }
+int main() {
+    return aura_issue_340_run();
+}
 #endif

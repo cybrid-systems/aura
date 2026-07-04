@@ -160,18 +160,18 @@ export enum class NodeTag : std::uint32_t {
 // scan looks for. Bits are OR-ed into summary_flags_ on
 // add_node; reset() / clear() clears the whole field.
 export enum class SummaryFlag : std::uint32_t {
-    None              = 0,
-    HasMacroDef       = 1u << 0,  // NodeTag::MacroDef → tree-walker fallback
-    HasDefineType     = 1u << 1,  // NodeTag::DefineType → tree-walker fallback
-    HasDefineModule   = 1u << 2,  // NodeTag::DefineModule → tree-walker fallback
-    HasLambdaDotted   = 1u << 3,  // Lambda with int_value!=0 (dotted rest param)
-    HasTypeAnnotVar   = 1u << 4,  // TypeAnnotation with int_value!=0 (3-arg form)
-    HasSet            = 1u << 5,  // NodeTag::Set (set! special form)
-    HasKeywordVar     = 1u << 6,  // Variable with sym_id starting with ':'
-    HasQueryOrMutateCall = 1u << 7,  // Call with callee sym_id starts_with "query:" / "mutate:"
-    HasTreeWalkerCall = 1u << 8,  // Call with callee sym_id in tree_walker_only set (slow-path only)
-    HasUserBindingVar = 1u << 9,  // Variable sym_id in user_bindings_ (cross-cutting with state)
-    HasUnresolvedVar  = 1u << 10, // Variable sym_id not in primitives + not in ir_cache_
+    None = 0,
+    HasMacroDef = 1u << 0,          // NodeTag::MacroDef → tree-walker fallback
+    HasDefineType = 1u << 1,        // NodeTag::DefineType → tree-walker fallback
+    HasDefineModule = 1u << 2,      // NodeTag::DefineModule → tree-walker fallback
+    HasLambdaDotted = 1u << 3,      // Lambda with int_value!=0 (dotted rest param)
+    HasTypeAnnotVar = 1u << 4,      // TypeAnnotation with int_value!=0 (3-arg form)
+    HasSet = 1u << 5,               // NodeTag::Set (set! special form)
+    HasKeywordVar = 1u << 6,        // Variable with sym_id starting with ':'
+    HasQueryOrMutateCall = 1u << 7, // Call with callee sym_id starts_with "query:" / "mutate:"
+    HasTreeWalkerCall = 1u << 8, // Call with callee sym_id in tree_walker_only set (slow-path only)
+    HasUserBindingVar = 1u << 9, // Variable sym_id in user_bindings_ (cross-cutting with state)
+    HasUnresolvedVar = 1u << 10, // Variable sym_id not in primitives + not in ir_cache_
 };
 
 
@@ -441,13 +441,13 @@ export constexpr std::array<NodeMeta, 33> kNodeMeta = {{
     // name + port list / modport name + port directions)
     // will be populated via side-tables when the builder
     // methods land in a follow-up.
-    {NodeTag::Interface, "Interface", 0, true, false, false, false, false},         // 0x1B
-    {NodeTag::Modport, "Modport", 0, true, false, false, false, false},              // 0x1C
-    {NodeTag::Property, "Property", 1, false, true, false, false, false},            // 0x1D
-    {NodeTag::Sequence, "Sequence", 1, false, true, false, false, false},            // 0x1E
-    {NodeTag::Assert, "Assert", 1, false, true, false, false, false},              // 0x1F
-    {NodeTag::Covergroup, "Covergroup", 0, true, false, false, false, false},        // 0x20
-    {NodeTag::Coverpoint, "Coverpoint", 0, true, false, false, false, false},        // 0x21
+    {NodeTag::Interface, "Interface", 0, true, false, false, false, false},   // 0x1B
+    {NodeTag::Modport, "Modport", 0, true, false, false, false, false},       // 0x1C
+    {NodeTag::Property, "Property", 1, false, true, false, false, false},     // 0x1D
+    {NodeTag::Sequence, "Sequence", 1, false, true, false, false, false},     // 0x1E
+    {NodeTag::Assert, "Assert", 1, false, true, false, false, false},         // 0x1F
+    {NodeTag::Covergroup, "Covergroup", 0, true, false, false, false, false}, // 0x20
+    {NodeTag::Coverpoint, "Coverpoint", 0, true, false, false, false, false}, // 0x21
 }};
 
 
@@ -659,10 +659,8 @@ export struct PostRestoreReport {
 //     read-only AST) plug into the same traversal logic without
 //     inheriting from FlatAST.
 export template <typename Id, typename C, typename Visitor>
-    requires aura::core::ASTContainer<C, Id>
-             && std::invocable<Visitor&, Id>
-constexpr std::size_t
-walk_children(C& ast, Id root, Visitor&& vis) {
+    requires aura::core::ASTContainer<C, Id> && std::invocable<Visitor&, Id>
+constexpr std::size_t walk_children(C& ast, Id root, Visitor&& vis) {
     std::size_t count = 0;
     for (auto child : ast.children(root)) {
         vis(static_cast<Id>(child));
@@ -693,12 +691,11 @@ walk_children(C& ast, Id root, Visitor&& vis) {
 // Used by (future) compile:* stats primitives that need to
 // count nodes matching some criteria.
 export template <typename Id, typename C, typename P>
-    requires aura::core::ASTContainer<C, Id>
-             && aura::core::AuraInvocable<P&, Id>
-[[nodiscard]] constexpr std::size_t
-count_nodes_with_predicate(C& ast, Id root, P&& pred) {
+    requires aura::core::ASTContainer<C, Id> && aura::core::AuraInvocable<P&, Id>
+[[nodiscard]] constexpr std::size_t count_nodes_with_predicate(C& ast, Id root, P&& pred) {
     std::size_t count = 0;
-    if (static_cast<bool>(pred(root))) ++count;
+    if (static_cast<bool>(pred(root)))
+        ++count;
     for (auto child : ast.children(root)) {
         count += count_nodes_with_predicate(ast, static_cast<Id>(child), pred);
     }
@@ -720,11 +717,10 @@ count_nodes_with_predicate(C& ast, Id root, P&& pred) {
 // Id payload) and short-circuits as soon as a match is found
 // (no full traversal).
 export template <typename Id, typename C, typename P>
-    requires aura::core::ASTContainer<C, Id>
-             && aura::core::AuraInvocable<P&, Id>
-[[nodiscard]] constexpr std::optional<Id>
-find_first_node_with(C& ast, Id root, P&& pred) {
-    if (static_cast<bool>(pred(root))) return root;
+    requires aura::core::ASTContainer<C, Id> && aura::core::AuraInvocable<P&, Id>
+[[nodiscard]] constexpr std::optional<Id> find_first_node_with(C& ast, Id root, P&& pred) {
+    if (static_cast<bool>(pred(root)))
+        return root;
     for (auto child : ast.children(root)) {
         if (auto found = find_first_node_with(ast, static_cast<Id>(child), pred)) {
             return found;
@@ -764,18 +760,17 @@ find_first_node_with(C& ast, Id root, P&& pred) {
 // Used by (future): scope chain analysis, name resolution
 // (find enclosing scope), GC root marking from a node.
 export template <typename Id, typename C, typename V>
-    requires aura::core::ASTContainer<C, Id>
-             && requires(C& c, Id id) {
-                    { c.parent_of(id) } -> std::convertible_to<Id>;
-                }
-             && aura::core::AuraInvocable<V&, Id>
-constexpr std::size_t
-walk_ancestors(C& ast, Id start, V&& vis) {
+    requires aura::core::ASTContainer<C, Id> &&
+             requires(C& c, Id id) {
+                 { c.parent_of(id) } -> std::convertible_to<Id>;
+             } && aura::core::AuraInvocable<V&, Id>
+constexpr std::size_t walk_ancestors(C& ast, Id start, V&& vis) {
     using NC = aura::core::NullIdCheck<Id>;
     std::size_t count = 0;
     Id cur = start;
     while (!NC::is_null(cur)) {
-        if (!static_cast<bool>(vis(cur))) return count;
+        if (!static_cast<bool>(vis(cur)))
+            return count;
         ++count;
         cur = ast.parent_of(cur);
     }
@@ -798,13 +793,12 @@ walk_ancestors(C& ast, Id start, V&& vis) {
 // must be a valid node id.
 export template <typename Id, typename C, typename Tag>
     requires aura::core::ASTContainer<C, Id>
-[[nodiscard]] constexpr std::size_t
-count_nodes_with_tag(C& ast, Id root, Tag tag) {
+[[nodiscard]] constexpr std::size_t count_nodes_with_tag(C& ast, Id root, Tag tag) {
     // The tag type is whatever ast.tag() returns (NodeTag for
     // FlatAST). We capture it by value in the lambda so the
     // recursive call passes it through without re-loading.
-    return count_nodes_with_predicate<Id>(
-        ast, root, [&ast, tag](Id id) { return ast.tag(id) == tag; });
+    return count_nodes_with_predicate<Id>(ast, root,
+                                          [&ast, tag](Id id) { return ast.tag(id) == tag; });
 }
 
 export class FlatAST {
@@ -900,14 +894,18 @@ private:
     // lazily when those values are written (see set_int_value,
     // set_sym_id) — this helper covers the tag-only path that
     // add_node takes for fresh nodes.
-    [[nodiscard]] static constexpr std::uint32_t
-    summary_flags_for_tag(NodeTag tag) noexcept {
+    [[nodiscard]] static constexpr std::uint32_t summary_flags_for_tag(NodeTag tag) noexcept {
         switch (tag) {
-        case NodeTag::MacroDef:     return static_cast<std::uint32_t>(SummaryFlag::HasMacroDef);
-        case NodeTag::DefineType:   return static_cast<std::uint32_t>(SummaryFlag::HasDefineType);
-        case NodeTag::DefineModule: return static_cast<std::uint32_t>(SummaryFlag::HasDefineModule);
-        case NodeTag::Set:          return static_cast<std::uint32_t>(SummaryFlag::HasSet);
-        default:                    return 0;
+            case NodeTag::MacroDef:
+                return static_cast<std::uint32_t>(SummaryFlag::HasMacroDef);
+            case NodeTag::DefineType:
+                return static_cast<std::uint32_t>(SummaryFlag::HasDefineType);
+            case NodeTag::DefineModule:
+                return static_cast<std::uint32_t>(SummaryFlag::HasDefineModule);
+            case NodeTag::Set:
+                return static_cast<std::uint32_t>(SummaryFlag::HasSet);
+            default:
+                return 0;
         }
     }
 
@@ -920,9 +918,12 @@ private:
         if (v == 0)
             return 0;
         switch (tag) {
-        case NodeTag::Lambda:          return static_cast<std::uint32_t>(SummaryFlag::HasLambdaDotted);
-        case NodeTag::TypeAnnotation:  return static_cast<std::uint32_t>(SummaryFlag::HasTypeAnnotVar);
-        default:                       return 0;
+            case NodeTag::Lambda:
+                return static_cast<std::uint32_t>(SummaryFlag::HasLambdaDotted);
+            case NodeTag::TypeAnnotation:
+                return static_cast<std::uint32_t>(SummaryFlag::HasTypeAnnotVar);
+            default:
+                return 0;
         }
     }
 
@@ -939,19 +940,19 @@ private:
         if (name.empty())
             return 0;
         switch (tag) {
-        case NodeTag::Variable:
-            if (name[0] == ':')
-                return static_cast<std::uint32_t>(SummaryFlag::HasKeywordVar);
-            // Unresolved bare variables depend on runtime state
-            // (primitives / ir_cache_), so we don't flag here.
-            return 0;
-        case NodeTag::Call: {
-            if (name.starts_with("query:") || name.starts_with("mutate:"))
-                return static_cast<std::uint32_t>(SummaryFlag::HasQueryOrMutateCall);
-            return 0;
-        }
-        default:
-            return 0;
+            case NodeTag::Variable:
+                if (name[0] == ':')
+                    return static_cast<std::uint32_t>(SummaryFlag::HasKeywordVar);
+                // Unresolved bare variables depend on runtime state
+                // (primitives / ir_cache_), so we don't flag here.
+                return 0;
+            case NodeTag::Call: {
+                if (name.starts_with("query:") || name.starts_with("mutate:"))
+                    return static_cast<std::uint32_t>(SummaryFlag::HasQueryOrMutateCall);
+                return 0;
+            }
+            default:
+                return 0;
         }
     }
 
@@ -961,21 +962,15 @@ private:
     // scan calls summary_recompute() after every structural
     // mutation to keep the bit-set in sync.
 public:
-    [[nodiscard]] std::uint32_t summary_flags() const noexcept {
-        return summary_flags_;
-    }
+    [[nodiscard]] std::uint32_t summary_flags() const noexcept { return summary_flags_; }
     [[nodiscard]] bool summary_has(SummaryFlag flag) const noexcept {
         return (summary_flags_ & static_cast<std::uint32_t>(flag)) != 0;
     }
     // OR-in additional bits (used by add_node + the lazy
     // set_int_value / set_sym_id sites).
-    void summary_add_flags(std::uint32_t bits) noexcept {
-        summary_flags_ |= bits;
-    }
+    void summary_add_flags(std::uint32_t bits) noexcept { summary_flags_ |= bits; }
     // Clear (used by reset() and the heavy recompute path).
-    void summary_clear() noexcept {
-        summary_flags_ = 0;
-    }
+    void summary_clear() noexcept { summary_flags_ = 0; }
     // Issue #402: rebuild the bit-set from scratch by walking
     // the entire tag_ column. O(n) but only called from test
     // code or after heavy structural mutations that may have
@@ -1212,7 +1207,7 @@ public:
     std::pmr::vector<std::uint8_t> macro_dirty_;
     // Issue #339: per-node occurrence-narrowing staleness
     // column. When a mutation affects a predicate or a
-std::pmr::vector<std::uint32_t> type_id_;
+    std::pmr::vector<std::uint32_t> type_id_;
     // Issue #412: per-node type cache generation. Parallel to
     // type_id_; stores the type_cache_generation_ at the time
     // the cache entry was populated. On cache hit, the
@@ -1272,8 +1267,7 @@ std::pmr::vector<std::uint32_t> type_id_;
         std::unordered_map<aura::ast::SymId, std::uint32_t> gens;
         BindingGenMap() = default;
     };
-    std::shared_ptr<BindingGenMap> binding_gens_ =
-        std::make_shared<BindingGenMap>();
+    std::shared_ptr<BindingGenMap> binding_gens_ = std::make_shared<BindingGenMap>();
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
     // queryable via the AuraQuery `(has-error? N)` clause.
@@ -1292,14 +1286,10 @@ std::pmr::vector<std::uint32_t> type_id_;
         std::uint16_t arity_min;
         std::uint16_t arity_max;
         bool operator==(const TagArityKey& o) const noexcept {
-            return tag == o.tag &&
-                   arity_min == o.arity_min &&
-                   arity_max == o.arity_max;
+            return tag == o.tag && arity_min == o.arity_min && arity_max == o.arity_max;
         }
     };
-    std::pmr::vector<std::pair<TagArityKey,
-                               std::pmr::vector<NodeId>>>
-        tag_arity_index_;
+    std::pmr::vector<std::pair<TagArityKey, std::pmr::vector<NodeId>>> tag_arity_index_;
     // Issue #447: index hit/miss counters (stats-only,
     // relaxed-ordering). Exposed via (query:query-stats)
     // primitive.
@@ -1612,7 +1602,8 @@ public:
     // Issue #437: verify_dirty_ accessor (public, used by
     // the (compile:verify-dirty?) primitive).
     [[nodiscard]] std::uint8_t verify_dirty(NodeId id) const noexcept {
-        if (id >= verify_dirty_.size()) return 0;
+        if (id >= verify_dirty_.size())
+            return 0;
         return verify_dirty_[id];
     }
     // Issue #469: verification_dirty_ accessor is defined
@@ -1622,7 +1613,8 @@ public:
     // (used by (query:dirty-subtree) to check each node's
     // dirty bitmask against a reason filter).
     [[nodiscard]] std::uint8_t dirty(NodeId id) const noexcept {
-        if (id >= dirty_.size()) return 0;
+        if (id >= dirty_.size())
+            return 0;
         return dirty_[id];
     }
     // Issue #447: tag+arity pre-index for query:pattern.
@@ -1642,8 +1634,7 @@ public:
         for (NodeId id = 0; id < n; ++id) {
             const auto tag = static_cast<std::uint32_t>(tag_[id]);
             const std::size_t ar = children_[id].size();
-            const TagArityKey key{tag,
-                                  static_cast<std::uint16_t>(ar),
+            const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
                                   static_cast<std::uint16_t>(ar)};
             // Linear scan to find the bucket (P0 — the
             // follow-up uses a hash map).
@@ -1661,22 +1652,17 @@ public:
                 tag_arity_index_.push_back({key, std::move(bucket)});
             }
         }
-        tag_arity_index_rebuilds_.fetch_add(1,
-                                            std::memory_order_relaxed);
+        tag_arity_index_rebuilds_.fetch_add(1, std::memory_order_relaxed);
         // Issue #554: record elapsed microseconds for the
         // (query:pattern-index-stats) primitive's AI Agent
         // observability. Stats-only (relaxed-ordering).
         auto t1 = std::chrono::steady_clock::now();
-        const auto us =
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                t1 - t0).count();
-        tag_arity_index_rebuild_time_us_.fetch_add(
-            static_cast<std::uint64_t>(us),
-            std::memory_order_relaxed);
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        tag_arity_index_rebuild_time_us_.fetch_add(static_cast<std::uint64_t>(us),
+                                                   std::memory_order_relaxed);
         // Issue #547: clear the dirty flag — the index is
         // now in sync with the AST.
-        tag_arity_index_dirty_.store(false,
-                                      std::memory_order_release);
+        tag_arity_index_dirty_.store(false, std::memory_order_release);
     }
     // Issue #447: find all NodeIds matching (tag,
     // arity_min, arity_max). Returns a copy of the
@@ -1686,21 +1672,17 @@ public:
     // (the (query:query-stats) primitive does this
     // implicitly on the first call).
     [[nodiscard]] std::pmr::vector<NodeId>
-    find_by_tag_arity(std::uint32_t tag,
-                      std::uint16_t arity_min,
-                      std::uint16_t arity_max) const {
+    find_by_tag_arity(std::uint32_t tag, std::uint16_t arity_min, std::uint16_t arity_max) const {
         std::pmr::vector<NodeId> out;
         const TagArityKey key{tag, arity_min, arity_max};
         for (const auto& [k, v] : tag_arity_index_) {
             if (k == key) {
                 out = v;
-                tag_arity_index_hits_.fetch_add(1,
-                                                std::memory_order_relaxed);
+                tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
                 return out;
             }
         }
-        tag_arity_index_misses_.fetch_add(1,
-                                          std::memory_order_relaxed);
+        tag_arity_index_misses_.fetch_add(1, std::memory_order_relaxed);
         return out;
     }
     // Issue #447: query-stats accessors.
@@ -1736,10 +1718,8 @@ public:
     // tag_arity_index_dirty_marks() exposes the lifetime
     // # of dirty marks for (query:pattern-index-stats).
     void mark_tag_arity_index_dirty() const noexcept {
-        tag_arity_index_dirty_.store(true,
-                                      std::memory_order_release);
-        tag_arity_index_dirty_marks_.fetch_add(1,
-                                                std::memory_order_relaxed);
+        tag_arity_index_dirty_.store(true, std::memory_order_release);
+        tag_arity_index_dirty_marks_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] bool tag_arity_index_dirty() const noexcept {
         return tag_arity_index_dirty_.load(std::memory_order_acquire);
@@ -1769,7 +1749,8 @@ public:
     // Issue #469: verification_dirty_ accessor (public, used
     // by the (query:verification-loop-stats) primitive).
     [[nodiscard]] std::uint8_t verification_dirty(NodeId id) const noexcept {
-        if (id >= verification_dirty_.size()) return 0;
+        if (id >= verification_dirty_.size())
+            return 0;
         return verification_dirty_[id];
     }
     // Issue #469: apply verification-dirty bits to a node.
@@ -1824,8 +1805,8 @@ public:
     // + mirror kGeneralDirty on the main dirty_ byte (via
     // apply_verification_dirty_bits).
     void mark_dirty_verification(NodeId id) {
-        apply_verification_dirty_bits(id,
-            static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
+        apply_verification_dirty_bits(
+            id, static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
     }
 
     // Issue #320: per-node epoch accessors + helper.
@@ -1848,7 +1829,8 @@ public:
     // Read-only accessor (public, used by the type
     // checker + tests).
     [[nodiscard]] std::uint64_t last_seen_epoch(NodeId id) const noexcept {
-        if (id >= last_seen_epoch_.size()) return 0;
+        if (id >= last_seen_epoch_.size())
+            return 0;
         return last_seen_epoch_[id];
     }
 
@@ -1869,8 +1851,7 @@ public:
     // (e.g. CompilerService::mutation_epoch_). This
     // helper exists so the call site doesn't have to
     // know about the column details.
-    void stamp_last_seen_epoch_to_current(NodeId id,
-                                          std::uint64_t current_epoch) noexcept {
+    void stamp_last_seen_epoch_to_current(NodeId id, std::uint64_t current_epoch) noexcept {
         stamp_last_seen_epoch(id, current_epoch);
     }
 
@@ -1893,7 +1874,8 @@ public:
     // out-of-range, consistent with the other
     // per-node dirty accessors).
     [[nodiscard]] std::uint8_t is_occurrence_stale(NodeId id) const noexcept {
-        if (id >= occ_stale_.size()) return 0;
+        if (id >= occ_stale_.size())
+            return 0;
         return occ_stale_[id];
     }
     // Mark a node as stale (after mutation or after
@@ -1916,7 +1898,9 @@ public:
     // (for observability).
     [[nodiscard]] std::size_t occurrence_stale_count() const noexcept {
         std::size_t n = 0;
-        for (auto v : occ_stale_) if (v) ++n;
+        for (auto v : occ_stale_)
+            if (v)
+                ++n;
         return n;
     }
 
@@ -1943,8 +1927,8 @@ public:
         while (!queue.empty()) {
             auto nid = queue.front();
             queue.pop_front();
-            apply_verification_dirty_bits(nid,
-                static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
+            apply_verification_dirty_bits(
+                nid, static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
             auto p = parent_[nid];
             if (p != NULL_NODE)
                 queue.push_back(p);
@@ -1960,8 +1944,7 @@ public:
         return id < verification_dirty_.size() && verification_dirty_[id] != 0;
     }
     bool is_verification_dirty_for(NodeId id, std::uint8_t verify_mask) const {
-        return id < verification_dirty_.size()
-               && (verification_dirty_[id] & verify_mask) != 0;
+        return id < verification_dirty_.size() && (verification_dirty_[id] & verify_mask) != 0;
     }
     void clear_verification_dirty(NodeId id) {
         if (id < verification_dirty_.size())
@@ -1985,7 +1968,8 @@ public:
     // Issue #290: macro_dirty_ accessor (public, used by the
     // (compile:macro-dirty?) primitive).
     [[nodiscard]] std::uint8_t macro_dirty(NodeId id) const noexcept {
-        if (id >= macro_dirty_.size()) return 0;
+        if (id >= macro_dirty_.size())
+            return 0;
         return macro_dirty_[id];
     }
     // Issue #290: apply macro-dirty bits to a node. Called from
@@ -2020,7 +2004,8 @@ public:
     [[nodiscard]] std::size_t macro_dirty_count() const noexcept {
         std::size_t n = 0;
         for (auto b : macro_dirty_)
-            if (b != 0) ++n;
+            if (b != 0)
+                ++n;
         return n;
     }
 
@@ -2158,8 +2143,10 @@ public:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
-            verification_coverage_feedback_total_.store(other.verification_coverage_feedback_total_.load());
-            verification_assert_failure_total_.store(other.verification_assert_failure_total_.load());
+            verification_coverage_feedback_total_.store(
+                other.verification_coverage_feedback_total_.load());
+            verification_assert_failure_total_.store(
+                other.verification_assert_failure_total_.load());
             sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
             sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
@@ -2289,8 +2276,10 @@ public:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
-            verification_coverage_feedback_total_.store(other.verification_coverage_feedback_total_.load());
-            verification_assert_failure_total_.store(other.verification_assert_failure_total_.load());
+            verification_coverage_feedback_total_.store(
+                other.verification_coverage_feedback_total_.load());
+            verification_assert_failure_total_.store(
+                other.verification_assert_failure_total_.load());
             sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
             sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
@@ -2592,11 +2581,10 @@ public:
     bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const {
         if (root == aura::ast::NULL_NODE || root >= size())
             return false;
-        auto found = find_first_node_with<std::uint32_t>(
-            *this, root, [this, sym](aura::ast::NodeId id) {
+        auto found =
+            find_first_node_with<std::uint32_t>(*this, root, [this, sym](aura::ast::NodeId id) {
                 auto v = this->get(id);
-                return v.tag == aura::ast::NodeTag::Variable
-                    && v.sym_id == sym;
+                return v.tag == aura::ast::NodeTag::Variable && v.sym_id == sym;
             });
         return found.has_value();
     }
@@ -2796,8 +2784,8 @@ public:
     [[nodiscard]] NodeId add_assert(SymId name, NodeId property_id) {
         auto id = add_node(NodeTag::Assert);
         sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t) -> NodeId { return property_id; });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return property_id; });
         link_children(id);
         return id;
     }
@@ -3704,8 +3692,7 @@ public:
     // the current eval's fallback decision; only the
     // reachable-from-root subgraph does.
     template <typename Visitor>
-    std::size_t walk_subtree(NodeId root, Visitor&& visit,
-                             std::size_t max_nodes = 1024) const {
+    std::size_t walk_subtree(NodeId root, Visitor&& visit, std::size_t max_nodes = 1024) const {
         if (root == NULL_NODE || root >= tag_.size())
             return 0;
         std::size_t visited = 0;
@@ -3795,35 +3782,30 @@ public:
 
     static void wire_write_string(std::vector<char>& buf, std::string_view s) {
         std::uint32_t len = static_cast<std::uint32_t>(s.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&len),
-                   reinterpret_cast<char*>(&len) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
         buf.insert(buf.end(), s.begin(), s.end());
     }
 
-    static void wire_write_vec_u32(std::vector<char>& buf,
-                                   const std::vector<SymId>& v) {
+    static void wire_write_vec_u32(std::vector<char>& buf, const std::vector<SymId>& v) {
         std::uint32_t sz = static_cast<std::uint32_t>(v.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
-                   reinterpret_cast<char*>(&sz) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
         if (!v.empty()) {
             buf.insert(buf.end(), reinterpret_cast<const char*>(v.data()),
                        reinterpret_cast<const char*>(v.data()) + v.size() * sizeof(SymId));
         }
     }
 
-    static void wire_write_match_clause_info(std::vector<char>& buf,
-                                             const MatchClauseInfo& m) {
+    static void wire_write_match_clause_info(std::vector<char>& buf, const MatchClauseInfo& m) {
         wire_write_vec_u32(buf, m.used_constructors);
         wire_write_vec_u32(buf, m.candidate_constructors);
         buf.push_back(m.has_wildcard ? '\1' : '\0');
     }
 
-    static void wire_write_map_u32_u8(
-        std::vector<char>& buf,
-        const std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
+    static void
+    wire_write_map_u32_u8(std::vector<char>& buf,
+                          const std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
         std::uint32_t count = static_cast<std::uint32_t>(m.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
         for (const auto& [k, v] : m) {
             buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
                        reinterpret_cast<const char*>(&k) + 4);
@@ -3841,8 +3823,7 @@ public:
         return s;
     }
 
-    static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf,
-                                                  std::size_t& pos) {
+    static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf, std::size_t& pos) {
         std::uint32_t sz;
         std::memcpy(&sz, &buf[pos], 4);
         pos += 4;
@@ -3863,9 +3844,8 @@ public:
         return m;
     }
 
-    static void wire_read_map_u32_u8(
-        const std::vector<char>& buf, std::size_t& pos,
-        std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
+    static void wire_read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
+                                     std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
         std::uint32_t count;
         std::memcpy(&count, &buf[pos], 4);
         pos += 4;
@@ -4177,9 +4157,9 @@ public:
         kOwnershipDirty = 0x08,  // Linear/Move/Borrow state changed
         kCoercionDirty = 0x10,   // deferred coercion needs re-apply
         // Issue #262: infra dirty bits for precise incremental paths.
-        kStructDirty = 0x20,     // structural shape changed (children/parent)
-        kDefUseDirty = 0x40,     // def-use / caller graph may be stale
-        kPpaHintDirty = 0x80,    // PPA-hint metadata needs refresh
+        kStructDirty = 0x20,  // structural shape changed (children/parent)
+        kDefUseDirty = 0x40,  // def-use / caller graph may be stale
+        kPpaHintDirty = 0x80, // PPA-hint metadata needs refresh
     };
 
     // Issue #277: PPA-specific dirty bits stored in the orthogonal
@@ -4187,10 +4167,10 @@ public:
     // PPA bit also ORs kPpaHintDirty on dirty_ for backward-compat
     // with dirty:counts "ppa-hint" aggregation.
     enum PpaDirtyReason : std::uint8_t {
-        kTimingDirty = 0x01,  // timing closure stale
-        kPowerDirty = 0x02,   // power estimate stale
-        kAreaDirty = 0x04,    // area estimate stale
-        kBackendHint = 0x08,  // Verilog/HW backend should re-emit
+        kTimingDirty = 0x01, // timing closure stale
+        kPowerDirty = 0x02,  // power estimate stale
+        kAreaDirty = 0x04,   // area estimate stale
+        kBackendHint = 0x08, // Verilog/HW backend should re-emit
     };
 
     // Issue #277: OR PPA bits into ppa_dirty_ and mirror kPpaHintDirty
@@ -4208,9 +4188,9 @@ public:
     // orthogonal verify_dirty_ column. Setting any verify bit also
     // ORs kGeneralDirty on dirty_ for backward-compat.
     enum VerifyDirtyReason : std::uint8_t {
-        kAssertionDirty = 0x01,        // assertion failed
-        kCoverageDirty = 0x02,         // coverage hole detected
-        kSvaDirty = 0x04,              // SVA property/sequence affected
+        kAssertionDirty = 0x01,            // assertion failed
+        kCoverageDirty = 0x02,             // coverage hole detected
+        kSvaDirty = 0x04,                  // SVA property/sequence affected
         kFormalCounterexampleDirty = 0x08, // formal proof counterexample
     };
 
@@ -4269,8 +4249,7 @@ public:
     // is 0 by default for small ASTs (it can be redefined), so the
     // contract catches genuine OOB like passing a stale NodeId from
     // a released child.
-    void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty)
-        pre(id < tag_.size()) {
+    void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) pre(id < tag_.size()) {
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
@@ -4354,17 +4333,15 @@ public:
     }
     // Issue #320: per-node epoch column view.
     [[nodiscard]] std::span<const std::uint64_t> last_seen_epoch_view() const noexcept {
-        return std::span<const std::uint64_t>(last_seen_epoch_.data(),
-                                                last_seen_epoch_.size());
+        return std::span<const std::uint64_t>(last_seen_epoch_.data(), last_seen_epoch_.size());
     }
     // Issue #456: dirty column accessor (the main dirty_).
     [[nodiscard]] std::span<const std::uint8_t> verify_dirty_view() const noexcept {
-        return std::span<const std::uint8_t>(verify_dirty_.data(),
-                                               verify_dirty_.size());
+        return std::span<const std::uint8_t>(verify_dirty_.data(), verify_dirty_.size());
     }
     [[nodiscard]] std::span<const std::uint8_t> verification_dirty_view() const noexcept {
         return std::span<const std::uint8_t>(verification_dirty_.data(),
-                                               verification_dirty_.size());
+                                             verification_dirty_.size());
     }
 
     // Issue #346: mutation_log view (most-recent first).
@@ -4373,10 +4350,8 @@ public:
     // with many mutations, the agent can sample via
     // (query:mutations-since <last_id>) instead of
     // walking the whole log.
-    [[nodiscard]] std::span<const MutationRecord>
-    mutation_log_view() const noexcept {
-        return std::span<const MutationRecord>(mutation_log_.data(),
-                                                mutation_log_.size());
+    [[nodiscard]] std::span<const MutationRecord> mutation_log_view() const noexcept {
+        return std::span<const MutationRecord>(mutation_log_.data(), mutation_log_.size());
     }
     // Issue #188: targeted check — true if a specific reason bit
     // (or any of the bits in the reason mask) is set. Lets the type
@@ -4442,7 +4417,8 @@ public:
             provenance_[id] = prov_id;
     }
     [[nodiscard]] std::uint32_t provenance(NodeId id) const noexcept {
-        if (id >= provenance_.size()) return 0;
+        if (id >= provenance_.size())
+            return 0;
         return provenance_[id];
     }
     [[nodiscard]] const std::pmr::vector<std::uint32_t>& provenance_column() const noexcept {
@@ -4533,11 +4509,10 @@ public:
         bool propagate_sva_verify = false;
         if (id < tag_.size()) {
             const auto src_tag = tag_[id];
-            propagate_sva_verify =
-                (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
-                 src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
-                 src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
-                 src_tag == NodeTag::Coverpoint);
+            propagate_sva_verify = (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
+                                    src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
+                                    src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
+                                    src_tag == NodeTag::Coverpoint);
         }
         if (!propagate_sva_verify && id < verify_dirty_.size())
             propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;
@@ -4563,7 +4538,8 @@ public:
             const std::uint64_t depth = touched;
             std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
             while (depth > cur) {
-                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth)) break;
+                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth))
+                    break;
             }
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
@@ -4594,8 +4570,7 @@ public:
         // bumps (no binding to bump).
         if (id < tag_.size()) {
             auto tgv = get(id);
-            if ((tgv.tag == NodeTag::Define ||
-                 tgv.tag == NodeTag::Let ||
+            if ((tgv.tag == NodeTag::Define || tgv.tag == NodeTag::Let ||
                  tgv.tag == NodeTag::LetRec) &&
                 tgv.sym_id != INVALID_SYM) {
                 bump_binding_gen(tgv.sym_id);
@@ -4613,8 +4588,7 @@ public:
                         .mutation_id = mid,
                         .binding_gen_at_bump = binding_gen(tgv.sym_id),
                     });
-                    invalidation_trace_records_total_.fetch_add(
-                        1, std::memory_order_relaxed);
+                    invalidation_trace_records_total_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
         }
@@ -4654,8 +4628,7 @@ public:
     // repeated small mutations in deep ASTs, this
     // should fire often.
     void mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons = kGeneralDirty,
-                                 std::uint8_t ppa_reasons = 0)
-        pre(id < tag_.size()) {
+                                std::uint8_t ppa_reasons = 0) pre(id < tag_.size()) {
         mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
         std::uint64_t touched = 0;
         std::uint64_t fixed_point_hits = 0;
@@ -4673,7 +4646,8 @@ public:
                 ++touched;
             }
             auto p = parent_[nid];
-            if (p == NULL_NODE) continue;
+            if (p == NULL_NODE)
+                continue;
             // Issue #336: early-exit when the parent
             // already has all the target reason bits
             // set. The parent's parents will inherit
@@ -4686,8 +4660,7 @@ public:
                 // Issue #471: also bump the lifetime
                 // mark_dirty_early_exit_count_ for
                 // (query:dirty-propagation-stats).
-                mark_dirty_early_exit_count_.fetch_add(
-                    1, std::memory_order_relaxed);
+                mark_dirty_early_exit_count_.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
             queue.push_back(p);
@@ -4698,12 +4671,12 @@ public:
             const std::uint64_t depth = touched;
             std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
             while (depth > cur) {
-                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth)) break;
+                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth))
+                    break;
             }
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
-        dirty_upward_fast_fixed_point_hits_.fetch_add(
-            fixed_point_hits, std::memory_order_relaxed);
+        dirty_upward_fast_fixed_point_hits_.fetch_add(fixed_point_hits, std::memory_order_relaxed);
         mark_tag_arity_index_dirty();
         type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -4809,7 +4782,7 @@ public:
                                              std::string_view summary, MutationStatus status,
                                              std::uint32_t field_offset, std::uint64_t old_value,
                                              std::uint64_t new_value, bool has_rollback)
-        pre(node < tag_.size()) post(r: r >= 1) {
+        pre(node < tag_.size()) post(r : r >= 1) {
         const std::uint64_t mid = next_mutation_id_++;
         mutation_log_.push_back(mutation::create_mutation_record({
             .mutation_id = mid,
@@ -4884,17 +4857,20 @@ public:
     // Wrapper primitives should prefer this over flat.add_mutation()
     // for any op that modifies the children_ column.
     std::uint64_t add_structural_mutation_log_entry(NodeId parent, std::uint32_t child_idx,
-                                                      NodeId old_child, NodeId new_child,
-                                                      std::string_view op_name) {
+                                                    NodeId old_child, NodeId new_child,
+                                                    std::string_view op_name) {
         std::string canonical;
-        if (op_name == "remove-node" || op_name == "remove-child" || op_name == "structural-remove-child")
+        if (op_name == "remove-node" || op_name == "remove-child" ||
+            op_name == "structural-remove-child")
             canonical = "structural-remove-child";
         else if (op_name == "insert-child" || op_name == "structural-insert-child")
             canonical = "structural-insert-child";
-        else if (op_name == "set-body" || op_name == "set-child" || op_name == "structural-set-child")
+        else if (op_name == "set-body" || op_name == "set-child" ||
+                 op_name == "structural-set-child")
             canonical = "structural-set-child";
         else
-            canonical = std::string(op_name); // pass through; try_rollback_structural_child_op may still skip
+            canonical = std::string(
+                op_name); // pass through; try_rollback_structural_child_op may still skip
         return add_mutation_child_op(parent, child_idx, old_child, new_child, canonical);
     }
 
@@ -4968,8 +4944,7 @@ public:
         return count;
     }
 
-    [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id,
-                                                std::uint64_t current_epoch) const {
+    [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id, std::uint64_t current_epoch) const {
         for (const auto& rec : narrowing_log_) {
             if (rec.if_node == if_id && (rec.stale || rec.capture_epoch < current_epoch))
                 return true;
@@ -5000,11 +4975,12 @@ public:
 
     // Check if a NodeId is valid (in-bounds and from the current generation).
     bool is_valid(const NodeId id) const
-        post(r: r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
-                      node_gen_[id] == generation_)) {
+        post(r : r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
+                       node_gen_[id] == generation_)) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
-        if (id == NULL_NODE) return false;
+        if (id == NULL_NODE)
+            return false;
         if (id >= tag_.size() || id >= node_gen_.size()) {
             // Issue #457: stale access (out-of-range
             // NodeId) — bump the stale counter. This
@@ -5040,8 +5016,8 @@ public:
 
     // Safe get — returns nullopt on stale/invalid NodeId.
     std::optional<NodeView> get_safe(const NodeId id) const
-        post(r: !r.has_value() || (id < tag_.size() && id < node_gen_.size() &&
-                                   node_gen_[id] == generation_)) {
+        post(r : !r.has_value() ||
+             (id < tag_.size() && id < node_gen_.size() && node_gen_[id] == generation_)) {
         if (!is_valid(id))
             return std::nullopt;
         return get(id);
@@ -5148,8 +5124,8 @@ public:
 
     // Issue #291: serialize a StableNodeRef to a compact
     // 16-byte binary blob. Format (little-endian):
-    //   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad][u64 mutation_id][u32 workspace_id][u32 reserved]
-    //   = 4+4+2+2+8+4+4 = 24 bytes
+    //   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad][u64 mutation_id][u32 workspace_id][u32
+    //   reserved] = 4+4+2+2+8+4+4 = 24 bytes
     // The packed form is designed to be:
     //   - trivially memcpy-able (no host-endian conversion needed
     //     for use within one process; cross-endian callers
@@ -5167,13 +5143,13 @@ public:
     // FlatAST::kStableRefSerializedSize). Moving them to a free
     // constexpr would change the public API.
     static constexpr std::size_t kStableRefSerializedSize = 24;
-    static constexpr std::uint32_t kStableRefMagic = 0x2901A17A;  // #291 + AURA tag
+    static constexpr std::uint32_t kStableRefMagic = 0x2901A17A; // #291 + AURA tag
 
     // Issue #291: pack a StableNodeRef into a 20-byte buffer.
     // Returns the number of bytes written (= kStableRefSerializedSize).
     // Issue #379: body moved to src/core/ast_stability.cpp.
     [[nodiscard]] std::size_t serialize_stable_ref(const StableNodeRef& ref,
-                                                  std::uint8_t* out) const noexcept;
+                                                   std::uint8_t* out) const noexcept;
 
     // Issue #291: deserialize a 20-byte buffer back to a
     // StableNodeRef. Returns false if the magic doesn't match
@@ -5181,9 +5157,8 @@ public:
     // checking is_valid() AFTER deserializing to confirm the
     // ref still points to a live node in the current flat.
     // Issue #379: body moved to src/core/ast_stability.cpp.
-    [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf,
-                                             std::size_t buf_size,
-                                             StableNodeRef& out) const noexcept;
+    [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf, std::size_t buf_size,
+                                              StableNodeRef& out) const noexcept;
 
     // Issue #191: make a StableNodeRef capturing the current
     // generation. Use this in EDSL / query / mutate primitives
@@ -5210,8 +5185,13 @@ public:
         // last_validated_generation == 0 means "no validation
         // history" — make_ref() captures don't imply validation.
         // Callers that want provenance should use make_safe_ref().
-        return StableNodeRef{id, generation_, next_mutation_id_, 0,
-                             0, 0, wrap_epoch_.load(std::memory_order_relaxed),
+        return StableNodeRef{id,
+                             generation_,
+                             next_mutation_id_,
+                             0,
+                             0,
+                             0,
+                             wrap_epoch_.load(std::memory_order_relaxed),
                              subtree_generation(id)};
     }
 
@@ -5219,13 +5199,19 @@ public:
     // with a specific WorkspaceTree layer index. Used by
     // query/mutate primitives that operate on a child
     // workspace.
-    [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id) const noexcept {
+    [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id,
+                                                  std::uint32_t workspace_id) const noexcept {
         // Issue #392: capture subtree_gen_at_capture too.
         // Backward-compat: fiber_id and last_validated_generation
         // both default to 0 (no fiber context, no validation
         // history). Same convention as make_ref().
-        return StableNodeRef{id, generation_, next_mutation_id_, workspace_id,
-                             0, 0, wrap_epoch_.load(std::memory_order_relaxed),
+        return StableNodeRef{id,
+                             generation_,
+                             next_mutation_id_,
+                             workspace_id,
+                             0,
+                             0,
+                             wrap_epoch_.load(std::memory_order_relaxed),
                              subtree_generation(id)};
     }
 
@@ -5236,12 +5222,15 @@ public:
     // used from a fiber / agent loop. Existing callers of
     // make_ref() continue to work unchanged (fiber_id
     // defaults to 0 = "not in a fiber").
-    [[nodiscard]] StableNodeRef make_safe_ref(NodeId id,
-                                              std::uint32_t workspace_id = 0,
+    [[nodiscard]] StableNodeRef make_safe_ref(NodeId id, std::uint32_t workspace_id = 0,
                                               std::uint32_t fiber_id = 0) const noexcept {
         // Issue #392: capture subtree_gen_at_capture too.
-        return StableNodeRef{id, generation_, next_mutation_id_,
-                             workspace_id, fiber_id, generation_,
+        return StableNodeRef{id,
+                             generation_,
+                             next_mutation_id_,
+                             workspace_id,
+                             fiber_id,
+                             generation_,
                              wrap_epoch_.load(std::memory_order_relaxed),
                              subtree_generation(id)};
     }
@@ -5251,7 +5240,7 @@ public:
     // The returned ref has last_validated_generation =
     // current generation_ (i.e., freshly captured).
     [[nodiscard]] StableNodeRef capture_for_fiber(NodeId id,
-                                                   std::uint32_t fiber_id) const noexcept {
+                                                  std::uint32_t fiber_id) const noexcept {
         return make_safe_ref(id, 0, fiber_id);
     }
 
@@ -5270,10 +5259,14 @@ public:
     // `(query:parent-stable)` for cases where the caller
     // already knows the generation (e.g. a checkpoint file
     // from a prior session, or a cross-workspace handoff).
-    [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id,
-                                                    std::uint16_t gen) const noexcept {
-        return StableNodeRef{id, gen, next_mutation_id_, 0, 0,
-                             gen, wrap_epoch_.load(std::memory_order_relaxed),
+    [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id, std::uint16_t gen) const noexcept {
+        return StableNodeRef{id,
+                             gen,
+                             next_mutation_id_,
+                             0,
+                             0,
+                             gen,
+                             wrap_epoch_.load(std::memory_order_relaxed),
                              subtree_generation(id)};
     }
 
@@ -5292,24 +5285,22 @@ public:
     // (typically the value they captured at, which may be
     // older than the current global gen if they're using
     // scoped ref tracking or a checkpoint file).
-    [[nodiscard]] bool is_valid_id_gen(NodeId id,
-                                        std::uint16_t gen,
-                                        std::uint32_t wrap_epoch_at_capture =
-                                            0 /* 0 = use current */) const noexcept {
+    [[nodiscard]] bool
+    is_valid_id_gen(NodeId id, std::uint16_t gen,
+                    std::uint32_t wrap_epoch_at_capture = 0 /* 0 = use current */) const noexcept {
         if (id == NULL_NODE || id >= tag_.size() || id >= node_gen_.size())
             return false;
         if (node_gen_[id] != gen)
             return false;
-        const auto we = (wrap_epoch_at_capture == 0)
-                            ? wrap_epoch_.load(std::memory_order_relaxed)
-                            : wrap_epoch_at_capture;
+        const auto we = (wrap_epoch_at_capture == 0) ? wrap_epoch_.load(std::memory_order_relaxed)
+                                                     : wrap_epoch_at_capture;
         // Issue #368: catch second-wrap false positives. If
         // the caller passed a specific wrap_epoch, check
         // against the current one (mismatch = wrapped).
         // If they passed 0 (default), use the current epoch
         // (skip the check — fresh captures are always safe).
-        if (wrap_epoch_at_capture != 0
-            && wrap_epoch_at_capture != wrap_epoch_.load(std::memory_order_relaxed))
+        if (wrap_epoch_at_capture != 0 &&
+            wrap_epoch_at_capture != wrap_epoch_.load(std::memory_order_relaxed))
             return false;
         (void)we;
         return true;
@@ -5320,15 +5311,14 @@ public:
     // they differ, the ref is stale (a structural mutation
     // happened in between).
     [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept
-        post(r: r == (ref.id != NULL_NODE && ref.id < tag_.size() &&
-                      ref.id < node_gen_.size() && node_gen_[ref.id] == ref.gen &&
-                      ref.gen == generation_ &&
-                      // Issue #368: generation_ is uint16_t; after
-                      // ~130K mutates a second wrap could match
-                      // the ref's captured gen by accident. Check
-                      // wrap_epoch explicitly (uint32_t, wraps
-                      // every ~2.6e14 mutates).
-                      ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed))) {
+        post(r : r == (ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
+                       node_gen_[ref.id] == ref.gen && ref.gen == generation_ &&
+                       // Issue #368: generation_ is uint16_t; after
+                       // ~130K mutates a second wrap could match
+                       // the ref's captured gen by accident. Check
+                       // wrap_epoch explicitly (uint32_t, wraps
+                       // every ~2.6e14 mutates).
+                       ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed))) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
@@ -5390,7 +5380,7 @@ public:
         return subtree_gen_[top] == ref.subtree_gen_at_capture;
     }
     [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept
-        post(r: !r.has_value() || is_valid(ref)) {
+        post(r : !r.has_value() || is_valid(ref)) {
         if (!is_valid(ref))
             return std::nullopt;
         return get(ref.id);
@@ -5696,9 +5686,7 @@ public:
     [[nodiscard]] std::uint64_t node_gen_stale_access_count() const noexcept {
         return node_gen_stale_access_count_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] std::uint16_t current_generation() const noexcept {
-        return generation_;
-    }
+    [[nodiscard]] std::uint16_t current_generation() const noexcept { return generation_; }
     std::uint64_t atomic_batch_commits_v() const noexcept {
         return atomic_batch_commits_.load(std::memory_order_relaxed);
     }
@@ -5790,8 +5778,8 @@ private:
             generation_ = 1;
     }
 
-    [[nodiscard]] std::expected<void, MutationError> try_rollback_structural_child_op(
-        MutationRecord& rec) {
+    [[nodiscard]] std::expected<void, MutationError>
+    try_rollback_structural_child_op(MutationRecord& rec) {
         auto op = mutation::structural_rollback_op(rec.operator_name);
         if (!op)
             return std::unexpected(op.error());
@@ -5843,7 +5831,6 @@ private:
     }
 
 public:
-
     // Rollback all mutations since (and including) the given ID.
     std::size_t rollback_since(std::uint64_t since_id) {
         std::size_t count = 0;
@@ -5989,9 +5976,7 @@ public:
     // and type_cache_gen_) to short-circuit
     // re-inference for macro-introduced nodes.
     std::uint32_t schema_cache(aura::ast::NodeId id) const {
-        return id < schema_cache_.size()
-                   ? schema_cache_[id]
-                   : 0;
+        return id < schema_cache_.size() ? schema_cache_[id] : 0;
     }
     void set_schema_cache(aura::ast::NodeId id, std::uint32_t tid) {
         if (id >= schema_cache_.size())
@@ -6008,13 +5993,9 @@ public:
     // most recent InvalidationRecord for that mutation
     // (a single mutation may invalidate multiple bindings
     // — the trace keeps all of them).
-    std::size_t invalidation_trace_size() const {
-        return invalidation_trace_.size();
-    }
-    std::optional<InvalidationRecord>
-    last_invalidation_for(std::uint64_t mutation_id) const {
-        for (auto it = invalidation_trace_.rbegin();
-             it != invalidation_trace_.rend(); ++it) {
+    std::size_t invalidation_trace_size() const { return invalidation_trace_.size(); }
+    std::optional<InvalidationRecord> last_invalidation_for(std::uint64_t mutation_id) const {
+        for (auto it = invalidation_trace_.rbegin(); it != invalidation_trace_.rend(); ++it) {
             if (it->mutation_id == mutation_id)
                 return *it;
         }
@@ -6023,21 +6004,17 @@ public:
     // Plumbed to CompilerMetrics via the snapshot for
     // observability. Counter incremented on every
     // per-binding gen bump that gets traced.
-    mutable std::atomic<std::uint64_t>
-        invalidation_trace_records_total_{0};
+    mutable std::atomic<std::uint64_t> invalidation_trace_records_total_{0};
     // Counter accessor.
     std::uint64_t invalidation_trace_records_total() const {
-        return invalidation_trace_records_total_.load(
-            std::memory_order_relaxed);
+        return invalidation_trace_records_total_.load(std::memory_order_relaxed);
     }
     // Per-node cache gen accessor for the BINDING the
     // cache entry is for. 0 = no binding context.
     // Mirrors type_cache_gen() / type_cache_binding_gen_
     // column.
     std::uint32_t type_cache_binding_gen(NodeId id) const {
-        return id < type_cache_binding_gen_.size()
-                   ? type_cache_binding_gen_[id]
-                   : 0;
+        return id < type_cache_binding_gen_.size() ? type_cache_binding_gen_[id] : 0;
     }
     // The canonical call site for the type-checker when
     // populating a cache entry for a Variable node (or
@@ -6045,9 +6022,8 @@ public:
     // Stores the type, the global gen, and the per-binding
     // gen. On cache hit, the check is: global gen matches
     // AND per-binding gen matches → entry is fresh.
-    void set_type_with_binding_gen(NodeId id, std::uint32_t tid,
-                                  std::uint32_t global_gen,
-                                  std::uint32_t binding_gen_val) {
+    void set_type_with_binding_gen(NodeId id, std::uint32_t tid, std::uint32_t global_gen,
+                                   std::uint32_t binding_gen_val) {
         if (id >= type_id_.size() || id >= type_cache_gen_.size() ||
             id >= type_cache_binding_gen_.size())
             return;
@@ -6192,8 +6168,7 @@ public:
     // Out-of-range ids are silently a no-op (no callback
     // invocation, same as the allocating version's empty
     // vector).
-    template <typename Fn>
-    void for_each_stable_child(NodeId id, Fn&& fn) const {
+    template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
         if (id >= children_.size())
             return;
         const auto& pcv = children_[id];
@@ -6263,10 +6238,10 @@ concept PureMutationFn = requires(Fn& fn, FlatAST& flat, const MutationRecord& r
     { fn(flat, rec) } -> std::same_as<void>;
 };
 
-export template <PureMutationFn Fn>
-class MutationFnWrap {
+export template <PureMutationFn Fn> class MutationFnWrap {
 public:
-    explicit MutationFnWrap(Fn& fn) : fn_(&fn) {}
+    explicit MutationFnWrap(Fn& fn)
+        : fn_(&fn) {}
 
     void visit_mutation(FlatAST& flat, const MutationRecord& rec) { (*fn_)(flat, rec); }
     bool has_error() const { return false; }
@@ -6287,7 +6262,7 @@ export [[nodiscard]] FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& f
 export [[nodiscard]] bool is_mutation_target_valid(const FlatAST& flat,
                                                    const MutationRecord& rec) noexcept;
 export [[nodiscard]] bool is_mutation_parent_valid(const FlatAST& flat,
-                                                  const MutationRecord& rec) noexcept;
+                                                   const MutationRecord& rec) noexcept;
 
 // ── run_mutation_pipeline — fold over mutation log ───────────
 export template <MutationVisitor V>
@@ -6347,10 +6322,10 @@ private:
 
 // Issue #276: resolve a captured stable ref across workspace layers.
 // Issue #378: body moved to ast_impl.cpp (non-template free function).
-export [[nodiscard]] std::optional<FlatAST::StableNodeRef> resolve_across_layer(
-    const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
-    FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
-    std::uint32_t target_layer) noexcept;
+export [[nodiscard]] std::optional<FlatAST::StableNodeRef>
+resolve_across_layer(const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
+                     FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
+                     std::uint32_t target_layer) noexcept;
 
 // ── Patch application ──────────────────────────────────────────
 export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
@@ -6359,8 +6334,6 @@ export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!pat
 export void fixup_deltas(FlatAST& ast);
 
 // ── Bridge from pointer tree to FlatAST ────────────────────────
-
-
 
 
 } // namespace aura::ast

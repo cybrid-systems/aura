@@ -43,8 +43,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -57,12 +57,10 @@ namespace aura_issue_350_detail {
 // structure. The Aura-level match syntax is
 // limited; we use a simpler structure (a define +
 // if) to exercise the match_info table indirectly.
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define x 0) "
-        "  (if (> x 0) 'pos 'neg))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define x 0) "
+                       "  (if (> x 0) 'pos 'neg))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -80,8 +78,7 @@ bool test_primitive_returns_value() {
     compiler::CompilerService cs;
     // No workspace: returns void (no match_info).
     auto r = cs.eval("(query:match-exhaustiveness-notes)");
-    CHECK(r.has_value(),
-          "(query:match-exhaustiveness-notes) returns a value");
+    CHECK(r.has_value(), "(query:match-exhaustiveness-notes) returns a value");
     return true;
 }
 
@@ -96,10 +93,12 @@ bool test_primitive_with_workspace() {
     std::println("\n--- AC2: primitive with workspace ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto r = cs.eval("(query:match-exhaustiveness-notes)");
-    CHECK(r.has_value(),
-          "with-workspace: (query:match-exhaustiveness-notes) returns a value");
+    CHECK(r.has_value(), "with-workspace: (query:match-exhaustiveness-notes) returns a value");
     return true;
 }
 
@@ -119,8 +118,7 @@ bool test_cpp_side_exhaustiveness_wired() {
     // bypasses the actual call but verifies the
     // function exists + the post_mutation_invariant
     // check calls it.
-    CHECK(true,
-          "C++ side exhaustiveness re-eval wired (verified at the C++ level)");
+    CHECK(true, "C++ side exhaustiveness re-eval wired (verified at the C++ level)");
     return true;
 }
 
@@ -133,15 +131,15 @@ bool test_end_to_end_via_compiler_service() {
     std::println("\n--- AC4: end-to-end via CompilerService ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // Run a mutation that should trigger a re-eval.
-    auto r1 = cs.eval(
-        "(mutate:rebind \"x\" \"1\" \"test-rebind-for-350\")");
-    CHECK(r1.has_value(),
-          "mutate:rebind runs");
+    auto r1 = cs.eval("(mutate:rebind \"x\" \"1\" \"test-rebind-for-350\")");
+    CHECK(r1.has_value(), "mutate:rebind runs");
     auto r2 = cs.eval("(query:match-exhaustiveness-notes)");
-    CHECK(r2.has_value(),
-          "post-mutate: (query:match-exhaustiveness-notes) returns a value");
+    CHECK(r2.has_value(), "post-mutate: (query:match-exhaustiveness-notes) returns a value");
     return true;
 }
 
@@ -156,10 +154,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_350_detail
+} // namespace aura_issue_350_detail
 
-int aura_issue_350_run() { return aura_issue_350_detail::run_tests(); }
+int aura_issue_350_run() {
+    return aura_issue_350_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_350_run(); }
+int main() {
+    return aura_issue_350_run();
+}
 #endif

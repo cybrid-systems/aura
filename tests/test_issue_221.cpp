@@ -46,12 +46,11 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 using PCV = aura::ast::PersistentChildVector<std::uint32_t>;
 static constexpr std::uint32_t NULL_NODE = ~0u;
-
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -79,7 +78,8 @@ void test_1_basic() {
 
     // Iterators
     std::uint32_t sum = 0;
-    for (auto x : v2) sum += x;
+    for (auto x : v2)
+        sum += x;
     CHECK(sum == 150, "sum of [10,20,30,40,50] == 150");
 }
 
@@ -92,8 +92,7 @@ void test_2_cow() {
 
     auto v2 = v.with_push_back(99);
     CHECK(v.size() == original_size, "push_back doesn't change v.size()");
-    CHECK(v.data() == original_data_ptr,
-          "push_back doesn't change v.data() (COW)");
+    CHECK(v.data() == original_data_ptr, "push_back doesn't change v.data() (COW)");
     CHECK(v[0] == 1 && v[1] == 2 && v[2] == 3, "v content unchanged");
     CHECK(v2.size() == 4, "v2 has new size 4");
     CHECK(v2[3] == 99, "v2[3] is the new element");
@@ -123,14 +122,12 @@ void test_3_back_references() {
     // v1 holds a reference to v's old data via the COW storage.
     // When we mutate v via with_push_back, v's storage should
     // still be alive (refcount >= 2) and v1 unchanged.
-    auto v1 = v;  // copy (shared_ptr refcount++)
+    auto v1 = v; // copy (shared_ptr refcount++)
     CHECK(v.data() == v1.data(), "v and v1 share the same storage");
 
-    auto v2 = v.with_push_back(40);  // v's storage should be preserved
-    CHECK(v.data() != v2.data(),
-          "v2 has different storage (new allocation for push_back)");
-    CHECK(v.data() == v1.data(),
-          "v1 still shares v's old storage (back-reference alive)");
+    auto v2 = v.with_push_back(40); // v's storage should be preserved
+    CHECK(v.data() != v2.data(), "v2 has different storage (new allocation for push_back)");
+    CHECK(v.data() == v1.data(), "v1 still shares v's old storage (back-reference alive)");
     CHECK(v.size() == 3, "v unchanged");
     CHECK(v1.size() == 3, "v1 unchanged");
     CHECK(v2.size() == 4, "v2 has new element");
@@ -152,11 +149,11 @@ void test_4_branches() {
     PRINTLN("\n--- Test 4: Multiple branches from a single original ---");
     PCV original{1, 2, 3, 4, 5};
     // Build 5 different branches, all from the same original.
-    auto a = original.with_push_back(100);          // [1,2,3,4,5,100]
-    auto b = original.with_erase(2);                 // [1,2,4,5]
-    auto c = original.with_insert(0, 0);             // [0,1,2,3,4,5]
-    auto d = original.with_set(2, 22);               // [1,2,22,4,5]
-    auto e = original;  // copy (untouched)
+    auto a = original.with_push_back(100); // [1,2,3,4,5,100]
+    auto b = original.with_erase(2);       // [1,2,4,5]
+    auto c = original.with_insert(0, 0);   // [0,1,2,3,4,5]
+    auto d = original.with_set(2, 22);     // [1,2,22,4,5]
+    auto e = original;                     // copy (untouched)
 
     // Each branch is independent
     CHECK(a.size() == 6 && a[5] == 100, "a: [1,2,3,4,5,100]");
@@ -176,7 +173,7 @@ void test_5_rollback() {
     //   3. "Rollback" by reinstalling the capture
     //   4. Verify the result == the pre-mutation state
     PCV pre_mutation{1, 2, 3, 4, 5};
-    PCV current = pre_mutation;  // checkpoint captures the old state
+    PCV current = pre_mutation; // checkpoint captures the old state
 
     // Mutate forward
     current = current.with_push_back(99);
@@ -187,7 +184,7 @@ void test_5_rollback() {
     CHECK(current[2] == 4, "[2] == 4 (erase removed 3)");
 
     // Rollback
-    current = pre_mutation;  // reinstall the snapshot
+    current = pre_mutation; // reinstall the snapshot
     CHECK(current == pre_mutation, "rollback → current == pre_mutation");
     CHECK(current.size() == 5, "rollback size 5");
     CHECK(current[0] == 1 && current[4] == 5, "rollback content matches");
@@ -203,20 +200,16 @@ void test_6_empty_and_edges() {
     PCV v;
     CHECK(v.empty(), "empty");
     CHECK(v.with_push_back(1).size() == 1, "with_push_back on empty works");
-    CHECK(v.with_insert(0, 99).size() == 1,
-          "with_insert on empty at pos 0 works");
+    CHECK(v.with_insert(0, 99).size() == 1, "with_insert on empty at pos 0 works");
     CHECK(v.with_erase(0).empty(), "with_erase on empty is no-op (empty)");
-    CHECK(v.with_set(0, 5).empty(),
-          "with_set on empty is no-op (out of range)");
+    CHECK(v.with_set(0, 5).empty(), "with_set on empty is no-op (out of range)");
 
     PCV v2{42};
     CHECK(v2.with_erase(0).empty(), "erase the only element → empty");
-    CHECK(v2.with_insert(5, 99).size() == 2,
-          "insert at pos > size is clamped to size (append)");
+    CHECK(v2.with_insert(5, 99).size() == 2, "insert at pos > size is clamped to size (append)");
 
     PCV v3{1, 2, 3};
-    CHECK(v3.with_insert(10, 99).size() == 4,
-          "with_insert at pos > size appends");
+    CHECK(v3.with_insert(10, 99).size() == 4, "with_insert at pos > size appends");
     CHECK(v3.with_insert(10, 99)[3] == 99, "appended element at end");
 }
 
@@ -227,8 +220,8 @@ void test_7_comparison() {
     PCV b{1, 2, 3};
     PCV c{1, 2, 4};
     PCV d{1, 2};
-    PCV e;  // empty
-    PCV f;  // empty
+    PCV e; // empty
+    PCV f; // empty
 
     CHECK(a == b, "a == b (same content)");
     CHECK(!(a == c), "a != c (different content)");
@@ -262,9 +255,12 @@ void test_8_perf() {
     // 100 mixed mutations
     start = std::chrono::steady_clock::now();
     for (int i = 0; i < 100; ++i) {
-        if (i % 2 == 0) base = base.with_push_back(2000 + i);
-        else if (i % 3 == 0) base = base.with_erase(500);
-        else base = base.with_set(i % base.size(), 3000 + i);
+        if (i % 2 == 0)
+            base = base.with_push_back(2000 + i);
+        else if (i % 3 == 0)
+            base = base.with_erase(500);
+        else
+            base = base.with_set(i % base.size(), 3000 + i);
     }
     end = std::chrono::steady_clock::now();
     us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
@@ -284,30 +280,34 @@ void test_9_wire_format() {
     auto serialize_to_buf = [](const PCV& v, std::vector<char>& buf) {
         // Per-node count (1 node)
         std::uint32_t count = 1;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
         // Per-node child count
         std::uint32_t child_count = static_cast<std::uint32_t>(v.size());
         buf.insert(buf.end(), reinterpret_cast<char*>(&child_count),
                    reinterpret_cast<char*>(&child_count) + 4);
         // Flat children
         std::uint32_t total = child_count;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&total),
-                   reinterpret_cast<char*>(&total) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&total), reinterpret_cast<char*>(&total) + 4);
         for (std::size_t i = 0; i < v.size(); ++i) {
             std::uint32_t x = v[i];
-            buf.insert(buf.end(), reinterpret_cast<char*>(&x),
-                       reinterpret_cast<char*>(&x) + 4);
+            buf.insert(buf.end(), reinterpret_cast<char*>(&x), reinterpret_cast<char*>(&x) + 4);
         }
     };
-    auto deserialize_from_buf = [](const std::vector<char>& buf,
-                                  std::size_t& pos) -> PCV {
-        std::uint32_t count; std::memcpy(&count, &buf[pos], 4); pos += 4;
-        std::uint32_t child_count; std::memcpy(&child_count, &buf[pos], 4); pos += 4;
-        std::uint32_t total; std::memcpy(&total, &buf[pos], 4); pos += 4;
+    auto deserialize_from_buf = [](const std::vector<char>& buf, std::size_t& pos) -> PCV {
+        std::uint32_t count;
+        std::memcpy(&count, &buf[pos], 4);
+        pos += 4;
+        std::uint32_t child_count;
+        std::memcpy(&child_count, &buf[pos], 4);
+        pos += 4;
+        std::uint32_t total;
+        std::memcpy(&total, &buf[pos], 4);
+        pos += 4;
         PCV out;
         for (std::uint32_t i = 0; i < child_count; ++i) {
-            std::uint32_t x; std::memcpy(&x, &buf[pos], 4); pos += 4;
+            std::uint32_t x;
+            std::memcpy(&x, &buf[pos], 4);
+            pos += 4;
             out = out.with_push_back(x);
         }
         return out;

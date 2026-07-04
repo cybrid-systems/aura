@@ -26,15 +26,15 @@ import aura.compiler.value;
 
 namespace aura_574_detail {
 
-using aura::ir::IRFunction;
-using aura::ir::IRInstruction;
-using aura::ir::IRModule;
-using aura::ir::IROpcode;
 using aura::compiler::CompilerService;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::TypeSpecializationWrap;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::ir::IRFunction;
+using aura::ir::IRInstruction;
+using aura::ir::IRModule;
+using aura::ir::IROpcode;
 
 static std::size_t count_cast_ops(const IRModule& mod) {
     std::size_t n = 0;
@@ -103,8 +103,7 @@ static void run_matrix(CompilerService& cs) {
     flat->root = call_id;
     aura::compiler::CoercionMap cm;
     cm.add(call_id, 1, arg0, 0, 1, 0, 0);
-    CHECK(aura::compiler::apply_coercion_map(*flat, cm) == 1,
-          "apply_coercion_map applied 1 entry");
+    CHECK(aura::compiler::apply_coercion_map(*flat, cm) == 1, "apply_coercion_map applied 1 entry");
     CHECK(flat->get(flat->get(call_id).child(1)).tag == aura::ast::NodeTag::Coercion,
           "CoercionNode at child slot");
 
@@ -129,8 +128,8 @@ static void run_matrix(CompilerService& cs) {
     ts.run(gradual);
     dce3.run(gradual);
     const auto remaining = count_cast_ops(gradual);
-    std::println("  castops: emitted={} remaining={} eliminated={}",
-                 emitted, remaining, dce3.eliminated_count());
+    std::println("  castops: emitted={} remaining={} eliminated={}", emitted, remaining,
+                 dce3.eliminated_count());
     CHECK(dce3.eliminated_count() > 0, "DCE eliminated identity casts");
     CHECK(remaining < emitted, "remaining CastOps < emitted");
 
@@ -141,8 +140,8 @@ static void run_matrix(CompilerService& cs) {
     const auto elim_before = cs.snapshot().dead_coercion_eliminated_total;
 
     for (int i = 0; i < 4; ++i) {
-        CHECK(cs.eval("(mutate:rebind \"n\" \"" + std::to_string(10 + i) +
-                      "\" \"574-" + std::to_string(i) + "\")")
+        CHECK(cs.eval("(mutate:rebind \"n\" \"" + std::to_string(10 + i) + "\" \"574-" +
+                      std::to_string(i) + "\")")
                   .has_value(),
               "mutate:rebind ok");
         CHECK(cs.eval("(eval-current)").has_value(), "post-mutate eval");

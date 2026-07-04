@@ -17,8 +17,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -26,7 +26,6 @@ import aura.core.type;
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.diag;
-
 
 
 // ── Test 1: fresh TypeChecker has hit rate 0.0 ─────────
@@ -37,8 +36,7 @@ bool test_fresh_hit_rate() {
 
     aura::core::TypeRegistry reg;
     aura::compiler::TypeChecker tc(reg);
-    CHECK(tc.cache_hit_rate() == 0.0,
-          "fresh TypeChecker has cache_hit_rate == 0.0");
+    CHECK(tc.cache_hit_rate() == 0.0, "fresh TypeChecker has cache_hit_rate == 0.0");
     return true;
 }
 
@@ -54,8 +52,7 @@ bool test_hit_rate_computation() {
 
     // After reset_stats, hit rate is 0.0
     tc.reset_stats();
-    CHECK(tc.cache_hit_rate() == 0.0,
-          "after reset_stats, hit rate is 0.0");
+    CHECK(tc.cache_hit_rate() == 0.0, "after reset_stats, hit rate is 0.0");
 
     // Inject synthetic counts via the underlying stats
     // struct. (We can't increment stats_ from outside
@@ -88,14 +85,11 @@ bool test_hit_rate_after_inference() {
 
     auto ty = tc.infer_flat(flat, pool, id, diag);
     auto s = tc.stats();
-    CHECK(s.cache_misses >= 1,
-          "first inference records at least one cache_miss");
+    CHECK(s.cache_misses >= 1, "first inference records at least one cache_miss");
     double rate = tc.cache_hit_rate();
-    CHECK(rate >= 0.0 && rate <= 1.0,
-          "hit rate is in [0, 1] after inference");
+    CHECK(rate >= 0.0 && rate <= 1.0, "hit rate is in [0, 1] after inference");
     // We expect 0% hit rate on a cold start
-    CHECK(rate < 0.5,
-          "cold-start hit rate is < 0.5 (no hits yet)");
+    CHECK(rate < 0.5, "cold-start hit rate is < 0.5 (no hits yet)");
     return true;
 }
 
@@ -116,8 +110,7 @@ bool test_synthetic_hit_rate() {
     constexpr std::uint64_t m = 5;
     constexpr std::uint64_t s = 0;
     double rate = static_cast<double>(h) / static_cast<double>(h + m + s);
-    CHECK(rate > 0.66 && rate < 0.67,
-          "hit rate formula: 10/15 ≈ 0.667");
+    CHECK(rate > 0.66 && rate < 0.67, "hit rate formula: 10/15 ≈ 0.667");
     return true;
 }
 
@@ -127,12 +120,12 @@ int run_tests() {
     test_hit_rate_computation();
     test_hit_rate_after_inference();
     test_synthetic_hit_rate();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_130_detail
+} // namespace aura_issue_130_detail
 
-int aura_issue_130_run() { return aura_issue_130_detail::run_tests(); }
-
+int aura_issue_130_run() {
+    return aura_issue_130_detail::run_tests();
+}

@@ -24,10 +24,16 @@ namespace aura_issue_677_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::string find_aura_binary() {
     // Check common locations in priority order.
@@ -56,7 +62,8 @@ static std::string http_get(const std::string& host, int port, const std::string
         ::close(fd);
         return {};
     }
-    const std::string req = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    const std::string req =
+        "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     (void)::send(fd, req.data(), req.size(), 0);
     std::string resp;
     char buf[4096];
@@ -67,7 +74,7 @@ static std::string http_get(const std::string& host, int port, const std::string
     return resp;
 }
 
-}  // namespace aura_issue_677_detail
+} // namespace aura_issue_677_detail
 
 int main() {
     using namespace aura_issue_677_detail;

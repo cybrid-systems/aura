@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -56,16 +56,14 @@ bool test_genvar_constructor() {
         return false;
     }
     // DEBUG: probe each piece
-    auto raw = run_string(cs,
-        "(string-append \"raw=\" (eda:name-str (eda:genvar-name-debug g)) "
-        "\" len=\" (number->string (eda:genvar-init g)))");
+    auto raw = run_string(cs, "(string-append \"raw=\" (eda:name-str (eda:genvar-name-debug g)) "
+                              "\" len=\" (number->string (eda:genvar-init g)))");
     std::println("  DEBUG g raw=[{}]", raw);
     auto raw2 = run_string(cs, "(eda:name-str (eda:genvar-name-debug g))");
     std::println("  DEBUG genvar-name-debug = [{}]", raw2);
     // Try directly probing what's in the env
-    auto probe = run_string(cs,
-        "(let ((probe-result (eda:genvar-name-debug g))) "
-        "  (string-append \"probe:[\" (eda:name-str probe-result) \"]\"))");
+    auto probe = run_string(cs, "(let ((probe-result (eda:genvar-name-debug g))) "
+                                "  (string-append \"probe:[\" (eda:name-str probe-result) \"]\"))");
     std::println("  DEBUG probe = [{}]", probe);
     // Direct inlined car/cdr test
     auto inline_test = run_string(cs, "(car (cdr g))");
@@ -101,8 +99,7 @@ bool test_genvar_constructor() {
 
     auto s = run_string(cs, "(eda:emit-genvar g)");
     std::println("  DEBUG emit-genvar result = [{}]", s);
-    CHECK(s == "genvar i = 0;",
-          std::string("genvar emit = \"") + s + "\"");
+    CHECK(s == "genvar i = 0;", std::string("genvar emit = \"") + s + "\"");
 
     // Non-zero init
     if (!cs.eval("(define g2 (make-eda:genvar 'k 3))")) {
@@ -110,8 +107,7 @@ bool test_genvar_constructor() {
         return false;
     }
     auto s2 = run_string(cs, "(eda:emit-genvar g2)");
-    CHECK(s2 == "genvar k = 3;",
-          std::string("genvar k emit = \"") + s2 + "\"");
+    CHECK(s2 == "genvar k = 3;", std::string("genvar k emit = \"") + s2 + "\"");
 
     return true;
 }
@@ -334,8 +330,12 @@ int run_tests() {
 
 } // namespace aura_issue_436_phase6_detail
 
-int aura_issue_436_phase6_run() { return aura_issue_436_phase6_detail::run_tests(); }
+int aura_issue_436_phase6_run() {
+    return aura_issue_436_phase6_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_436_phase6_run(); }
+int main() {
+    return aura_issue_436_phase6_run();
+}
 #endif

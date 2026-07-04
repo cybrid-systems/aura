@@ -33,8 +33,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -63,8 +63,7 @@ bool test_alloc_env_frame_stamps_version() {
     CHECK(id != aura::compiler::NULL_ENV_ID, "alloc_env_frame returns valid id");
     // The frame's version_ must equal defuse_version_ at the
     // time of alloc (which hasn't been bumped yet by us).
-    CHECK(ev.env_frame(id).version_ == v0,
-          "frame.version_ == defuse_version_ at alloc time");
+    CHECK(ev.env_frame(id).version_ == v0, "frame.version_ == defuse_version_ at alloc time");
     return true;
 }
 
@@ -72,18 +71,15 @@ bool test_fresh_frame_not_stale() {
     std::println("\n--- AC2: fresh frame is not stale ---");
     aura::compiler::Evaluator ev;
     aura::compiler::EnvId id = ev.alloc_env_frame();
-    CHECK(!ev.is_env_frame_stale(id),
-          "is_env_frame_stale returns false for fresh frame");
+    CHECK(!ev.is_env_frame_stale(id), "is_env_frame_stale returns false for fresh frame");
     return true;
 }
 
 bool test_invalid_frame_is_stale() {
     std::println("\n--- AC3: invalid id is treated as stale (safety net) ---");
     aura::compiler::Evaluator ev;
-    CHECK(ev.is_env_frame_stale(aura::compiler::NULL_ENV_ID),
-          "NULL_ENV_ID is stale (defensive)");
-    CHECK(ev.is_env_frame_stale(999999),
-          "out-of-range id is stale (defensive)");
+    CHECK(ev.is_env_frame_stale(aura::compiler::NULL_ENV_ID), "NULL_ENV_ID is stale (defensive)");
+    CHECK(ev.is_env_frame_stale(999999), "out-of-range id is stale (defensive)");
     return true;
 }
 
@@ -97,8 +93,7 @@ bool test_defuse_version_bump_marks_frame_stale() {
     // test layer. The version bump itself is what marks the
     // frame stale.)
     ev.bump_defuse_version_for_test();
-    CHECK(ev.is_env_frame_stale(id),
-          "frame is stale after defuse_version_ bump");
+    CHECK(ev.is_env_frame_stale(id), "frame is stale after defuse_version_ bump");
     return true;
 }
 
@@ -115,8 +110,8 @@ bool test_capture_then_mutate_consistency() {
             "  (define f (lambda () x)) "
             "  (f))");
     auto r1 = cs.eval("(begin "
-                     "  (define x 20) "   // shadow x
-                     "  (f))");
+                      "  (define x 20) " // shadow x
+                      "  (f))");
     CHECK(r1.has_value(), "lookup after mutation returns a value");
     // Note: the closure f was captured against x=10 in the SoA
     // arena. After the rebind, x=20 (new define shadows old).
@@ -147,8 +142,8 @@ bool test_materialize_call_env_stale_detection() {
     // Call materialize_call_env — should log a warning to std::cerr
     // and bump the frame's version_ to silence future warnings.
     auto ne = ev.materialize_call_env(cl);
-    (void)ne;  // result is a fresh Env; we only care about the
-                // side effect on the frame's version_.
+    (void)ne; // result is a fresh Env; we only care about the
+              // side effect on the frame's version_.
     auto v_after = ev.defuse_version_for_test();
     CHECK(ev.env_frame(id).version_ == v_after,
           "frame.version_ bumped to defuse_version_ by materialize_call_env");
@@ -164,14 +159,10 @@ bool test_save_panic_checkpoint_snapshots_arenas() {
     aura::compiler::Evaluator ev;
     // Without a workspace loaded, save_panic_checkpoint returns false.
     // We can still verify the size members exist and default to 0.
-    CHECK(ev.panic_safe_cells_size() == 0,
-          "panic_safe_cells_size_ defaults to 0");
-    CHECK(ev.panic_safe_pairs_size() == 0,
-          "panic_safe_pairs_size_ defaults to 0");
-    CHECK(ev.panic_safe_string_heap_size() == 0,
-          "panic_safe_string_heap_size_ defaults to 0");
-    CHECK(ev.panic_safe_env_frames_size() == 0,
-          "panic_safe_env_frames_size_ defaults to 0");
+    CHECK(ev.panic_safe_cells_size() == 0, "panic_safe_cells_size_ defaults to 0");
+    CHECK(ev.panic_safe_pairs_size() == 0, "panic_safe_pairs_size_ defaults to 0");
+    CHECK(ev.panic_safe_string_heap_size() == 0, "panic_safe_string_heap_size_ defaults to 0");
+    CHECK(ev.panic_safe_env_frames_size() == 0, "panic_safe_env_frames_size_ defaults to 0");
     // Now load a workspace via CompilerService + try a real save
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define x 1)\")");
@@ -195,14 +186,10 @@ bool test_commit_panic_checkpoint_clears_arena_sizes() {
     ev.set_panic_safe_string_heap_size_for_test(100);
     ev.set_panic_safe_env_frames_size_for_test(7);
     ev.commit_panic_checkpoint();
-    CHECK(ev.panic_safe_cells_size() == 0,
-          "commit clears panic_safe_cells_size_");
-    CHECK(ev.panic_safe_pairs_size() == 0,
-          "commit clears panic_safe_pairs_size_");
-    CHECK(ev.panic_safe_string_heap_size() == 0,
-          "commit clears panic_safe_string_heap_size_");
-    CHECK(ev.panic_safe_env_frames_size() == 0,
-          "commit clears panic_safe_env_frames_size_");
+    CHECK(ev.panic_safe_cells_size() == 0, "commit clears panic_safe_cells_size_");
+    CHECK(ev.panic_safe_pairs_size() == 0, "commit clears panic_safe_pairs_size_");
+    CHECK(ev.panic_safe_string_heap_size() == 0, "commit clears panic_safe_string_heap_size_");
+    CHECK(ev.panic_safe_env_frames_size() == 0, "commit clears panic_safe_env_frames_size_");
     return true;
 }
 
@@ -230,6 +217,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_242_detail
+} // namespace aura_issue_242_detail
 
-int aura_issue_242_run() { return aura_issue_242_detail::run_tests(); }
+int aura_issue_242_run() {
+    return aura_issue_242_detail::run_tests();
+}

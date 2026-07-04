@@ -31,8 +31,7 @@ import std;
 
 namespace aura_issue_564_detail {
 
-static int count_occurrences(const std::string& haystack,
-                             const std::string& needle) {
+static int count_occurrences(const std::string& haystack, const std::string& needle) {
     int count = 0;
     std::size_t pos = 0;
     while ((pos = haystack.find(needle, pos + 1)) != std::string::npos) {
@@ -45,8 +44,7 @@ static std::string read_file(const std::string& path) {
     std::ifstream f(path);
     std::string content;
     if (f.good()) {
-        content.assign((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
+        content.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     }
     f.close();
     return content;
@@ -58,12 +56,9 @@ bool test_stdlib_core_file_present() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/core.aura";
     std::string content = read_file(lib_path);
     CHECK(!content.empty(), "lib/std/core.aura exists on disk");
-    CHECK(content.find("(export") != std::string::npos,
-          "stdlib/core.aura has (export ...) line");
-    CHECK(content.find("(core:any") != std::string::npos,
-          "stdlib/core.aura exports (core:any)");
-    CHECK(content.find("(core:all") != std::string::npos,
-          "stdlib/core.aura exports (core:all)");
+    CHECK(content.find("(export") != std::string::npos, "stdlib/core.aura has (export ...) line");
+    CHECK(content.find("(core:any") != std::string::npos, "stdlib/core.aura exports (core:any)");
+    CHECK(content.find("(core:all") != std::string::npos, "stdlib/core.aura exports (core:all)");
     CHECK(content.find("(core:zip-with") != std::string::npos,
           "stdlib/core.aura exports (core:zip-with)");
     CHECK(content.find("(core:group-by") != std::string::npos,
@@ -78,10 +73,8 @@ bool test_stdlib_core_file_present() {
           "stdlib/core.aura exports (core:format-currency)");
     CHECK(content.find("(core:clamp") != std::string::npos,
           "stdlib/core.aura exports (core:clamp)");
-    CHECK(content.find("(core:lerp") != std::string::npos,
-          "stdlib/core.aura exports (core:lerp)");
-    std::string type_content =
-        read_file("/home/dev/code/aura/lib/std/core.aura-type");
+    CHECK(content.find("(core:lerp") != std::string::npos, "stdlib/core.aura exports (core:lerp)");
+    std::string type_content = read_file("/home/dev/code/aura/lib/std/core.aura-type");
     CHECK(!type_content.empty(), "lib/std/core.aura-type exists on disk");
     std::println("  lib/core.aura: present + 10 funcs + export + type");
     return true;
@@ -94,8 +87,7 @@ bool test_10_primitives_wrapped() {
     CHECK(!content.empty(), "lib/std/core.aura exists");
     const int n = count_occurrences(content, "(core:");
     std::println("  (core: occurrences in stdlib: {}", n);
-    CHECK(n >= 20,
-          "stdlib/core.aura has >= 20 (core: tokens (10 export + 10 define))");
+    CHECK(n >= 20, "stdlib/core.aura has >= 20 (core: tokens (10 export + 10 define))");
     return true;
 }
 
@@ -103,11 +95,9 @@ bool test_10_primitives_wrapped() {
 //         with STAY + DEMOTE tables + review process
 bool test_decision_doc_exists() {
     std::println("\n--- AC3: docs/design/core-builtins-checklist.md ---");
-    std::string content =
-        read_file("/home/dev/code/aura/docs/design/core-builtins-checklist.md");
+    std::string content = read_file("/home/dev/code/aura/docs/design/core-builtins-checklist.md");
     CHECK(!content.empty(), "decision doc exists");
-    CHECK(content.find("STAY in engine") != std::string::npos,
-          "doc has STAY in engine section");
+    CHECK(content.find("STAY in engine") != std::string::npos, "doc has STAY in engine section");
     CHECK(content.find("Demoted to stdlib") != std::string::npos,
           "doc has Demoted to stdlib section");
     CHECK(content.find("Reusable review process") != std::string::npos,
@@ -125,8 +115,7 @@ bool test_decision_doc_exists() {
         ++ship_count;
     }
     std::println("  ship rows in decision doc: {}", ship_count);
-    CHECK(ship_count >= 10,
-          "decision doc has >= 10 ship rows (Tier 1 demoted)");
+    CHECK(ship_count >= 10, "decision doc has >= 10 ship rows (Tier 1 demoted)");
     return true;
 }
 
@@ -143,8 +132,12 @@ int run_tests() {
 
 } // namespace aura_issue_564_detail
 
-int aura_issue_564_run() { return aura_issue_564_detail::run_tests(); }
+int aura_issue_564_run() {
+    return aura_issue_564_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_564_run(); }
+int main() {
+    return aura_issue_564_run();
+}
 #endif

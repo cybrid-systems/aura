@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -58,8 +58,7 @@ bool test_query_compiler_cache_stats() {
     CHECK(r_extract.has_value() && aura::compiler::types::is_int(*r_extract),
           "(car (car (query:compiler-cache-stats))) extracts dirty-blocks int");
     if (r_extract && aura::compiler::types::is_int(*r_extract)) {
-        const auto n = static_cast<std::int64_t>(
-            aura::compiler::types::as_int(*r_extract));
+        const auto n = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_extract));
         CHECK(n >= 0, "dirty-blocks count is >= 0");
     }
     return true;
@@ -92,17 +91,12 @@ bool test_count_dirty_blocks() {
 // ── AC3: estimate_relower_blocks heuristic ──
 bool test_estimate_relower_blocks() {
     std::println("\n--- AC3: estimate_relower_blocks heuristic ---");
-    CHECK(aura::compiler::estimate_relower_blocks(0) == 0,
-          "0 dirty → 0 (skip)");
-    CHECK(aura::compiler::estimate_relower_blocks(1) == 1,
-          "1 dirty → 1 (incremental)");
-    CHECK(aura::compiler::estimate_relower_blocks(7) == 7,
-          "7 dirty → 7 (incremental)");
-    CHECK(aura::compiler::estimate_relower_blocks(8) ==
-              static_cast<std::size_t>(-1),
+    CHECK(aura::compiler::estimate_relower_blocks(0) == 0, "0 dirty → 0 (skip)");
+    CHECK(aura::compiler::estimate_relower_blocks(1) == 1, "1 dirty → 1 (incremental)");
+    CHECK(aura::compiler::estimate_relower_blocks(7) == 7, "7 dirty → 7 (incremental)");
+    CHECK(aura::compiler::estimate_relower_blocks(8) == static_cast<std::size_t>(-1),
           "8+ dirty → -1 (full re-lower sentinel)");
-    CHECK(aura::compiler::estimate_relower_blocks(100) ==
-              static_cast<std::size_t>(-1),
+    CHECK(aura::compiler::estimate_relower_blocks(100) == static_cast<std::size_t>(-1),
           "100 dirty → -1 (full re-lower sentinel)");
     return true;
 }
@@ -112,17 +106,14 @@ bool test_summarize_block_dirty() {
     std::println("\n--- AC4: summarize_block_dirty aggregates ---");
     // 3 functions: f0 clean, f1 partial (3 dirty), f2 full (8 dirty)
     std::vector<std::vector<std::uint8_t>> per_func = {
-        {0x00},                                // 0 dirty
-        {0x07},                                // 3 dirty
-        {0xFF},                                // 8 dirty (full)
+        {0x00}, // 0 dirty
+        {0x07}, // 3 dirty
+        {0xFF}, // 8 dirty (full)
     };
     const auto s = aura::compiler::summarize_block_dirty(per_func);
-    CHECK(s.functions_total == 3,
-          "summarize: 3 functions total");
-    CHECK(s.total_dirty_blocks == 11,
-          "summarize: 0 + 3 + 8 = 11 total dirty blocks");
-    CHECK(s.functions_with_dirty == 2,
-          "summarize: 2 functions have at least 1 dirty block");
+    CHECK(s.functions_total == 3, "summarize: 3 functions total");
+    CHECK(s.total_dirty_blocks == 11, "summarize: 0 + 3 + 8 = 11 total dirty blocks");
+    CHECK(s.functions_with_dirty == 2, "summarize: 2 functions have at least 1 dirty block");
     CHECK(s.incremental_candidates == 1,
           "summarize: 1 function (f1) is incremental candidate (1..7 dirty)");
     CHECK(s.full_relower_candidates == 1,
@@ -136,8 +127,7 @@ bool test_service_total_dirty_block_count() {
     std::println("\n--- AC5: CompilerService::total_dirty_block_count ---");
     aura::compiler::CompilerService cs;
     const auto n = cs.total_dirty_block_count();
-    CHECK(n >= 0,
-          "CompilerService::total_dirty_block_count() returns >= 0");
+    CHECK(n >= 0, "CompilerService::total_dirty_block_count() returns >= 0");
     return true;
 }
 
@@ -162,11 +152,8 @@ bool test_query_compiler_cache_stats_after_mutate() {
     CHECK(r_count.has_value() && aura::compiler::types::is_int(*r_count),
           "dirty-blocks count extracted from 3-tuple");
     if (r_count && aura::compiler::types::is_int(*r_count)) {
-        const auto count =
-            static_cast<std::int64_t>(
-                aura::compiler::types::as_int(*r_count));
-        CHECK(count >= 0,
-              "query:compiler-cache-stats count >= 0");
+        const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_count));
+        CHECK(count >= 0, "query:compiler-cache-stats count >= 0");
     }
     return true;
 }
@@ -205,8 +192,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 19 23) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 19 23) == 42 (regression)");
     return true;
 }
 
@@ -226,8 +212,12 @@ int run_tests() {
 
 } // namespace aura_issue_426_detail
 
-int aura_issue_426_run() { return aura_issue_426_detail::run_tests(); }
+int aura_issue_426_run() {
+    return aura_issue_426_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_426_run(); }
+int main() {
+    return aura_issue_426_run();
+}
 #endif

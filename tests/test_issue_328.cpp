@@ -47,7 +47,8 @@ struct CycleStats {
 bool test_fuzz_loop_50() {
     std::println("\n--- Scenario 1: fuzz loop (50 iterations) ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+    (void)cs.eval(
+        "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
     (void)cs.eval("(eval-current)");
     constexpr int N = 50;
     std::mt19937 rng{0xF022};
@@ -58,9 +59,15 @@ bool test_fuzz_loop_50() {
         int query_kind = qd(rng);
         std::string query;
         switch (query_kind) {
-            case 0: query = "(query:pattern \"a\")"; break;
-            case 1: query = "(query:def-use \"a\")"; break;
-            case 2: query = "(query:pattern \"...\")"; break;
+            case 0:
+                query = "(query:pattern \"a\")";
+                break;
+            case 1:
+                query = "(query:def-use \"a\")";
+                break;
+            case 2:
+                query = "(query:pattern \"...\")";
+                break;
         }
         auto q = cs.eval(query);
         if (q) {
@@ -70,18 +77,17 @@ bool test_fuzz_loop_50() {
         std::uniform_int_distribution<int> bd(0, 4);
         const char* names[] = {"a", "b", "c", "d", "e"};
         int idx = bd(rng);
-        std::string mut = std::string("(mutate:replace-value (define ") +
-            names[idx] + " " + std::to_string(i * 11 + 7) +
-            ") (define " + names[idx] + " " +
-            std::to_string(i * 11 + 7) + "))";
+        std::string mut = std::string("(mutate:replace-value (define ") + names[idx] + " " +
+                          std::to_string(i * 11 + 7) + ") (define " + names[idx] + " " +
+                          std::to_string(i * 11 + 7) + "))";
         auto m = cs.eval(mut);
         if (m) {
             stats.mutations_applied++;
         }
         stats.iterations++;
     }
-    std::println("  {} iterations, {} queries, {} mutations applied",
-                 stats.iterations, stats.query_hits, stats.mutations_applied);
+    std::println("  {} iterations, {} queries, {} mutations applied", stats.iterations,
+                 stats.query_hits, stats.mutations_applied);
     CHECK(stats.iterations == N, "all iterations ran");
     CHECK(stats.mutations_applied == N, "all mutations applied");
     CHECK(stats.query_hits > 0, "at least some queries returned values");
@@ -96,8 +102,7 @@ bool test_differential_marker_state() {
     (void)cs.eval("(eval-current)");
     // Capture marker state before.
     auto snap_before = cs.eval("(syntax-marker-counts)");
-    CHECK(snap_before.has_value(),
-          "syntax-marker-counts observable pre-mutate");
+    CHECK(snap_before.has_value(), "syntax-marker-counts observable pre-mutate");
     // Define a hygienic macro + invoke (introduces macro markers).
     (void)cs.eval("(set-code \""
                   "(define-hygienic-macro (mk x) (list 'define (list 'v x) x)) "
@@ -105,8 +110,7 @@ bool test_differential_marker_state() {
     (void)cs.eval("(eval-current)");
     // Capture marker state after.
     auto snap_after = cs.eval("(syntax-marker-counts)");
-    CHECK(snap_after.has_value(),
-          "syntax-marker-counts observable post-mutate");
+    CHECK(snap_after.has_value(), "syntax-marker-counts observable post-mutate");
     // The total-nodes counter should have increased (new bindings
     // introduced by the macro).
     std::println("  marker state snapshots captured (before + after)");
@@ -127,8 +131,7 @@ bool test_mbg_depth_under_loop() {
         code += std::to_string(i);
         code += "))";
         auto r = cs.eval(code);
-        CHECK(r.has_value(),
-              std::string("iter #") + std::to_string(i) + " mutate succeeds");
+        CHECK(r.has_value(), std::string("iter #") + std::to_string(i) + " mutate succeeds");
     }
     // After all mutations, the workspace should be consistent.
     auto re = cs.eval("(eval-current)");
@@ -158,17 +161,15 @@ bool test_fuzz_with_hygienic_macro() {
             // Mutate path.
             std::uniform_int_distribution<int> vd(0, 4);
             int v = vd(rng) + 1;
-            code = std::string("(mutate:replace-value (define v ") +
-                std::to_string(i + v * 100) +
-                ") (define v " +
-                std::to_string(i + v * 100) + "))";
+            code = std::string("(mutate:replace-value (define v ") + std::to_string(i + v * 100) +
+                   ") (define v " + std::to_string(i + v * 100) + "))";
         }
         auto r = cs.eval(code);
-        if (r) successful_iters++;
+        if (r)
+            successful_iters++;
     }
     std::println("  {} / {} iterations succeeded", successful_iters, N);
-    CHECK(successful_iters >= N - 5,
-          "at least 195/200 iterations succeed (≥97.5% success rate)");
+    CHECK(successful_iters >= N - 5, "at least 195/200 iterations succeed (≥97.5% success rate)");
     return true;
 }
 

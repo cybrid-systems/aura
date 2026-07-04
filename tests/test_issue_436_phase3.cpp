@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -133,8 +133,7 @@ bool test_property_and_assertion_constructors() {
     CHECK(is_prop == 1, "(eda:assertion-property a) returns an eda:property");
 
     auto prop_name = run_symbol_str(cs, "(eda:property-name (eda:assertion-property a))");
-    CHECK(prop_name == "req_then_ack",
-          "auto-built property has the same name as the assertion");
+    CHECK(prop_name == "req_then_ack", "auto-built property has the same name as the assertion");
 
     return true;
 }
@@ -324,8 +323,12 @@ int run_tests() {
 
 } // namespace aura_issue_436_phase3_detail
 
-int aura_issue_436_phase3_run() { return aura_issue_436_phase3_detail::run_tests(); }
+int aura_issue_436_phase3_run() {
+    return aura_issue_436_phase3_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_436_phase3_run(); }
+int main() {
+    return aura_issue_436_phase3_run();
+}
 #endif

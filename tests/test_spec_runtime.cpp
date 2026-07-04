@@ -28,46 +28,49 @@ extern "C" int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
 }
 
 extern "C" {
-    int64_t aura_pair_car(int64_t pair_val) {
-        uint64_t id = (uint64_t)(pair_val >> 2);
-        if (id >= g_pair_count) return 0;
-        return g_pair_cars[id];
-    }
-    int64_t aura_pair_cdr(int64_t pair_val) {
-        uint64_t id = (uint64_t)(pair_val >> 2);
-        if (id >= g_pair_count) return 0;
-        return g_pair_cdrs[id];
-    }
-    // Unchecked variants (skip bounds check)
-    int64_t aura_pair_car_unchecked(int64_t pair_val) {
-        uint64_t id = (uint64_t)(pair_val >> 2);
-        return g_pair_cars[id];
-    }
-    int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
-        uint64_t id = (uint64_t)(pair_val >> 2);
-        return g_pair_cdrs[id];
-    }
+int64_t aura_pair_car(int64_t pair_val) {
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= g_pair_count)
+        return 0;
+    return g_pair_cars[id];
+}
+int64_t aura_pair_cdr(int64_t pair_val) {
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= g_pair_count)
+        return 0;
+    return g_pair_cdrs[id];
+}
+// Unchecked variants (skip bounds check)
+int64_t aura_pair_car_unchecked(int64_t pair_val) {
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    return g_pair_cars[id];
+}
+int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    return g_pair_cdrs[id];
+}
 }
 
 static int tests_run = 0;
 static int tests_passed = 0;
 
-#define TEST(name, expr) do { \
-    tests_run++; \
-    if (!(expr)) { \
-        std::fprintf(stderr, "FAIL: %s (%s)\n", name, #expr); \
-    } else { \
-        tests_passed++; \
-        std::fprintf(stdout, "PASS: %s\n", name); \
-    } \
-} while(0)
+#define TEST(name, expr)                                                                           \
+    do {                                                                                           \
+        tests_run++;                                                                               \
+        if (!(expr)) {                                                                             \
+            std::fprintf(stderr, "FAIL: %s (%s)\n", name, #expr);                                  \
+        } else {                                                                                   \
+            tests_passed++;                                                                        \
+            std::fprintf(stdout, "PASS: %s\n", name);                                              \
+        }                                                                                          \
+    } while (0)
 
 int main() {
     // ── Setup: create some pairs ─────────────────────────────
-    int64_t p1 = aura_alloc_pair(42, 100);      // (42 . 100)
-    int64_t p2 = aura_alloc_pair(0, 7);          // (0 . 7)
-    int64_t p3 = aura_alloc_pair(-5 << 1, 11);   // (fixnum -5 . void)
-    int64_t p4 = aura_alloc_pair(p1, p2);        // ((42 . 100) . (0 . 7))
+    int64_t p1 = aura_alloc_pair(42, 100);     // (42 . 100)
+    int64_t p2 = aura_alloc_pair(0, 7);        // (0 . 7)
+    int64_t p3 = aura_alloc_pair(-5 << 1, 11); // (fixnum -5 . void)
+    int64_t p4 = aura_alloc_pair(p1, p2);      // ((42 . 100) . (0 . 7))
 
     // ═══════════════════════════════════════════════════════════
     // Section 1: Checked pair access
@@ -87,30 +90,23 @@ int main() {
 
     // ── 1d: Nested pairs ─────────────────────────────────
     TEST("Checked: car of nested pair = p1", aura_pair_car(p4) == p1);
-    TEST("Checked: car of p1 through nested = 42",
-         aura_pair_car(aura_pair_car(p4)) == 42);
+    TEST("Checked: car of p1 through nested = 42", aura_pair_car(aura_pair_car(p4)) == 42);
 
     // ═══════════════════════════════════════════════════════════
     // Section 2: Unchecked pair access (L2 specialization)
     // ═══════════════════════════════════════════════════════════
 
     // ── 2a: Basic unchecked access ──────────────────────────
-    TEST("Unchecked: car (42 . 100) == 42",
-         aura_pair_car_unchecked(p1) == 42);
-    TEST("Unchecked: cdr (42 . 100) == 100",
-         aura_pair_cdr_unchecked(p1) == 100);
+    TEST("Unchecked: car (42 . 100) == 42", aura_pair_car_unchecked(p1) == 42);
+    TEST("Unchecked: cdr (42 . 100) == 100", aura_pair_cdr_unchecked(p1) == 100);
 
     // ── 2b: Unchecked with zero ─────────────────────────────
-    TEST("Unchecked: car (0 . 7) == 0",
-         aura_pair_car_unchecked(p2) == 0);
-    TEST("Unchecked: cdr (0 . 7) == 7",
-         aura_pair_cdr_unchecked(p2) == 7);
+    TEST("Unchecked: car (0 . 7) == 0", aura_pair_car_unchecked(p2) == 0);
+    TEST("Unchecked: cdr (0 . 7) == 7", aura_pair_cdr_unchecked(p2) == 7);
 
     // ── 2c: Unchecked with negative ─────────────────────────
-    TEST("Unchecked: car = fixnum -5",
-         aura_pair_car_unchecked(p3) == (-5 << 1));
-    TEST("Unchecked: cdr = void (11)",
-         aura_pair_cdr_unchecked(p3) == 11);
+    TEST("Unchecked: car = fixnum -5", aura_pair_car_unchecked(p3) == (-5 << 1));
+    TEST("Unchecked: cdr = void (11)", aura_pair_cdr_unchecked(p3) == 11);
 
     // ═══════════════════════════════════════════════════════════
     // Section 3: Checked vs unchecked result equivalence
@@ -118,21 +114,21 @@ int main() {
 
     TEST("Equivalence: checked car == unchecked car (all pairs)",
          aura_pair_car(p1) == aura_pair_car_unchecked(p1) &&
-         aura_pair_car(p2) == aura_pair_car_unchecked(p2) &&
-         aura_pair_car(p3) == aura_pair_car_unchecked(p3) &&
-         aura_pair_car(p4) == aura_pair_car_unchecked(p4));
+             aura_pair_car(p2) == aura_pair_car_unchecked(p2) &&
+             aura_pair_car(p3) == aura_pair_car_unchecked(p3) &&
+             aura_pair_car(p4) == aura_pair_car_unchecked(p4));
 
     TEST("Equivalence: checked cdr == unchecked cdr (all pairs)",
          aura_pair_cdr(p1) == aura_pair_cdr_unchecked(p1) &&
-         aura_pair_cdr(p2) == aura_pair_cdr_unchecked(p2) &&
-         aura_pair_cdr(p3) == aura_pair_cdr_unchecked(p3) &&
-         aura_pair_cdr(p4) == aura_pair_cdr_unchecked(p4));
+             aura_pair_cdr(p2) == aura_pair_cdr_unchecked(p2) &&
+             aura_pair_cdr(p3) == aura_pair_cdr_unchecked(p3) &&
+             aura_pair_cdr(p4) == aura_pair_cdr_unchecked(p4));
 
     // ═══════════════════════════════════════════════════════════
     // Section 4: Performance comparison (basic timing)
     // ═══════════════════════════════════════════════════════════
 
-    static constexpr int kIterations = 10000000;  // 10M iterations
+    static constexpr int kIterations = 10000000; // 10M iterations
 
     // ── 4a: Checked access throughput ───────────────────────
     {
@@ -169,8 +165,7 @@ int main() {
         // Checked should work
         TEST("Checked: large index car == 999", aura_pair_car(large_ref) == 999);
         // Unchecked should also work (same pool)
-        TEST("Unchecked: large index car == 999",
-             aura_pair_car_unchecked(large_ref) == 999);
+        TEST("Unchecked: large index car == 999", aura_pair_car_unchecked(large_ref) == 999);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -183,7 +178,6 @@ int main() {
     g_pair_count = 0;
     g_pair_cap = 0;
 
-    std::fprintf(stdout, "\n=== Results: %d/%d passed ===\n",
-                 tests_passed, tests_run);
+    std::fprintf(stdout, "\n=== Results: %d/%d passed ===\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }

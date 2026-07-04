@@ -31,8 +31,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -40,7 +40,6 @@ import aura.core.type;
 import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
-
 
 
 // ═════════════════════════════════════════════════════════════
@@ -73,10 +72,8 @@ bool test_threshold_parameter_changes_signal() {
     // For a function that has never been seen:
     // - threshold=0: not deopted (0 > 0 is false)
     // - threshold=5: not deopted (0 > 5 is false)
-    CHECK(!ctl.should_deopt_specialization_for("fn", 0),
-          "threshold=0 with count=0 → not deopted");
-    CHECK(!ctl.should_deopt_specialization_for("fn", 5),
-          "threshold=5 with count=0 → not deopted");
+    CHECK(!ctl.should_deopt_specialization_for("fn", 0), "threshold=0 with count=0 → not deopted");
+    CHECK(!ctl.should_deopt_specialization_for("fn", 5), "threshold=5 with count=0 → not deopted");
     return true;
 }
 
@@ -183,7 +180,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_193_detail
+} // namespace aura_issue_193_detail
 
-int aura_issue_193_run() { return aura_issue_193_detail::run_tests(); }
-
+int aura_issue_193_run() {
+    return aura_issue_193_detail::run_tests();
+}

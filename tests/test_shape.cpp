@@ -15,28 +15,28 @@ using namespace aura::compiler::shape;
 static int tests_run = 0;
 static int tests_passed = 0;
 
-template<typename T>
-const char* test_name_cstr(const T& name) {
+template <typename T> const char* test_name_cstr(const T& name) {
     if constexpr (std::is_same_v<std::decay_t<T>, std::string>)
         return name.c_str();
     else
         return name;
 }
 
-#define TEST(name, expr) do { \
-    const auto _test_name_tmp = (name); \
-    const char* _test_name_cstr = test_name_cstr(_test_name_tmp); \
-    tests_run++; \
-    if (!(expr)) { \
-        std::println(std::cerr, "FAIL: %s ({})", _test_name_cstr, #expr); \
-    } else { \
-        tests_passed++; \
-        std::println("PASS: {}", _test_name_cstr); \
-    } \
-} while(0)
+#define TEST(name, expr)                                                                           \
+    do {                                                                                           \
+        const auto _test_name_tmp = (name);                                                        \
+        const char* _test_name_cstr = test_name_cstr(_test_name_tmp);                              \
+        tests_run++;                                                                               \
+        if (!(expr)) {                                                                             \
+            std::println(std::cerr, "FAIL: %s ({})", _test_name_cstr, #expr);                      \
+        } else {                                                                                   \
+            tests_passed++;                                                                        \
+            std::println("PASS: {}", _test_name_cstr);                                             \
+        }                                                                                          \
+    } while (0)
 
 // ── Float/string bias constants (must match shape_profiler.cpp) ──
-static constexpr std::int64_t kFloatBias  = -10000000000000000LL;
+static constexpr std::int64_t kFloatBias = -10000000000000000LL;
 // Issue #278 follow-up: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 (low
 // 2 bits set to 2 for the v2 string encoding). The test used the raw
 // STRING_BIAS_VAL (-9e18), but shape_profiler.cpp's kStringBias is
@@ -63,24 +63,22 @@ int main() {
 
     // ── 2a: Fixnum (int) ────────────────────────────────────
     TEST("shape_of(0) == Int", inline_shape_of(0) == SHAPE_INT);
-    TEST("shape_of(2) == Int", inline_shape_of(2) == SHAPE_INT);   // fixnum 1
+    TEST("shape_of(2) == Int", inline_shape_of(2) == SHAPE_INT); // fixnum 1
     TEST("shape_of(42 << 1) == Int", inline_shape_of(42 << 1) == SHAPE_INT);
     TEST("shape_of(-2) == Int", inline_shape_of(-2LL) == SHAPE_INT); // fixnum -1
     TEST("shape_of(100 << 1) == Int", inline_shape_of(100 << 1) == SHAPE_INT);
     TEST("shape_of((-100) << 1) == Int", inline_shape_of((-100LL) << 1) == SHAPE_INT);
     // Max positive fixnum (INT64_MAX >> 1, bit0=0)
-    TEST("shape_of(0x7FFFFFFFFFFFFFFE) == Int",
-         inline_shape_of(0x7FFFFFFFFFFFFFFELL) == SHAPE_INT);
+    TEST("shape_of(0x7FFFFFFFFFFFFFFE) == Int", inline_shape_of(0x7FFFFFFFFFFFFFFELL) == SHAPE_INT);
     // Near FLOAT_BIAS boundary from above — still Int
     TEST("shape_of(kFloatBias + 2) == Int (bit0=0, > FLOAT_BIAS)",
          inline_shape_of(kFloatBias + 2) == SHAPE_INT);
     // Exactly at FLOAT_BIAS — is fixnum but !(> FLOAT_BIAS) → not Int
-    TEST("shape_of(kFloatBias) != Int",
-         inline_shape_of(kFloatBias) != SHAPE_INT);
+    TEST("shape_of(kFloatBias) != Int", inline_shape_of(kFloatBias) != SHAPE_INT);
 
     // ── 2b: Bool ────────────────────────────────────────────
-    TEST("shape_of(3) == Bool", inline_shape_of(3) == SHAPE_BOOL);  // #f
-    TEST("shape_of(7) == Bool", inline_shape_of(7) == SHAPE_BOOL);  // #t
+    TEST("shape_of(3) == Bool", inline_shape_of(3) == SHAPE_BOOL); // #f
+    TEST("shape_of(7) == Bool", inline_shape_of(7) == SHAPE_BOOL); // #t
     // Only 3 and 7 are bools
     TEST("shape_of(11) != Bool", inline_shape_of(11) != SHAPE_BOOL);
     TEST("shape_of(1) != Bool", inline_shape_of(1) != SHAPE_BOOL);
@@ -93,8 +91,7 @@ int main() {
 
     // ── 2d: Float ────────────────────────────────────────────
     // Float range: <= FLOAT_BIAS && > STRING_BIAS (v2 also requires v&3 == 0)
-    TEST("shape_of(kFloatBias) == Float",
-         inline_shape_of(kFloatBias) == SHAPE_FLOAT);
+    TEST("shape_of(kFloatBias) == Float", inline_shape_of(kFloatBias) == SHAPE_FLOAT);
     // Issue #378 follow-up: v1 encoding didn't check tag bits. v2
     // requires v&3 == 0 for floats; kFloatBias - 1 has v&3 == 3, which
     // is neither a fixnum nor a valid float → Unknown.
@@ -109,8 +106,7 @@ int main() {
 
     // ── 2e: String ────────────────────────────────────────────
     // String range: <= STRING_BIAS (v2 also requires v&3 == 2)
-    TEST("shape_of(kStringBias) == String",
-         inline_shape_of(kStringBias) == SHAPE_STRING);
+    TEST("shape_of(kStringBias) == String", inline_shape_of(kStringBias) == SHAPE_STRING);
     // Issue #378 follow-up: v1 encoding had v <= STRING_BIAS as the
     // string range. v2 has tighter rules: v must have v&3 == 2 AND
     // v <= STRING_BIAS_VAL_2. kStringBias - 1 has v&3 == 1, so it's
@@ -126,28 +122,25 @@ int main() {
     // Ref encoding: (index << 6) | (type << 2) | 1
     // Pair (type=0):  (0 << 6) | (0 << 2) | 1 = 1
     TEST("shape_of(1) == Pair (ref type 0)",
-         inline_shape_of(1) == 10);  // SHAPE_PAIR = 10
+         inline_shape_of(1) == 10); // SHAPE_PAIR = 10
     // Cell (type=2): (0 << 6) | (2 << 2) | 1 = 9
     // But cell is not in our switch, returns Ref (14)
-    TEST("shape_of(9) == Ref",
-         inline_shape_of(9) == 14);
+    TEST("shape_of(9) == Ref", inline_shape_of(9) == 14);
     // String ref (type=6): (0 << 6) | (6 << 2) | 1 = 25
     // But ref strings are already covered by STRING_BIAS. This would
     // be an actual RefString from the pool.
-    TEST("shape_of(25) == Ref",
-         inline_shape_of(25) == 14);
+    TEST("shape_of(25) == Ref", inline_shape_of(25) == 14);
     // Vector (type=3): (0 << 6) | (3 << 2) | 1 = 13
     TEST("shape_of(13) == Vector",
-         inline_shape_of(13) == 11);  // SHAPE_VECTOR = 11
+         inline_shape_of(13) == 11); // SHAPE_VECTOR = 11
     // Hash (type=4): (0 << 6) | (4 << 2) | 1 = 17
     TEST("shape_of(17) == Hash",
-         inline_shape_of(17) == 12);  // SHAPE_HASH = 12
+         inline_shape_of(17) == 12); // SHAPE_HASH = 12
     // Closure (type=1): (0 << 6) | (1 << 2) | 1 = 5
     TEST("shape_of(5) == Closure",
-         inline_shape_of(5) == 13);  // SHAPE_CLOSURE = 13
+         inline_shape_of(5) == 13); // SHAPE_CLOSURE = 13
     // Non-zero index: (1 << 6) | (0 << 2) | 1 = 65 (Pair with index 1)
-    TEST("shape_of(65) == Pair (index=1)",
-         inline_shape_of(65) == 10);
+    TEST("shape_of(65) == Pair (index=1)", inline_shape_of(65) == 10);
 
     // ── 2g: Fallthrough (Any) ─────────────────────────────────
     // All-zero value should be Int (fixnum 0)
@@ -155,17 +148,15 @@ int main() {
     // Issue #378 follow-up: v=15 has v&3 == 3 but is not 3/7/11,
     // so classify_eval_value_tag returns Unknown → inline_shape_of
     // returns SHAPE_UNKNOWN (was contract_assert abort before).
-    TEST("shape_of(15) == Unknown (v2 invalid tag)",
-         inline_shape_of(15) == SHAPE_UNKNOWN);
+    TEST("shape_of(15) == Unknown (v2 invalid tag)", inline_shape_of(15) == SHAPE_UNKNOWN);
 
     // ═══════════════════════════════════════════════════════════
     // Section 3: compute_shape_id
     // ═══════════════════════════════════════════════════════════
 
     // ── 3a: All primitive shapes are deterministic ──────────
-    for (auto tag : {ShapeTag::Any, ShapeTag::Int, ShapeTag::Float,
-                     ShapeTag::Bool, ShapeTag::String, ShapeTag::Void,
-                     ShapeTag::Ref}) {
+    for (auto tag : {ShapeTag::Any, ShapeTag::Int, ShapeTag::Float, ShapeTag::Bool,
+                     ShapeTag::String, ShapeTag::Void, ShapeTag::Ref}) {
         Shape s;
         s.tag = tag;
         s.id = compute_shape_id(s);
@@ -176,38 +167,49 @@ int main() {
     // ── 3b: Different tags → different IDs ────────────────
     {
         Shape int_s, str_s;
-        int_s.tag = ShapeTag::Int; int_s.id = compute_shape_id(int_s);
-        str_s.tag = ShapeTag::String; str_s.id = compute_shape_id(str_s);
+        int_s.tag = ShapeTag::Int;
+        int_s.id = compute_shape_id(int_s);
+        str_s.tag = ShapeTag::String;
+        str_s.id = compute_shape_id(str_s);
         TEST("Int vs String have different shape IDs", int_s.id != str_s.id);
     }
 
     // ── 3c: Same tag + same type_id → same ID ───────────────
     {
         Shape a, b;
-        a.tag = ShapeTag::Hash; a.type_id = 42; a.id = compute_shape_id(a);
-        b.tag = ShapeTag::Hash; b.type_id = 42; b.id = compute_shape_id(b);
+        a.tag = ShapeTag::Hash;
+        a.type_id = 42;
+        a.id = compute_shape_id(a);
+        b.tag = ShapeTag::Hash;
+        b.type_id = 42;
+        b.id = compute_shape_id(b);
         TEST("Same tag+type_id → same ID", a.id == b.id);
     }
 
     // ── 3d: Different type_id → different ID ────────────────
     {
         Shape a, b;
-        a.tag = ShapeTag::Hash; a.type_id = 42; a.id = compute_shape_id(a);
-        b.tag = ShapeTag::Hash; b.type_id = 99; b.id = compute_shape_id(b);
+        a.tag = ShapeTag::Hash;
+        a.type_id = 42;
+        a.id = compute_shape_id(a);
+        b.tag = ShapeTag::Hash;
+        b.type_id = 99;
+        b.id = compute_shape_id(b);
         TEST("Different type_id → different ID", a.id != b.id);
     }
 
     // ── 3e: Recursive shapes (Hash[Int → String]) ──────────
     {
         Shape int_s, str_s, hash_s;
-        int_s.tag = ShapeTag::Int; int_s.id = compute_shape_id(int_s);
-        str_s.tag = ShapeTag::String; str_s.id = compute_shape_id(str_s);
+        int_s.tag = ShapeTag::Int;
+        int_s.id = compute_shape_id(int_s);
+        str_s.tag = ShapeTag::String;
+        str_s.id = compute_shape_id(str_s);
         hash_s.tag = ShapeTag::Hash;
         hash_s.key_shape = &int_s;
         hash_s.value_shape = &str_s;
         hash_s.id = compute_shape_id(hash_s);
-        TEST("Hash[Int→String] is deterministic",
-             compute_shape_id(hash_s) == hash_s.id);
+        TEST("Hash[Int→String] is deterministic", compute_shape_id(hash_s) == hash_s.id);
         TEST("Hash[Int→String] != Int", hash_s.id != int_s.id);
         TEST("Hash[Int→String] != String", hash_s.id != str_s.id);
     }
@@ -215,23 +217,29 @@ int main() {
     // ── 3f: Pair[Int, String] vs Pair[String, Int] ──────────
     {
         Shape int_s, str_s;
-        int_s.tag = ShapeTag::Int; int_s.id = compute_shape_id(int_s);
-        str_s.tag = ShapeTag::String; str_s.id = compute_shape_id(str_s);
+        int_s.tag = ShapeTag::Int;
+        int_s.id = compute_shape_id(int_s);
+        str_s.tag = ShapeTag::String;
+        str_s.id = compute_shape_id(str_s);
 
         Shape p1, p2;
-        p1.tag = ShapeTag::Pair; p1.car_shape = &int_s; p1.cdr_shape = &str_s;
+        p1.tag = ShapeTag::Pair;
+        p1.car_shape = &int_s;
+        p1.cdr_shape = &str_s;
         p1.id = compute_shape_id(p1);
-        p2.tag = ShapeTag::Pair; p2.car_shape = &str_s; p2.cdr_shape = &int_s;
+        p2.tag = ShapeTag::Pair;
+        p2.car_shape = &str_s;
+        p2.cdr_shape = &int_s;
         p2.id = compute_shape_id(p2);
 
-        TEST("Pair[Int,String] vs Pair[String,Int] → different",
-             p1.id != p2.id);
+        TEST("Pair[Int,String] vs Pair[String,Int] → different", p1.id != p2.id);
     }
 
     // ── 3g: Vector shape ─────────────────────────────────────
     {
         Shape elem_s;
-        elem_s.tag = ShapeTag::Float; elem_s.id = compute_shape_id(elem_s);
+        elem_s.tag = ShapeTag::Float;
+        elem_s.id = compute_shape_id(elem_s);
 
         Shape vec;
         vec.tag = ShapeTag::Vector;
@@ -239,8 +247,7 @@ int main() {
         vec.min_len = 0;
         vec.max_len = 10;
         vec.id = compute_shape_id(vec);
-        TEST("Vector shape is deterministic",
-             compute_shape_id(vec) == vec.id);
+        TEST("Vector shape is deterministic", compute_shape_id(vec) == vec.id);
 
         // Different size bounds → different ID
         Shape vec2;
@@ -255,15 +262,15 @@ int main() {
     // ── 3h: Closure shape ────────────────────────────────────
     {
         Shape ret_s;
-        ret_s.tag = ShapeTag::Int; ret_s.id = compute_shape_id(ret_s);
+        ret_s.tag = ShapeTag::Int;
+        ret_s.id = compute_shape_id(ret_s);
 
         Shape cl;
         cl.tag = ShapeTag::Closure;
         cl.arity = 2;
         cl.ret_shape = &ret_s;
         cl.id = compute_shape_id(cl);
-        TEST("Closure shape is deterministic",
-             compute_shape_id(cl) == cl.id);
+        TEST("Closure shape is deterministic", compute_shape_id(cl) == cl.id);
 
         Shape cl2;
         cl2.tag = ShapeTag::Closure;
@@ -282,14 +289,12 @@ int main() {
         ShapeProfiler profiler;
         FnKey fn = make_fn_key("test", "empty");
         TEST("Empty profiler: not stable", !profiler.is_stable(fn));
-        TEST("Empty profiler: dominant == unknown",
-             profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
+        TEST("Empty profiler: dominant == unknown", profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
         // Snapshot of unknown fn
         auto snap = profiler.current_snapshot(fn);
         TEST("Empty profiler: snapshot id == 0", snap.id == SHAPE_UNKNOWN);
         TEST("Empty profiler: snapshot version == 0", snap.version == 0);
-        TEST("Empty profiler: tracked_fns is empty",
-             profiler.tracked_fns().empty());
+        TEST("Empty profiler: tracked_fns is empty", profiler.tracked_fns().empty());
 
         // Metrics of unknown fn
         auto m = profiler.metrics(fn);
@@ -303,8 +308,7 @@ int main() {
         bool stable = profiler.record_shape(fn, SHAPE_INT);
         TEST("Single call: not stable", !stable);
         TEST("Single call: not stable (is_stable)", !profiler.is_stable(fn));
-        TEST("Single call: dominant == unknown",
-             profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
+        TEST("Single call: dominant == unknown", profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
     }
 
     // ── 4c: Exactly 99 calls (below threshold) ──────────────
@@ -325,8 +329,7 @@ int main() {
             last_stable = profiler.record_shape(fn, SHAPE_INT);
         TEST("100 identical: stable at 100th", last_stable);
         TEST("100 identical: is_stable", profiler.is_stable(fn));
-        TEST("100 identical: dominant == Int",
-             profiler.dominant_shape(fn) == SHAPE_INT);
+        TEST("100 identical: dominant == Int", profiler.dominant_shape(fn) == SHAPE_INT);
     }
 
     // ── 4e: Multiple functions tracked independently ────────
@@ -459,8 +462,7 @@ int main() {
 
         profiler.invalidate(fn);
         TEST("Post-inval: not stable", !profiler.is_stable(fn));
-        TEST("Post-inval: dominant == unknown",
-             profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
+        TEST("Post-inval: dominant == unknown", profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
 
         auto post_snap = profiler.current_snapshot(fn);
         TEST("Post-inval: version == 1", post_snap.version == 1);
@@ -500,16 +502,16 @@ int main() {
 
         for (int i = 0; i < 100; i++)
             profiler.record_shape(fn, SHAPE_INT);
-        TEST("Stable on Int before inval", profiler.is_stable(fn) &&
-             profiler.dominant_shape(fn) == SHAPE_INT);
+        TEST("Stable on Int before inval",
+             profiler.is_stable(fn) && profiler.dominant_shape(fn) == SHAPE_INT);
 
         profiler.invalidate(fn);
 
         // Re-stabilize on different shape
         for (int i = 0; i < 100; i++)
             profiler.record_shape(fn, SHAPE_STRING);
-        TEST("Restabilized on String", profiler.is_stable(fn) &&
-             profiler.dominant_shape(fn) == SHAPE_STRING);
+        TEST("Restabilized on String",
+             profiler.is_stable(fn) && profiler.dominant_shape(fn) == SHAPE_STRING);
 
         // verify version stayed at 1
         TEST("Version still 1", profiler.current_snapshot(fn).version == 1);
@@ -531,8 +533,7 @@ int main() {
         TEST("metrics: unique_shapes == 1", m.unique_shapes_seen == 1);
         TEST("metrics: is_good_deopt_candidate", m.is_good_deopt_candidate);
         TEST("metrics: deopt_count == 0", m.deopt_count == 0);
-        TEST("metrics: stability_ratio == 1.0",
-             m.shape_stability_ratio >= 0.999);
+        TEST("metrics: stability_ratio == 1.0", m.shape_stability_ratio >= 0.999);
     }
 
     // ── 7b: Metrics after invalidate ───────────────────────
@@ -547,8 +548,7 @@ int main() {
         auto m = profiler.metrics(fn);
         TEST("metrics: deopt_count == 2", m.deopt_count == 2);
         // After invalidate, history was cleared, so stability ratio is 0
-        TEST("metrics: stability_ratio == 0 after inval",
-             m.shape_stability_ratio == 0.0);
+        TEST("metrics: stability_ratio == 0 after inval", m.shape_stability_ratio == 0.0);
     }
 
     // ── 7c: Metrics with multiple shapes ───────────────────
@@ -585,7 +585,7 @@ int main() {
     // ── 8a: Custom window size ─────────────────────────────
     {
         ShapeProfiler profiler;
-        profiler.set_window_size(200);     // smaller window for faster convergence
+        profiler.set_window_size(200); // smaller window for faster convergence
         profiler.set_stability_ratio(0.80);
         FnKey fn = make_fn_key("test", "custom_window");
 
@@ -610,7 +610,7 @@ int main() {
         // So dominant becomes Float
         // But actually this needs exact math. Let's just check it changes.
         bool still_int = (profiler.dominant_shape(fn) == SHAPE_INT);
-        TEST("After more Float: dominant may have changed", true);  // just verify no crash
+        TEST("After more Float: dominant may have changed", true); // just verify no crash
     }
 
     // ── 8b: Reset clears everything ────────────────────────
@@ -624,8 +624,7 @@ int main() {
 
         profiler.reset();
         TEST("After reset: not stable", !profiler.is_stable(fn));
-        TEST("After reset: dominant == unknown",
-             profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
+        TEST("After reset: dominant == unknown", profiler.dominant_shape(fn) == SHAPE_UNKNOWN);
         TEST("After reset: 0 tracked fns", profiler.tracked_fns().empty());
 
         // Can re-stabilize after reset
@@ -656,8 +655,7 @@ int main() {
 
     // ── 9b: FnKey is 64-bit (fits in ShapeID type) ────────
     {
-        FnKey k = make_fn_key("a_long_session_name_12345",
-                              "another_long_function_name_67890");
+        FnKey k = make_fn_key("a_long_session_name_12345", "another_long_function_name_67890");
         // Just ensure it compiles and is non-zero (vanishingly unlikely to be 0)
         TEST("FnKey non-zero", k != 0);
     }
@@ -667,32 +665,25 @@ int main() {
     // ═══════════════════════════════════════════════════════════
 
     // ── 10a: All shape tag names ────────────────────────────
-    TEST("shape_tag_name(Any) == 'any'",
-         std::string(shape_tag_name(ShapeTag::Any)) == "any");
-    TEST("shape_tag_name(Int) == 'int'",
-         std::string(shape_tag_name(ShapeTag::Int)) == "int");
+    TEST("shape_tag_name(Any) == 'any'", std::string(shape_tag_name(ShapeTag::Any)) == "any");
+    TEST("shape_tag_name(Int) == 'int'", std::string(shape_tag_name(ShapeTag::Int)) == "int");
     TEST("shape_tag_name(Float) == 'float'",
          std::string(shape_tag_name(ShapeTag::Float)) == "float");
-    TEST("shape_tag_name(Bool) == 'bool'",
-         std::string(shape_tag_name(ShapeTag::Bool)) == "bool");
+    TEST("shape_tag_name(Bool) == 'bool'", std::string(shape_tag_name(ShapeTag::Bool)) == "bool");
     TEST("shape_tag_name(String) == 'string'",
          std::string(shape_tag_name(ShapeTag::String)) == "string");
-    TEST("shape_tag_name(Void) == 'void'",
-         std::string(shape_tag_name(ShapeTag::Void)) == "void");
-    TEST("shape_tag_name(Pair) == 'pair'",
-         std::string(shape_tag_name(ShapeTag::Pair)) == "pair");
+    TEST("shape_tag_name(Void) == 'void'", std::string(shape_tag_name(ShapeTag::Void)) == "void");
+    TEST("shape_tag_name(Pair) == 'pair'", std::string(shape_tag_name(ShapeTag::Pair)) == "pair");
     TEST("shape_tag_name(Vector) == 'vector'",
          std::string(shape_tag_name(ShapeTag::Vector)) == "vector");
-    TEST("shape_tag_name(Hash) == 'hash'",
-         std::string(shape_tag_name(ShapeTag::Hash)) == "hash");
+    TEST("shape_tag_name(Hash) == 'hash'", std::string(shape_tag_name(ShapeTag::Hash)) == "hash");
     TEST("shape_tag_name(Closure) == 'closure'",
          std::string(shape_tag_name(ShapeTag::Closure)) == "closure");
     TEST("shape_tag_name(Struct) == 'struct'",
          std::string(shape_tag_name(ShapeTag::Struct)) == "struct");
     TEST("shape_tag_name(Union) == 'union'",
          std::string(shape_tag_name(ShapeTag::Union)) == "union");
-    TEST("shape_tag_name(Ref) == 'ref'",
-         std::string(shape_tag_name(ShapeTag::Ref)) == "ref");
+    TEST("shape_tag_name(Ref) == 'ref'", std::string(shape_tag_name(ShapeTag::Ref)) == "ref");
 
     // ── 10b: format_shape_id for known shapes ─────────────
     TEST("format(UNKNOWN) == '?'", format_shape_id(SHAPE_UNKNOWN) == "?");
@@ -746,7 +737,7 @@ int main() {
         FnKey fn = make_fn_key("test", "one_off");
         for (int i = 0; i < 1000; i++) {
             if (i == 500)
-                profiler.record_shape(fn, SHAPE_FLOAT);  // one outlier
+                profiler.record_shape(fn, SHAPE_FLOAT); // one outlier
             else
                 profiler.record_shape(fn, SHAPE_INT);
         }
@@ -776,9 +767,9 @@ int main() {
                 profiler.record_shape(fn, SHAPE_INT);
             profiler.invalidate(fn);
             auto snap = profiler.current_snapshot(fn);
-            TEST(std::string("Version monotonic: iter ") + std::to_string(i) +
-                 " (" + std::to_string(snap.version) + " > " +
-                 std::to_string(prev) + ")", snap.version > prev);
+            TEST(std::string("Version monotonic: iter ") + std::to_string(i) + " (" +
+                     std::to_string(snap.version) + " > " + std::to_string(prev) + ")",
+                 snap.version > prev);
             prev = snap.version;
         }
     }

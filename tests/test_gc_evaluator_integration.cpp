@@ -24,15 +24,16 @@ import aura.compiler.value;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println(std::cerr, "  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            std::println(std::cerr, "  FAIL: {} (line {})", msg, __LINE__);                        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── Test 1: gc_root_count on a fresh Evaluator ────────────
 // A brand-new Evaluator's gc_root_count() must return a value
@@ -79,7 +80,7 @@ bool test_gc_root_count_after_eval() {
     auto r = eval.eval_flat(flat, pool, lit42, eval.top_env());
     if (!r) {
         std::println(std::cerr, "  SKIP: eval failed, can't verify alloc roots");
-        return true;  // not a test failure
+        return true; // not a test failure
     }
 
     auto after = eval.gc_root_count();
@@ -168,17 +169,15 @@ bool test_gc_hooks_api() {
     auto prev_record = aura::gc_hooks::g_arena_record_alloc.load();
 
     // Set and restore.
-    aura::gc_hooks::g_arena_safepoint_check.store(
-        +[](void) { });
-    aura::gc_hooks::g_arena_record_alloc.store(
-        +[](void) { (void)0; });
+    aura::gc_hooks::g_arena_safepoint_check.store(+[](void) {});
+    aura::gc_hooks::g_arena_record_alloc.store(+[](void) { (void)0; });
 
     CHECK(aura::gc_hooks::g_arena_safepoint_check.load() != nullptr,
           "g_arena_safepoint_check is settable");
     CHECK(aura::gc_hooks::g_arena_record_alloc.load() != nullptr,
           "g_arena_record_alloc is settable");
 
-    aura::gc_hooks::safepoint_check();  // should not crash
+    aura::gc_hooks::safepoint_check(); // should not crash
     aura::gc_hooks::record_alloc();    // should not crash
 
     // Restore previous state.

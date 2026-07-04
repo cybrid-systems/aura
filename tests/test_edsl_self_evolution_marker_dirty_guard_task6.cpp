@@ -68,12 +68,11 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: Guard mutate bumps dirty + epoch ---");
     const auto dirty0 = cs.evaluator().get_dirty_propagation_count();
     const auto epoch0 = cs.evaluator().get_guard_dirty_epoch_count();
-    CHECK(cs.eval("(mutate:rebind \"user-val\" \"42\")").has_value(),
-          "mutate:rebind under Guard");
+    CHECK(cs.eval("(mutate:rebind \"user-val\" \"42\")").has_value(), "mutate:rebind under Guard");
     const auto dirty1 = cs.evaluator().get_dirty_propagation_count();
     const auto epoch1 = cs.evaluator().get_guard_dirty_epoch_count();
-    std::println("  dirty_propagation: {} -> {} guard_epoch: {} -> {}",
-                 dirty0, dirty1, epoch0, epoch1);
+    std::println("  dirty_propagation: {} -> {} guard_epoch: {} -> {}", dirty0, dirty1, epoch0,
+                 epoch1);
     CHECK(dirty1 >= dirty0, "dirty_propagation monotonic after Guard mutate");
     CHECK(epoch1 >= epoch0, "guard_dirty_epoch monotonic after Guard mutate");
 
@@ -92,8 +91,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = loop_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"" +
-                      std::to_string(200 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = loop_stats(cs);

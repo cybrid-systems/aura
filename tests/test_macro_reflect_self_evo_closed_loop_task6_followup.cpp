@@ -73,8 +73,7 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(mutate:rebind \"user-val\" \"99\")");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     const auto schema = cs.evaluator().get_schema_validation_pass_count();
-    std::println("  mutation_impact: {} -> {} schema_pass={}",
-                 impact0, impact1, schema);
+    std::println("  mutation_impact: {} -> {} schema_pass={}", impact0, impact1, schema);
     CHECK(impact1 > impact0, "transform_applied proxy bumped on Guard success");
 
     std::println("\n--- AC5: dirty/epoch after self-evo mutate ---");
@@ -98,8 +97,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats8a = followup_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"" +
-                      std::to_string(100 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats8b = followup_stats(cs);

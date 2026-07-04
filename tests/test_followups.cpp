@@ -9,8 +9,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -22,7 +22,8 @@ namespace aura_followups_detail {
 
 static int64_t run_int(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = cs.eval(src);
-    if (!r || !aura::compiler::types::is_int(*r)) return -1;
+    if (!r || !aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -31,7 +32,8 @@ bool test_mutation_log_diff() {
     std::println("\n--- AC1: (mutation-log:diff from to) ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Note: set-code may add mutations to the log
     // (workspace rebind, eval-prime, etc.), so the mutation_id
@@ -40,13 +42,16 @@ bool test_mutation_log_diff() {
     // before each diff call.
     auto n_before = run_int(cs, "(mutation-count)");
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 4))\" \"bump-3\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto n_total = run_int(cs, "(mutation-count)");
     CHECK(n_total >= n_before + 3, "3 rebinds added 3+ mutations");
@@ -74,11 +79,13 @@ bool test_dirty_summary() {
     std::println("\n--- AC2: (dirty:summary) ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Force a mutation to make something dirty
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // dirty:summary should return a hash with at least present-bits
     auto r = cs.eval("(dirty:summary)");
@@ -100,7 +107,8 @@ bool test_or_combine_bits() {
     if (!cs.eval("(set-code \""
                  "(define (f x) "
                  "  (if (or (string? x) (number? x)) 1 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "(typecheck-current) succeeds for OR of two predicates");
@@ -119,7 +127,8 @@ bool test_provenance_wildcard() {
                  "(define (f x y) "
                  "  (if (string? x) (length x) "
                  "  (if (number? y) (+ y 1) 0)))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "typecheck succeeds");
@@ -134,7 +143,8 @@ bool test_narrowings_at_mutation() {
     std::println("\n--- AC5: (query:narrowings-at-mutation mutation-id) ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Force typecheck + provenance capture
     auto tc = cs.eval("(typecheck-current)");
@@ -153,10 +163,12 @@ bool test_backward_compat() {
     std::println("\n--- AC6: backward compat ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Existing primitives still work
     auto r1 = cs.eval("(mutation-log:summary)");
@@ -175,7 +187,8 @@ bool test_check_mode_captures_provenance() {
     if (!cs.eval("(set-code \""
                  "(define (f x) "
                  "  (if (string? x) (length x) 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Run check-mode only.
     auto tc = cs.eval("(typecheck-current)");
@@ -192,7 +205,8 @@ bool test_or_and_inner_predicate() {
     if (!cs.eval("(set-code \""
                  "(define (f x) "
                  "  (if (and (string? x) (number? x)) 1 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "(and (string? x) (number? x)) typechecks");
@@ -204,12 +218,14 @@ bool test_memo_size_cap() {
     std::println("\n--- AC9: predicate memo size cap ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     for (int i = 0; i < 5; ++i) {
         auto tc = cs.eval("(typecheck-current)");
         if (!tc.has_value()) {
-            ++g_failed; return false;
+            ++g_failed;
+            return false;
         }
     }
     CHECK(true, "5 consecutive (typecheck-current) calls all succeed");
@@ -221,18 +237,22 @@ bool test_hash_to_alist() {
     std::println("\n--- AC10: (hash->alist hash) ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // hash->alist on (mutation-log:summary) should return a list
     // of (key . value) pairs.
     auto n = run_int(cs, "(length (hash->alist (mutation-log:summary)))");
-    CHECK(n >= 5, "hash->alist returns >= 5 entries (total/committed/rolled-back/by-operator/last-*)");
+    CHECK(n >= 5,
+          "hash->alist returns >= 5 entries (total/committed/rolled-back/by-operator/last-*)");
     return true;
 }
 
@@ -242,7 +262,8 @@ bool test_bidirectional_opt_out() {
     aura::compiler::CompilerService cs;
     // Default: bidirectional_mode is true. typecheck still works.
     if (!cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto tc1 = cs.eval("(typecheck-current)");
     CHECK(tc1.has_value(), "typecheck works in default (bidirectional=true) mode");
@@ -270,7 +291,8 @@ bool test_register_predicate() {
     CHECK(reg.has_value(), "(register-predicate! \"int?\" \"Int\") returns a value");
     // Set-code and typecheck a function that uses it.
     if (!cs.eval("(set-code \"(define (g x) (if (int? x) (+ x 1) 0))\")")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "typecheck-current succeeds with custom predicate");
@@ -303,8 +325,12 @@ int run_tests() {
 
 } // namespace aura_followups_detail
 
-int aura_followups_run() { return aura_followups_detail::run_tests(); }
+int aura_followups_run() {
+    return aura_followups_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_followups_run(); }
+int main() {
+    return aura_followups_run();
+}
 #endif

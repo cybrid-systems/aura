@@ -58,11 +58,9 @@ static void test_equal_cross_delta_conflict() {
     TypeRegistry reg;
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "first delta T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) == SolveResult::CONFLICT,
           "second delta T~String conflicts via touched_roots reverify");
 }
 
@@ -72,14 +70,11 @@ static void test_merge_binding_conflict() {
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
     const auto u = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, u, reg.string_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, u, reg.string_type()}) == SolveResult::SOLVED,
           "U~String solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, u}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, u}) == SolveResult::CONFLICT,
           "T~U merge conflicts across clean constraints");
 }
 
@@ -132,14 +127,12 @@ static void test_conflict_matrix() {
         const auto t = cs.fresh_var();
         (void)solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.dynamic_type()});
         ++conflict_injected;
-        if (solve_delta_with(cs, {Constraint::CONSISTENT, t, linear}) ==
-            SolveResult::CONFLICT)
+        if (solve_delta_with(cs, {Constraint::CONSISTENT, t, linear}) == SolveResult::CONFLICT)
             ++conflict_detected;
     }
 
     std::println("  conflict_detected={}/{}", conflict_detected, conflict_injected);
-    CHECK(conflict_detected * 2 >= conflict_injected,
-          "≥50% injected conflict scenarios detected");
+    CHECK(conflict_detected * 2 >= conflict_injected, "≥50% injected conflict scenarios detected");
 }
 
 static void run_integration_matrix(CompilerService& cs) {
@@ -154,8 +147,7 @@ static void run_integration_matrix(CompilerService& cs) {
     constraint_cs.set_metrics(&metrics);
     const auto t = constraint_cs.fresh_var();
     (void)solve_delta_with(constraint_cs, {Constraint::EQUAL, t, reg.int_type()});
-    (void)solve_delta_with(constraint_cs,
-                           {Constraint::EQUAL, t, reg.string_type()});
+    (void)solve_delta_with(constraint_cs, {Constraint::EQUAL, t, reg.string_type()});
 
     std::println("\n--- AC7: query regression ---");
     auto cstats = cs.eval("(query:constraint-stats)");
@@ -170,19 +162,16 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(det > 0, "unit path bumped conflict detected");
 
     std::println("\n--- AC8: incremental_infer multi-mutate smoke ---");
-    CHECK(cs.eval("(set-code \"(define (f x) (if (number? x) (+ x 1) 0))\")"),
-          "load workspace");
+    CHECK(cs.eval("(set-code \"(define (f x) (if (number? x) (+ x 1) 0))\")"), "load workspace");
     (void)cs.eval("(eval-current)");
     (void)cs.eval("(typecheck-current)");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
-        "\"issue-509-a\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+                  "\"issue-509-a\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
-        "\"issue-509-b\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+                  "\"issue-509-b\")");
     (void)cs.incremental_infer(ws->all_mutations().back());
     auto r = cs.eval("(f 4)");
     CHECK(r && is_int(*r), "eval after multi-mutate incremental infer");

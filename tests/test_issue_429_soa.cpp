@@ -64,7 +64,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -73,18 +73,25 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
     return *r;
 }
 
-static std::int64_t hash_int(aura::compiler::CompilerService& cs,
-                              std::string_view key) {
+static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:soa-dirty-stats) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: fresh Evaluator — cached-fns == 0
@@ -141,10 +148,8 @@ bool test_all_8_fields_present() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     static const char* kFields[] = {
-        "cached-fns", "dirty-fns",
-        "total-blocks", "dirty-blocks",
-        "total-instructions", "dirty-instructions",
-        "dirty-block-pct", "dirty-instruction-pct",
+        "cached-fns",         "dirty-fns",          "total-blocks",    "dirty-blocks",
+        "total-instructions", "dirty-instructions", "dirty-block-pct", "dirty-instruction-pct",
     };
     bool all_ok = true;
     for (auto* k : kFields) {
@@ -240,14 +245,13 @@ bool test_stats_list_includes() {
     // so the freshly-added primitive appears EARLIEST in
     // the list, not latest. We check both positions to
     // be robust to future refactors.
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"query:soa-dirty-stats\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"query:soa-dirty-stats\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes query:soa-dirty-stats");
     return true;
 }
@@ -259,8 +263,7 @@ bool test_stats_count() {
     std::println("\n--- AC11: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 40;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 40;
     CHECK(ok, "stats:count >= 40 (was 39 in #428, now 40 in #429)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -268,7 +271,7 @@ bool test_stats_count() {
     return true;
 }
 
-}  // namespace aura_issue_429_detail
+} // namespace aura_issue_429_detail
 
 int main() {
     using namespace aura_issue_429_detail;

@@ -103,19 +103,22 @@ static int k_race_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !is_int(*r)) return -1;
+    if (!r || !is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(as_int(*r));
 }
 
 static bool setup_workspace(CompilerService& cs) {
     // Mix of (define ...), if, +, lambda — gives query:pattern
     // a non-trivial (tag, arity) distribution to index.
-    return cs.eval("(set-code \""
-                   "(define a 1) (define b 2) (define c 3) "
-                   "(define (add1 x) (+ x 1)) "
-                   "(define (dbl y) (* y 2)) "
-                   "(if (> a 0) (add1 b) (dbl c))"
-                   "\")").has_value();
+    return cs
+        .eval("(set-code \""
+              "(define a 1) (define b 2) (define c 3) "
+              "(define (add1 x) (+ x 1)) "
+              "(define (dbl y) (* y 2)) "
+              "(if (> a 0) (add1 b) (dbl c))"
+              "\")")
+        .has_value();
 }
 
 // ── AC1: single-thread regression — query:pattern /
@@ -139,16 +142,14 @@ bool test_single_thread_regression() {
 
     // After replacement, the new define's body is present.
     auto r3 = cs.eval("(query:pattern \"inc\")");
-    CHECK(r3.has_value(),
-          "post-replace (query:pattern \"inc\") returns a list");
+    CHECK(r3.has_value(), "post-replace (query:pattern \"inc\") returns a list");
 
     // Index was rebuilt (or invalidated) — query the
     // C++ accessor (no EDSL primitive for size lives
     // today — query:pattern-index-stats returns the 6
     // counter sum, not the bucket count).
     const auto size = cs.evaluator().tag_arity_index_size();
-    CHECK(size > 0,
-          "tag_arity_index_size() populated post-query");
+    CHECK(size > 0, "tag_arity_index_size() populated post-query");
     return true;
 }
 
@@ -164,8 +165,7 @@ bool test_index_round_trip() {
     // First build — populates the index from the workspace.
     ev.force_build_tag_arity_index();
     const auto size_after_build = ev.tag_arity_index_size();
-    CHECK(size_after_build > 0,
-          "size > 0 after force_build_tag_arity_index()");
+    CHECK(size_after_build > 0, "size > 0 after force_build_tag_arity_index()");
 
     // Invalidate — drops to zero.
     ev.invalidate_tag_arity_index_for_test();
@@ -215,18 +215,17 @@ bool test_four_thread_eval_serialized() {
                     code = "(query:pattern \"+\" :arity-min 2 :arity-max 3)";
                     break;
                 case 2:
-                    code = "(mutate:replace-value (define q" +
-                           std::to_string(tid) + "_" + std::to_string(i) +
-                           " " + std::to_string(rng() & 0xfff) +
-                           ") (define q" + std::to_string(tid) + "_" +
-                           std::to_string(i) + " 0))";
+                    code = "(mutate:replace-value (define q" + std::to_string(tid) + "_" +
+                           std::to_string(i) + " " + std::to_string(rng() & 0xfff) + ") (define q" +
+                           std::to_string(tid) + "_" + std::to_string(i) + " 0))";
                     break;
                 default:
                     code = "(query:pattern \"define\")";
                     break;
             }
             auto r = cs.eval(code);
-            if (!r) failures.fetch_add(1, std::memory_order_relaxed);
+            if (!r)
+                failures.fetch_add(1, std::memory_order_relaxed);
             if (kind == 0 || kind == 1 || kind == 3) {
                 query_count.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -238,17 +237,18 @@ bool test_four_thread_eval_serialized() {
 
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < k_threads(); ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
-    std::println("  total_ops={} query={} mutate={} failures={} elapsed={}ms",
-                 total_ops.load(), query_count.load(),
-                 mutate_count.load(), failures.load(), ms);
+    for (int i = 0; i < k_threads(); ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  total_ops={} query={} mutate={} failures={} elapsed={}ms", total_ops.load(),
+                 query_count.load(), mutate_count.load(), failures.load(), ms);
     CHECK(total_ops.load() == k_threads() * k_iters(),
           "every thread completed all iters (no crashes)");
-    CHECK(failures.load() == 0,
-          "no eval failures under concurrent mutate + query:pattern");
+    CHECK(failures.load() == 0, "no eval failures under concurrent mutate + query:pattern");
     return true;
 }
 
@@ -257,8 +257,8 @@ bool test_four_thread_eval_serialized() {
 //   size). Bypasses the eval() serializer so the
 //   shared_mutex is exercised under real contention. ──────
 bool test_four_thread_direct_lock_race() {
-    std::println("\n--- AC4: {} threads × {} iters direct-index lock race ---",
-                 k_threads(), k_race_iters());
+    std::println("\n--- AC4: {} threads × {} iters direct-index lock race ---", k_threads(),
+                 k_race_iters());
     CompilerService cs;
     CHECK(setup_workspace(cs), "workspace ready");
 
@@ -301,8 +301,7 @@ bool test_four_thread_direct_lock_race() {
                         // Defensive sanity: any sane
                         // workspace has <1k entries in the
                         // (tag, arity) index. Larger = bug.
-                        observable_failures.fetch_add(1,
-                            std::memory_order_relaxed);
+                        observable_failures.fetch_add(1, std::memory_order_relaxed);
                     }
                     (void)initial_size;
                     (void)rng;
@@ -314,32 +313,32 @@ bool test_four_thread_direct_lock_race() {
 
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < k_threads(); ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < k_threads(); ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     std::println("  build={} invalidate={} size_reads={} failures={} elapsed={}ms",
-                 build_count.load(), invalidate_count.load(),
-                 size_reads.load(), observable_failures.load(), ms);
+                 build_count.load(), invalidate_count.load(), size_reads.load(),
+                 observable_failures.load(), ms);
     CHECK(build_count.load() > 0, "build path exercised under contention");
-    CHECK(invalidate_count.load() > 0,
-          "invalidate path exercised under contention");
+    CHECK(invalidate_count.load() > 0, "invalidate path exercised under contention");
     CHECK(size_reads.load() > 0, "read path exercised under contention");
     CHECK(observable_failures.load() == 0,
           "no observable corruption from concurrent direct-index ops");
 
     // Final state: rebuild once so post-test stats are sane.
     ev.force_build_tag_arity_index();
-    CHECK(ev.tag_arity_index_size() > 0,
-          "index re-populated after the race window");
+    CHECK(ev.tag_arity_index_size() > 0, "index re-populated after the race window");
     return true;
 }
 
 // ── AC5: 200-iter stress mixing all ops (mutate +
 //   query:pattern + set-code) under the eval() mutex. ────
 bool test_long_stress_mixed_ops() {
-    std::println("\n--- AC5: {} threads × {} iters mixed-op stress ---",
-                 k_threads(), k_iters());
+    std::println("\n--- AC5: {} threads × {} iters mixed-op stress ---", k_threads(), k_iters());
     CompilerService cs;
     CHECK(setup_workspace(cs), "workspace ready");
 
@@ -361,11 +360,9 @@ bool test_long_stress_mixed_ops() {
                     code = "(query:pattern \"define\" :arity-min 2 :arity-max 2)";
                     break;
                 case 1:
-                    code = "(mutate:replace-value (define z" +
-                           std::to_string(tid) + "_" + std::to_string(i) +
-                           " " + std::to_string(rng() & 0xff) +
-                           ") (define z" + std::to_string(tid) + "_" +
-                           std::to_string(i) + " 0))";
+                    code = "(mutate:replace-value (define z" + std::to_string(tid) + "_" +
+                           std::to_string(i) + " " + std::to_string(rng() & 0xff) + ") (define z" +
+                           std::to_string(tid) + "_" + std::to_string(i) + " 0))";
                     break;
                 case 2:
                     code = "(query:pattern \"+\" :arity-min 2 :arity-max 3)";
@@ -374,9 +371,8 @@ bool test_long_stress_mixed_ops() {
                     // (set-code ...) triggers
                     // invalidate_tag_arity_index in
                     // eval_primitives_eval.cpp.
-                    code = "(set-code \"(define w" + std::to_string(i) +
-                           " 1) (define w" + std::to_string(i + 1) +
-                           " 2)\")";
+                    code = "(set-code \"(define w" + std::to_string(i) + " 1) (define w" +
+                           std::to_string(i + 1) + " 2)\")";
                     break;
                 default:
                     code = "(query:pattern \"lambda\")";
@@ -398,17 +394,18 @@ bool test_long_stress_mixed_ops() {
 
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < k_threads(); ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
-    std::println("  total={} query={} mutate={} set_code={} failures={} elapsed={}ms",
-                 total.load(), query_ok.load(), mutate_ok.load(),
-                 setcode_ok.load(), failures.load(), ms);
+    for (int i = 0; i < k_threads(); ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  total={} query={} mutate={} set_code={} failures={} elapsed={}ms", total.load(),
+                 query_ok.load(), mutate_ok.load(), setcode_ok.load(), failures.load(), ms);
     CHECK(total.load() == k_threads() * k_iters(),
           "every thread completed all iters under mixed-op stress");
-    CHECK(failures.load() == 0,
-          "no eval failures under mixed-op stress");
+    CHECK(failures.load() == 0, "no eval failures under mixed-op stress");
     return true;
 }
 
@@ -433,12 +430,11 @@ bool test_pattern_index_stats_observability() {
     (void)cs.eval("(query:pattern \"define\")");
     (void)cs.eval("(query:pattern \"define\" :arity-min 2 :arity-max 2)");
     const auto stats_after = eval_int(cs, "(query:pattern-index-stats)");
-    CHECK(stats_after >= stats_before,
-          "pattern-index-stats monotonic (hits accumulate)");
+    CHECK(stats_after >= stats_before, "pattern-index-stats monotonic (hits accumulate)");
     return true;
 }
 
-}  // namespace aura_issue_371_detail
+} // namespace aura_issue_371_detail
 
 int aura_issue_371_run() {
     using namespace aura_issue_371_detail;
@@ -454,5 +450,7 @@ int aura_issue_371_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_371_run(); }
+int main() {
+    return aura_issue_371_run();
+}
 #endif

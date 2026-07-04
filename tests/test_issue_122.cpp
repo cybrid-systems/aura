@@ -20,8 +20,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -30,7 +30,6 @@ import aura.diag;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_122_detail {
@@ -117,9 +116,8 @@ bool test_reflect_end_to_end() {
     std::println("\n--- Test: end-to-end runtime check ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(display (reflect-type \"Bool\")) "
-        "(display (reflect-members \"Int\"))");
+    auto root = parse(e, "(display (reflect-type \"Bool\")) "
+                         "(display (reflect-members \"Int\"))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "end-to-end smoke parses + typechecks");
@@ -148,12 +146,12 @@ int run_tests() {
     test_reflect_module_exports_unknown();
     test_reflect_end_to_end();
     test_reflect_in_query();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_122_detail
+} // namespace aura_issue_122_detail
 
-int aura_issue_122_run() { return aura_issue_122_detail::run_tests(); }
-
+int aura_issue_122_run() {
+    return aura_issue_122_detail::run_tests();
+}

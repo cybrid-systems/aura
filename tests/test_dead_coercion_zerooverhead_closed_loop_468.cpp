@@ -28,15 +28,15 @@ import aura.compiler.value;
 
 namespace aura_468_detail {
 
-using aura::ir::IRFunction;
-using aura::ir::IRInstruction;
-using aura::ir::IRModule;
-using aura::ir::IROpcode;
 using aura::compiler::CompilerService;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::TypeSpecializationWrap;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::ir::IRFunction;
+using aura::ir::IRInstruction;
+using aura::ir::IRModule;
+using aura::ir::IROpcode;
 
 static std::int64_t zerooverhead_stats(CompilerService& cs) {
     auto r = cs.eval("(query:dead-coercion-zerooverhead-stats)");
@@ -92,10 +92,9 @@ static void run_matrix(CompilerService& cs) {
     DeadCoercionEliminationPass dce;
     dce.run(mod);
     const auto after = count_cast_ops(mod);
-    const auto reduction_pct =
-        before > 0 ? (100 * (before - after)) / before : 0;
-    std::println("  before={} after={} reduction={}% eliminated={}",
-                 before, after, reduction_pct, dce.eliminated_count());
+    const auto reduction_pct = before > 0 ? (100 * (before - after)) / before : 0;
+    std::println("  before={} after={} reduction={}% eliminated={}", before, after, reduction_pct,
+                 dce.eliminated_count());
     CHECK(before == 12, "12 CastOps before (9 elidable + 3 not)");
     CHECK(after == 3, "3 CastOps remain after DCE");
     CHECK(reduction_pct > 60, "reduction > 60%");
@@ -113,8 +112,7 @@ static void run_matrix(CompilerService& cs) {
     const auto narrow_before = count_cast_ops(narrow);
     DeadCoercionEliminationPass dce2;
     dce2.run(narrow);
-    CHECK(count_cast_ops(narrow) == narrow_before,
-          "Dynamic→Int without type_id not elided");
+    CHECK(count_cast_ops(narrow) == narrow_before, "Dynamic→Int without type_id not elided");
     CHECK(dce2.eliminated_count() == 0, "no elision without ground type info");
 
     std::println("\n--- AC4: typed mutate loop + stats monotonic ---");
@@ -124,8 +122,8 @@ static void run_matrix(CompilerService& cs) {
     const auto elim4a = cs.snapshot().dead_coercion_eliminated_total;
 
     for (int i = 0; i < 4; ++i) {
-        CHECK(cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(100 + i) +
-                      "\" \"468-" + std::to_string(i) + "\")")
+        CHECK(cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(100 + i) + "\" \"468-" +
+                      std::to_string(i) + "\")")
                   .has_value(),
               "mutate:rebind ok");
         CHECK(cs.eval("(eval-current)").has_value(), "post-mutate eval");
@@ -170,16 +168,15 @@ static void run_matrix(CompilerService& cs) {
     ts.run(gradual);
     dce3.run(gradual);
     const auto remaining = count_cast_ops(gradual);
-    std::println("  castops: emitted={} remaining={} eliminated={}",
-                 emitted, remaining, dce3.eliminated_count());
+    std::println("  castops: emitted={} remaining={} eliminated={}", emitted, remaining,
+                 dce3.eliminated_count());
     CHECK(dce3.eliminated_count() > 0, "pipeline eliminated identity casts");
     CHECK(remaining < emitted, "remaining < emitted after pipeline");
 
     std::println("\n--- AC8: multi-round gradual mutate ---");
     const auto stats8a = zerooverhead_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(200 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(200 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats8b = zerooverhead_stats(cs);

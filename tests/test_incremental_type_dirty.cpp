@@ -31,19 +31,15 @@ static void test_mutate_rebind_selective_recheck() {
     cs.eval("(set-code \"(define x 1) (define y 2)\")");
     cs.eval("(eval-current)");
 
-    CHECK(cs.eval("(mutate:rebind \"x\" \"42\" \"526\")").has_value(),
-          "mutate:rebind succeeds");
+    CHECK(cs.eval("(mutate:rebind \"x\" \"42\" \"526\")").has_value(), "mutate:rebind succeeds");
 
     auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr && !ws->all_mutations().empty(),
-          "mutation log populated after rebind");
-    CHECK(!cs.evaluator().has_type_error(),
-          "post-mutate selective typecheck clean");
+    CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation log populated after rebind");
+    CHECK(!cs.evaluator().has_type_error(), "post-mutate selective typecheck clean");
 
     // run_post_mutate_typecheck_no_lock already invoked infer_flat_partial.
     const auto reinferred = cs.incremental_infer(ws->all_mutations().back());
-    std::println("  reinferred={} (second incremental_infer on same record)",
-                 reinferred);
+    std::println("  reinferred={} (second incremental_infer on same record)", reinferred);
     CHECK(reinferred >= 0, "incremental_infer returns non-negative count");
 }
 
@@ -82,10 +78,8 @@ static void test_pass_short_circuit_dce_dirty_blocks() {
     std::vector<std::uint8_t> dirty_mask = {1, 0};
     DeadCoercionEliminationPass dce;
     dce.run_function(func, dirty_mask);
-    CHECK(func.blocks[0].instructions[1].opcode == IROpcode::Local,
-          "dirty block CastOp elided");
-    CHECK(func.blocks[1].instructions[1].opcode == IROpcode::CastOp,
-          "clean block untouched");
+    CHECK(func.blocks[0].instructions[1].opcode == IROpcode::Local, "dirty block CastOp elided");
+    CHECK(func.blocks[1].instructions[1].opcode == IROpcode::CastOp, "clean block untouched");
 
     // Simulate service-level metric bump (1 clean block skipped).
     cs.evaluator().bump_passes_skipped_type_dirty(1);
@@ -132,8 +126,7 @@ static void test_end_to_end_mutate_cycle() {
     CHECK(after.has_value(), "final eval ok");
 
     auto snap1 = cs.snapshot();
-    CHECK(snap1.incremental_typecheck_re_inferred_total >= reinf0,
-          "re_inferred_total monotonic");
+    CHECK(snap1.incremental_typecheck_re_inferred_total >= reinf0, "re_inferred_total monotonic");
     CHECK(snap1.incremental_typecheck_auto_invocations_total >= auto0,
           "auto_invocations monotonic");
 

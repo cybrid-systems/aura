@@ -16,8 +16,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -35,8 +35,7 @@ bool test_query_stable_ref_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:stable-ref-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:stable-ref-stats returns an integer");
     return true;
 }
 
@@ -83,8 +82,7 @@ bool test_is_valid_bumps_stale() {
         return false;
     }
     const auto after = ws->node_gen_stale_access_count();
-    CHECK(after > before,
-          "is_valid on out-of-range NodeId bumps node_gen_stale_access_count_");
+    CHECK(after > before, "is_valid on out-of-range NodeId bumps node_gen_stale_access_count_");
     return true;
 }
 
@@ -104,8 +102,7 @@ bool test_stable_ref_bumps_invalidation() {
     }
     // Capture a ref to a real node.
     auto ref = ws->make_ref(0);
-    CHECK(ref.is_valid_in(*ws),
-          "fresh StableNodeRef is valid");
+    CHECK(ref.is_valid_in(*ws), "fresh StableNodeRef is valid");
     // Force a structural mutation so generation_ changes.
     if (!cs.eval("(mutate:rebind \"p\" \"99\")")) {
         ++g_failed;
@@ -119,8 +116,7 @@ bool test_stable_ref_bumps_invalidation() {
         return false;
     }
     const auto after = ws->stable_ref_invalidations();
-    CHECK(after > before,
-          "is_valid(StableNodeRef) on stale ref bumps stable_ref_invalidations_");
+    CHECK(after > before, "is_valid(StableNodeRef) on stale ref bumps stable_ref_invalidations_");
     return true;
 }
 
@@ -143,8 +139,7 @@ bool test_current_generation_advances() {
         return false;
     }
     const auto gen_after = ws->current_generation();
-    CHECK(gen_after != gen_before,
-          "current_generation() changes after a structural mutation");
+    CHECK(gen_after != gen_before, "current_generation() changes after a structural mutation");
     return true;
 }
 
@@ -161,8 +156,7 @@ bool test_query_stable_ref_stats_bumps() {
         ++g_failed;
         return false;
     }
-    const auto count_before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto count_before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     if (!cs.eval("(mutate:rebind \"s\" \"99\")")) {
         ++g_failed;
         return false;
@@ -179,10 +173,8 @@ bool test_query_stable_ref_stats_bumps() {
         ++g_failed;
         return false;
     }
-    const auto count_after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(count_after >= count_before,
-          "query:stable-ref-stats count is monotonic (>= before)");
+    const auto count_after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(count_after >= count_before, "query:stable-ref-stats count is monotonic (>= before)");
     return true;
 }
 
@@ -220,13 +212,13 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 7 35) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 7 35) == 42 (regression)");
     return true;
 }
 
 int run_tests() {
-    std::println("Issue #457 (generation_/node_gen_ wrap counters + StableNodeRef invalidation metrics)\n");
+    std::println(
+        "Issue #457 (generation_/node_gen_ wrap counters + StableNodeRef invalidation metrics)\n");
     test_query_stable_ref_stats();
     test_public_accessors();
     test_is_valid_bumps_stale();
@@ -241,8 +233,12 @@ int run_tests() {
 
 } // namespace aura_issue_457_detail
 
-int aura_issue_457_run() { return aura_issue_457_detail::run_tests(); }
+int aura_issue_457_run() {
+    return aura_issue_457_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_457_run(); }
+int main() {
+    return aura_issue_457_run();
+}
 #endif

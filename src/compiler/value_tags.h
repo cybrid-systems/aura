@@ -84,11 +84,11 @@ static_assert(eval_value_tag_low2_table(3) == EvalValueTag::Special,
 // encoding drift at compile time (the alternative is a
 // runtime check on every dispatch, which is what was
 // happening pre-#465).
-static_assert(static_cast<std::uint8_t>(EvalValueTag::Fixnum)   == 0, "Fixnum tag must be 0");
-static_assert(static_cast<std::uint8_t>(EvalValueTag::Ref)      == 1, "Ref tag must be 1");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Fixnum) == 0, "Fixnum tag must be 0");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Ref) == 1, "Ref tag must be 1");
 static_assert(static_cast<std::uint8_t>(EvalValueTag::StringV2) == 2, "StringV2 tag must be 2");
-static_assert(static_cast<std::uint8_t>(EvalValueTag::Special)  == 3, "Special tag must be 3");
-static_assert(static_cast<std::uint8_t>(EvalValueTag::Float)    == 4, "Float tag must be 4");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Special) == 3, "Special tag must be 3");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Float) == 4, "Float tag must be 4");
 // Unknown = 255 must stay >= 5 (so the low-2-bit dispatch
 // never accidentally classifies a value as Unknown when the
 // real tag is Fixnum/Ref/StringV2/Special).
@@ -323,7 +323,8 @@ static_assert((make_float_raw_v2(0) & 3) == 0, "v2 float encoding broke tag bits
 static_assert((make_float_raw_v2(1) & 3) == 0, "v2 float encoding broke tag bits (idx=1)");
 static_assert((make_float_raw_v2(2) & 3) == 0, "v2 float encoding broke tag bits (idx=2)");
 static_assert((make_float_raw_v2(3) & 3) == 0, "v2 float encoding broke tag bits (idx=3)");
-static_assert((make_float_raw_v2(0xFFFFULL) & 3) == 0, "v2 float encoding broke tag bits (idx=0xFFFF)");
+static_assert((make_float_raw_v2(0xFFFFULL) & 3) == 0,
+              "v2 float encoding broke tag bits (idx=0xFFFF)");
 
 // Roundtrip check at compile time: make then decode returns the
 // same idx. (Sanity guard against off-by-one in the shift.)

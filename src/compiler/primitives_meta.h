@@ -37,57 +37,56 @@ struct PrimitiveSkeleton {
 
 namespace primitives_meta_detail {
 
-inline bool contains_ci(std::string_view hay, std::string_view needle) {
-    if (needle.empty() || hay.size() < needle.size())
-        return false;
-    const auto lower = [](char c) {
-        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    };
-    for (std::size_t i = 0; i + needle.size() <= hay.size(); ++i) {
-        bool match = true;
-        for (std::size_t j = 0; j < needle.size(); ++j) {
-            if (lower(hay[i + j]) != lower(needle[j])) {
-                match = false;
-                break;
+    inline bool contains_ci(std::string_view hay, std::string_view needle) {
+        if (needle.empty() || hay.size() < needle.size())
+            return false;
+        const auto lower = [](char c) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        };
+        for (std::size_t i = 0; i + needle.size() <= hay.size(); ++i) {
+            bool match = true;
+            for (std::size_t j = 0; j < needle.size(); ++j) {
+                if (lower(hay[i + j]) != lower(needle[j])) {
+                    match = false;
+                    break;
+                }
             }
+            if (match)
+                return true;
         }
-        if (match)
-            return true;
+        return false;
     }
-    return false;
-}
 
-inline std::string detect_category(std::string_view desc) {
-    if (contains_ci(desc, "coverpoint") || contains_ci(desc, "covergroup"))
-        return std::string(kPrimCategorySva);
-    if (contains_ci(desc, "property") || contains_ci(desc, "assert") ||
-        contains_ci(desc, "sequence") || contains_ci(desc, "sva"))
-        return std::string(kPrimCategorySva);
-    if (contains_ci(desc, "verification") || contains_ci(desc, "feedback") ||
-        contains_ci(desc, "coverage"))
-        return std::string(kPrimCategoryVerification);
-    if (contains_ci(desc, "interface") || contains_ci(desc, "modport") ||
-        contains_ci(desc, "eda") || contains_ci(desc, "hardware"))
-        return std::string(kPrimCategoryEda);
-    return std::string(kPrimCategoryGeneral);
-}
+    inline std::string detect_category(std::string_view desc) {
+        if (contains_ci(desc, "coverpoint") || contains_ci(desc, "covergroup"))
+            return std::string(kPrimCategorySva);
+        if (contains_ci(desc, "property") || contains_ci(desc, "assert") ||
+            contains_ci(desc, "sequence") || contains_ci(desc, "sva"))
+            return std::string(kPrimCategorySva);
+        if (contains_ci(desc, "verification") || contains_ci(desc, "feedback") ||
+            contains_ci(desc, "coverage"))
+            return std::string(kPrimCategoryVerification);
+        if (contains_ci(desc, "interface") || contains_ci(desc, "modport") ||
+            contains_ci(desc, "eda") || contains_ci(desc, "hardware"))
+            return std::string(kPrimCategoryEda);
+        return std::string(kPrimCategoryGeneral);
+    }
 
-inline std::string suggest_primitive_name(std::string_view desc,
-                                          std::string_view category) {
-    if (category == kPrimCategorySva && contains_ci(desc, "coverpoint"))
-        return "eda:add-coverpoint-bin";
-    if (category == kPrimCategorySva && contains_ci(desc, "property"))
-        return "eda:weaken-property";
-    if (category == kPrimCategoryVerification)
-        return "eda:run-verification-feedback";
-    if (category == kPrimCategoryEda && contains_ci(desc, "evolution"))
-        return "eda:demo-sv-self-evolution";
-    if (category == kPrimCategoryEda)
-        return "eda:custom-interface-mutate";
-    return "eda:custom-mutate";
-}
+    inline std::string suggest_primitive_name(std::string_view desc, std::string_view category) {
+        if (category == kPrimCategorySva && contains_ci(desc, "coverpoint"))
+            return "eda:add-coverpoint-bin";
+        if (category == kPrimCategorySva && contains_ci(desc, "property"))
+            return "eda:weaken-property";
+        if (category == kPrimCategoryVerification)
+            return "eda:run-verification-feedback";
+        if (category == kPrimCategoryEda && contains_ci(desc, "evolution"))
+            return "eda:demo-sv-self-evolution";
+        if (category == kPrimCategoryEda)
+            return "eda:custom-interface-mutate";
+        return "eda:custom-mutate";
+    }
 
-}  // namespace primitives_meta_detail
+} // namespace primitives_meta_detail
 
 inline PrimitiveSkeleton generate_primitive_skeleton(std::string_view description) {
     using namespace primitives_meta_detail;
@@ -105,58 +104,49 @@ inline PrimitiveSkeleton generate_primitive_skeleton(std::string_view descriptio
             "    return make_bool(true);\n"
             "});";
         sk.test_snippet = "(eda:add-coverpoint-bin <coverpoint-id> \"mid\")";
-        sk.registration =
-            "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
-            "\"Add coverpoint bin.\", \"(int string) -> bool\")";
+        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
+                          "\"Add coverpoint bin.\", \"(int string) -> bool\")";
     } else if (prim_name == "eda:weaken-property") {
         sk.spec = "(property-id disable-clause-string) -> bool";
-        sk.cpp_lambda =
-            "add_mutate(\"eda:weaken-property\", [&ev](const auto& a) -> EvalValue {\n"
-            "    bool ok = true;\n"
-            "    MutationBoundaryGuard guard(ev, &ok);\n"
-            "    return make_bool(true);\n"
-            "});";
+        sk.cpp_lambda = "add_mutate(\"eda:weaken-property\", [&ev](const auto& a) -> EvalValue {\n"
+                        "    bool ok = true;\n"
+                        "    MutationBoundaryGuard guard(ev, &ok);\n"
+                        "    return make_bool(true);\n"
+                        "});";
         sk.test_snippet = "(eda:weaken-property <property-id> \"reset\")";
-        sk.registration =
-            "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
-            "\"Weaken property.\", \"(int string) -> bool\")";
+        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
+                          "\"Weaken property.\", \"(int string) -> bool\")";
     } else if (prim_name == "eda:run-verification-feedback") {
         sk.spec = "(report-kind-string report-text-string) -> bool";
         sk.cpp_lambda =
             "add(\"eda:run-verification-feedback\", [&ev](const auto& a) -> EvalValue {\n"
             "    return make_bool(true);\n"
             "});";
-        sk.test_snippet =
-            "(eda:run-verification-feedback \"coverage.log\" \"0 hole_a\")";
-        sk.registration =
-            "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates|kPrimSafetyFiber, "
-            "\"verification\", \"Feedback loop.\", \"(string string) -> bool\")";
+        sk.test_snippet = "(eda:run-verification-feedback \"coverage.log\" \"0 hole_a\")";
+        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates|kPrimSafetyFiber, "
+                          "\"verification\", \"Feedback loop.\", \"(string string) -> bool\")";
     } else if (prim_name == "eda:demo-sv-self-evolution") {
         sk.spec = "(example-string cycles-int) -> int";
-        sk.cpp_lambda =
-            "add(\"eda:demo-sv-self-evolution\", [&ev](const auto& a) -> EvalValue {\n"
-            "    return make_int(successes);\n"
-            "});";
+        sk.cpp_lambda = "add(\"eda:demo-sv-self-evolution\", [&ev](const auto& a) -> EvalValue {\n"
+                        "    return make_int(successes);\n"
+                        "});";
         sk.test_snippet = "(eda:demo-sv-self-evolution \"interface\" 50)";
-        sk.registration =
-            "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates|kPrimSafetyFiber, "
-            "\"eda\", \"Self-evolution demo.\", \"(string int) -> int\")";
+        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates|kPrimSafetyFiber, "
+                          "\"eda\", \"Self-evolution demo.\", \"(string int) -> int\")";
     } else {
         sk.spec = "(node-id payload-string) -> bool";
-        sk.cpp_lambda =
-            "add_mutate(\"eda:custom-mutate\", [&ev](const auto& a) -> EvalValue {\n"
-            "    bool ok = true;\n"
-            "    MutationBoundaryGuard guard(ev, &ok);\n"
-            "    return make_bool(true);\n"
-            "});";
+        sk.cpp_lambda = "add_mutate(\"eda:custom-mutate\", [&ev](const auto& a) -> EvalValue {\n"
+                        "    bool ok = true;\n"
+                        "    MutationBoundaryGuard guard(ev, &ok);\n"
+                        "    return make_bool(true);\n"
+                        "});";
         sk.test_snippet = "(eda:custom-mutate <node-id> \"payload\")";
-        sk.registration =
-            "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"eda\", "
-            "\"Custom EDA mutate.\", \"(int string) -> bool\")";
+        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"eda\", "
+                          "\"Custom EDA mutate.\", \"(int string) -> bool\")";
     }
     return sk;
 }
 
-}  // namespace aura::compiler
+} // namespace aura::compiler
 
-#endif  // AURA_COMPILER_PRIMITIVES_META_H
+#endif // AURA_COMPILER_PRIMITIVES_META_H

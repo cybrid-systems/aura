@@ -1,5 +1,6 @@
-// evaluator_primitives_module.cpp — P0 step 24: module? / module-get / module-keys / use / load-module / import
-// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+// evaluator_primitives_module.cpp — P0 step 24: module? / module-get / module-keys / use /
+// load-module / import aura.compiler.evaluator module partition; registered via
+// evaluator_primitives_registry.cpp.
 
 module;
 

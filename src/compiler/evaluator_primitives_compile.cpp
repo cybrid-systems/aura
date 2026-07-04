@@ -1,5 +1,6 @@
-// evaluator_primitives_compile.cpp — P0 step 14: compile:* / concurrency:* / syntax-marker primitives
-// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+// evaluator_primitives_compile.cpp — P0 step 14: compile:* / concurrency:* / syntax-marker
+// primitives aura.compiler.evaluator module partition; registered via
+// evaluator_primitives_registry.cpp.
 
 module;
 
@@ -11,9 +12,9 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
-import aura.core.mutators;  // Phase 4 follow-up #4: (compile:mutator-dispatch-stats)
+import aura.core.mutators; // Phase 4 follow-up #4: (compile:mutator-dispatch-stats)
 import aura.core.type;
-import aura.compiler.ir;     // Issue #375: (compile:ir-stats) needs IROpcode + IRModule
+import aura.compiler.ir; // Issue #375: (compile:ir-stats) needs IROpcode + IRModule
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.compiler.type_checker;
@@ -321,8 +322,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             // the fast path is paying off (most calls
             // hit a parent that was already dirty for
             // the target reasons).
-            {"dirty-upward-fast-fixed-point-hits",
-             make_int(static_cast<std::int64_t>(fast_hits))},
+            {"dirty-upward-fast-fixed-point-hits", make_int(static_cast<std::int64_t>(fast_hits))},
         };
         return build_hash(kv);
     });
@@ -507,14 +507,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   leveraging per-node occurrence-dirty for
     //   targeted re-analysis. This scope-limited
     //   slice ships the observability foundation.
-    add("compile:occurrence-typing-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:occurrence-typing-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -524,10 +522,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -556,22 +552,15 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"applied-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.narrowing_applied_total))},
-            {"skipped-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.narrowing_skipped_total))},
+            {"applied-total", make_int(static_cast<std::int64_t>(snap.narrowing_applied_total))},
+            {"skipped-total", make_int(static_cast<std::int64_t>(snap.narrowing_skipped_total))},
             {"reanalyzed-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.narrowing_reanalyzed_total))},
+             make_int(static_cast<std::int64_t>(snap.narrowing_reanalyzed_total))},
             {"applied-ratio-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.narrowing_applied_ratio_bp))},
+             make_int(static_cast<std::int64_t>(snap.narrowing_applied_ratio_bp))},
         };
         return build_hash(kv);
     });
@@ -586,14 +575,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   scope is also real intersection / union
     //   types in the registry; this scope-limited
     //   slice ships the observability foundation.
-    add("compile:and-or-precision-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:and-or-precision-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -603,10 +590,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -635,16 +620,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"meet-uses-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.and_or_meet_uses_total))},
-            {"join-uses-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.and_or_join_uses_total))},
+            {"meet-uses-total", make_int(static_cast<std::int64_t>(snap.and_or_meet_uses_total))},
+            {"join-uses-total", make_int(static_cast<std::int64_t>(snap.and_or_join_uses_total))},
         };
         return build_hash(kv);
     });
@@ -662,14 +642,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   This is the narrower signal that
     //   measures the post-mutation re-analysis
     //   workload specifically.
-    add("compile:occurrence-dirty-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:occurrence-dirty-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -679,10 +657,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -711,13 +687,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"dirty-recovery-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.narrowing_dirty_recovery_total))},
+             make_int(static_cast<std::int64_t>(snap.narrowing_dirty_recovery_total))},
         };
         return build_hash(kv);
     });
@@ -740,14 +714,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   guard; this slice ships the observability
     //   foundation + the basic cache check in
     //   synthesize_flat.
-    add("compile:schema-cache-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:schema-cache-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -757,10 +729,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -789,19 +759,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"lookups-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.schema_cache_lookups_total))},
-            {"hits-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.schema_cache_hits_total))},
-            {"hit-rate-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.schema_cache_hit_rate_bp))},
+            {"lookups-total", make_int(static_cast<std::int64_t>(snap.schema_cache_lookups_total))},
+            {"hits-total", make_int(static_cast<std::int64_t>(snap.schema_cache_hits_total))},
+            {"hit-rate-bp", make_int(static_cast<std::int64_t>(snap.schema_cache_hit_rate_bp))},
         };
         return build_hash(kv);
     });
@@ -823,14 +786,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   map to cover more constraint kinds +
     //   var-rep updates across unify; this slice
     //   ships the observability foundation.
-    add("compile:constraint-dep-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:constraint-dep-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -840,10 +801,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -872,19 +831,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"processed-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.delta_constraints_processed_total))},
-            {"total",
-             make_int(static_cast<std::int64_t>(
-                 snap.delta_constraints_total))},
+             make_int(static_cast<std::int64_t>(snap.delta_constraints_processed_total))},
+            {"total", make_int(static_cast<std::int64_t>(snap.delta_constraints_total))},
             {"ratio-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.delta_solve_constraints_ratio_bp))},
+             make_int(static_cast<std::int64_t>(snap.delta_solve_constraints_ratio_bp))},
         };
         return build_hash(kv);
     });
@@ -909,14 +863,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   graph; this slice ships the
     //   observability foundation + the
     //   worklist restart detection.
-    add("compile:constraint-solver-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:constraint-solver-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -926,10 +878,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -958,25 +908,16 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"unify-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.consistent_unify_total))},
-            {"subtype-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.consistent_subtype_total))},
-            {"restart-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.worklist_restart_total))},
+            {"unify-total", make_int(static_cast<std::int64_t>(snap.consistent_unify_total))},
+            {"subtype-total", make_int(static_cast<std::int64_t>(snap.consistent_subtype_total))},
+            {"restart-total", make_int(static_cast<std::int64_t>(snap.worklist_restart_total))},
             {"reverify-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.delta_conflict_reverify_total))},
+             make_int(static_cast<std::int64_t>(snap.delta_conflict_reverify_total))},
             {"conflict-detected",
-             make_int(static_cast<std::int64_t>(
-                 snap.delta_conflict_detected_total))},
+             make_int(static_cast<std::int64_t>(snap.delta_conflict_detected_total))},
         };
         return build_hash(kv);
     });
@@ -988,8 +929,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(0);
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         const auto snap = svc->snapshot();
-        return make_int(static_cast<std::int64_t>(
-            snap.delta_conflict_reverify_total + snap.delta_conflict_detected_total));
+        return make_int(static_cast<std::int64_t>(snap.delta_conflict_reverify_total +
+                                                  snap.delta_conflict_detected_total));
     });
 
     // (compile:let-poly-stats)
@@ -1012,14 +953,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   tracking + Value Restriction
     //   re-evaluation; this slice ships the
     //   observability foundation.
-    add("compile:let-poly-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:let-poly-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -1029,10 +968,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -1061,22 +998,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"register-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.poly_register_total))},
-            {"dedup-hits-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.poly_dedup_hits_total))},
-            {"instantiate-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.poly_instantiate_total))},
-            {"dedup-ratio-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.poly_dedup_ratio_bp))},
+            {"register-total", make_int(static_cast<std::int64_t>(snap.poly_register_total))},
+            {"dedup-hits-total", make_int(static_cast<std::int64_t>(snap.poly_dedup_hits_total))},
+            {"instantiate-total", make_int(static_cast<std::int64_t>(snap.poly_instantiate_total))},
+            {"dedup-ratio-bp", make_int(static_cast<std::int64_t>(snap.poly_dedup_ratio_bp))},
         };
         return build_hash(kv);
     });
@@ -1100,14 +1028,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   primitive for fine-grained impact; this
     //   slice ships the observability foundation
     //   + the 2 lifetime counters.
-    add("compile:dirty-impact-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:dirty-impact-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -1117,10 +1043,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -1149,19 +1073,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"should-relower-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.should_relower_total))},
+             make_int(static_cast<std::int64_t>(snap.should_relower_total))},
             {"affected-subtree-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.affected_subtree_total))},
-            {"trigger-rate-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.dirty_trigger_rate_bp))},
+             make_int(static_cast<std::int64_t>(snap.affected_subtree_total))},
+            {"trigger-rate-bp", make_int(static_cast<std::int64_t>(snap.dirty_trigger_rate_bp))},
         };
         return build_hash(kv);
     });
@@ -1188,26 +1107,16 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   TypeChecker::record_type_dependency
     //   (e.g. for benchmark setup) and query
     //   it via affected_nodes_for_type.
-    add("compile:type-dep-graph-stats",
-        [&ev](const auto&) -> EvalValue {
+    add("compile:type-dep-graph-stats", [&ev](const auto&) -> EvalValue {
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"lookups-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.type_dep_graph_lookups))},
-            {"hits-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.type_dep_graph_hits))},
-            {"size",
-             make_int(static_cast<std::int64_t>(
-                 snap.type_dep_graph_size))},
-            {"hit-rate-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.type_dep_graph_hit_rate_bp))},
+            {"lookups-total", make_int(static_cast<std::int64_t>(snap.type_dep_graph_lookups))},
+            {"hits-total", make_int(static_cast<std::int64_t>(snap.type_dep_graph_hits))},
+            {"size", make_int(static_cast<std::int64_t>(snap.type_dep_graph_size))},
+            {"hit-rate-bp", make_int(static_cast<std::int64_t>(snap.type_dep_graph_hit_rate_bp))},
         };
         // Use the same hash-table builder pattern as
         // compile:dirty-impact-stats (create +
@@ -1215,7 +1124,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // consistency, build it inline here.
         auto cap = std::max<std::size_t>(8, kv.size() * 2);
         std::size_t hcap = 8;
-        while (hcap < cap) hcap *= 2;
+        while (hcap < cap)
+            hcap *= 2;
         auto* ht = FlatHashTable::create(hcap);
         if (!ht)
             return make_int(0);
@@ -1225,10 +1135,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         for (auto& [k, v] : kv) {
             std::uint64_t h = 0xcbf29ce484222325ull;
             for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) *
-                    0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                      0x80;
+                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
             auto kidx = ev.string_heap_.size();
@@ -1273,14 +1181,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   checking. This slice ships the
     //   observability foundation + the basic
     //   env-lookup path for the subject type.
-    add("compile:match-narrowing-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:match-narrowing-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -1290,10 +1196,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -1322,19 +1226,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"narrowed-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.match_subject_narrowed_total))},
-            {"total",
-             make_int(static_cast<std::int64_t>(
-                 snap.match_subject_total))},
-            {"ratio-bp",
-             make_int(static_cast<std::int64_t>(
-                 snap.match_narrowed_ratio_bp))},
+             make_int(static_cast<std::int64_t>(snap.match_subject_narrowed_total))},
+            {"total", make_int(static_cast<std::int64_t>(snap.match_subject_total))},
+            {"ratio-bp", make_int(static_cast<std::int64_t>(snap.match_narrowed_ratio_bp))},
         };
         return build_hash(kv);
     });
@@ -1350,14 +1248,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   analyze_predicate_flat that returns a
     //   populated OccurrenceInfoFlat bumps this
     //   counter.
-    add("compile:narrowing-blame-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:narrowing-blame-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -1367,10 +1263,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -1399,13 +1293,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"provenance-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.narrowing_provenance_total))},
+             make_int(static_cast<std::int64_t>(snap.narrowing_provenance_total))},
         };
         return build_hash(kv);
     });
@@ -1431,14 +1323,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   (e.g. checkpoint when wrap-count > 0,
     //   investigate when stale-access-count
     //   grows faster than bump-count).
-    add("ast:generation-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("ast:generation-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -1448,10 +1338,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -1480,32 +1368,23 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"current-generation",
-             make_int(static_cast<std::int64_t>(
-                 snap.current_generation))},
+            {"current-generation", make_int(static_cast<std::int64_t>(snap.current_generation))},
             {"bump-generation-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.bump_generation_count))},
+             make_int(static_cast<std::int64_t>(snap.bump_generation_count))},
             {"generation-wrap-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.generation_wrap_count))},
+             make_int(static_cast<std::int64_t>(snap.generation_wrap_count))},
             {"stable-ref-invalidations-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.stable_ref_invalidations))},
+             make_int(static_cast<std::int64_t>(snap.stable_ref_invalidations))},
             {"node-gen-stale-access-total",
-             make_int(static_cast<std::int64_t>(
-                 snap.node_gen_stale_access_count))},
+             make_int(static_cast<std::int64_t>(snap.node_gen_stale_access_count))},
             // Issue #368: current wrap_epoch_ (uint32_t).
             // AI agents can checkpoint / compact before the
             // next generation_ wrap creates a wave of stale
             // refs in long-running workspaces.
-            {"current-wrap-epoch",
-             make_int(static_cast<std::int64_t>(
-                 snap.current_wrap_epoch))},
+            {"current-wrap-epoch", make_int(static_cast<std::int64_t>(snap.current_wrap_epoch))},
             // Issue #369: per-category counters for the
             // structural-rollback dispatcher. 'structural-
             // rollback-success' is the number of mutations
@@ -1519,18 +1398,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             // yet). AI agents can use this to find structural
             // ops that are still at risk of partial rollback.
             {"structural-rollback-success",
-             make_int(static_cast<std::int64_t>(
-                 snap.structural_rollback_success))},
+             make_int(static_cast<std::int64_t>(snap.structural_rollback_success))},
             {"structural-rollback-besteffort",
-             make_int(static_cast<std::int64_t>(
-                 snap.structural_rollback_besteffort))},
+             make_int(static_cast<std::int64_t>(snap.structural_rollback_besteffort))},
             // Issue #370: lifetime-safe view count.
             {"children-safe-view-count",
-             make_int(static_cast<std::int64_t>(
-                 snap.children_safe_view_count))},
+             make_int(static_cast<std::int64_t>(snap.children_safe_view_count))},
             {"parent-safe-view-count",
-             make_int(static_cast<std::int64_t>(
-                 snap.parent_safe_view_count))},
+             make_int(static_cast<std::int64_t>(snap.parent_safe_view_count))},
         };
         return build_hash(kv);
     });
@@ -1606,8 +1481,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_void();
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         auto snap = svc->snapshot();
         // node-count is the workspace's total node count, not a
         // snapshot field — read it directly from the FlatAST when
@@ -1617,26 +1491,20 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (ev.workspace_flat_)
             node_count = ev.workspace_flat_->size();
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"marker-user-count",
-             make_int(static_cast<std::int64_t>(snap.marker_user_count))},
+            {"marker-user-count", make_int(static_cast<std::int64_t>(snap.marker_user_count))},
             {"marker-macro-introduced-count",
              make_int(static_cast<std::int64_t>(snap.marker_macro_introduced_count))},
             {"marker-bool-literal-count",
              make_int(static_cast<std::int64_t>(snap.marker_bool_literal_count))},
-            {"marker-total-count",
-             make_int(static_cast<std::int64_t>(snap.marker_total_count))},
-            {"current-generation",
-             make_int(static_cast<std::int64_t>(snap.current_generation))},
-            {"current-wrap-epoch",
-             make_int(static_cast<std::int64_t>(snap.current_wrap_epoch))},
+            {"marker-total-count", make_int(static_cast<std::int64_t>(snap.marker_total_count))},
+            {"current-generation", make_int(static_cast<std::int64_t>(snap.current_generation))},
+            {"current-wrap-epoch", make_int(static_cast<std::int64_t>(snap.current_wrap_epoch))},
             {"generation-wrap-count",
              make_int(static_cast<std::int64_t>(snap.generation_wrap_count))},
-            {"node-count",
-             make_int(static_cast<std::int64_t>(node_count))},
+            {"node-count", make_int(static_cast<std::int64_t>(node_count))},
             // Issue #422: live evaluator hygiene violation attempts.
             {"hygiene-violation-attempts",
-             make_int(static_cast<std::int64_t>(
-                 ev.get_hygiene_violation_attempts()))},
+             make_int(static_cast<std::int64_t>(ev.get_hygiene_violation_attempts()))},
         };
         return build_hash(kv);
     });
@@ -1787,14 +1655,22 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::array<std::uint64_t, 8> counts = {0, 0, 0, 0, 0, 0, 0, 0};
         const auto view = ws->dirty_view();
         for (auto byte : view) {
-            if (byte & 0x01) ++counts[0];
-            if (byte & 0x02) ++counts[1];
-            if (byte & 0x04) ++counts[2];
-            if (byte & 0x08) ++counts[3];
-            if (byte & 0x10) ++counts[4];
-            if (byte & 0x20) ++counts[5];
-            if (byte & 0x40) ++counts[6];
-            if (byte & 0x80) ++counts[7];
+            if (byte & 0x01)
+                ++counts[0];
+            if (byte & 0x02)
+                ++counts[1];
+            if (byte & 0x04)
+                ++counts[2];
+            if (byte & 0x08)
+                ++counts[3];
+            if (byte & 0x10)
+                ++counts[4];
+            if (byte & 0x20)
+                ++counts[5];
+            if (byte & 0x40)
+                ++counts[6];
+            if (byte & 0x80)
+                ++counts[7];
         }
         // Build the 8-tuple (nested pairs, right-folded).
         EvalValue out = make_void();
@@ -1830,14 +1706,22 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         const auto& reason_name = ev.string_heap_[idx];
         std::uint8_t mask = 0;
-        if (reason_name == "general")          mask = 0x01;
-        else if (reason_name == "constraint") mask = 0x02;
-        else if (reason_name == "occurrence") mask = 0x04;
-        else if (reason_name == "ownership")   mask = 0x08;
-        else if (reason_name == "coercion")    mask = 0x10;
-        else if (reason_name == "struct")      mask = 0x20;
-        else if (reason_name == "defuse")      mask = 0x40;
-        else if (reason_name == "ppa-hint")    mask = 0x80;
+        if (reason_name == "general")
+            mask = 0x01;
+        else if (reason_name == "constraint")
+            mask = 0x02;
+        else if (reason_name == "occurrence")
+            mask = 0x04;
+        else if (reason_name == "ownership")
+            mask = 0x08;
+        else if (reason_name == "coercion")
+            mask = 0x10;
+        else if (reason_name == "struct")
+            mask = 0x20;
+        else if (reason_name == "defuse")
+            mask = 0x40;
+        else if (reason_name == "ppa-hint")
+            mask = 0x80;
         else
             return make_void();
         // Walk the dirty column; collect NodeIds
@@ -1930,8 +1814,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.is_block_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.is_block_dirty_fn_(ev.string_heap_[idx].c_str(),
-                                            static_cast<std::size_t>(fidx),
-                                            static_cast<std::uint32_t>(bidx)));
+                                               static_cast<std::size_t>(fidx),
+                                               static_cast<std::uint32_t>(bidx)));
     });
 
     // (compile:mark-block-dirty! name func-idx block-idx) —
@@ -1955,8 +1839,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.mark_block_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.mark_block_dirty_fn_(ev.string_heap_[idx].c_str(),
-                                              static_cast<std::size_t>(fidx),
-                                              static_cast<std::uint32_t>(bidx)));
+                                                 static_cast<std::size_t>(fidx),
+                                                 static_cast<std::uint32_t>(bidx)));
     });
 
     // (compile:clear-block-dirty! name func-idx block-idx) —
@@ -1979,8 +1863,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.clear_block_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.clear_block_dirty_fn_(ev.string_heap_[idx].c_str(),
-                                               static_cast<std::size_t>(fidx),
-                                               static_cast<std::uint32_t>(bidx)));
+                                                  static_cast<std::size_t>(fidx),
+                                                  static_cast<std::uint32_t>(bidx)));
     });
 
     // Issue #460: (compile:is-instruction-dirty? name func-idx
@@ -1997,10 +1881,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.is_instruction_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.is_instruction_dirty_fn_(
-            ev.string_heap_[idx].c_str(),
-            static_cast<std::size_t>(as_int(a[1])),
-            static_cast<std::uint32_t>(as_int(a[2])),
-            static_cast<std::uint32_t>(as_int(a[3]))));
+            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(as_int(a[1])),
+            static_cast<std::uint32_t>(as_int(a[2])), static_cast<std::uint32_t>(as_int(a[3]))));
     });
 
     // Issue #460: (compile:mark-instruction-dirty! name
@@ -2015,10 +1897,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.mark_instruction_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.mark_instruction_dirty_fn_(
-            ev.string_heap_[idx].c_str(),
-            static_cast<std::size_t>(as_int(a[1])),
-            static_cast<std::uint32_t>(as_int(a[2])),
-            static_cast<std::uint32_t>(as_int(a[3]))));
+            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(as_int(a[1])),
+            static_cast<std::uint32_t>(as_int(a[2])), static_cast<std::uint32_t>(as_int(a[3]))));
     });
 
     // Issue #460: (compile:clear-instruction-dirty! name
@@ -2032,10 +1912,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.clear_instruction_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.clear_instruction_dirty_fn_(
-            ev.string_heap_[idx].c_str(),
-            static_cast<std::size_t>(as_int(a[1])),
-            static_cast<std::uint32_t>(as_int(a[2])),
-            static_cast<std::uint32_t>(as_int(a[3]))));
+            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(as_int(a[1])),
+            static_cast<std::uint32_t>(as_int(a[2])), static_cast<std::uint32_t>(as_int(a[3]))));
     });
 
     // Issue #460: (query:compiler-incremental-stats) — return
@@ -2045,8 +1923,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // (partial-relower impact-scope-calls total-affected-blocks).
     add("query:compiler-incremental-stats", [&ev](const auto& a) -> EvalValue {
         (void)a;
-        return make_int(static_cast<std::int64_t>(
-            ev.get_partial_relower_count()));
+        return make_int(static_cast<std::int64_t>(ev.get_partial_relower_count()));
     });
 
     // Issue #426 / #293: (query:compiler-cache-stats) —
@@ -2065,13 +1942,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:compiler-cache-stats", [&ev](const auto& a) -> EvalValue {
         (void)a;
         auto* svc_void = ev.compiler_service();
-        if (!svc_void) return make_int(0);
+        if (!svc_void)
+            return make_int(0);
         auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
         // Build 3-tuple as nested pair-of-pairs:
         // ((dirty-blocks . dirty-functions) . incremental-candidates)
         std::int64_t dirty_blocks = static_cast<std::int64_t>(svc->total_dirty_block_count());
-        std::int64_t dirty_funcs  = static_cast<std::int64_t>(svc->total_dirty_func_count());
-        std::int64_t incr_cands   = static_cast<std::int64_t>(svc->total_incremental_candidates());
+        std::int64_t dirty_funcs = static_cast<std::int64_t>(svc->total_dirty_func_count());
+        std::int64_t incr_cands = static_cast<std::int64_t>(svc->total_incremental_candidates());
         auto p1 = ev.pairs_.size();
         ev.pairs_.push_back({make_int(dirty_blocks), make_int(dirty_funcs)});
         auto outer = ev.pairs_.size();
@@ -2110,7 +1988,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:incremental-effectiveness", [&ev](const auto& a) -> EvalValue {
         (void)a;
         auto* svc_void = ev.compiler_service();
-        if (!svc_void) return make_int(0);
+        if (!svc_void)
+            return make_int(0);
         auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
 
         std::int64_t ratio_bp = 0;
@@ -2130,8 +2009,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             cascade_depth = static_cast<std::int64_t>(snap.mark_dirty_total_nodes);
             bridge_overhead = static_cast<std::int64_t>(snap.closure_bridge_calls);
-            fallback_freq = static_cast<std::int64_t>(
-                snap.closure_tw_calls + snap.closure_ffi_calls);
+            fallback_freq =
+                static_cast<std::int64_t>(snap.closure_tw_calls + snap.closure_ffi_calls);
         } catch (...) {
             // Service-side failure: zeros are already initialized.
         }
@@ -2170,7 +2049,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
         auto* svc_void = ev.compiler_service();
-        if (!svc_void) return make_bool(false);
+        if (!svc_void)
+            return make_bool(false);
         auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
         const std::string& fname = ev.string_heap_[idx];
         // Look up the entry in ir_cache_v2_
@@ -2183,9 +2063,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         std::size_t dirty = it->dirty_block_count();
         const char* tag = nullptr;
-        if (dirty == 0) tag = "none";
-        else if (dirty < 8) tag = "incremental";
-        else tag = "full";
+        if (dirty == 0)
+            tag = "none";
+        else if (dirty < 8)
+            tag = "incremental";
+        else
+            tag = "full";
         auto sym_idx = ev.keyword_table_.size();
         ev.keyword_table_.push_back(tag);
         return make_keyword(sym_idx);
@@ -2198,8 +2081,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // (steal-violations gc-bumps-lost).
     add("query:atomic-batch-stats", [&ev](const auto& a) -> EvalValue {
         (void)a;
-        return make_int(static_cast<std::int64_t>(
-            ev.get_atomic_batch_steal_violation()));
+        return make_int(static_cast<std::int64_t>(ev.get_atomic_batch_steal_violation()));
     });
 
     // Issue #437: (verify:assertion-failed node-id
@@ -2250,11 +2132,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:verify-dirty-stats", [&ev](const auto& a) -> EvalValue {
         (void)a;
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_int(0);
-        auto sum = ws->verify_assertion_dirty_total() +
-                   ws->verify_coverage_dirty_total() +
-                   ws->verify_sva_dirty_total() +
-                   ws->verify_formal_cex_dirty_total();
+        if (!ws)
+            return make_int(0);
+        auto sum = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
+                   ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total();
         return make_int(static_cast<std::int64_t>(sum));
     });
 
@@ -2338,8 +2219,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         auto* ws = pick_macro_flat();
         if (!ws)
             return make_bool(false);
-        auto sum = ws->macro_expansion_dirty_total() +
-                   ws->macro_self_modify_dirty_total();
+        auto sum = ws->macro_expansion_dirty_total() + ws->macro_self_modify_dirty_total();
         return make_int(static_cast<std::int64_t>(sum));
     });
 
@@ -2366,7 +2246,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         auto text_idx = as_string_idx(a[0]);
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
@@ -2376,11 +2257,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         while (i < text.size()) {
             // Find end of line.
             std::size_t j = i;
-            while (j < text.size() && text[j] != '\n') ++j;
+            while (j < text.size() && text[j] != '\n')
+                ++j;
             const std::string_view line(text.data() + i, j - i);
             // Skip leading whitespace.
             std::size_t k = 0;
-            while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                ++k;
             // Parse the first integer (NodeId).
             if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
                 std::size_t val = 0;
@@ -2390,8 +2273,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 const auto nid = static_cast<aura::ast::NodeId>(val);
                 if (nid < ws->size()) {
-                    ws->apply_verification_dirty_bits(
-                        nid, aura::ast::FlatAST::kCoverageFeedbackDirty);
+                    ws->apply_verification_dirty_bits(nid,
+                                                      aura::ast::FlatAST::kCoverageFeedbackDirty);
                     ++marked;
                 }
             }
@@ -2409,7 +2292,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         auto text_idx = as_string_idx(a[0]);
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
@@ -2418,10 +2302,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::size_t i = 0;
         while (i < text.size()) {
             std::size_t j = i;
-            while (j < text.size() && text[j] != '\n') ++j;
+            while (j < text.size() && text[j] != '\n')
+                ++j;
             const std::string_view line(text.data() + i, j - i);
             std::size_t k = 0;
-            while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                ++k;
             if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
                 std::size_t val = 0;
                 while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
@@ -2430,8 +2316,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 const auto nid = static_cast<aura::ast::NodeId>(val);
                 if (nid < ws->size()) {
-                    ws->apply_verification_dirty_bits(
-                        nid, aura::ast::FlatAST::kAssertFailureDirty);
+                    ws->apply_verification_dirty_bits(nid, aura::ast::FlatAST::kAssertFailureDirty);
                     ++marked;
                 }
             }
@@ -2479,23 +2364,18 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (target == aura::ast::NULL_NODE || target >= ws->size())
             return make_bool(false);
         const bool coverage =
-            kind.find("coverage") != std::string::npos ||
-            kind.find("cov") != std::string::npos;
+            kind.find("coverage") != std::string::npos || kind.find("cov") != std::string::npos;
         ws->bump_sv_mutate_attempt();
         if (coverage) {
-            ws->apply_verification_dirty_bits(
-                target, aura::ast::FlatAST::kCoverageFeedbackDirty);
+            ws->apply_verification_dirty_bits(target, aura::ast::FlatAST::kCoverageFeedbackDirty);
             ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
-            ws->add_mutation(target, "sv-add-coverpoint", "covergroup",
-                             "covergroup+coverpoint",
+            ws->add_mutation(target, "sv-add-coverpoint", "covergroup", "covergroup+coverpoint",
                              "feedback closed-loop coverpoint");
             ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
         } else {
-            ws->apply_verification_dirty_bits(
-                target, aura::ast::FlatAST::kAssertFailureDirty);
+            ws->apply_verification_dirty_bits(target, aura::ast::FlatAST::kAssertFailureDirty);
             ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
-            ws->add_mutation(target, "sv-weaken-property", "property",
-                             "property+disable-iff",
+            ws->add_mutation(target, "sv-weaken-property", "property", "property+disable-iff",
                              "feedback closed-loop weaken");
             ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         }
@@ -2505,28 +2385,23 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto sv_reasons =
                 aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
             aura::compiler::hardware::on_structural_mutation(
-                target,
-                static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+                target, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
                 ws->ppa_dirty_reasons(target));
             if (auto* pool = ev.workspace_pool()) {
                 const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, target);
                 const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
                 const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->hardware_backend_hook_calls_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
                     m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
                     m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
                     if (!diff.empty())
                         m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
                     if (validation.ok) {
-                        m->sv_emit_parse_success_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        m->verification_loop_success_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+                        m->verification_loop_success_total.fetch_add(1, std::memory_order_relaxed);
                     } else {
-                        m->sv_emit_parse_fail_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
                     }
                     if (reemit.ppa_savings > 0) {
                         m->ppa_savings_total.fetch_add(
@@ -2558,17 +2433,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!aura::compiler::hardware::is_sv_structural_node(*ws, nid))
             return make_bool(false);
-        const auto reemit =
-            aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
+        const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
         const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
         if (!validation.ok)
             return make_bool(false);
         if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid)) {
-            const auto sv_reasons =
-                aura::compiler::hardware::sv_structural_dirty_reasons(*ws, nid);
+            const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, nid);
             aura::compiler::hardware::on_structural_mutation(
-                nid,
-                static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+                nid, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
                 ws->ppa_dirty_reasons(nid));
         }
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
@@ -2577,9 +2449,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
             m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
             if (reemit.ppa_savings > 0) {
-                m->ppa_savings_total.fetch_add(
-                    static_cast<std::uint64_t>(reemit.ppa_savings),
-                    std::memory_order_relaxed);
+                m->ppa_savings_total.fetch_add(static_cast<std::uint64_t>(reemit.ppa_savings),
+                                               std::memory_order_relaxed);
             }
         }
         return make_bool(true);
@@ -2632,11 +2503,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             if (m)
                 m->eda_sv_evolution_cycles_total.fetch_add(1, std::memory_order_relaxed);
             if (!prop_ref.is_valid_in(*ws))
-                if (m) m->eda_sv_stable_ref_invalidation_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                if (m)
+                    m->eda_sv_stable_ref_invalidation_total.fetch_add(1, std::memory_order_relaxed);
             if (!cp_ref.is_valid_in(*ws))
-                if (m) m->eda_sv_stable_ref_invalidation_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                if (m)
+                    m->eda_sv_stable_ref_invalidation_total.fetch_add(1, std::memory_order_relaxed);
             bool ok = true;
             if (feedback_fn) {
                 const char* kind = (i & 1) ? "coverage.log" : "assert-fail.log";
@@ -2652,16 +2523,16 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             if (ok && (i & 3) == 0 && weaken_fn) {
                 auto pid_idx = ev.string_heap_.size();
                 ev.string_heap_.push_back("reset");
-                auto r = (*weaken_fn)({make_int(static_cast<std::int64_t>(property_id)),
-                                       make_string(pid_idx)});
+                auto r = (*weaken_fn)(
+                    {make_int(static_cast<std::int64_t>(property_id)), make_string(pid_idx)});
                 ok = is_bool(r) && as_bool(r);
             }
             if (ok && (i & 3) == 2 && add_bin_fn) {
                 auto bin = std::format("demo_bin_{}", i);
                 auto bin_idx = ev.string_heap_.size();
                 ev.string_heap_.push_back(bin);
-                auto r = (*add_bin_fn)({make_int(static_cast<std::int64_t>(coverpoint_id)),
-                                        make_string(bin_idx)});
+                auto r = (*add_bin_fn)(
+                    {make_int(static_cast<std::int64_t>(coverpoint_id)), make_string(bin_idx)});
                 ok = is_bool(r) && as_bool(r);
             }
             if ((i & 7) == 0 && gc_fn)
@@ -2669,16 +2540,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             if (ok) {
                 ++successes;
                 if (m) {
-                    m->eda_sv_verification_convergence_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    m->eda_sv_feedback_mutate_success_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    m->eda_sv_commercial_stub_latency_us_total.fetch_add(
-                        12, std::memory_order_relaxed);
+                    m->eda_sv_verification_convergence_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    m->eda_sv_feedback_mutate_success_total.fetch_add(1, std::memory_order_relaxed);
+                    m->eda_sv_commercial_stub_latency_us_total.fetch_add(12,
+                                                                         std::memory_order_relaxed);
                 }
             } else if (m) {
-                m->eda_sv_corruption_detected_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                m->eda_sv_corruption_detected_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
         return make_int(static_cast<std::int64_t>(successes));
@@ -2709,7 +2578,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // (mutate:query-and-replace ...) for automated refine.
     add("verify:coverage-holes", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_void();
+        if (!ws)
+            return make_void();
         // Optional first arg: parse the report first (so
         // downstream calls see freshly-marked dirty nodes).
         if (!a.empty() && is_string(a[0])) {
@@ -2719,10 +2589,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::size_t i = 0;
                 while (i < text.size()) {
                     std::size_t j = i;
-                    while (j < text.size() && text[j] != '\n') ++j;
+                    while (j < text.size() && text[j] != '\n')
+                        ++j;
                     const std::string_view line(text.data() + i, j - i);
                     std::size_t k = 0;
-                    while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+                    while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                        ++k;
                     if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
                         std::size_t val = 0;
                         while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
@@ -2798,7 +2670,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("verify:suggest-constraint-refine", [&ev](const auto& a) -> EvalValue {
         (void)a;
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_void();
+        if (!ws)
+            return make_void();
         EvalValue list = make_void();
         const auto n = ws->size();
         // Issue #319 follow-up: use verification_dirty_ (#469)
@@ -2924,11 +2797,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // flat-eval).
         auto inner_idx = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(misses)),
-                              make_int(static_cast<std::int64_t>(evictions))});
+                             make_int(static_cast<std::int64_t>(evictions))});
         auto outer_idx = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(hits)),
-                              make_pair(inner_idx)});
-        (void)hits; (void)misses; (void)evictions;
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(hits)), make_pair(inner_idx)});
+        (void)hits;
+        (void)misses;
+        (void)evictions;
         return make_pair(outer_idx);
     });
 
@@ -2974,8 +2848,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         std::int64_t macro_skipped = 0;
         if (ev.get_macro_hygiene_skipped_fn_) {
-            macro_skipped = static_cast<std::int64_t>(
-                ev.get_macro_hygiene_skipped_fn_());
+            macro_skipped = static_cast<std::int64_t>(ev.get_macro_hygiene_skipped_fn_());
         }
         std::int64_t total = inlined + branch_aware;
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
@@ -3158,7 +3031,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (marker_val < 0 || marker_val > 2) {
             ok = false;
-            return ev.make_merr("bad-arg", "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
+            return ev.make_merr("bad-arg",
+                                "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
         }
         // No MutationBoundaryGuard — this is metadata-only, not a
         // structural mutation. The version bump is unnecessary
@@ -3181,9 +3055,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto marker_val = static_cast<int>(as_int(a[1]));
-        if (!ev.workspace_flat_) return make_int(0);
-        if (root >= ev.workspace_flat_->size()) return make_int(0);
-        if (marker_val < 0 || marker_val > 2) return make_int(0);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        if (root >= ev.workspace_flat_->size())
+            return make_int(0);
+        if (marker_val < 0 || marker_val > 2)
+            return make_int(0);
         // Recursive DFS — no mutation guard since this is
         // metadata-only. We walk via workspace_flat_->children()
         // which returns PersistentChildVector<NodeId>.
@@ -3194,8 +3071,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             stack.pop_back();
             if (cur == aura::ast::NULL_NODE || cur >= ev.workspace_flat_->size())
                 continue;
-            ev.workspace_flat_->set_marker(
-                cur, static_cast<aura::ast::SyntaxMarker>(marker_val));
+            ev.workspace_flat_->set_marker(cur, static_cast<aura::ast::SyntaxMarker>(marker_val));
             ++count;
             // Snapshot children before pushing to avoid
             // invalidation issues (set_marker doesn't
@@ -3221,8 +3097,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto prov = static_cast<std::uint32_t>(as_int(a[1]));
-        if (!ev.workspace_flat_) return make_bool(false);
-        if (id >= ev.workspace_flat_->size()) return make_bool(false);
+        if (!ev.workspace_flat_)
+            return make_bool(false);
+        if (id >= ev.workspace_flat_->size())
+            return make_bool(false);
         ev.workspace_flat_->set_provenance(id, prov);
         return make_bool(true);
     });
@@ -3232,10 +3110,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // look up the actual macro_def_id / expansion_id /
     // mutation_id via its own side-table.
     add("syntax:get-provenance", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0])) return make_int(0);
-        if (!ev.workspace_flat_) return make_int(0);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        if (!ev.workspace_flat_)
+            return make_int(0);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (id >= ev.workspace_flat_->size()) return make_int(0);
+        if (id >= ev.workspace_flat_->size())
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->provenance(id)));
     });
 
@@ -3393,8 +3274,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // Compute per-symbol affected set (O(n) walk).
         std::vector<aura::ast::NodeId> per_symbol_affected;
         if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
-            per_symbol_affected =
-                affected_subtree_for_symbol(*ev.workspace_flat_, target_sym);
+            per_symbol_affected = affected_subtree_for_symbol(*ev.workspace_flat_, target_sym);
         }
         // Compute ancestor-affected count: walk the parent_ chain
         // from the def node (the Define/Let/LetRec that binds
@@ -3405,8 +3285,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             const std::size_t n = ev.workspace_flat_->size();
             for (std::size_t i = 0; i < n; ++i) {
                 auto v = ev.workspace_flat_->get(static_cast<aura::ast::NodeId>(i));
-                if ((v.tag == aura::ast::NodeTag::Define ||
-                     v.tag == aura::ast::NodeTag::Let ||
+                if ((v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::Let ||
                      v.tag == aura::ast::NodeTag::LetRec) &&
                     v.sym_id == target_sym) {
                     def_node = static_cast<aura::ast::NodeId>(i);
@@ -3429,17 +3308,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 // inside the visitor via early-return.
                 std::int64_t chain_len = 0;
                 auto start = ev.workspace_flat_->parent_of(def_node);
-                const auto max_count =
-                    static_cast<std::size_t>(ev.workspace_flat_->size());
+                const auto max_count = static_cast<std::size_t>(ev.workspace_flat_->size());
                 if (start != aura::ast::NULL_NODE) {
-                    chain_len = static_cast<std::int64_t>(
-                        aura::compiler::walk_ancestors<std::uint32_t>(
+                    chain_len =
+                        static_cast<std::int64_t>(aura::compiler::walk_ancestors<std::uint32_t>(
                             *ev.workspace_flat_, start,
-                            [&chain_len, max_count](aura::ast::NodeId)
-                                -> bool {
-                                if (static_cast<std::size_t>(chain_len)
-                                    >= max_count) {
-                                    return false;  // safety cap
+                            [&chain_len, max_count](aura::ast::NodeId) -> bool {
+                                if (static_cast<std::size_t>(chain_len) >= max_count) {
+                                    return false; // safety cap
                                 }
                                 ++chain_len;
                                 return true;
@@ -3454,10 +3330,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
             m->per_symbol_dirty_lookups_total.fetch_add(1, std::memory_order_relaxed);
             m->per_symbol_dirty_uses_total.fetch_add(
-                static_cast<std::uint64_t>(per_symbol_affected.size()),
-                std::memory_order_relaxed);
-            lookup_count =
-                m->per_symbol_dirty_lookups_total.load(std::memory_order_relaxed);
+                static_cast<std::uint64_t>(per_symbol_affected.size()), std::memory_order_relaxed);
+            lookup_count = m->per_symbol_dirty_lookups_total.load(std::memory_order_relaxed);
         }
         // reduction-ratio-bp = per_symbol / ancestor * 10000.
         // Cap at 10000 (per_symbol can't exceed ancestor in
@@ -3541,14 +3415,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t re_inferred = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            auto_invocations = m->incremental_typecheck_auto_invocations_total.load(
-                std::memory_order_relaxed);
-            re_inferred = m->incremental_typecheck_re_inferred_total.load(
-                std::memory_order_relaxed);
+            auto_invocations =
+                m->incremental_typecheck_auto_invocations_total.load(std::memory_order_relaxed);
+            re_inferred =
+                m->incremental_typecheck_re_inferred_total.load(std::memory_order_relaxed);
         }
-        const std::uint64_t avg_bp = (auto_invocations > 0)
-                                         ? (re_inferred * 10000u) / auto_invocations
-                                         : 0;
+        const std::uint64_t avg_bp =
+            (auto_invocations > 0) ? (re_inferred * 10000u) / auto_invocations : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"auto-invocations-total", make_int(static_cast<std::int64_t>(auto_invocations))},
             {"re-inferred-total", make_int(static_cast<std::int64_t>(re_inferred))},
@@ -3675,7 +3548,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             std::size_t cap = std::max<std::size_t>(8, kv.size() * 2);
             // Round up to next power of 2.
             std::size_t p2 = 1;
-            while (p2 < cap) p2 <<= 1;
+            while (p2 < cap)
+                p2 <<= 1;
             cap = p2;
             auto* ht = FlatHashTable::create(cap);
             if (!ht)
@@ -3725,21 +3599,16 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t per_defuse_index_walk_fallback = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            per_symbol_used = m->per_symbol_reinfer_used_total.load(
-                std::memory_order_relaxed);
-            per_symbol_visited = m->per_symbol_reinfer_visited_total.load(
-                std::memory_order_relaxed);
-            ancestor_used = m->ancestor_reinfer_used_total.load(
-                std::memory_order_relaxed);
-            ancestor_visited = m->ancestor_reinfer_visited_total.load(
-                std::memory_order_relaxed);
-            per_defuse_index_used = m->per_defuse_index_used_total.load(
-                std::memory_order_relaxed);
-            per_defuse_index_visited = m->per_defuse_index_visited_total.load(
-                std::memory_order_relaxed);
+            per_symbol_used = m->per_symbol_reinfer_used_total.load(std::memory_order_relaxed);
+            per_symbol_visited =
+                m->per_symbol_reinfer_visited_total.load(std::memory_order_relaxed);
+            ancestor_used = m->ancestor_reinfer_used_total.load(std::memory_order_relaxed);
+            ancestor_visited = m->ancestor_reinfer_visited_total.load(std::memory_order_relaxed);
+            per_defuse_index_used = m->per_defuse_index_used_total.load(std::memory_order_relaxed);
+            per_defuse_index_visited =
+                m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
             per_defuse_index_walk_fallback =
-                m->per_defuse_index_walk_fallback_total.load(
-                    std::memory_order_relaxed);
+                m->per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed);
         }
         const std::uint64_t total_visited = per_symbol_visited + ancestor_visited;
         const std::uint64_t path_share_bp =
@@ -3760,10 +3629,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #411 fu1 follow-up #2: per-DefUseIndex
             // tracker observability (the underlying data
             // structure for the per-symbol O(uses) path).
-            {"per-defuse-index-used-total", make_int(static_cast<std::int64_t>(per_defuse_index_used))},
-            {"per-defuse-index-visited-total", make_int(static_cast<std::int64_t>(per_defuse_index_visited))},
-            {"per-defuse-index-walk-fallback-total", make_int(static_cast<std::int64_t>(per_defuse_index_walk_fallback))},
-            {"per-defuse-index-visited-avg-bp", make_int(static_cast<std::int64_t>(per_defuse_index_visited_avg_bp))},
+            {"per-defuse-index-used-total",
+             make_int(static_cast<std::int64_t>(per_defuse_index_used))},
+            {"per-defuse-index-visited-total",
+             make_int(static_cast<std::int64_t>(per_defuse_index_visited))},
+            {"per-defuse-index-walk-fallback-total",
+             make_int(static_cast<std::int64_t>(per_defuse_index_walk_fallback))},
+            {"per-defuse-index-visited-avg-bp",
+             make_int(static_cast<std::int64_t>(per_defuse_index_visited_avg_bp))},
         };
         return build_hash(kv);
     });
@@ -3797,8 +3670,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto caller_node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
         using aura::compiler::per_defuse_index::DefUseIndex;
         using aura::compiler::per_defuse_index::Caller;
-        svc->per_defuse_index_tracker().add_caller(
-            DefUseIndex{idx_name}, Caller{caller_node_id});
+        svc->per_defuse_index_tracker().add_caller(DefUseIndex{idx_name}, Caller{caller_node_id});
         return make_int(static_cast<std::int64_t>(
             svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
     });
@@ -3934,8 +3806,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"total-size", make_int(static_cast<std::int64_t>(tracker.total_size()))},
             {"index-count", make_int(static_cast<std::int64_t>(tracker.index_count()))},
-            {"defuse-service-ptr", make_int(static_cast<std::int64_t>(
-                reinterpret_cast<std::uintptr_t>(svc)))},
+            {"defuse-service-ptr",
+             make_int(static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(svc)))},
         };
         return build_hash(kv);
     });
@@ -3950,15 +3822,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   trace-size and records-total indicates how
     //   many traces were accumulated in prior
     //   workspaces that have since been swapped out.
-    add("compile:mutation-log-invalidation-stats",
-        [&ev](const auto&) -> EvalValue {
-        auto build_hash =
-            [&](std::span<const std::pair<std::string, EvalValue>> kv)
-            -> EvalValue {
+    add("compile:mutation-log-invalidation-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto cap = std::max<std::size_t>(8, kv.size() * 2);
             // Round up to next power of 2.
             std::size_t hcap = 8;
-            while (hcap < cap) hcap *= 2;
+            while (hcap < cap)
+                hcap *= 2;
             auto* ht = FlatHashTable::create(hcap);
             if (!ht)
                 return make_void();
@@ -3968,10 +3838,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) *
-                        0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
-                          0x80;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
@@ -4000,19 +3868,15 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         if (!ev.compiler_service_)
             return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         std::uint64_t trace_size = 0;
         if (auto* ws = ev.workspace_flat()) {
-            trace_size = static_cast<std::uint64_t>(
-                ws->invalidation_trace_size());
+            trace_size = static_cast<std::uint64_t>(ws->invalidation_trace_size());
         }
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"records-total",
-             make_int(static_cast<std::int64_t>(
-                 svc->snapshot().invalidation_trace_records_total))},
-            {"trace-size",
-             make_int(static_cast<std::int64_t>(trace_size))},
+             make_int(static_cast<std::int64_t>(svc->snapshot().invalidation_trace_records_total))},
+            {"trace-size", make_int(static_cast<std::int64_t>(trace_size))},
         };
         return build_hash(kv);
     });
@@ -4041,8 +3905,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   flows, large SoC designs with thousands of defines.
     add("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
-            return ev.make_merr("bad-arg",
-                "usage: (compile:subtree-bump subtree-root-id)");
+            return ev.make_merr("bad-arg", "usage: (compile:subtree-bump subtree-root-id)");
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (!ev.workspace_flat_)
             return make_int(0);
@@ -4066,13 +3929,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   against this counter.
     add("compile:subtree-generation", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
-            return ev.make_merr("bad-arg",
-                "usage: (compile:subtree-generation subtree-root-id)");
+            return ev.make_merr("bad-arg", "usage: (compile:subtree-generation subtree-root-id)");
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (!ev.workspace_flat_)
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(
-            ev.workspace_flat_->subtree_generation(id)));
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_generation(id)));
     });
 
     // (compile:subtree-bump-count)
@@ -4086,8 +3947,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("compile:subtree-bump-count", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(
-            ev.workspace_flat_->subtree_bump_count()));
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_bump_count()));
     });
 
     // (compile:mutator-dispatch-stats)
@@ -4135,48 +3995,54 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // 12 entries: total + 3 dispatcher counters + 1 failure +
         // 4 success + 3 failure-per-kind (NoOp never fails).
         auto e_total = add_entry(":total", cvt(s.total()));
-        auto e_amut  = add_entry(":apply-mutation-total", cvt(
-            s.apply_mutation_total.load(std::memory_order_relaxed)));
-        auto e_aknd  = add_entry(":apply-by-kind-total", cvt(
-            s.apply_by_kind_total.load(std::memory_order_relaxed)));
-        auto e_anam  = add_entry(":apply-by-name-total", cvt(
-            s.apply_by_name_total.load(std::memory_order_relaxed)));
-        auto e_fail  = add_entry(":failure-total", cvt(
-            s.failure_total.load(std::memory_order_relaxed)));
-        auto e_nsucc = add_entry(":noop-success", cvt(
-            s.kind_success[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::NoOp)]
-                .load(std::memory_order_relaxed)));
-        auto e_rsucc = add_entry(":replace-child-success", cvt(
-            s.kind_success[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::ReplaceChild)]
-                .load(std::memory_order_relaxed)));
-        auto e_isucc = add_entry(":insert-child-success", cvt(
-            s.kind_success[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::InsertChild)]
-                .load(std::memory_order_relaxed)));
-        auto e_xsucc = add_entry(":remove-child-success", cvt(
-            s.kind_success[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::RemoveChild)]
-                .load(std::memory_order_relaxed)));
-        auto e_rfail = add_entry(":replace-child-failure", cvt(
-            s.kind_failure[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::ReplaceChild)]
-                .load(std::memory_order_relaxed)));
-        auto e_ifail = add_entry(":insert-child-failure", cvt(
-            s.kind_failure[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::InsertChild)]
-                .load(std::memory_order_relaxed)));
-        auto e_xfail = add_entry(":remove-child-failure", cvt(
-            s.kind_failure[aura::ast::mutators::kind_index(
-                aura::ast::mutators::StrategyKind::RemoveChild)]
-                .load(std::memory_order_relaxed)));
+        auto e_amut = add_entry(":apply-mutation-total",
+                                cvt(s.apply_mutation_total.load(std::memory_order_relaxed)));
+        auto e_aknd = add_entry(":apply-by-kind-total",
+                                cvt(s.apply_by_kind_total.load(std::memory_order_relaxed)));
+        auto e_anam = add_entry(":apply-by-name-total",
+                                cvt(s.apply_by_name_total.load(std::memory_order_relaxed)));
+        auto e_fail =
+            add_entry(":failure-total", cvt(s.failure_total.load(std::memory_order_relaxed)));
+        auto e_nsucc = add_entry(":noop-success",
+                                 cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                                        aura::ast::mutators::StrategyKind::NoOp)]
+                                         .load(std::memory_order_relaxed)));
+        auto e_rsucc =
+            add_entry(":replace-child-success",
+                      cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                             aura::ast::mutators::StrategyKind::ReplaceChild)]
+                              .load(std::memory_order_relaxed)));
+        auto e_isucc =
+            add_entry(":insert-child-success",
+                      cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                             aura::ast::mutators::StrategyKind::InsertChild)]
+                              .load(std::memory_order_relaxed)));
+        auto e_xsucc =
+            add_entry(":remove-child-success",
+                      cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                             aura::ast::mutators::StrategyKind::RemoveChild)]
+                              .load(std::memory_order_relaxed)));
+        auto e_rfail =
+            add_entry(":replace-child-failure",
+                      cvt(s.kind_failure[aura::ast::mutators::kind_index(
+                                             aura::ast::mutators::StrategyKind::ReplaceChild)]
+                              .load(std::memory_order_relaxed)));
+        auto e_ifail =
+            add_entry(":insert-child-failure",
+                      cvt(s.kind_failure[aura::ast::mutators::kind_index(
+                                             aura::ast::mutators::StrategyKind::InsertChild)]
+                              .load(std::memory_order_relaxed)));
+        auto e_xfail =
+            add_entry(":remove-child-failure",
+                      cvt(s.kind_failure[aura::ast::mutators::kind_index(
+                                             aura::ast::mutators::StrategyKind::RemoveChild)]
+                              .load(std::memory_order_relaxed)));
 
         // Cons them onto the result list (in reverse so the head is :total).
-        std::uint64_t entries[] = {e_xfail, e_ifail, e_rfail,
-                                   e_xsucc, e_isucc, e_rsucc, e_nsucc,
-                                   e_fail, e_anam, e_aknd, e_amut, e_total};
-        for (auto eid : entries) cons(eid);
+        std::uint64_t entries[] = {e_xfail, e_ifail, e_rfail, e_xsucc, e_isucc, e_rsucc,
+                                   e_nsucc, e_fail,  e_anam,  e_aknd,  e_amut,  e_total};
+        for (auto eid : entries)
+            cons(eid);
         return result;
     });
 
@@ -4227,7 +4093,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("compile:hw-bitvec-register", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return ev.make_merr("bad-arg",
-                "usage: (compile:hw-bitvec-register type-name width signed?)");
+                                "usage: (compile:hw-bitvec-register type-name width signed?)");
         }
         auto sidx = as_string_idx(a[0]);
         std::string name;
@@ -4255,8 +4121,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("compile:hw-bitvec-width", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
-            return ev.make_merr("bad-arg",
-                "usage: (compile:hw-bitvec-width type-name)");
+            return ev.make_merr("bad-arg", "usage: (compile:hw-bitvec-width type-name)");
         auto sidx = as_string_idx(a[0]);
         std::string name;
         if (sidx < ev.string_heap_.size())
@@ -4277,8 +4142,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("compile:hw-bitvec-signed?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
-            return ev.make_merr("bad-arg",
-                "usage: (compile:hw-bitvec-signed? type-name)");
+            return ev.make_merr("bad-arg", "usage: (compile:hw-bitvec-signed? type-name)");
         auto sidx = as_string_idx(a[0]);
         std::string name;
         if (sidx < ev.string_heap_.size())
@@ -4300,12 +4164,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("compile:hw-bitvec-compatible?", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return ev.make_merr("bad-arg",
-                "usage: (compile:hw-bitvec-compatible? type-a-name type-b-name)");
+                                "usage: (compile:hw-bitvec-compatible? type-a-name type-b-name)");
         auto asx = as_string_idx(a[0]);
         auto bsx = as_string_idx(a[1]);
         std::string an, bn;
-        if (asx < ev.string_heap_.size()) an = ev.string_heap_[asx];
-        if (bsx < ev.string_heap_.size()) bn = ev.string_heap_[bsx];
+        if (asx < ev.string_heap_.size())
+            an = ev.string_heap_[asx];
+        if (bsx < ev.string_heap_.size())
+            bn = ev.string_heap_[bsx];
         if (!ev.type_registry_)
             return make_int(0);
         auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
@@ -4316,7 +4182,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         auto* ba = reg.hw_bitvec_of(ta);
         auto* bb = reg.hw_bitvec_of(tb);
         if (!ba || !bb)
-            return make_int(0);  // one or both not registered as hw bitvecs
+            return make_int(0); // one or both not registered as hw bitvecs
         // Compatible iff SAME width AND SAME signedness.
         // The canonical hardware bug: uint8_t vs uint16_t
         // (different widths), uint8_t vs int8_t (different
@@ -4366,13 +4232,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //     latch" for incomplete case + width-loss).
     add("compile:hw-coercion-lossy?", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return ev.make_merr("bad-arg",
-                "usage: (compile:hw-coercion-lossy? from-name to-name)");
+            return ev.make_merr("bad-arg", "usage: (compile:hw-coercion-lossy? from-name to-name)");
         auto from_sx = as_string_idx(a[0]);
         auto to_sx = as_string_idx(a[1]);
         std::string from_name, to_name;
-        if (from_sx < ev.string_heap_.size()) from_name = ev.string_heap_[from_sx];
-        if (to_sx < ev.string_heap_.size()) to_name = ev.string_heap_[to_sx];
+        if (from_sx < ev.string_heap_.size())
+            from_name = ev.string_heap_[from_sx];
+        if (to_sx < ev.string_heap_.size())
+            to_name = ev.string_heap_[to_sx];
         if (!ev.type_registry_)
             return make_int(0);
         auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
@@ -4383,7 +4250,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         auto* from_bv = reg.hw_bitvec_of(from_tid);
         auto* to_bv = reg.hw_bitvec_of(to_tid);
         if (!from_bv || !to_bv)
-            return make_int(0);  // not a hw coercion
+            return make_int(0); // not a hw coercion
         // Lossy iff FROM is wider than TO (narrowing drops bits).
         // Same width (regardless of signedness) is lossless:
         // reinterpreting signed↔unsigned doesn't lose bits.
@@ -4395,14 +4262,16 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     add("compile:hw-coercion-warning", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return ev.make_merr("bad-arg",
-                "usage: (compile:hw-coercion-warning from-name to-name)");
+                                "usage: (compile:hw-coercion-warning from-name to-name)");
         auto from_sx = as_string_idx(a[0]);
         auto to_sx = as_string_idx(a[1]);
         std::string from_name, to_name;
-        if (from_sx < ev.string_heap_.size()) from_name = ev.string_heap_[from_sx];
-        if (to_sx < ev.string_heap_.size()) to_name = ev.string_heap_[to_sx];
+        if (from_sx < ev.string_heap_.size())
+            from_name = ev.string_heap_[from_sx];
+        if (to_sx < ev.string_heap_.size())
+            to_name = ev.string_heap_[to_sx];
         if (!ev.type_registry_)
-            return make_string(ev.string_heap_.size());  // empty string
+            return make_string(ev.string_heap_.size()); // empty string
         auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         auto from_tid = reg.lookup_type(from_name);
         auto to_tid = reg.lookup_type(to_name);
@@ -4413,14 +4282,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!from_bv || !to_bv)
             return make_string(ev.string_heap_.size());
         if (from_bv->width <= to_bv->width)
-            return make_string(ev.string_heap_.size());  // lossless — no warning
+            return make_string(ev.string_heap_.size()); // lossless — no warning
         const std::uint32_t dropped = from_bv->width - to_bv->width;
         const std::string from_str = from_bv->is_signed ? "signed" : "unsigned";
         const std::string to_str = to_bv->is_signed ? "signed" : "unsigned";
-        const std::string msg =
-            "lossy coercion: " + from_name + " (W" + std::to_string(from_bv->width) +
-            " " + from_str + ") -> " + to_name + " (W" + std::to_string(to_bv->width) +
-            " " + to_str + ") drops " + std::to_string(dropped) + " bits";
+        const std::string msg = "lossy coercion: " + from_name + " (W" +
+                                std::to_string(from_bv->width) + " " + from_str + ") -> " +
+                                to_name + " (W" + std::to_string(to_bv->width) + " " + to_str +
+                                ") drops " + std::to_string(dropped) + " bits";
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(msg);
         return make_string(sidx);
@@ -4455,21 +4324,22 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // without changing the flag is the :allow-macro? #t kwarg
     // on each mutate:* primitive.
     add("hygiene:protected?", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0])) return make_bool(false);
-        if (!ev.workspace_flat_) return make_bool(false);
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        if (!ev.workspace_flat_)
+            return make_bool(false);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (id >= ev.workspace_flat_->size()) return make_bool(false);
+        if (id >= ev.workspace_flat_->size())
+            return make_bool(false);
         return make_bool(ev.workspace_flat_->is_macro_introduced(id));
     });
 
-    add("hygiene:allow-macro-mutate?", [&ev](const auto&) -> EvalValue {
-        return make_bool(ev.get_allow_macro_mutate());
-    });
+    add("hygiene:allow-macro-mutate?",
+        [&ev](const auto&) -> EvalValue { return make_bool(ev.get_allow_macro_mutate()); });
 
     add("hygiene:set-allow-macro-mutate!", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_bool(a[0])) {
-            return ev.make_merr("bad-arg",
-                "usage: (hygiene:set-allow-macro-mutate! bool)");
+            return ev.make_merr("bad-arg", "usage: (hygiene:set-allow-macro-mutate! bool)");
         }
         ev.set_allow_macro_mutate(as_bool(a[0]));
         return make_void();
@@ -4538,8 +4408,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.compiler_service_) {
             return make_void();
         }
-        auto* svc = static_cast<class aura::compiler::CompilerService*>(
-            ev.compiler_service_);
+        auto* svc = static_cast<class aura::compiler::CompilerService*>(ev.compiler_service_);
         // Read the snapshot, not last_ir_module(). The snapshot
         // was computed when last_ir_mod_ was last assigned, so
         // it reflects the WORKLOAD's IR, not the IR of the
@@ -4555,9 +4424,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv,
                               std::size_t min_cap = 8) -> EvalValue {
             std::size_t cap = 8;
-            while (cap < std::max(min_cap, kv.size() * 2)) cap *= 2;
+            while (cap < std::max(min_cap, kv.size() * 2))
+                cap *= 2;
             auto* ht = FlatHashTable::create(cap);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4567,7 +4438,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -4595,13 +4467,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // Opcode histogram (nested hash, only non-zero opcodes).
         std::vector<std::pair<std::string, EvalValue>> op_kv;
         for (std::size_t i = 0; i < s.opcode_histogram.size(); ++i) {
-            if (s.opcode_histogram[i] == 0) continue;
-            std::string name = (i < 54)
-                ? std::string(aura::ir::kOpcodeInfo[i].name)
-                : std::string("?");
-            op_kv.emplace_back(
-                std::move(name),
-                make_int(static_cast<std::int64_t>(s.opcode_histogram[i])));
+            if (s.opcode_histogram[i] == 0)
+                continue;
+            std::string name =
+                (i < 54) ? std::string(aura::ir::kOpcodeInfo[i].name) : std::string("?");
+            op_kv.emplace_back(std::move(name),
+                               make_int(static_cast<std::int64_t>(s.opcode_histogram[i])));
         }
         EvalValue opcode_hist_ev = build_hash(op_kv, 16);
         // Operand-count distribution (nested hash, 0..4).
@@ -4613,15 +4484,15 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         EvalValue dist_ev = build_hash(dist_kv, 8);
         // Top-level hash with all scalar fields + the 2 nested hashes.
-        const std::uint64_t avg_ops_x100 = s.total_instructions
-            ? (s.operands_used_sum * 100u / s.total_instructions)
-            : 0;
+        const std::uint64_t avg_ops_x100 =
+            s.total_instructions ? (s.operands_used_sum * 100u / s.total_instructions) : 0;
         std::vector<std::pair<std::string, EvalValue>> top_kv = {
             {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
             {"total-functions", make_int(static_cast<std::int64_t>(s.total_functions))},
             {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
-            {"avg-instructions-per-block-x100", make_int(static_cast<std::int64_t>(
-                s.total_blocks ? (s.total_instructions * 100u / s.total_blocks) : 0))},
+            {"avg-instructions-per-block-x100",
+             make_int(static_cast<std::int64_t>(
+                 s.total_blocks ? (s.total_instructions * 100u / s.total_blocks) : 0))},
             {"avg-operands-used-x100", make_int(static_cast<std::int64_t>(avg_ops_x100))},
             {"aos-bytes-total", make_int(static_cast<std::int64_t>(s.aos_bytes_total))},
             {"padding-bytes-total", make_int(static_cast<std::int64_t>(s.padding_bytes_total))},
@@ -4678,12 +4549,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // and target == 100, the goal is met.
         // The primitive returns a hash with the gap
         // analysis; the agent uses it to drive the loop.
-        std::int64_t gap = (target >= 100) ? 0
-            : static_cast<std::int64_t>(current_dirty);
+        std::int64_t gap = (target >= 100) ? 0 : static_cast<std::int64_t>(current_dirty);
         std::int64_t achieved = (gap == 0) ? 1 : 0;
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4693,7 +4564,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -4701,12 +4573,18 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -4747,7 +4625,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::int64_t reset_holes = static_cast<std::int64_t>(assertion);
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4757,7 +4636,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -4765,12 +4645,18 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -4793,16 +4679,15 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // specifics. The string is in ev.string_heap_.
     add("seva:generate-regression", [&ev](const auto&) -> EvalValue {
         auto sidx = ev.string_heap_.size();
-        std::string script =
-            ";; Auto-generated regression script (seva:generate-regression)\n"
-            ";; Step 1: re-load the workspace\n"
-            "(set-code \"<paste your DUT spec here>\")\n"
-            ";; Step 2: run the verification loop\n"
-            "(eval-current)\n"
-            ";; Step 3: query readiness\n"
-            "(query:edsl-readiness)\n"
-            ";; Step 4: query verify-dirty\n"
-            "(query:verify-dirty-stats)\n";
+        std::string script = ";; Auto-generated regression script (seva:generate-regression)\n"
+                             ";; Step 1: re-load the workspace\n"
+                             "(set-code \"<paste your DUT spec here>\")\n"
+                             ";; Step 2: run the verification loop\n"
+                             "(eval-current)\n"
+                             ";; Step 3: query readiness\n"
+                             "(query:edsl-readiness)\n"
+                             ";; Step 4: query verify-dirty\n"
+                             "(query:verify-dirty-stats)\n";
         ev.string_heap_.push_back(script);
         return make_string(sidx);
     });
@@ -4845,14 +4730,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // so the audit trail covers the full loop.
         std::uint64_t verify_total = 0;
         if (auto* ws = ev.workspace_flat()) {
-            verify_total = ws->verify_assertion_dirty_total() +
-                            ws->verify_coverage_dirty_total();
+            verify_total = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total();
         }
         std::uint64_t auto_evolve_cycles = ev.auto_evolve_cycle_count_;
         std::uint64_t auto_evolve_fixed = ev.auto_evolve_total_fixed_;
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4862,7 +4747,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -4870,12 +4756,18 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -4910,8 +4802,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             mutations = m->atomic_batch_commits.load(std::memory_order_relaxed);
         }
         if (auto* ws = ev.workspace_flat()) {
-            verify_total = ws->verify_assertion_dirty_total() +
-                            ws->verify_coverage_dirty_total();
+            verify_total = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total();
             // mutations_success approximated as the
             // difference: total fixed - auto-evolve-fixed
             // is hard to compute without a per-mutation
@@ -4932,13 +4823,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         std::uint64_t total_hits = greedy_h + bugfix_h + minimal_h;
         std::uint64_t total_success = greedy_s + bugfix_s + minimal_s;
-        std::int64_t success_rate = total_hits > 0
-            ? static_cast<std::int64_t>((total_success * 100) / total_hits)
-            : 0;
-        std::int64_t human_intervention = 0;  // MVP: agent runs autonomously
+        std::int64_t success_rate =
+            total_hits > 0 ? static_cast<std::int64_t>((total_success * 100) / total_hits) : 0;
+        std::int64_t human_intervention = 0; // MVP: agent runs autonomously
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4948,7 +4839,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -4956,19 +4848,26 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
         auto active_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(ev.active_strategy_.empty() ? std::string("none") : ev.active_strategy_);
+        ev.string_heap_.push_back(ev.active_strategy_.empty() ? std::string("none")
+                                                              : ev.active_strategy_);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"iterations-to-closure", make_int(static_cast<std::int64_t>(iterations))},
             {"coverage-improvement", make_int(static_cast<std::int64_t>(verify_total))},

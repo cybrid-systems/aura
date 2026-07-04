@@ -276,22 +276,20 @@ PostRestoreReport FlatAST::validate_post_restore(std::vector<ValidationError>* e
 
 // ── StableNodeRef + MutationRecord helpers ───────────────────
 FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,
-                                            const MutationRecord& rec) noexcept {
+                                           const MutationRecord& rec) noexcept {
     return flat.make_ref(rec.target_node);
 }
 
 FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& flat,
-                                            const MutationRecord& rec) noexcept {
+                                           const MutationRecord& rec) noexcept {
     return flat.make_ref(rec.parent_id);
 }
 
-bool is_mutation_target_valid(const FlatAST& flat,
-                               const MutationRecord& rec) noexcept {
+bool is_mutation_target_valid(const FlatAST& flat, const MutationRecord& rec) noexcept {
     return flat.is_valid(mutation_target_ref(flat, rec));
 }
 
-bool is_mutation_parent_valid(const FlatAST& flat,
-                              const MutationRecord& rec) noexcept {
+bool is_mutation_parent_valid(const FlatAST& flat, const MutationRecord& rec) noexcept {
     return rec.parent_id == NULL_NODE || flat.is_valid(mutation_parent_ref(flat, rec));
 }
 
@@ -302,11 +300,17 @@ void MutationCountVisitor::visit_mutation(FlatAST&, const MutationRecord& rec) {
     ++total_count_;
 }
 
-bool MutationCountVisitor::has_error() const { return false; }
+bool MutationCountVisitor::has_error() const {
+    return false;
+}
 
-std::size_t MutationCountVisitor::total_count() const { return total_count_; }
+std::size_t MutationCountVisitor::total_count() const {
+    return total_count_;
+}
 
-std::size_t MutationCountVisitor::committed_count() const { return committed_count_; }
+std::size_t MutationCountVisitor::committed_count() const {
+    return committed_count_;
+}
 
 void MutationTargetValidityVisitor::visit_mutation(FlatAST& flat, const MutationRecord& rec) {
     if (rec.status != MutationStatus::Committed)
@@ -321,13 +325,15 @@ void MutationTargetValidityVisitor::visit_mutation(FlatAST& flat, const Mutation
         has_error_ = true;
 }
 
-bool MutationTargetValidityVisitor::has_error() const { return has_error_; }
+bool MutationTargetValidityVisitor::has_error() const {
+    return has_error_;
+}
 
 // Issue #276: resolve a captured stable ref across workspace layers.
-std::optional<FlatAST::StableNodeRef> resolve_across_layer(
-    const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
-    FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
-    std::uint32_t target_layer) noexcept {
+std::optional<FlatAST::StableNodeRef>
+resolve_across_layer(const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
+                     FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
+                     std::uint32_t target_layer) noexcept {
     if (captured_layer == target_layer)
         return target_flat.is_valid(captured) ? std::optional{captured} : std::nullopt;
     NodeId mapped = captured.id;

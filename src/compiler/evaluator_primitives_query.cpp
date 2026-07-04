@@ -56,83 +56,84 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                std::pmr::vector<std::string>& string_heap, void*& type_registry,
                                ModulePathResolver resolve_module_path, Evaluator& ev) {
 
-    add("query:module-exports", [&pairs, &string_heap, resolve_module_path](
-                                   std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap.size())
-            return make_void();
-        auto path = string_heap[idx];
-        auto resolved = resolve_module_path(path);
-        if (resolved.empty())
-            return make_void();
-        std::ifstream f(resolved);
-        if (!f.is_open())
-            return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        f.close();
-        std::vector<std::string> exports;
-        std::size_t pos = 0;
-        while (pos < content.size()) {
-            auto export_pos = content.find("(export", pos);
-            if (export_pos == std::string::npos)
-                break;
-            if (export_pos > 0) {
-                char prev = content[export_pos - 1];
-                if (prev != '\n' && prev != ' ' && prev != '\t' && prev != '(') {
-                    pos = export_pos + 1;
-                    continue;
-                }
-            }
-            auto sym_start = export_pos + 7;
-            while (sym_start < content.size() &&
-                   (content[sym_start] == ' ' || content[sym_start] == '\t' ||
-                    content[sym_start] == '\n' || content[sym_start] == '\r')) {
-                ++sym_start;
-            }
-            std::size_t i = sym_start;
-            while (i < content.size() && content[i] != ')') {
-                if (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' ||
-                    content[i] == '\r') {
-                    ++i;
-                    continue;
-                }
-                if (content[i] == ';') {
-                    while (i < content.size() && content[i] != '\n')
-                        ++i;
-                    continue;
-                }
-                std::size_t s = i;
-                while (i < content.size()) {
-                    char c = content[i];
-                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                        (c >= '0' && c <= '9') || c == '_' || c == '?' || c == '!' || c == '<' ||
-                        c == '>' || c == '=' || c == '*' || c == '+' || c == '-' || c == '/' ||
-                        c == '.' || c == '$') {
-                        ++i;
-                    } else {
-                        break;
+    add("query:module-exports",
+        [&pairs, &string_heap, resolve_module_path](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_void();
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap.size())
+                return make_void();
+            auto path = string_heap[idx];
+            auto resolved = resolve_module_path(path);
+            if (resolved.empty())
+                return make_void();
+            std::ifstream f(resolved);
+            if (!f.is_open())
+                return make_void();
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            f.close();
+            std::vector<std::string> exports;
+            std::size_t pos = 0;
+            while (pos < content.size()) {
+                auto export_pos = content.find("(export", pos);
+                if (export_pos == std::string::npos)
+                    break;
+                if (export_pos > 0) {
+                    char prev = content[export_pos - 1];
+                    if (prev != '\n' && prev != ' ' && prev != '\t' && prev != '(') {
+                        pos = export_pos + 1;
+                        continue;
                     }
                 }
-                if (i > s) {
-                    exports.push_back(content.substr(s, i - s));
-                } else {
-                    ++i;
+                auto sym_start = export_pos + 7;
+                while (sym_start < content.size() &&
+                       (content[sym_start] == ' ' || content[sym_start] == '\t' ||
+                        content[sym_start] == '\n' || content[sym_start] == '\r')) {
+                    ++sym_start;
                 }
+                std::size_t i = sym_start;
+                while (i < content.size() && content[i] != ')') {
+                    if (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' ||
+                        content[i] == '\r') {
+                        ++i;
+                        continue;
+                    }
+                    if (content[i] == ';') {
+                        while (i < content.size() && content[i] != '\n')
+                            ++i;
+                        continue;
+                    }
+                    std::size_t s = i;
+                    while (i < content.size()) {
+                        char c = content[i];
+                        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                            (c >= '0' && c <= '9') || c == '_' || c == '?' || c == '!' ||
+                            c == '<' || c == '>' || c == '=' || c == '*' || c == '+' || c == '-' ||
+                            c == '/' || c == '.' || c == '$') {
+                            ++i;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (i > s) {
+                        exports.push_back(content.substr(s, i - s));
+                    } else {
+                        ++i;
+                    }
+                }
+                break;
             }
-            break;
-        }
-        EvalValue lst = make_void();
-        for (auto it = exports.rbegin(); it != exports.rend(); ++it) {
-            auto sidx = string_heap.size();
-            string_heap.push_back(*it);
-            auto pid = pairs.size();
-            pairs.push_back({make_string(sidx), lst});
-            lst = make_pair(pid);
-        }
-        return lst;
-    });
+            EvalValue lst = make_void();
+            for (auto it = exports.rbegin(); it != exports.rend(); ++it) {
+                auto sidx = string_heap.size();
+                string_heap.push_back(*it);
+                auto pid = pairs.size();
+                pairs.push_back({make_string(sidx), lst});
+                lst = make_pair(pid);
+            }
+            return lst;
+        });
 
     add("query:jit-fallback-stats", [](std::span<const EvalValue> a) -> EvalValue {
         // Issue #461: read the global fallback counter. The
@@ -142,8 +143,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // integer. Future ship: returns a list
         // (fallback-count deopt-count consistency-violations).
         (void)a;
-        return make_int(static_cast<std::int64_t>(
-            aura_jit_fallback_count_v_read()));
+        return make_int(static_cast<std::int64_t>(aura_jit_fallback_count_v_read()));
     });
 
     // Issue #455: query:ir-marker-stats
@@ -174,9 +174,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // pattern as the #453 hooks). Returns 0 when no
         // evaluator is active.
         auto* ev = Evaluator::yield_hook_evaluator();
-        if (!ev) return make_int(0);
-        return make_int(static_cast<std::int64_t>(
-            ev->get_macro_introduced_skipped_in_query()));
+        if (!ev)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
     });
 
     // Issue #456: query:dirty-subtree root-node-id
@@ -191,16 +191,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // returns a list of (NodeId . dirty-bit) pairs.
     add("query:dirty-subtree", [](std::span<const EvalValue> a) -> EvalValue {
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         if (a.empty() || !is_int(a[0]))
             return make_int(0);
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
         const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
-            ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
-            : 0xFF; // 0xFF = all reasons
-        if (root >= ws->size()) return make_int(0);
+                                             ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
+                                             : 0xFF; // 0xFF = all reasons
+        if (root >= ws->size())
+            return make_int(0);
         // Walk the parent chain from root upward; count nodes
         // that have at least one dirty bit intersecting
         // reason_mask. (P0: this is the ancestor chain, not
@@ -231,9 +234,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:mutation-impact", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        return make_int(static_cast<std::int64_t>(
-            ev->get_mutation_impact_count()));
+        if (!ev)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev->get_mutation_impact_count()));
     });
 
     // Issue #456: query:epoch-stats. Returns the current
@@ -246,7 +249,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:epoch-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(ev->get_defuse_version()));
     });
 
@@ -258,7 +262,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:epoch-delta-since-last-query", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t cur = ev->get_defuse_version();
         const std::uint64_t last = ev->get_last_queried_epoch();
         ev->record_epoch_query();
@@ -276,17 +281,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // counters. Follow-up: returns a 3-tuple
     // (wraps invalidations stale-accesses) so the AI
     // Agent can react to each category independently.
-        add("query:stable-ref-stats", [](std::span<const EvalValue> a) -> EvalValue {
+    add("query:stable-ref-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         const std::uint64_t wraps = ws->generation_wrap_count();
         const std::uint64_t invalidations = ws->stable_ref_invalidations();
         const std::uint64_t stale = ws->node_gen_stale_access_count();
-        return make_int(static_cast<std::int64_t>(
-            wraps + invalidations + stale));
+        return make_int(static_cast<std::int64_t>(wraps + invalidations + stale));
     });
 
     // Issue #470: query:stable-ref-stats-hash — 4-element
@@ -303,59 +309,64 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // position 3 = recommendation (0=healthy,
     // 1=wrap-detected, 2=high-invalidation-rate).
     // The Aura side can iterate with a `let` form.
-    add("query:stable-ref-stats-hash", [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        std::uint64_t wraps = 0;
-        std::uint64_t invalidations = 0;
-        std::uint64_t stale = 0;
-        if (auto* ws = ev.workspace_flat()) {
-            wraps = ws->generation_wrap_count();
-            invalidations = ws->stable_ref_invalidations();
-            stale = ws->node_gen_stale_access_count();
-        }
-        std::int64_t rec_int = 0;
-        if (wraps > 0) rec_int = 1;
-        else if (invalidations >= 10) rec_int = 2;
-        // Build a 4-field hash using the FNV-1a scheme
-        // (same as the other observability primitives).
-        // Uses the `string_heap` reference passed into
-        // register_query_primitives() (avoids the private
-        // Evaluator::string_heap_ field).
-        auto* ht = FlatHashTable::create(8);
-        if (!ht) return make_int(rec_int);
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF) fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    add("query:stable-ref-stats-hash",
+        [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            std::uint64_t wraps = 0;
+            std::uint64_t invalidations = 0;
+            std::uint64_t stale = 0;
+            if (auto* ws = ev.workspace_flat()) {
+                wraps = ws->generation_wrap_count();
+                invalidations = ws->stable_ref_invalidations();
+                stale = ws->node_gen_stale_access_count();
             }
-        };
-        insert_kv("generation-wrap-count", static_cast<std::int64_t>(wraps));
-        insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
-        insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
-        insert_kv("recommendation", rec_int);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            std::int64_t rec_int = 0;
+            if (wraps > 0)
+                rec_int = 1;
+            else if (invalidations >= 10)
+                rec_int = 2;
+            // Build a 4-field hash using the FNV-1a scheme
+            // (same as the other observability primitives).
+            // Uses the `string_heap` reference passed into
+            // register_query_primitives() (avoids the private
+            // Evaluator::string_heap_ field).
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_int(rec_int);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("generation-wrap-count", static_cast<std::int64_t>(wraps));
+            insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
+            insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
+            insert_kv("recommendation", rec_int);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
-// Issue #438: query:fiber-migration-stats. Returns
+    // Issue #438: query:fiber-migration-stats. Returns
     // the sum of the 2 fiber-migration + work-stealing
     // observability counters:
     //   - mutation_steal_attempts_  (lifetime # of
@@ -372,11 +383,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:fiber-migration-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t attempts = ev->get_mutation_steal_attempts();
         const std::uint64_t violations = ev->get_boundary_violation_count();
-        return make_int(static_cast<std::int64_t>(
-            attempts + violations));
+        return make_int(static_cast<std::int64_t>(attempts + violations));
     });
 
     // Issue #439: query:gc-safepoint-stats. Returns
@@ -397,12 +408,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:gc-safepoint-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t requests = ev->get_gc_safepoint_requests_total();
         const std::uint64_t waits = ev->get_gc_safepoint_waits_total();
         const std::uint64_t deferred = ev->get_gc_safepoint_deferred_total();
-        return make_int(static_cast<std::int64_t>(
-            requests + waits + deferred));
+        return make_int(static_cast<std::int64_t>(requests + waits + deferred));
     });
 
     // Issue #443: query:verify-tool-stats. Returns the
@@ -422,12 +433,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:verify-tool-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t calls = ev->get_verify_tool_calls_total();
         const std::uint64_t hits = ev->get_verify_tool_cache_hits_total();
         const std::uint64_t errors = ev->get_verify_tool_parse_errors_total();
-        return make_int(static_cast<std::int64_t>(
-            calls + hits + errors));
+        return make_int(static_cast<std::int64_t>(calls + hits + errors));
     });
 
     // Issue #451: query:orchestration-metrics. Returns
@@ -447,16 +458,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // aggregated via the active yield-hook
         // evaluator (the P0 reads them via a thread-
         // local; the follow-up uses GlobalMetrics).
-        const std::uint64_t gc_pauses =
-            aura_fiber_static_gc_pause_attributed_to_mutation();
+        const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
         std::uint64_t eda_sv_cycles = 0;
         std::uint64_t eda_sv_corruption = 0;
         if (auto* ev = Evaluator::get_query_evaluator()) {
             if (const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics())) {
-                eda_sv_cycles = m->eda_sv_evolution_cycles_total.load(
-                    std::memory_order_relaxed);
-                eda_sv_corruption = m->eda_sv_corruption_detected_total.load(
-                    std::memory_order_relaxed);
+                eda_sv_cycles = m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed);
+                eda_sv_corruption =
+                    m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed);
             }
         }
         const std::uint64_t sum = gc_pauses + eda_sv_cycles;
@@ -473,7 +482,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // evaluator to push the string into the
         // string_heap_; if no evaluator, return #f.
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const auto idx = ev->push_string_heap(result);
         return make_string(static_cast<std::int32_t>(idx));
     });
@@ -487,14 +497,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:query-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         const std::uint64_t hits = ws->tag_arity_index_hits();
         const std::uint64_t misses = ws->tag_arity_index_misses();
         const std::uint64_t rebuilds = ws->tag_arity_index_rebuilds();
-        return make_int(static_cast<std::int64_t>(
-            hits + misses + rebuilds));
+        return make_int(static_cast<std::int64_t>(hits + misses + rebuilds));
     });
 
     // Issue #547: query:pattern-index-stats. Returns
@@ -515,9 +526,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:pattern-index-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         const std::uint64_t hits = ws->tag_arity_index_hits();
         const std::uint64_t misses = ws->tag_arity_index_misses();
         const std::uint64_t rebuilds = ws->tag_arity_index_rebuilds();
@@ -527,13 +540,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // 6-counter matrix. The AI Agent can compute
         // avg_rebuild_us = rebuild_time_us / rebuilds and
         // delta_hit_rate = delta_hits / (delta_hits + rebuilds).
-        const std::uint64_t rebuild_time_us =
-            ws->tag_arity_index_rebuild_time_us();
-        const std::uint64_t delta_hits =
-            ws->tag_arity_index_delta_hits();
-        return make_int(static_cast<std::int64_t>(
-            hits + misses + rebuilds + dirty_marks +
-            rebuild_time_us + delta_hits));
+        const std::uint64_t rebuild_time_us = ws->tag_arity_index_rebuild_time_us();
+        const std::uint64_t delta_hits = ws->tag_arity_index_delta_hits();
+        return make_int(static_cast<std::int64_t>(hits + misses + rebuilds + dirty_marks +
+                                                  rebuild_time_us + delta_hits));
     });
 
     // Issue #547: query:pattern-hygiene-stats. Returns
@@ -554,11 +564,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:pattern-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
         const std::uint64_t violations = ev->get_hygiene_violation_count();
-        return make_int(static_cast<std::int64_t>(
-            skips + violations));
+        return make_int(static_cast<std::int64_t>(skips + violations));
     });
 
     // Issue #548: query:panic-checkpoint-lifecycle-stats.
@@ -585,13 +595,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:panic-checkpoint-lifecycle-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t save = ev->get_panic_checkpoint_save_count();
         const std::uint64_t restore = ev->get_panic_checkpoint_restore_count();
         const std::uint64_t commit = ev->get_panic_checkpoint_commit_count();
         const std::uint64_t rollback_success = ev->get_rollback_success_on_panic();
-        return make_int(static_cast<std::int64_t>(
-            save + restore + commit + rollback_success));
+        return make_int(static_cast<std::int64_t>(save + restore + commit + rollback_success));
     });
 
     // Issue #549: query:self-evolution-stability-stats.
@@ -625,13 +635,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:self-evolution-stability-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
         const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
         const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
         const std::uint64_t provenance = ev->get_provenance_mismatch();
-        return make_int(static_cast<std::int64_t>(
-            cross_cow + fiber_stale + rollback + provenance));
+        return make_int(static_cast<std::int64_t>(cross_cow + fiber_stale + rollback + provenance));
     });
 
     // Issue #550: query:typed-mutation-stats. Returns the
@@ -657,13 +667,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:typed-mutation-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
         const std::uint64_t conflicts = ev->get_cross_delta_conflicts_caught();
         const std::uint64_t passes_skipped = ev->get_passes_skipped_type_dirty();
         const std::uint64_t touched_size = ev->get_touched_roots_size();
-        return make_int(static_cast<std::int64_t>(
-            narrowing + conflicts + passes_skipped + touched_size));
+        return make_int(
+            static_cast<std::int64_t>(narrowing + conflicts + passes_skipped + touched_size));
     });
 
     // Issue #550: query:dirty-impact. Returns the touched
@@ -675,9 +686,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:dirty-impact", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        return make_int(static_cast<std::int64_t>(
-            ev->get_touched_roots_size()));
+        if (!ev)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev->get_touched_roots_size()));
     });
 
     // Issue #495: query:task2-refinement-stats. Returns the sum
@@ -694,7 +705,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t constraint =
             m->delta_conflict_reverify_total.load(std::memory_order_relaxed) +
             m->delta_conflict_detected_total.load(std::memory_order_relaxed);
@@ -706,8 +718,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed);
         const std::uint64_t jit_elision =
             m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            constraint + coercion + occurrence + jit_elision));
+        return make_int(
+            static_cast<std::int64_t>(constraint + coercion + occurrence + jit_elision));
     });
 
     // Issue #690: query:constraint-delta-blame-stats. Returns the
@@ -716,12 +728,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:constraint-delta-blame-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-        const std::uint64_t constraint_blame = m
-            ? m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t occurrence_blame = m
-            ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t constraint_blame =
+            m ? m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t occurrence_blame =
+            m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
         return make_int(static_cast<std::int64_t>(constraint_blame + occurrence_blame));
     });
 
@@ -733,7 +746,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:constraint-delta-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t touched_hits =
             m ? m->delta_conflict_reverify_total.load(std::memory_order_relaxed) : 0;
@@ -751,7 +765,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t clean_conflicts =
             m->delta_conflict_detected_total.load(std::memory_order_relaxed);
         const std::uint64_t full_fallbacks =
@@ -760,8 +775,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             m->delta_conflict_reverify_total.load(std::memory_order_relaxed);
         const std::uint64_t prevented =
             m->delta_constraints_processed_total.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            clean_conflicts + full_fallbacks + consistency + prevented));
+        return make_int(
+            static_cast<std::int64_t>(clean_conflicts + full_fallbacks + consistency + prevented));
     });
 
     // Issue #573: query:typed-incremental-stats. Returns the sum
@@ -774,15 +789,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:typed-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t conflicts = ev->get_cross_delta_conflicts_caught();
         const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
         const std::uint64_t local_recheck = ev->get_selective_recheck_count();
         const std::uint64_t solve_us =
             m ? m->delta_solve_time_us.load(std::memory_order_relaxed) : 0;
-        return make_int(static_cast<std::int64_t>(
-            conflicts + narrowing + local_recheck + solve_us));
+        return make_int(
+            static_cast<std::int64_t>(conflicts + narrowing + local_recheck + solve_us));
     });
 
     // Issue #608: query:type-incremental-stats. Returns the sum
@@ -796,7 +812,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t delta_processed =
             m->delta_constraints_processed_total.load(std::memory_order_relaxed);
         const std::uint64_t occ_recovery =
@@ -804,10 +821,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t narrow_hits =
             m->post_mutate_narrow_consistency_total.load(std::memory_order_relaxed);
         const std::uint64_t delta_win =
-            m->incremental_typecheck_auto_invocations_total.load(
-                std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            delta_processed + occ_recovery + narrow_hits + delta_win));
+            m->incremental_typecheck_auto_invocations_total.load(std::memory_order_relaxed);
+        return make_int(
+            static_cast<std::int64_t>(delta_processed + occ_recovery + narrow_hits + delta_win));
     });
 
     // Issue #305: query:type-propagation-stats. Returns the
@@ -838,17 +854,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
-        const std::uint64_t runs = m->type_propagation_runs_.load(
-            std::memory_order_relaxed);
-        const std::uint64_t total = m->type_propagation_total_.load(
-            std::memory_order_relaxed);
-        const std::uint64_t unknown = m->type_propagation_unknown_.load(
-            std::memory_order_relaxed);
-        const std::uint64_t int_width = m->type_propagation_int_width_.load(
-            std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            runs + total + unknown + int_width));
+        if (!m)
+            return make_int(0);
+        const std::uint64_t runs = m->type_propagation_runs_.load(std::memory_order_relaxed);
+        const std::uint64_t total = m->type_propagation_total_.load(std::memory_order_relaxed);
+        const std::uint64_t unknown = m->type_propagation_unknown_.load(std::memory_order_relaxed);
+        const std::uint64_t int_width =
+            m->type_propagation_int_width_.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(runs + total + unknown + int_width));
     });
 
     // Issue #468: query:dead-coercion-zerooverhead-stats. Returns
@@ -858,23 +871,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - dead_coercion_elapsed_us_total (pass pipeline time)
     //   - coercion_type_prop_hits_total (Rule 1 type_id identity)
     //   - coercion_zerooverhead_win_total (per-run pipeline wins)
-    add("query:dead-coercion-zerooverhead-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            const auto* m = static_cast<const CompilerMetrics*>(
-                Evaluator::get_query_evaluator()->compiler_metrics());
-            if (!m) return make_int(0);
-            const std::uint64_t eliminated =
-                m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
-            const std::uint64_t elapsed =
-                m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
-            const std::uint64_t type_prop =
-                m->coercion_type_prop_hits_total.load(std::memory_order_relaxed);
-            const std::uint64_t win = m->coercion_zerooverhead_win_total.load(
-                std::memory_order_relaxed);
-            return make_int(static_cast<std::int64_t>(
-                eliminated + elapsed + type_prop + win));
-        });
+    add("query:dead-coercion-zerooverhead-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m)
+            return make_int(0);
+        const std::uint64_t eliminated =
+            m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+        const std::uint64_t elapsed =
+            m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
+        const std::uint64_t type_prop =
+            m->coercion_type_prop_hits_total.load(std::memory_order_relaxed);
+        const std::uint64_t win =
+            m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(eliminated + elapsed + type_prop + win));
+    });
 
     // Issue #629: query:coercion-zerooverhead-stats. Returns the
     // sum of the 4 zero-overhead coercion lifetime counters:
@@ -887,15 +899,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
-        const std::uint64_t castop = m->coercion_castop_emitted_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t type_prop = m->coercion_type_prop_hits_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t narrow = m->coercion_narrow_evidence_hits_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t win = m->coercion_zerooverhead_win_total.load(
-            std::memory_order_relaxed);
+        if (!m)
+            return make_int(0);
+        const std::uint64_t castop =
+            m->coercion_castop_emitted_total.load(std::memory_order_relaxed);
+        const std::uint64_t type_prop =
+            m->coercion_type_prop_hits_total.load(std::memory_order_relaxed);
+        const std::uint64_t narrow =
+            m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
+        const std::uint64_t win =
+            m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
         return make_int(static_cast<std::int64_t>(castop + type_prop + narrow + win));
     });
 
@@ -911,17 +924,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t total_castop =
             m->coercion_castop_emitted_total.load(std::memory_order_relaxed);
         const std::uint64_t eliminated =
             m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
         const std::uint64_t runtime_check_elided =
             m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
-        const std::uint64_t blame =
-            m->narrowing_provenance_total.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            total_castop + eliminated + runtime_check_elided + blame));
+        const std::uint64_t blame = m->narrowing_provenance_total.load(std::memory_order_relaxed);
+        return make_int(
+            static_cast<std::int64_t>(total_castop + eliminated + runtime_check_elided + blame));
     });
 
     // Issue #306: query:linear-ownership-stats. Returns the
@@ -952,17 +965,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t wire_borrows =
             m->hw_resource_wire_borrows_.load(std::memory_order_relaxed);
-        const std::uint64_t reg_writes =
-            m->hw_resource_reg_writes_.load(std::memory_order_relaxed);
-        const std::uint64_t mem_access =
-            m->hw_resource_mem_access_.load(std::memory_order_relaxed);
+        const std::uint64_t reg_writes = m->hw_resource_reg_writes_.load(std::memory_order_relaxed);
+        const std::uint64_t mem_access = m->hw_resource_mem_access_.load(std::memory_order_relaxed);
         const std::uint64_t double_drive =
             m->hw_resource_double_drive_.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            wire_borrows + reg_writes + mem_access + double_drive));
+        return make_int(
+            static_cast<std::int64_t>(wire_borrows + reg_writes + mem_access + double_drive));
     });
 
     // Issue #575: query:linear-ownership-incremental-stats. Returns
@@ -975,25 +987,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     + linear_leak_prevented_total
     //   - escape_analysis_hits: linear_check_pass_count_
     //     (runtime linear ownership_state fast-path checks)
-    add("query:linear-ownership-incremental-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            const auto* m = static_cast<const CompilerMetrics*>(
-                Evaluator::get_query_evaluator()->compiler_metrics());
-            if (!m) return make_int(0);
-            const std::uint64_t revalidate =
-                m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
-            const std::uint64_t dirty_uses =
-                m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
-            const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
-            const std::uint64_t leaks =
-                m->linear_leak_prevented_total.load(std::memory_order_relaxed);
-            const std::uint64_t escape_hits =
-                m->linear_check_pass_count_.load(std::memory_order_relaxed);
-            return make_int(static_cast<std::int64_t>(
-                revalidate + dirty_uses + violations + leaks + escape_hits));
-        });
+    add("query:linear-ownership-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m)
+            return make_int(0);
+        const std::uint64_t revalidate =
+            m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
+        const std::uint64_t dirty_uses =
+            m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
+        const std::uint64_t violations =
+            m->linear_violations_caught_total.load(std::memory_order_relaxed);
+        const std::uint64_t leaks = m->linear_leak_prevented_total.load(std::memory_order_relaxed);
+        const std::uint64_t escape_hits =
+            m->linear_check_pass_count_.load(std::memory_order_relaxed);
+        return make_int(
+            static_cast<std::int64_t>(revalidate + dirty_uses + violations + leaks + escape_hits));
+    });
 
     // Issue #610: query:linear-ownership-mutation-stats. Returns
     // the sum of 4 post-mutation linear ownership observability
@@ -1002,23 +1013,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - violations_caught: linear_violations_caught_total
     //   - deopt_on_linear: linear_deopt_on_invalidate_total
     //   - leak_prevented: linear_leak_prevented_total
-    add("query:linear-ownership-mutation-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            const auto* m = static_cast<const CompilerMetrics*>(
-                Evaluator::get_query_evaluator()->compiler_metrics());
-            if (!m) return make_int(0);
-            const std::uint64_t revalidations =
-                m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
-            const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
-            const std::uint64_t deopt =
-                m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
-            const std::uint64_t leaks =
-                m->linear_leak_prevented_total.load(std::memory_order_relaxed);
-            return make_int(static_cast<std::int64_t>(
-                revalidations + violations + deopt + leaks));
-        });
+    add("query:linear-ownership-mutation-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m)
+            return make_int(0);
+        const std::uint64_t revalidations =
+            m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
+        const std::uint64_t violations =
+            m->linear_violations_caught_total.load(std::memory_order_relaxed);
+        const std::uint64_t deopt =
+            m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
+        const std::uint64_t leaks = m->linear_leak_prevented_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(revalidations + violations + deopt + leaks));
+    });
 
     // Issue #638: query:linear-ownership-safety-stats. Returns the
     // sum of 3 runtime linear + GuardShape post-mutation safety
@@ -1027,21 +1036,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - violations_caught: linear_violations_caught_total
     //   - deopt_on_linear_mismatch: linear_deopt_on_mismatch_total
     //   - post_mutate_enforcements: linear_post_mutate_enforcements_total
-    add("query:linear-ownership-safety-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            const auto* m = static_cast<const CompilerMetrics*>(
-                Evaluator::get_query_evaluator()->compiler_metrics());
-            if (!m) return make_int(0);
-            const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
-            const std::uint64_t deopt_mismatch =
-                m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
-            const std::uint64_t enforcements =
-                m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
-            return make_int(static_cast<std::int64_t>(
-                violations + deopt_mismatch + enforcements));
-        });
+    add("query:linear-ownership-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m)
+            return make_int(0);
+        const std::uint64_t violations =
+            m->linear_violations_caught_total.load(std::memory_order_relaxed);
+        const std::uint64_t deopt_mismatch =
+            m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
+        const std::uint64_t enforcements =
+            m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(violations + deopt_mismatch + enforcements));
+    });
 
     // Issue #598: query:linear-ownership-runtime-stats. Returns the
     // sum of 4 runtime linear enforcement counters spanning
@@ -1053,24 +1061,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - post_mutate_enforcement_hits:
     //     linear_post_mutate_enforcements_total
     //   - deopt_on_invalidate: linear_deopt_on_invalidate_total
-    add("query:linear-ownership-runtime-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            const auto* m = static_cast<const CompilerMetrics*>(
-                Evaluator::get_query_evaluator()->compiler_metrics());
-            if (!m) return make_int(0);
-            const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
-            const std::uint64_t deopt_mismatch =
-                m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
-            const std::uint64_t enforcement_hits =
-                m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
-            const std::uint64_t deopt_invalidate =
-                m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
-            return make_int(static_cast<std::int64_t>(
-                violations + deopt_mismatch + enforcement_hits +
-                deopt_invalidate));
-        });
+    add("query:linear-ownership-runtime-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m)
+            return make_int(0);
+        const std::uint64_t violations =
+            m->linear_violations_caught_total.load(std::memory_order_relaxed);
+        const std::uint64_t deopt_mismatch =
+            m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
+        const std::uint64_t enforcement_hits =
+            m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
+        const std::uint64_t deopt_invalidate =
+            m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(violations + deopt_mismatch + enforcement_hits +
+                                                  deopt_invalidate));
+    });
 
     // Issue #454: query:reflect-edsl-bridge-stats. Returns the
     // sum of 4 reflection-to-EDSL bridge observability counters:
@@ -1082,13 +1089,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:reflect-edsl-bridge-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t pass = ev->get_schema_validation_pass_count();
         const std::uint64_t fail = ev->get_schema_validation_fail_count();
         const std::uint64_t snapshots = ev->get_impact_snapshot_count();
         const std::uint64_t marker_skips = ev->get_macro_introduced_skipped_in_query();
-        return make_int(static_cast<std::int64_t>(
-            pass + fail + snapshots + marker_skips));
+        return make_int(static_cast<std::int64_t>(pass + fail + snapshots + marker_skips));
     });
 
     // Issue #551: query:reflect-postmutate-stats. Returns
@@ -1114,13 +1121,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:reflect-postmutate-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t snapshots = ev->get_impact_snapshot_count();
         const std::uint64_t pass = ev->get_schema_validation_pass_count();
         const std::uint64_t fail = ev->get_schema_validation_fail_count();
         const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
-        return make_int(static_cast<std::int64_t>(
-            snapshots + pass + fail + dirty));
+        return make_int(static_cast<std::int64_t>(snapshots + pass + fail + dirty));
     });
 
     // Issue #594: query:reflection-selfmod-stats. Returns the sum of
@@ -1141,14 +1148,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:reflection-selfmod-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t pass = ev->get_schema_validation_pass_count();
         const std::uint64_t fail = ev->get_schema_validation_fail_count();
         const std::uint64_t snapshots = ev->get_impact_snapshot_count();
         const std::uint64_t impact = ev->get_mutation_impact_count();
         const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
-        return make_int(static_cast<std::int64_t>(
-            pass + fail + snapshots + impact + guard_epoch));
+        return make_int(static_cast<std::int64_t>(pass + fail + snapshots + impact + guard_epoch));
     });
 
     // Issue #514: query:ir-hygiene-stats. Returns the sum of IR-level
@@ -1159,7 +1166,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:ir-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
         const std::uint64_t markers = workspace_marker_macro_introduced(ev);
         return make_int(static_cast<std::int64_t>(inline_skipped + markers));
@@ -1173,12 +1181,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:pattern-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
         const std::uint64_t violations = ev->get_hygiene_violation_count();
         const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-        return make_int(static_cast<std::int64_t>(
-            skips + violations + markers));
+        return make_int(static_cast<std::int64_t>(skips + violations + markers));
     });
 
     // Issue #517: query:consolidated-production-priority-stats.
@@ -1207,41 +1215,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
+            if (!ev)
+                return make_int(0);
             auto* ws = ev->workspace_flat();
-            const auto* m = static_cast<const CompilerMetrics*>(
-                ev->compiler_metrics());
-            const std::uint64_t persistence =
-                ev->get_panic_checkpoint_save_count() +
-                ev->get_panic_checkpoint_commit_count() +
-                (ws ? ws->generation_wrap_count() : 0);
-            const std::uint64_t eda_feedback =
-                ws ? ws->verification_coverage_feedback_total() +
-                         ws->verification_assert_failure_total()
-                   : 0;
-            const std::uint64_t memory_bridge = m
-                ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) +
-                      m->closure_stale_refresh_count_.load(
-                          std::memory_order_relaxed)
-                : 0;
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t persistence = ev->get_panic_checkpoint_save_count() +
+                                              ev->get_panic_checkpoint_commit_count() +
+                                              (ws ? ws->generation_wrap_count() : 0);
+            const std::uint64_t eda_feedback = ws ? ws->verification_coverage_feedback_total() +
+                                                        ws->verification_assert_failure_total()
+                                                  : 0;
+            const std::uint64_t memory_bridge =
+                m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) +
+                        m->closure_stale_refresh_count_.load(std::memory_order_relaxed)
+                  : 0;
             const std::uint64_t memory_env =
-                ev->get_envframe_stale_refresh_count() +
-                ev->get_envframe_gc_walk_safe_skips();
-            const std::uint64_t gc_sync =
-                ev->get_gc_safepoint_waits_total();
-            const std::uint64_t ir_soa = m
-                ? m->ir_soa_instructions_emitted.load(
-                      std::memory_order_relaxed) +
-                      m->ir_soa_functions_emitted.load(
-                          std::memory_order_relaxed)
-                : 0;
+                ev->get_envframe_stale_refresh_count() + ev->get_envframe_gc_walk_safe_skips();
+            const std::uint64_t gc_sync = ev->get_gc_safepoint_waits_total();
+            const std::uint64_t ir_soa =
+                m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) +
+                        m->ir_soa_functions_emitted.load(std::memory_order_relaxed)
+                  : 0;
             const std::uint64_t soa_dirty =
                 ev->get_passes_skipped_type_dirty() +
-                (m ? m->module_dirty_skips.load(std::memory_order_relaxed)
-                   : 0);
-            return make_int(static_cast<std::int64_t>(
-                persistence + eda_feedback + memory_bridge +
-                memory_env + gc_sync + ir_soa + soa_dirty));
+                (m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0);
+            return make_int(static_cast<std::int64_t>(persistence + eda_feedback + memory_bridge +
+                                                      memory_env + gc_sync + ir_soa + soa_dirty));
         });
 
     // Issue #520: query:production-roadmap-stats. Returns the sum of
@@ -1265,51 +1264,38 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // P0: returns an integer = sum of all 10 counter groups.
     // Follow-up: returns a 10-tuple so fleet dashboards can track
     // each north-star pillar independently.
-    add("query:production-roadmap-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const auto* m = static_cast<const CompilerMetrics*>(
-                ev->compiler_metrics());
-            const std::uint64_t eda_feedback =
-                ws ? ws->verification_coverage_feedback_total() +
-                         ws->verification_assert_failure_total()
-                   : 0;
-            const std::uint64_t eda_sv =
-                ws ? ws->sv_mutate_attempts_total() +
-                         ws->sv_mutate_success_total()
-                   : 0;
-            const std::uint64_t checkpoint =
-                ev->get_panic_checkpoint_save_count() +
-                ev->get_panic_checkpoint_commit_count();
-            const std::uint64_t gen_wrap =
-                ws ? ws->generation_wrap_count() : 0;
-            const std::uint64_t memory_bridge = m
-                ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) +
-                      m->closure_stale_refresh_count_.load(
-                          std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t memory_env =
-                ev->get_envframe_stale_refresh_count();
-            const std::uint64_t soa_skip =
-                ev->get_passes_skipped_type_dirty();
-            const std::uint64_t soa_hotpath =
-                (m ? m->specialization_hits.load(std::memory_order_relaxed)
-                   : 0) +
-                (ws ? ws->tag_arity_index_hits() : 0);
-            const std::uint64_t batch =
-                (ws ? ws->atomic_batch_commits() : 0) +
-                ev->atomic_batch_count();
-            const std::uint64_t rollback =
-                ev->atomic_batch_rollbacks() +
-                ev->get_mutation_log_rollback_count();
-            return make_int(static_cast<std::int64_t>(
-                eda_feedback + eda_sv + checkpoint + gen_wrap +
-                memory_bridge + memory_env + soa_skip + soa_hotpath +
-                batch + rollback));
-        });
+    add("query:production-roadmap-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t eda_feedback = ws ? ws->verification_coverage_feedback_total() +
+                                                    ws->verification_assert_failure_total()
+                                              : 0;
+        const std::uint64_t eda_sv =
+            ws ? ws->sv_mutate_attempts_total() + ws->sv_mutate_success_total() : 0;
+        const std::uint64_t checkpoint =
+            ev->get_panic_checkpoint_save_count() + ev->get_panic_checkpoint_commit_count();
+        const std::uint64_t gen_wrap = ws ? ws->generation_wrap_count() : 0;
+        const std::uint64_t memory_bridge =
+            m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) +
+                    m->closure_stale_refresh_count_.load(std::memory_order_relaxed)
+              : 0;
+        const std::uint64_t memory_env = ev->get_envframe_stale_refresh_count();
+        const std::uint64_t soa_skip = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t soa_hotpath =
+            (m ? m->specialization_hits.load(std::memory_order_relaxed) : 0) +
+            (ws ? ws->tag_arity_index_hits() : 0);
+        const std::uint64_t batch =
+            (ws ? ws->atomic_batch_commits() : 0) + ev->atomic_batch_count();
+        const std::uint64_t rollback =
+            ev->atomic_batch_rollbacks() + ev->get_mutation_log_rollback_count();
+        return make_int(static_cast<std::int64_t>(eda_feedback + eda_sv + checkpoint + gen_wrap +
+                                                  memory_bridge + memory_env + soa_skip +
+                                                  soa_hotpath + batch + rollback));
+    });
 
     // Issue #514: query:task6-production-readiness-stats. Returns the
     // sum of 12 counters spanning the Task6 review Top 3 production
@@ -1319,30 +1305,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //                       + panic_commit
     //   Top3 dirty/type: narrowing_refresh + passes_skipped + touched_roots
     //                    + narrowing_dirty_recovery
-    add("query:task6-production-readiness-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            const std::uint64_t top1 =
-                ev->get_macro_introduced_skipped_in_query() +
-                ev->get_hygiene_violation_count() +
-                ir_inline_hygiene_skipped(ev) +
-                workspace_marker_macro_introduced(ev);
-            const std::uint64_t top2 =
-                ev->get_mutation_impact_count() +
-                ev->get_impact_snapshot_count() +
-                ev->get_schema_validation_pass_count() +
-                ev->get_panic_checkpoint_commit_count();
-            const std::uint64_t dirty_recovery =
-                m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t top3 =
-                ev->get_narrowing_refresh_count() +
-                ev->get_passes_skipped_type_dirty() +
-                ev->get_touched_roots_size() + dirty_recovery;
-            return make_int(static_cast<std::int64_t>(top1 + top2 + top3));
-        });
+    add("query:task6-production-readiness-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t top1 =
+            ev->get_macro_introduced_skipped_in_query() + ev->get_hygiene_violation_count() +
+            ir_inline_hygiene_skipped(ev) + workspace_marker_macro_introduced(ev);
+        const std::uint64_t top2 =
+            ev->get_mutation_impact_count() + ev->get_impact_snapshot_count() +
+            ev->get_schema_validation_pass_count() + ev->get_panic_checkpoint_commit_count();
+        const std::uint64_t dirty_recovery =
+            m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t top3 = ev->get_narrowing_refresh_count() +
+                                   ev->get_passes_skipped_type_dirty() +
+                                   ev->get_touched_roots_size() + dirty_recovery;
+        return make_int(static_cast<std::int64_t>(top1 + top2 + top3));
+    });
 
     // Issue #441: query:compiler-runtime-production-readiness-stats.
     // Returns the sum of 12 counters spanning the consolidated
@@ -1361,31 +1342,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
+            if (!ev)
+                return make_int(0);
             auto* ws = ev->workspace_flat();
             const std::uint64_t runtime_fiber =
-                ev->get_mutation_steal_attempts() +
-                ev->get_boundary_violation_count();
-            const std::uint64_t runtime_gc =
-                ev->get_gc_safepoint_requests_total() +
-                ev->get_gc_safepoint_waits_total() +
-                ev->get_gc_safepoint_deferred_total();
+                ev->get_mutation_steal_attempts() + ev->get_boundary_violation_count();
+            const std::uint64_t runtime_gc = ev->get_gc_safepoint_requests_total() +
+                                             ev->get_gc_safepoint_waits_total() +
+                                             ev->get_gc_safepoint_deferred_total();
             const std::uint64_t edsl_workspace =
-                ev->get_cross_cow_invalidations() +
-                ev->get_fiber_stale_ref_count() +
-                ev->get_provenance_mismatch() +
-                ev->get_mutation_log_rollback_count() +
-                ev->get_schema_validation_pass_count() +
-                ev->get_mutation_impact_count();
+                ev->get_cross_cow_invalidations() + ev->get_fiber_stale_ref_count() +
+                ev->get_provenance_mismatch() + ev->get_mutation_log_rollback_count() +
+                ev->get_schema_validation_pass_count() + ev->get_mutation_impact_count();
             const std::uint64_t eda_verify =
-                (ws ? ws->verify_assertion_dirty_total() +
-                          ws->verify_coverage_dirty_total() +
-                          ws->verify_sva_dirty_total() +
-                          ws->verify_formal_cex_dirty_total()
+                (ws ? ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
+                          ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total()
                     : 0) +
                 ev->get_verify_tool_calls_total();
-            return make_int(static_cast<std::int64_t>(
-                runtime_fiber + runtime_gc + edsl_workspace + eda_verify));
+            return make_int(static_cast<std::int64_t>(runtime_fiber + runtime_gc + edsl_workspace +
+                                                      eda_verify));
         });
 
     // Issue #634: query:commercial-production-readiness-stats.
@@ -1410,42 +1385,33 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
+            if (!ev)
+                return make_int(0);
             auto* ws = ev->workspace_flat();
-            const auto* m = static_cast<const CompilerMetrics*>(
-                ev->compiler_metrics());
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             const std::uint64_t stable_ref =
-                ev->get_provenance_mismatch() +
-                (ws ? ws->stable_ref_invalidations() : 0);
+                ev->get_provenance_mismatch() + (ws ? ws->stable_ref_invalidations() : 0);
             const std::uint64_t arena_gc =
-                ev->get_gc_safepoint_waits_total() +
-                ev->get_gc_safepoint_requests_total();
+                ev->get_gc_safepoint_waits_total() + ev->get_gc_safepoint_requests_total();
             const std::uint64_t shape_jit =
                 shape::shape_stability_hit_count.load(std::memory_order_relaxed) +
                 (m ? m->deopt_count.load(std::memory_order_relaxed) : 0);
             const std::uint64_t type_system =
-                (m ? m->narrowing_dirty_recovery_total.load(
-                         std::memory_order_relaxed)
-                   : 0) +
-                (m ? m->coercion_zerooverhead_win_total.load(
-                         std::memory_order_relaxed)
-                   : 0);
+                (m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0) +
+                (m ? m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed) : 0);
             const std::uint64_t eda_batch =
-                (ws ? ws->verify_assertion_dirty_total() +
-                          ws->verify_coverage_dirty_total() +
-                          ws->verify_sva_dirty_total() +
-                          ws->verify_formal_cex_dirty_total()
+                (ws ? ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
+                          ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total()
                     : 0) +
                 (m ? m->atomic_batch_commits.load(std::memory_order_relaxed) : 0);
             const std::uint64_t stdlib_hotpath =
                 (m ? m->specialization_hits.load(std::memory_order_relaxed) : 0) +
                 (ws ? ws->tag_arity_index_hits() : 0);
             const std::uint64_t orchestration =
-                ev->get_mutation_steal_attempts() +
-                ev->get_lock_contention_us();
-            return make_int(static_cast<std::int64_t>(
-                stable_ref + arena_gc + shape_jit + type_system +
-                eda_batch + stdlib_hotpath + orchestration));
+                ev->get_mutation_steal_attempts() + ev->get_lock_contention_us();
+            return make_int(static_cast<std::int64_t>(stable_ref + arena_gc + shape_jit +
+                                                      type_system + eda_batch + stdlib_hotpath +
+                                                      orchestration));
         });
 
     // Issue #635: query:macro-reflect-self-evo-commercial-stats.
@@ -1474,37 +1440,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
+            if (!ev)
+                return make_int(0);
             auto* ws = ev->workspace_flat();
-            if (!ws) return make_int(0);
-            const auto* m = static_cast<const CompilerMetrics*>(
-                ev->compiler_metrics());
+            if (!ws)
+                return make_int(0);
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             const std::uint64_t macro_dirty =
-                ws->macro_expansion_dirty_total() +
-                ws->macro_self_modify_dirty_total();
-            const std::uint64_t query_hygiene =
-                ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t markers =
-                workspace_marker_macro_introduced(ev);
+                ws->macro_expansion_dirty_total() + ws->macro_self_modify_dirty_total();
+            const std::uint64_t query_hygiene = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
             const std::uint64_t reflect_validate =
-                ev->get_schema_validation_pass_count() +
-                ev->get_schema_validation_fail_count();
-            const std::uint64_t reflect_snap =
-                ev->get_impact_snapshot_count();
-            const std::uint64_t guard_impact =
-                ev->get_mutation_impact_count();
-            const std::uint64_t guard_epoch =
-                ev->get_guard_dirty_epoch_count();
-            const std::uint64_t dirty_up =
-                ws->mark_dirty_upward_call_count();
-            const std::uint64_t stable_ref =
-                ws->stable_ref_invalidations();
-            const std::uint64_t deopt =
-                m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+                ev->get_schema_validation_pass_count() + ev->get_schema_validation_fail_count();
+            const std::uint64_t reflect_snap = ev->get_impact_snapshot_count();
+            const std::uint64_t guard_impact = ev->get_mutation_impact_count();
+            const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+            const std::uint64_t dirty_up = ws->mark_dirty_upward_call_count();
+            const std::uint64_t stable_ref = ws->stable_ref_invalidations();
+            const std::uint64_t deopt = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
             return make_int(static_cast<std::int64_t>(
-                macro_dirty + query_hygiene + markers +
-                reflect_validate + reflect_snap + guard_impact +
-                guard_epoch + dirty_up + stable_ref + deopt));
+                macro_dirty + query_hygiene + markers + reflect_validate + reflect_snap +
+                guard_impact + guard_epoch + dirty_up + stable_ref + deopt));
         });
 
     // Issue #636: query:edsl-query-mutate-commercial-stats.
@@ -1532,48 +1488,37 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //
     // P0: returns an integer = sum of all 10 counter groups.
     // Follow-up: returns a 10-tuple for per-pillar fleet dashboards.
-    add("query:edsl-query-mutate-commercial-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            if (!ws) return make_int(0);
-            const std::uint64_t stable_ref =
-                ws->stable_ref_invalidations() +
-                ws->node_gen_stale_access_count();
-            const std::uint64_t provenance =
-                ev->get_provenance_mismatch() +
-                ev->get_fiber_stale_ref_count();
-            const std::uint64_t query_index =
-                ws->tag_arity_index_hits() +
-                ws->tag_arity_index_dirty_marks();
-            const std::uint64_t query_hygiene =
-                ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t guard_mutate =
-                ev->get_mutation_impact_count() +
-                ev->get_guard_dirty_epoch_count();
-            const std::uint64_t dirty_up =
-                ws->mark_dirty_upward_call_count() +
-                ws->mark_dirty_total_nodes();
-            const std::uint64_t atomic =
-                ws->atomic_batch_commits() +
-                ev->atomic_batch_count() +
-                ev->atomic_batch_rollbacks();
-            const std::uint64_t eda_feedback =
-                ws->verification_coverage_feedback_total() +
-                ws->verification_assert_failure_total();
-            const std::uint64_t gc_coord =
-                ev->get_gc_safepoint_requests_total() +
-                ev->get_gc_safepoint_waits_total();
-            const std::uint64_t orchestration =
-                ev->get_mutation_steal_attempts() +
-                ev->get_lock_contention_us();
-            return make_int(static_cast<std::int64_t>(
-                stable_ref + provenance + query_index + query_hygiene +
-                guard_mutate + dirty_up + atomic + eda_feedback +
-                gc_coord + orchestration));
-        });
+    add("query:edsl-query-mutate-commercial-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws)
+            return make_int(0);
+        const std::uint64_t stable_ref =
+            ws->stable_ref_invalidations() + ws->node_gen_stale_access_count();
+        const std::uint64_t provenance =
+            ev->get_provenance_mismatch() + ev->get_fiber_stale_ref_count();
+        const std::uint64_t query_index =
+            ws->tag_arity_index_hits() + ws->tag_arity_index_dirty_marks();
+        const std::uint64_t query_hygiene = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t guard_mutate =
+            ev->get_mutation_impact_count() + ev->get_guard_dirty_epoch_count();
+        const std::uint64_t dirty_up =
+            ws->mark_dirty_upward_call_count() + ws->mark_dirty_total_nodes();
+        const std::uint64_t atomic =
+            ws->atomic_batch_commits() + ev->atomic_batch_count() + ev->atomic_batch_rollbacks();
+        const std::uint64_t eda_feedback =
+            ws->verification_coverage_feedback_total() + ws->verification_assert_failure_total();
+        const std::uint64_t gc_coord =
+            ev->get_gc_safepoint_requests_total() + ev->get_gc_safepoint_waits_total();
+        const std::uint64_t orchestration =
+            ev->get_mutation_steal_attempts() + ev->get_lock_contention_us();
+        return make_int(static_cast<std::int64_t>(stable_ref + provenance + query_index +
+                                                  query_hygiene + guard_mutate + dirty_up + atomic +
+                                                  eda_feedback + gc_coord + orchestration));
+    });
 
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:
@@ -1586,19 +1531,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
+            if (!ev)
+                return make_int(0);
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             const std::uint64_t hygiene = ev->get_macro_introduced_skipped_in_query();
             const std::uint64_t reflect = ev->get_schema_validation_pass_count();
             const std::uint64_t dirty_recheck =
                 m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t type_recheck =
-                m ? m->incremental_typecheck_auto_invocations_total.load(
-                        std::memory_order_relaxed)
+                m ? m->incremental_typecheck_auto_invocations_total.load(std::memory_order_relaxed)
                   : 0;
             const std::uint64_t transform = ev->get_mutation_impact_count();
-            return make_int(static_cast<std::int64_t>(
-                hygiene + reflect + dirty_recheck + type_recheck + transform));
+            return make_int(static_cast<std::int64_t>(hygiene + reflect + dirty_recheck +
+                                                      type_recheck + transform));
         });
 
     // Issue #597: query:macro-reflect-self-evo-stats. Returns
@@ -1626,7 +1571,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:macro-reflect-self-evo-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
         const std::uint64_t violations = ev->get_hygiene_violation_count();
         const std::uint64_t impact = ev->get_mutation_impact_count();
@@ -1635,9 +1581,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t fail = ev->get_schema_validation_fail_count();
         const std::uint64_t commit = ev->get_panic_checkpoint_commit_count();
         const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
-        return make_int(static_cast<std::int64_t>(
-            skips + violations + impact + snapshots + pass + fail +
-            commit + cross_cow));
+        return make_int(static_cast<std::int64_t>(skips + violations + impact + snapshots + pass +
+                                                  fail + commit + cross_cow));
     });
 
     // Issue #595: query:self-evolution-loop-stats. Returns the
@@ -1650,24 +1595,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - epoch_deltas: guard_dirty_epoch_count_
     //   - validation_pass: schema_validation_pass_count_
     //   - rollback_count: mutation_log_rollback_count_
-    add("query:self-evolution-loop-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const std::uint64_t hygiene =
-                ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t dirty =
-                ev->get_dirty_propagation_count();
-            const std::uint64_t epoch =
-                ev->get_guard_dirty_epoch_count();
-            const std::uint64_t validation =
-                ev->get_schema_validation_pass_count();
-            const std::uint64_t rollback =
-                ev->get_mutation_log_rollback_count();
-            return make_int(static_cast<std::int64_t>(
-                hygiene + dirty + epoch + validation + rollback));
-        });
+    add("query:self-evolution-loop-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const std::uint64_t hygiene = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t dirty = ev->get_dirty_propagation_count();
+        const std::uint64_t epoch = ev->get_guard_dirty_epoch_count();
+        const std::uint64_t validation = ev->get_schema_validation_pass_count();
+        const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
+        return make_int(static_cast<std::int64_t>(hygiene + dirty + epoch + validation + rollback));
+    });
 
     // Issue #583: query:primitives-stats. Returns the sum of 6
     // primitives registry + core hot-path observability counters
@@ -1688,21 +1627,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:primitives-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t registry_slots = ev->get_primitive_slot_count();
         const std::uint64_t errors = ev->get_primitive_error_count();
         const std::uint64_t stored = ev->get_primitive_error_values_size();
         const std::uint64_t mutations = ev->total_mutations();
         const std::uint64_t queries = ev->get_total_query_calls();
-        const std::uint64_t hot_hits = m
-            ? m->specialization_hits.load(std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            registry_slots + errors + stored + mutations + queries +
-            hot_hits));
+        const std::uint64_t hot_hits =
+            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(registry_slots + errors + stored + mutations +
+                                                  queries + hot_hits));
     });
 
     // Issue #480: query:primitive-meta-stats. Returns the sum of
@@ -1721,16 +1657,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:primitive-meta-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t registry_slots = ev->get_primitive_slot_count();
         const std::uint64_t documented = ev->get_primitive_documented_meta_count();
         const std::uint64_t describes = ev->get_primitive_describe_count();
         const std::uint64_t list_meta = ev->get_primitive_list_meta_count();
         const std::uint64_t errors = ev->get_primitive_error_count();
         const std::uint64_t queries = ev->get_total_query_calls();
-        return make_int(static_cast<std::int64_t>(
-            registry_slots + documented + describes + list_meta + errors +
-            queries));
+        return make_int(static_cast<std::int64_t>(registry_slots + documented + describes +
+                                                  list_meta + errors + queries));
     });
 
     // Issue #602: query:prompt6-violation-count. Returns
@@ -1755,18 +1691,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:prompt6-violation-count", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t boundary = ev->get_boundary_violation_count();
-        const std::uint64_t steal_viol =
-            ev->get_mutation_steal_violation_count();
+        const std::uint64_t steal_viol = ev->get_mutation_steal_violation_count();
         const std::uint64_t desync = ev->get_envframe_desync_detected();
         const std::uint64_t unsafe = ev->get_unsafe_boundary_attempts();
         const std::uint64_t batch_steal = ev->get_atomic_batch_steal_violation();
         const std::uint64_t provenance = ev->get_provenance_mismatch();
         const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
-        return make_int(static_cast<std::int64_t>(
-            boundary + steal_viol + desync + unsafe + batch_steal +
-            provenance + fiber_stale));
+        return make_int(static_cast<std::int64_t>(boundary + steal_viol + desync + unsafe +
+                                                  batch_steal + provenance + fiber_stale));
     });
 
     // Issue #602: query:prompt6-safety-score. Returns
@@ -1790,30 +1725,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:prompt6-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
-        const std::uint64_t bridge_hit = m
-            ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t linear_pass = m
-            ? m->linear_check_pass_count_.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t closure_refresh = m
-            ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t env_refresh =
-            ev->get_envframe_stale_refresh_count();
-        const std::uint64_t gc_skipped = m
-            ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t gc_walk_skips =
-            ev->get_envframe_gc_walk_safe_skips();
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t bridge_hit =
+            m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t linear_pass =
+            m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t closure_refresh =
+            m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
+        const std::uint64_t gc_skipped =
+            m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t gc_walk_skips = ev->get_envframe_gc_walk_safe_skips();
         const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
-        return make_int(static_cast<std::int64_t>(
-            bridge_hit + linear_pass + closure_refresh + env_refresh +
-            gc_skipped + gc_walk_skips + gc_waits));
+        return make_int(static_cast<std::int64_t>(bridge_hit + linear_pass + closure_refresh +
+                                                  env_refresh + gc_skipped + gc_walk_skips +
+                                                  gc_waits));
     });
 
     // Issue #506: query:soa-hotpath-adoption-stats. Returns the sum
@@ -1837,37 +1765,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:soa-hotpath-adoption-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
-        const std::uint64_t ir_instr = m
-            ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t ir_funcs = m
-            ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed)
-            : 0;
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t ir_instr =
+            m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ir_funcs =
+            m ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed) : 0;
         const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
-        const std::uint64_t relower_skip = m
-            ? m->relower_skipped_entirely_count.load(
-                  std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t relower_per_fn = m
-            ? m->relower_per_function_called_count.load(
-                  std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t mod_skip = m
-            ? m->module_dirty_skips.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t linear_elide = m
-            ? m->linear_elide_count.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t cascade = m
-            ? m->cascade_body_only_count.load(std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            ir_instr + ir_funcs + passes_skip + relower_skip +
-            relower_per_fn + mod_skip + linear_elide + cascade));
+        const std::uint64_t relower_skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mod_skip =
+            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t linear_elide =
+            m ? m->linear_elide_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cascade =
+            m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(ir_instr + ir_funcs + passes_skip + relower_skip +
+                                                  relower_per_fn + mod_skip + linear_elide +
+                                                  cascade));
     });
 
     // Issue #408: query:dirty-propagation-cost-stats. Returns the
@@ -1885,32 +1803,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - cascade_body: cascade_body_only_count (precise block mark)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:dirty-propagation-cost-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const auto* m =
-                static_cast<const aura::compiler::CompilerMetrics*>(
-                    ev->compiler_metrics());
-            const std::uint64_t upward_calls =
-                ws ? ws->mark_dirty_upward_call_count() : 0;
-            const std::uint64_t upward_nodes =
-                ws ? ws->mark_dirty_total_nodes() : 0;
-            const std::uint64_t fast_hits =
-                ws ? ws->dirty_upward_fast_fixed_point_count() : 0;
-            const std::uint64_t propagation = ev->get_dirty_propagation_count();
-            const std::uint64_t passes_skip =
-                ev->get_passes_skipped_type_dirty();
-            const std::uint64_t selective = ev->get_selective_recheck_count();
-            const std::uint64_t cascade = m
-                ? m->cascade_body_only_count.load(std::memory_order_relaxed)
-                : 0;
-            return make_int(static_cast<std::int64_t>(
-                upward_calls + upward_nodes + fast_hits + propagation +
-                passes_skip + selective + cascade));
-        });
+    add("query:dirty-propagation-cost-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t upward_calls = ws ? ws->mark_dirty_upward_call_count() : 0;
+        const std::uint64_t upward_nodes = ws ? ws->mark_dirty_total_nodes() : 0;
+        const std::uint64_t fast_hits = ws ? ws->dirty_upward_fast_fixed_point_count() : 0;
+        const std::uint64_t propagation = ev->get_dirty_propagation_count();
+        const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t selective = ev->get_selective_recheck_count();
+        const std::uint64_t cascade =
+            m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(upward_calls + upward_nodes + fast_hits +
+                                                  propagation + passes_skip + selective + cascade));
+    });
 
     // Issue #471: query:dirty-propagation-stats. Returns the
     // sum of 3 SV-scale dirty-propagation observability counters
@@ -1927,22 +1837,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // blocks) hit BFS levels of 50+ on every small mutate;
     // the early-exit rate (early_exit / upward_calls) tells
     // the AI Agent how much redundant work is being saved.
-    add("query:dirty-propagation-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            if (!ws) return make_int(0);
-            const std::uint64_t upward_calls =
-                ws->mark_dirty_upward_call_count();
-            const std::uint64_t early_exit =
-                ws->mark_dirty_early_exit_count();
-            const std::uint64_t max_depth =
-                ws->mark_dirty_max_depth_observed();
-            return make_int(static_cast<std::int64_t>(
-                upward_calls + early_exit + max_depth));
-        });
+    add("query:dirty-propagation-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws)
+            return make_int(0);
+        const std::uint64_t upward_calls = ws->mark_dirty_upward_call_count();
+        const std::uint64_t early_exit = ws->mark_dirty_early_exit_count();
+        const std::uint64_t max_depth = ws->mark_dirty_max_depth_observed();
+        return make_int(static_cast<std::int64_t>(upward_calls + early_exit + max_depth));
+    });
 
     // Issue #414: query:generation-epoch-stats. Returns the sum of
     // 7 long-running generation_ + composite wrap_epoch_ +
@@ -1961,29 +1868,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - rollback_ok: structural_rollback_success_ (mutate/rollback)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:generation-epoch-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const std::uint64_t bumps =
-                ws ? ws->bump_generation_count() : 0;
-            const std::uint64_t wraps =
-                ws ? ws->generation_wrap_count() : 0;
-            const std::uint64_t wrap_ep =
-                ws ? ws->wrap_epoch() : 0;
-            const std::uint64_t checks =
-                ws ? ws->is_valid_check_count() : 0;
-            const std::uint64_t guard_epoch =
-                ev->get_guard_dirty_epoch_count();
-            const std::uint64_t defuse = ev->get_defuse_version();
-            const std::uint64_t rollback =
-                ws ? ws->structural_rollback_success() : 0;
-            return make_int(static_cast<std::int64_t>(
-                bumps + wraps + wrap_ep + checks + guard_epoch +
-                defuse + rollback));
-        });
+    add("query:generation-epoch-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t bumps = ws ? ws->bump_generation_count() : 0;
+        const std::uint64_t wraps = ws ? ws->generation_wrap_count() : 0;
+        const std::uint64_t wrap_ep = ws ? ws->wrap_epoch() : 0;
+        const std::uint64_t checks = ws ? ws->is_valid_check_count() : 0;
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        const std::uint64_t defuse = ev->get_defuse_version();
+        const std::uint64_t rollback = ws ? ws->structural_rollback_success() : 0;
+        return make_int(static_cast<std::int64_t>(bumps + wraps + wrap_ep + checks + guard_epoch +
+                                                  defuse + rollback));
+    });
 
     // Issue #416: query:ast-column-compaction-stats. Returns the sum
     // of 7 FlatAST SoA column compaction + fragmentation
@@ -2001,26 +1901,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - fragmentation_bp: dead/total ratio in basis points
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:ast-column-compaction-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            if (!ws) return make_int(0);
-            const auto snap = ws->node_lifecycle_stats();
-            const std::uint64_t recycle = ws->node_recycle_total();
-            const std::uint64_t compact = ws->node_compact_total();
-            const std::uint64_t reuse = ws->node_slot_reuse_count();
-            const std::uint64_t live = snap.live_nodes;
-            const std::uint64_t free = snap.free_slots;
-            const std::uint64_t total = snap.total_slots;
-            const std::uint64_t frag_bp = static_cast<std::uint64_t>(
-                snap.fragmentation_ratio * 10000.0);
-            return make_int(static_cast<std::int64_t>(
-                recycle + compact + reuse + live + free + total +
-                frag_bp));
-        });
+    add("query:ast-column-compaction-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws)
+            return make_int(0);
+        const auto snap = ws->node_lifecycle_stats();
+        const std::uint64_t recycle = ws->node_recycle_total();
+        const std::uint64_t compact = ws->node_compact_total();
+        const std::uint64_t reuse = ws->node_slot_reuse_count();
+        const std::uint64_t live = snap.live_nodes;
+        const std::uint64_t free = snap.free_slots;
+        const std::uint64_t total = snap.total_slots;
+        const std::uint64_t frag_bp =
+            static_cast<std::uint64_t>(snap.fragmentation_ratio * 10000.0);
+        return make_int(
+            static_cast<std::int64_t>(recycle + compact + reuse + live + free + total + frag_bp));
+    });
 
     // Issue #417: query:mutation-boundary-invariant-stats. Returns
     // the sum of 7 cross-TU MutationBoundaryGuard + defuse_version_
@@ -2039,27 +1939,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - boundary_depth: mutation_boundary_depth() snapshot
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:mutation-boundary-invariant-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const std::uint64_t violations =
-                ev->get_total_invariant_violations();
-            const std::uint64_t rollback =
-                ev->cross_fiber_rollback_count();
-            const std::uint64_t yields = ev->mutation_yield_count();
-            const std::uint64_t guard_epoch =
-                ev->get_guard_dirty_epoch_count();
-            const std::uint64_t boundary =
-                ev->get_boundary_violation_count();
-            const std::uint64_t defuse = ev->get_defuse_version();
-            const std::uint64_t depth =
-                Evaluator::mutation_boundary_depth();
-            return make_int(static_cast<std::int64_t>(
-                violations + rollback + yields + guard_epoch +
-                boundary + defuse + depth));
-        });
+    add("query:mutation-boundary-invariant-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const std::uint64_t violations = ev->get_total_invariant_violations();
+        const std::uint64_t rollback = ev->cross_fiber_rollback_count();
+        const std::uint64_t yields = ev->mutation_yield_count();
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        const std::uint64_t boundary = ev->get_boundary_violation_count();
+        const std::uint64_t defuse = ev->get_defuse_version();
+        const std::uint64_t depth = Evaluator::mutation_boundary_depth();
+        return make_int(static_cast<std::int64_t>(violations + rollback + yields + guard_epoch +
+                                                  boundary + defuse + depth));
+    });
 
     // Issue #418: query:envframe-dualpath-stale-stats. Returns the
     // sum of 7 EnvFrame SoA dual-path + stale-policy observability
@@ -2077,33 +1971,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - defuse_epoch: defuse_version_ (stale epoch snapshot)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:envframe-dualpath-stale-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const auto* m =
-                static_cast<const aura::compiler::CompilerMetrics*>(
-                    ev->compiler_metrics());
-            const std::uint64_t desync =
-                ev->get_envframe_desync_detected();
-            const std::uint64_t stale =
-                ev->get_envframe_stale_refresh_count();
-            const std::uint64_t rollback =
-                ev->get_envframe_post_rollback_invalidations();
-            const std::uint64_t mismatch =
-                ev->get_envframe_version_mismatch_in_walk();
-            const std::uint64_t gc_skips =
-                ev->get_envframe_gc_walk_safe_skips();
-            const std::uint64_t gc_stale = m
-                ? m->gc_envframe_stale_skipped_.load(
-                      std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t defuse = ev->get_defuse_version();
-            return make_int(static_cast<std::int64_t>(
-                desync + stale + rollback + mismatch + gc_skips +
-                gc_stale + defuse));
-        });
+    add("query:envframe-dualpath-stale-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t desync = ev->get_envframe_desync_detected();
+        const std::uint64_t stale = ev->get_envframe_stale_refresh_count();
+        const std::uint64_t rollback = ev->get_envframe_post_rollback_invalidations();
+        const std::uint64_t mismatch = ev->get_envframe_version_mismatch_in_walk();
+        const std::uint64_t gc_skips = ev->get_envframe_gc_walk_safe_skips();
+        const std::uint64_t gc_stale =
+            m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t defuse = ev->get_defuse_version();
+        return make_int(static_cast<std::int64_t>(desync + stale + rollback + mismatch + gc_skips +
+                                                  gc_stale + defuse));
+    });
 
     // Issue #419: query:defuse-version-stats. Returns the sum of
     // 7 modular defuse_version_ + AOT/runtime dispatch
@@ -2121,31 +2005,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - bridge_hits: bridge_epoch_hit_count_ (fresh bridge)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:defuse-version-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const auto* m =
-                static_cast<const aura::compiler::CompilerMetrics*>(
-                    ev->compiler_metrics());
-            const std::uint64_t defuse = ev->current_defuse_version();
-            const std::uint64_t last = ev->get_last_queried_epoch();
-            const std::uint64_t mutations = ev->total_mutations();
-            const std::uint64_t impact = ev->get_mutation_impact_count();
-            const std::uint64_t guard_epoch =
-                ev->get_guard_dirty_epoch_count();
-            const std::uint64_t aot = m
-                ? m->aot_emits.load(std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t bridge = m
-                ? m->bridge_epoch_hit_count_.load(
-                      std::memory_order_relaxed)
-                : 0;
-            return make_int(static_cast<std::int64_t>(
-                defuse + last + mutations + impact + guard_epoch +
-                aot + bridge));
-        });
+    add("query:defuse-version-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t defuse = ev->current_defuse_version();
+        const std::uint64_t last = ev->get_last_queried_epoch();
+        const std::uint64_t mutations = ev->total_mutations();
+        const std::uint64_t impact = ev->get_mutation_impact_count();
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        const std::uint64_t aot = m ? m->aot_emits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t bridge =
+            m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(defuse + last + mutations + impact + guard_epoch +
+                                                  aot + bridge));
+    });
 
     // Issue #420: query:macro-hygiene-contract-stats. Returns the
     // sum of 7 end-to-end MacroIntroduced hygiene contract
@@ -2164,30 +2040,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - macro_dirty: macro_expansion_dirty_total_ (clone path)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:macro-hygiene-contract-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const std::uint64_t query_skips =
-                ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t violations =
-                ev->get_hygiene_violation_count();
-            const std::uint64_t markers =
-                workspace_marker_macro_introduced(ev);
-            const std::uint64_t ir_skips =
-                ir_inline_hygiene_skipped(ev);
-            const std::uint64_t queries = ev->get_total_query_calls();
-            const std::uint64_t contract =
-                ev->get_macro_hygiene_contract_violations();
-            const std::uint64_t macro_dirty = ws
-                ? ws->macro_expansion_dirty_total()
-                : 0;
-            return make_int(static_cast<std::int64_t>(
-                query_skips + violations + markers + ir_skips +
-                queries + contract + macro_dirty));
-        });
+    add("query:macro-hygiene-contract-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t query_skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t violations = ev->get_hygiene_violation_count();
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        const std::uint64_t ir_skips = ir_inline_hygiene_skipped(ev);
+        const std::uint64_t queries = ev->get_total_query_calls();
+        const std::uint64_t contract = ev->get_macro_hygiene_contract_violations();
+        const std::uint64_t macro_dirty = ws ? ws->macro_expansion_dirty_total() : 0;
+        return make_int(static_cast<std::int64_t>(query_skips + violations + markers + ir_skips +
+                                                  queries + contract + macro_dirty));
+    });
 
     // Issue #421: query:pattern-macro-filter-stats. Returns the
     // sum of 7 query:pattern recursive MacroIntroduced filter
@@ -2204,30 +2072,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - hygiene_violations: hygiene_violation_count_
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:pattern-macro-filter-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const std::uint64_t root_skips =
-                ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t recursive =
-                ev->get_pattern_recursive_macro_skipped();
-            const std::uint64_t violations =
-                ev->get_pattern_macro_filter_violations();
-            const std::uint64_t markers =
-                workspace_marker_macro_introduced(ev);
-            const std::uint64_t queries = ev->get_total_query_calls();
-            const std::uint64_t index_hits = ws
-                ? ws->tag_arity_index_hits()
-                : 0;
-            const std::uint64_t hygiene =
-                ev->get_hygiene_violation_count();
-            return make_int(static_cast<std::int64_t>(
-                root_skips + recursive + violations + markers +
-                queries + index_hits + hygiene));
-        });
+    add("query:pattern-macro-filter-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t recursive = ev->get_pattern_recursive_macro_skipped();
+        const std::uint64_t violations = ev->get_pattern_macro_filter_violations();
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        const std::uint64_t queries = ev->get_total_query_calls();
+        const std::uint64_t index_hits = ws ? ws->tag_arity_index_hits() : 0;
+        const std::uint64_t hygiene = ev->get_hygiene_violation_count();
+        return make_int(static_cast<std::int64_t>(root_skips + recursive + violations + markers +
+                                                  queries + index_hits + hygiene));
+    });
 
     // Issue #422: query:hygiene-violation-stats. Returns the sum of
     // 7 mutate-path hygiene violation observability counters
@@ -2243,27 +2103,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - guard_epoch: guard_dirty_epoch_count_
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:hygiene-violation-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const std::uint64_t attempts =
-                ev->get_hygiene_violation_attempts();
-            const std::uint64_t violations =
-                ev->get_hygiene_violation_count();
-            const std::uint64_t query_skips =
-                ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t impact = ev->get_mutation_impact_count();
-            const std::uint64_t mutations = ev->total_mutations();
-            const std::uint64_t markers =
-                workspace_marker_macro_introduced(ev);
-            const std::uint64_t guard_epoch =
-                ev->get_guard_dirty_epoch_count();
-            return make_int(static_cast<std::int64_t>(
-                attempts + violations + query_skips + impact +
-                mutations + markers + guard_epoch));
-        });
+    add("query:hygiene-violation-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const std::uint64_t attempts = ev->get_hygiene_violation_attempts();
+        const std::uint64_t violations = ev->get_hygiene_violation_count();
+        const std::uint64_t query_skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t impact = ev->get_mutation_impact_count();
+        const std::uint64_t mutations = ev->total_mutations();
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        return make_int(static_cast<std::int64_t>(attempts + violations + query_skips + impact +
+                                                  mutations + markers + guard_epoch));
+    });
 
     // Issue #423: query:pattern-structural-index-stats. Returns the
     // sum of 7 Evaluator-side structural pre-index observability
@@ -2278,28 +2132,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - consistency_violations: pattern_index_consistency_violations_
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:pattern-structural-index-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const std::uint64_t hits =
-                ev->get_pattern_structural_index_hits();
-            const std::uint64_t misses =
-                ev->get_pattern_structural_index_misses();
-            const std::uint64_t buckets = ev->tag_arity_index_size();
-            const std::uint64_t entries =
-                ev->tag_arity_index_entry_count();
-            const std::uint64_t synced_size =
-                ev->tag_arity_index_synced_size();
-            const std::uint64_t synced_gen =
-                ev->tag_arity_index_synced_gen();
-            const std::uint64_t violations =
-                ev->get_pattern_index_consistency_violations();
-            return make_int(static_cast<std::int64_t>(
-                hits + misses + buckets + entries + synced_size +
-                synced_gen + violations));
-        });
+    add("query:pattern-structural-index-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const std::uint64_t hits = ev->get_pattern_structural_index_hits();
+        const std::uint64_t misses = ev->get_pattern_structural_index_misses();
+        const std::uint64_t buckets = ev->tag_arity_index_size();
+        const std::uint64_t entries = ev->tag_arity_index_entry_count();
+        const std::uint64_t synced_size = ev->tag_arity_index_synced_size();
+        const std::uint64_t synced_gen = ev->tag_arity_index_synced_gen();
+        const std::uint64_t violations = ev->get_pattern_index_consistency_violations();
+        return make_int(static_cast<std::int64_t>(hits + misses + buckets + entries + synced_size +
+                                                  synced_gen + violations));
+    });
 
     // Issue #424: query:stable-ref-workspace-tree-stats. Returns the
     // sum of 7 WorkspaceTree / cross-layer StableNodeRef
@@ -2315,31 +2162,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - is_valid_checks: FlatAST is_valid_check_count()
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:stable-ref-workspace-tree-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const std::uint64_t resolves =
-                ev->get_stable_ref_workspace_resolves();
-            const std::uint64_t misses =
-                ev->get_stable_ref_workspace_resolve_misses();
-            const std::uint64_t violations =
-                ev->get_stable_ref_workspace_tree_violations();
-            std::uint64_t layers = 0;
-            std::uint64_t active = 0;
-            std::uint64_t cow_epoch = 0;
-            if (auto* wt = static_cast<WorkspaceTree*>(ev->workspace_tree())) {
-                layers = wt->size();
-                active = wt->active_idx();
-                cow_epoch = wt->cow_epoch_;
-            }
-            const std::uint64_t checks = ws ? ws->is_valid_check_count() : 0;
-            return make_int(static_cast<std::int64_t>(
-                resolves + misses + violations + layers + active +
-                cow_epoch + checks));
-        });
+    add("query:stable-ref-workspace-tree-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t resolves = ev->get_stable_ref_workspace_resolves();
+        const std::uint64_t misses = ev->get_stable_ref_workspace_resolve_misses();
+        const std::uint64_t violations = ev->get_stable_ref_workspace_tree_violations();
+        std::uint64_t layers = 0;
+        std::uint64_t active = 0;
+        std::uint64_t cow_epoch = 0;
+        if (auto* wt = static_cast<WorkspaceTree*>(ev->workspace_tree())) {
+            layers = wt->size();
+            active = wt->active_idx();
+            cow_epoch = wt->cow_epoch_;
+        }
+        const std::uint64_t checks = ws ? ws->is_valid_check_count() : 0;
+        return make_int(static_cast<std::int64_t>(resolves + misses + violations + layers + active +
+                                                  cow_epoch + checks));
+    });
 
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
@@ -2359,29 +2202,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:shape-deopt-burst-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t churn =
             shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
-        const std::uint64_t changes = m
-            ? m->shape_changes_observed.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t deopt = m
-            ? m->deopt_count.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t jit_miss =
-            shape::jit_shape_miss_count.load(std::memory_order_relaxed);
+        const std::uint64_t changes =
+            m ? m->shape_changes_observed.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t deopt = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t jit_miss = shape::jit_shape_miss_count.load(std::memory_order_relaxed);
         const std::uint64_t hooks =
             shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
-        const std::uint64_t bumps =
-            shape::shape_version_bump_count.load(std::memory_order_relaxed);
-        const std::uint64_t spec_hits = m
-            ? m->specialization_hits.load(std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            churn + changes + deopt + jit_miss + hooks + bumps + spec_hits));
+        const std::uint64_t bumps = shape::shape_version_bump_count.load(std::memory_order_relaxed);
+        const std::uint64_t spec_hits =
+            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(churn + changes + deopt + jit_miss + hooks +
+                                                  bumps + spec_hits));
     });
 
     // Issue #406: query:pass-contracts-stats. Returns the sum of
@@ -2402,34 +2238,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:pass-contracts-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t violations =
-            types::value_contract_violation_count.load(
-                std::memory_order_relaxed);
+            types::value_contract_violation_count.load(std::memory_order_relaxed);
         const std::uint64_t dispatch_hits =
             types::value_dispatch_hit_count.load(std::memory_order_relaxed);
         const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
-        const std::uint64_t relower_skip = m
-            ? m->relower_skipped_entirely_count.load(
-                  std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t relower_per_fn = m
-            ? m->relower_per_function_called_count.load(
-                  std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t mod_skip = m
-            ? m->module_dirty_skips.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t zero_wins = m
-            ? m->coercion_zerooverhead_win_total.load(
-                  std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            violations + dispatch_hits + passes_skip + relower_skip +
-            relower_per_fn + mod_skip + zero_wins));
+        const std::uint64_t relower_skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mod_skip =
+            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t zero_wins =
+            m ? m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(violations + dispatch_hits + passes_skip +
+                                                  relower_skip + relower_per_fn + mod_skip +
+                                                  zero_wins));
     });
 
     // Issue #405: query:arena-compaction-stats. Returns the sum of
@@ -2447,24 +2274,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - dirty_propagation: mark_dirty_upward activity
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:arena-compaction-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const auto& group = ev->arena_group();
-            const auto stats = group.total_stats();
-            const std::uint64_t triggers = group.auto_compact_trigger_count();
-            const std::uint64_t skips = group.auto_compact_skip_count();
-            const std::uint64_t compacts = stats.compaction_count;
-            const std::uint64_t saved = stats.total_compaction_saved;
-            const std::uint64_t paused = ev->compaction_paused_by_boundary();
-            const std::uint64_t mutations = ev->total_mutations();
-            const std::uint64_t dirty = ev->get_dirty_propagation_count();
-            return make_int(static_cast<std::int64_t>(
-                triggers + skips + compacts + saved + paused + mutations +
-                dirty));
-        });
+    add("query:arena-compaction-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const auto& group = ev->arena_group();
+        const auto stats = group.total_stats();
+        const std::uint64_t triggers = group.auto_compact_trigger_count();
+        const std::uint64_t skips = group.auto_compact_skip_count();
+        const std::uint64_t compacts = stats.compaction_count;
+        const std::uint64_t saved = stats.total_compaction_saved;
+        const std::uint64_t paused = ev->compaction_paused_by_boundary();
+        const std::uint64_t mutations = ev->total_mutations();
+        const std::uint64_t dirty = ev->get_dirty_propagation_count();
+        return make_int(static_cast<std::int64_t>(triggers + skips + compacts + saved + paused +
+                                                  mutations + dirty));
+    });
 
     // Issue #404: query:ir-soa-incremental-stats. Returns the sum
     // of 7 IR SoA Phase 3 block_dirty_-driven incremental lowering
@@ -2481,45 +2307,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - cascade_body_only             (block_dirty cascade)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:ir-soa-incremental-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const auto* m =
-                static_cast<const aura::compiler::CompilerMetrics*>(
-                    ev->compiler_metrics());
-            const std::uint64_t ir_instr = m
-                ? m->ir_soa_instructions_emitted.load(
-                      std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t ir_funcs = m
-                ? m->ir_soa_functions_emitted.load(
-                      std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t relower_skip = m
-                ? m->relower_skipped_entirely_count.load(
-                      std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t relower_per_fn = m
-                ? m->relower_per_function_called_count.load(
-                      std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t mod_skip = m
-                ? m->module_dirty_skips.load(std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t mod_recompile = m
-                ? m->module_dirty_recompiles.load(
-                      std::memory_order_relaxed)
-                : 0;
-            const std::uint64_t cascade = m
-                ? m->cascade_body_only_count.load(
-                      std::memory_order_relaxed)
-                : 0;
-            return make_int(static_cast<std::int64_t>(
-                ir_instr + ir_funcs + relower_skip + relower_per_fn +
-                mod_skip + mod_recompile + cascade));
-        });
+    add("query:ir-soa-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t ir_instr =
+            m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ir_funcs =
+            m ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mod_skip =
+            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mod_recompile =
+            m ? m->module_dirty_recompiles.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cascade =
+            m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(ir_instr + ir_funcs + relower_skip +
+                                                  relower_per_fn + mod_skip + mod_recompile +
+                                                  cascade));
+    });
 
     // Issue #403: query:ir-metadata-stats. Returns the sum of
     // 7 IRInstruction rich-metadata consumption counters spanning
@@ -2542,37 +2353,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:ir-metadata-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
-        const std::uint64_t narrow = m
-            ? m->coercion_narrow_evidence_hits_total.load(
-                  std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t linear_elide = m
-            ? m->linear_elide_count.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t linear_enforce = m
-            ? m->linear_post_mutate_enforcements_total.load(
-                  std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t linear_pass = m
-            ? m->linear_check_pass_count_.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t jit_hits = m
-            ? m->specialization_hits.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t deopt = m
-            ? m->deopt_count.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t adt_impacts = m
-            ? m->adt_variant_mutate_impacts_total.load(
-                  std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            narrow + linear_elide + linear_enforce + linear_pass +
-            jit_hits + deopt + adt_impacts));
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t narrow =
+            m ? m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t linear_elide =
+            m ? m->linear_elide_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t linear_enforce =
+            m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t linear_pass =
+            m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t jit_hits =
+            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t deopt = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t adt_impacts =
+            m ? m->adt_variant_mutate_impacts_total.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(narrow + linear_elide + linear_enforce +
+                                                  linear_pass + jit_hits + deopt + adt_impacts));
     });
 
     // Issue #607: query:task4-hotpath-safety-score. Returns
@@ -2590,29 +2388,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:task4-hotpath-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
         auto* ws = ev->workspace_flat();
-        const std::uint64_t spec_hits = m
-            ? m->specialization_hits.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t relower_skip = m
-            ? m->relower_skipped_entirely_count.load(
-                  std::memory_order_relaxed)
-            : 0;
+        const std::uint64_t spec_hits =
+            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
         const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
-        const std::uint64_t linear_elide = m
-            ? m->linear_elide_count.load(std::memory_order_relaxed)
-            : 0;
+        const std::uint64_t linear_elide =
+            m ? m->linear_elide_count.load(std::memory_order_relaxed) : 0;
         const std::uint64_t index_hits = ws ? ws->tag_arity_index_hits() : 0;
-        const std::uint64_t mod_skip = m
-            ? m->module_dirty_skips.load(std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            spec_hits + relower_skip + passes_skip + linear_elide +
-            index_hits + mod_skip));
+        const std::uint64_t mod_skip =
+            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(spec_hits + relower_skip + passes_skip +
+                                                  linear_elide + index_hits + mod_skip));
     });
 
     // Issue #607: query:task4-cache-locality-win. Returns
@@ -2627,25 +2418,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:task4-cache-locality-win", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
+        if (!ev)
+            return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
         auto* ws = ev->workspace_flat();
         const std::uint64_t hits = ws ? ws->tag_arity_index_hits() : 0;
         const std::uint64_t delta = ws ? ws->tag_arity_index_delta_hits() : 0;
-        const std::uint64_t spec = m
-            ? m->specialization_hits.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t cascade = m
-            ? m->cascade_body_only_count.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t per_fn = m
-            ? m->relower_per_function_called_count.load(
-                  std::memory_order_relaxed)
-            : 0;
-        return make_int(static_cast<std::int64_t>(
-            hits + delta + spec + cascade + per_fn));
+        const std::uint64_t spec = m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cascade =
+            m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(hits + delta + spec + cascade + per_fn));
     });
 
     // Issue #570/#605: query:shape-stability-stats. Returns the sum
@@ -2675,9 +2459,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
         const std::uint64_t jit_shape_miss =
             shape::jit_shape_miss_count.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            stable_hits + version_bumps + fiber_refresh + churn + deopt_hooks +
-            jit_shape_miss));
+        return make_int(static_cast<std::int64_t>(stable_hits + version_bumps + fiber_refresh +
+                                                  churn + deopt_hooks + jit_shape_miss));
     });
 
     // Issue #571: query:value-dispatch-stats. Returns the sum
@@ -2693,16 +2476,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // (Task4 hot-path matrix) — unified value-dispatch surface.
     add("query:value-dispatch-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const std::uint64_t hits =
-            types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+        const std::uint64_t hits = types::value_dispatch_hit_count.load(std::memory_order_relaxed);
         const std::uint64_t misses =
             types::value_dispatch_miss_count.load(std::memory_order_relaxed);
         const std::uint64_t violations =
             types::value_contract_violation_count.load(std::memory_order_relaxed);
         const std::uint64_t collisions =
             types::v2_string_collision_attempts.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            hits + misses + violations + collisions));
+        return make_int(static_cast<std::int64_t>(hits + misses + violations + collisions));
     });
 
     // Issue #607: query:task4-mutation-stability. Returns
@@ -2718,16 +2499,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:task4-mutation-stability", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
         const std::uint64_t selective = ev->get_selective_recheck_count();
         const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
         const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
         const std::uint64_t snapshots = ev->get_impact_snapshot_count();
         const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
-        return make_int(static_cast<std::int64_t>(
-            dirty_prop + selective + guard_epoch + narrowing +
-            snapshots + cross_cow));
+        return make_int(static_cast<std::int64_t>(dirty_prop + selective + guard_epoch + narrowing +
+                                                  snapshots + cross_cow));
     });
 
     // Issue #552: query:edsl-stability-stats. Returns
@@ -2771,15 +2552,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:edsl-stability-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         auto* ws = ev->workspace_flat();
         const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
         const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
         const std::uint64_t wraps = ws ? ws->generation_wrap_count() : 0;
         const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
         const std::uint64_t provenance = ev->get_provenance_mismatch();
-        return make_int(static_cast<std::int64_t>(
-            cross_cow + fiber_stale + wraps + rollback + provenance));
+        return make_int(
+            static_cast<std::int64_t>(cross_cow + fiber_stale + wraps + rollback + provenance));
     });
 
     // Issue #527: query:stable-ref-cow-fiber-stats. Returns the
@@ -2798,27 +2580,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - mutation_log_rollback_count_    (Guard rollback path)
     //
     // P0: returns an integer = sum of all 7 counter groups.
-    add("query:stable-ref-cow-fiber-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
-            const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
-            const std::uint64_t provenance = ev->get_provenance_mismatch();
-            const std::uint64_t wraps =
-                ws ? ws->generation_wrap_count() : 0;
-            const std::uint64_t invalidations =
-                ws ? ws->stable_ref_invalidations() : 0;
-            const std::uint64_t stale =
-                ws ? ws->node_gen_stale_access_count() : 0;
-            const std::uint64_t rollback =
-                ev->get_mutation_log_rollback_count();
-            return make_int(static_cast<std::int64_t>(
-                cross_cow + fiber_stale + provenance + wraps +
-                invalidations + stale + rollback));
-        });
+    add("query:stable-ref-cow-fiber-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+        const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+        const std::uint64_t provenance = ev->get_provenance_mismatch();
+        const std::uint64_t wraps = ws ? ws->generation_wrap_count() : 0;
+        const std::uint64_t invalidations = ws ? ws->stable_ref_invalidations() : 0;
+        const std::uint64_t stale = ws ? ws->node_gen_stale_access_count() : 0;
+        const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
+        return make_int(static_cast<std::int64_t>(cross_cow + fiber_stale + provenance + wraps +
+                                                  invalidations + stale + rollback));
+    });
 
     // Issue #529: query:atomic-batch-rollback-stats. Returns the
     // sum of 7 counters spanning the end-to-end atomic batch +
@@ -2838,28 +2615,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // P0: returns an integer = sum of all 7 counter groups.
     // Follow-up: returns a 7-tuple so the AI Agent can compute
     // rollback_rate and fiber_safety_ratio independently.
-    add("query:atomic-batch-rollback-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            const std::uint64_t commits = ev->atomic_batch_count();
-            const std::uint64_t rollbacks = ev->atomic_batch_rollbacks();
-            const std::uint64_t bumps_saved =
-                ev->atomic_batch_bumps_saved_total();
-            const std::uint64_t fiber_safety =
-                ev->get_atomic_batch_steal_violation() +
-                ev->atomic_batch_in_fiber_total();
-            const std::uint64_t guard_rollbacks =
-                ev->get_mutation_log_rollback_count();
-            const std::uint64_t guard_success =
-                ev->get_mutation_impact_count();
-            const std::uint64_t panic_recovery =
-                ev->get_panic_checkpoint_restore_count();
-            return make_int(static_cast<std::int64_t>(
-                commits + rollbacks + bumps_saved + fiber_safety +
-                guard_rollbacks + guard_success + panic_recovery));
-        });
+    add("query:atomic-batch-rollback-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        const std::uint64_t commits = ev->atomic_batch_count();
+        const std::uint64_t rollbacks = ev->atomic_batch_rollbacks();
+        const std::uint64_t bumps_saved = ev->atomic_batch_bumps_saved_total();
+        const std::uint64_t fiber_safety =
+            ev->get_atomic_batch_steal_violation() + ev->atomic_batch_in_fiber_total();
+        const std::uint64_t guard_rollbacks = ev->get_mutation_log_rollback_count();
+        const std::uint64_t guard_success = ev->get_mutation_impact_count();
+        const std::uint64_t panic_recovery = ev->get_panic_checkpoint_restore_count();
+        return make_int(static_cast<std::int64_t>(commits + rollbacks + bumps_saved + fiber_safety +
+                                                  guard_rollbacks + guard_success +
+                                                  panic_recovery));
+    });
 
     // Issue #553: query:mutation-log-stats. Returns the
     // sum of 4 atomic-batch + mutation-log observability
@@ -2895,26 +2667,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:mutation-log-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         auto* ws = ev->workspace_flat();
-        const std::uint64_t steal_violations =
-            ev->get_atomic_batch_steal_violation();
+        const std::uint64_t steal_violations = ev->get_atomic_batch_steal_violation();
         const std::uint64_t batch_count = ev->atomic_batch_count();
-        const std::uint64_t bumps_saved_total =
-            ev->atomic_batch_bumps_saved_total();
+        const std::uint64_t bumps_saved_total = ev->atomic_batch_bumps_saved_total();
         const std::uint64_t rollbacks = ev->atomic_batch_rollbacks();
-        const std::uint64_t ws_commits =
-            ws ? ws->atomic_batch_commits() : 0;
-        const std::uint64_t ws_bumps_saved =
-            ws ? ws->atomic_batch_bumps_saved() : 0;
+        const std::uint64_t ws_commits = ws ? ws->atomic_batch_commits() : 0;
+        const std::uint64_t ws_bumps_saved = ws ? ws->atomic_batch_bumps_saved() : 0;
         // Issue #396 Phase 3: include the in-fiber heuristic
         // counter in the sum so changes to it show up in the
         // mutation-log-stats aggregate.
-        const std::uint64_t in_fiber_total =
-            ev->atomic_batch_in_fiber_total();
-        return make_int(static_cast<std::int64_t>(
-            steal_violations + batch_count + bumps_saved_total +
-            rollbacks + ws_commits + ws_bumps_saved + in_fiber_total));
+        const std::uint64_t in_fiber_total = ev->atomic_batch_in_fiber_total();
+        return make_int(static_cast<std::int64_t>(steal_violations + batch_count +
+                                                  bumps_saved_total + rollbacks + ws_commits +
+                                                  ws_bumps_saved + in_fiber_total));
     });
 
     // Issue #400: query:mutation-rollback-coverage-stats. Returns
@@ -2929,24 +2697,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - field_log_rollbacks: mutation_log_rollback_count_
     //     (Guard boundary field_offset rollbacks incl. sym_id)
     //   - batch_rollbacks: atomic_batch_rollbacks_
-    add("query:mutation-rollback-coverage-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            const std::uint64_t structural_success =
-                ws ? ws->structural_rollback_success() : 0;
-            const std::uint64_t structural_besteffort =
-                ws ? ws->structural_rollback_besteffort() : 0;
-            const std::uint64_t field_log =
-                ev->get_mutation_log_rollback_count();
-            const std::uint64_t batch =
-                ev->atomic_batch_rollbacks();
-            return make_int(static_cast<std::int64_t>(
-                structural_success + structural_besteffort + field_log +
-                batch));
-        });
+    add("query:mutation-rollback-coverage-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t structural_success = ws ? ws->structural_rollback_success() : 0;
+        const std::uint64_t structural_besteffort = ws ? ws->structural_rollback_besteffort() : 0;
+        const std::uint64_t field_log = ev->get_mutation_log_rollback_count();
+        const std::uint64_t batch = ev->atomic_batch_rollbacks();
+        return make_int(static_cast<std::int64_t>(structural_success + structural_besteffort +
+                                                  field_log + batch));
+    });
 
     // (query:mutation-log [n]) — Issue #346: returns
     // a pair-list of the most recent n mutations in
@@ -2960,32 +2723,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // mutations are logged.
     add("query:mutation-log", [](std::span<const EvalValue> a) -> EvalValue {
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_void();
+        if (!ev)
+            return make_void();
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_void();
+        if (!ws)
+            return make_void();
         std::int64_t n = 10;
         if (!a.empty() && is_int(a[0]))
             n = as_int(a[0]);
-        if (n < 0) return make_void();
+        if (n < 0)
+            return make_void();
         // Read the mutation log (most recent first)
         // and take the last n.
         const auto& log = ws->mutation_log_view();
-        if (log.empty()) return make_void();
-        const std::int64_t take = static_cast<std::int64_t>(log.size()) < n
-            ? static_cast<std::int64_t>(log.size())
-            : n;
+        if (log.empty())
+            return make_void();
+        const std::int64_t take =
+            static_cast<std::int64_t>(log.size()) < n ? static_cast<std::int64_t>(log.size()) : n;
         // Build the pair-list in chronological order
         // (oldest first). The log is most-recent first,
         // so we walk from (log.size() - take) to end.
         const std::size_t start = log.size() - static_cast<std::size_t>(take);
         EvalValue list = make_void();
-        for (std::size_t i = log.size(); i-- > start; ) {
+        for (std::size_t i = log.size(); i-- > start;) {
             const auto& rec = log[i];
             // Format: "id=<id> target=<node> op=<name> sum=<summary>"
             const std::string s = "id=" + std::to_string(rec.mutation_id) +
-                                    " target=" + std::to_string(rec.target_node) +
-                                    " op=" + rec.operator_name +
-                                    " sum=" + rec.summary;
+                                  " target=" + std::to_string(rec.target_node) +
+                                  " op=" + rec.operator_name + " sum=" + rec.summary;
             const auto sidx = ev->push_string_heap(std::move(s));
             const auto p_idx = ev->push_pair(make_string(sidx), list);
             list = make_pair(p_idx);
@@ -3004,21 +2769,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (a.empty() || !is_int(a[0]))
             return make_void();
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_void();
+        if (!ev)
+            return make_void();
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_void();
+        if (!ws)
+            return make_void();
         const std::uint64_t since_id = static_cast<std::uint64_t>(as_int(a[0]));
         const auto& log = ws->mutation_log_view();
         EvalValue list = make_void();
         // Walk most-recent first (the natural order
         // for the agent's "newest changes" view).
-        for (std::size_t i = log.size(); i-- > 0; ) {
+        for (std::size_t i = log.size(); i-- > 0;) {
             const auto& rec = log[i];
-            if (rec.mutation_id <= since_id) break;
+            if (rec.mutation_id <= since_id)
+                break;
             const std::string s = "id=" + std::to_string(rec.mutation_id) +
-                                    " target=" + std::to_string(rec.target_node) +
-                                    " op=" + rec.operator_name +
-                                    " sum=" + rec.summary;
+                                  " target=" + std::to_string(rec.target_node) +
+                                  " op=" + rec.operator_name + " sum=" + rec.summary;
             const auto sidx = ev->push_string_heap(std::move(s));
             const auto p_idx = ev->push_pair(make_string(sidx), list);
             list = make_pair(p_idx);
@@ -3038,11 +2805,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:last-mutation-blame", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_void();
+        if (!ev)
+            return make_void();
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_void();
+        if (!ws)
+            return make_void();
         const auto view = ws->mutation_log_view();
-        if (view.empty()) return make_void();
+        if (view.empty())
+            return make_void();
         // Most-recent first.
         const auto& rec = view.back();
         // Build the 2-tuple (operator_name . summary).
@@ -3055,8 +2825,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const auto sidx = ev->push_string_heap(rec.summary);
         // The push_pair helper copies the EvalValues
         // (so the cdr is a fresh make_string of sidx).
-        return make_pair(ev->push_pair(
-            make_string(oidx), make_string(sidx)));
+        return make_pair(ev->push_pair(make_string(oidx), make_string(sidx)));
     });
 
     // Issue #577: query:adt-exhaustiveness-stats. Returns the sum
@@ -3069,15 +2838,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
-        const std::uint64_t checks = m->adt_exhaust_rechecks_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t narrow = m->adt_occurrence_narrow_in_match_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t stale = m->adt_stale_exhaust_prevented_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t impact = m->adt_variant_mutate_impacts_total.load(
-            std::memory_order_relaxed);
+        if (!m)
+            return make_int(0);
+        const std::uint64_t checks = m->adt_exhaust_rechecks_total.load(std::memory_order_relaxed);
+        const std::uint64_t narrow =
+            m->adt_occurrence_narrow_in_match_total.load(std::memory_order_relaxed);
+        const std::uint64_t stale =
+            m->adt_stale_exhaust_prevented_total.load(std::memory_order_relaxed);
+        const std::uint64_t impact =
+            m->adt_variant_mutate_impacts_total.load(std::memory_order_relaxed);
         return make_int(static_cast<std::int64_t>(checks + narrow + stale + impact));
     });
 
@@ -3091,15 +2860,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
-        const std::uint64_t rechecks = m->adt_exhaust_rechecks_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t impacts = m->adt_variant_mutate_impacts_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t stale = m->adt_stale_exhaust_prevented_total.load(
-            std::memory_order_relaxed);
-        const std::uint64_t narrow = m->adt_occurrence_narrow_in_match_total.load(
-            std::memory_order_relaxed);
+        if (!m)
+            return make_int(0);
+        const std::uint64_t rechecks =
+            m->adt_exhaust_rechecks_total.load(std::memory_order_relaxed);
+        const std::uint64_t impacts =
+            m->adt_variant_mutate_impacts_total.load(std::memory_order_relaxed);
+        const std::uint64_t stale =
+            m->adt_stale_exhaust_prevented_total.load(std::memory_order_relaxed);
+        const std::uint64_t narrow =
+            m->adt_occurrence_narrow_in_match_total.load(std::memory_order_relaxed);
         return make_int(static_cast<std::int64_t>(rechecks + impacts + stale + narrow));
     });
 
@@ -3120,13 +2890,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // surfaces the underlying match-info state to
     // Aura so the AI agent can ask "which matches
     // are currently flagged as non-exhaustive?".
-    add("query:match-exhaustiveness-notes",
-        [](std::span<const EvalValue> a) -> EvalValue {
+    add("query:match-exhaustiveness-notes", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_void();
+        if (!ev)
+            return make_void();
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_void();
+        if (!ws)
+            return make_void();
         // Walk the flat; collect node-ids that
         // have a match_info entry with
         // exhaustiveness_checked = true + a
@@ -3135,21 +2906,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // use (query:node-type <id>) to inspect.
         EvalValue list = make_void();
         const auto n = ws->size();
-        for (std::size_t id = n; id-- > 0; ) {
+        for (std::size_t id = n; id-- > 0;) {
             if (!ws->has_match_info(static_cast<aura::ast::NodeId>(id)))
                 continue;
-            const auto* mi = ws->get_match_info(
-                static_cast<aura::ast::NodeId>(id));
-            if (!mi || !mi->exhaustiveness_checked) continue;
+            const auto* mi = ws->get_match_info(static_cast<aura::ast::NodeId>(id));
+            if (!mi || !mi->exhaustiveness_checked)
+                continue;
             // We surface any checked match. A
             // future enhancement can filter to
             // "non-exhaustive" (used < candidates)
             // but the agent can derive that
             // locally.
-            auto sidx = ev->push_string_heap(
-                std::to_string(id));
-            auto p_idx = ev->push_pair(
-                make_string(sidx), list);
+            auto sidx = ev->push_string_heap(std::to_string(id));
+            auto p_idx = ev->push_pair(make_string(sidx), list);
             list = make_pair(p_idx);
         }
         return list;
@@ -3189,7 +2958,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:typed-mutation-stats-task1", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
         const std::uint64_t selective = ev->get_selective_recheck_count();
         const std::uint64_t conflicts = ev->get_touched_roots_conflict_count();
@@ -3198,9 +2968,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t cross_delta = ev->get_cross_delta_conflicts_caught();
         const std::uint64_t passes_skipped = ev->get_passes_skipped_type_dirty();
         const std::uint64_t touched_size = ev->get_touched_roots_size();
-        return make_int(static_cast<std::int64_t>(
-            dirty_prop + selective + conflicts + guard_epoch +
-            narrowing + cross_delta + passes_skipped + touched_size));
+        return make_int(static_cast<std::int64_t>(dirty_prop + selective + conflicts + guard_epoch +
+                                                  narrowing + cross_delta + passes_skipped +
+                                                  touched_size));
     });
 
     // Issue #556: query:edsl-concurrency-stats. Returns
@@ -3234,13 +3004,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:edsl-concurrency-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t steals = ev->get_mutation_steal_attempts();
         const std::uint64_t violations = ev->get_boundary_violation_count();
         const std::uint64_t unsafe_attempts = ev->get_unsafe_boundary_attempts();
         const std::uint64_t contention_us = ev->get_lock_contention_us();
-        return make_int(static_cast<std::int64_t>(
-            steals + violations + unsafe_attempts + contention_us));
+        return make_int(
+            static_cast<std::int64_t>(steals + violations + unsafe_attempts + contention_us));
     });
 
     // Issue #531: query:closure-env-safety-stats. Returns
@@ -3272,29 +3043,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:closure-env-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         // Read from the shared CompilerMetrics struct via
         // the Evaluator's void pointer (set by CompilerService
         // via set_compiler_metrics(&metrics_)). Cast back to
         // CompilerMetrics* to access the 4 new counters.
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(
-                ev->compiler_metrics());
-        if (!m) return make_int(0);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+        if (!m)
+            return make_int(0);
         const std::uint64_t stale_refresh =
-            m->closure_stale_refresh_count_.load(
-                std::memory_order_relaxed);
-        const std::uint64_t bridge_hit =
-            m->bridge_epoch_hit_count_.load(
-                std::memory_order_relaxed);
+            m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
+        const std::uint64_t bridge_hit = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
         const std::uint64_t linear_pass =
-            m->linear_check_pass_count_.load(
-                std::memory_order_relaxed);
+            m->linear_check_pass_count_.load(std::memory_order_relaxed);
         const std::uint64_t gc_skipped =
-            m->gc_envframe_stale_skipped_.load(
-                std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(
-            stale_refresh + bridge_hit + linear_pass + gc_skipped));
+            m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed);
+        return make_int(
+            static_cast<std::int64_t>(stale_refresh + bridge_hit + linear_pass + gc_skipped));
     });
 
     // Issue #447: (query:tag-arity-count tag-int arity-int)
@@ -3304,11 +3070,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // back to a linear scan on miss).
     add("query:tag-arity-count", [](std::span<const EvalValue> a) -> EvalValue {
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
             return make_int(0);
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         // Lazy rebuild on first call: if the index is
         // empty, build it from the current AST.
         if (ws->tag_arity_index_size() == 0) {
@@ -3341,16 +3109,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:verification-loop-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         auto* ws = ev->workspace_flat();
-        if (!ws) return make_int(0);
+        if (!ws)
+            return make_int(0);
         const std::uint64_t cov = ws->verification_coverage_feedback_total();
         const std::uint64_t ass = ws->verification_assert_failure_total();
         const std::uint64_t att = ws->sv_mutate_attempts_total();
         const std::uint64_t suc = ws->sv_mutate_success_total();
         const std::uint64_t cyc = ws->verify_loop_cycles_total();
-        return make_int(static_cast<std::int64_t>(
-            cov + ass + att + suc + cyc));
+        return make_int(static_cast<std::int64_t>(cov + ass + att + suc + cyc));
     });
 
     // Issue #415: query:dirty-reason-propagation-stats. Returns
@@ -3378,31 +3147,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // #437 (query:verify-dirty-stats 4-tuple only), and
     // #469 (query:verification-loop-stats includes SV
     // mutate + loop-cycle counters).
-    add("query:dirty-reason-propagation-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev) return make_int(0);
-            auto* ws = ev->workspace_flat();
-            if (!ws) return make_int(0);
-            const std::uint64_t upward_calls =
-                ws->mark_dirty_upward_call_count();
-            const std::uint64_t upward_nodes =
-                ws->mark_dirty_total_nodes();
-            const std::uint64_t fast_hits =
-                ws->dirty_upward_fast_fixed_point_count();
-            const std::uint64_t verify =
-                ws->verify_assertion_dirty_total() +
-                ws->verify_coverage_dirty_total() +
-                ws->verify_sva_dirty_total() +
-                ws->verify_formal_cex_dirty_total();
-            const std::uint64_t feedback =
-                ws->verification_coverage_feedback_total() +
-                ws->verification_assert_failure_total();
-            return make_int(static_cast<std::int64_t>(
-                upward_calls + upward_nodes + fast_hits +
-                verify + feedback));
-        });
+    add("query:dirty-reason-propagation-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws)
+            return make_int(0);
+        const std::uint64_t upward_calls = ws->mark_dirty_upward_call_count();
+        const std::uint64_t upward_nodes = ws->mark_dirty_total_nodes();
+        const std::uint64_t fast_hits = ws->dirty_upward_fast_fixed_point_count();
+        const std::uint64_t verify =
+            ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
+            ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total();
+        const std::uint64_t feedback =
+            ws->verification_coverage_feedback_total() + ws->verification_assert_failure_total();
+        return make_int(
+            static_cast<std::int64_t>(upward_calls + upward_nodes + fast_hits + verify + feedback));
+    });
 
     // Issue #448: query:mutation-coordination-stats.
     // Returns observability counters for the fiber /
@@ -3424,12 +3187,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:mutation-coordination-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t steals = ev->get_mutation_steal_violation_count();
         const std::uint64_t gc_blocks = ev->get_gc_blocked_by_mutation_boundary();
         const std::uint64_t wait_ns = ev->get_safepoint_mutation_wait_total_ns();
-        return make_int(static_cast<std::int64_t>(
-            steals + gc_blocks + wait_ns));
+        return make_int(static_cast<std::int64_t>(steals + gc_blocks + wait_ns));
     });
 
     // Issue #543: query:envframe-dualpath-stats.
@@ -3463,13 +3226,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:envframe-dualpath-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const std::uint64_t desync = ev->get_envframe_desync_detected();
         const std::uint64_t stale = ev->get_envframe_stale_refresh_count();
         const std::uint64_t mismatch = ev->get_envframe_version_mismatch_in_walk();
         const std::uint64_t gc_skips = ev->get_envframe_gc_walk_safe_skips();
-        return make_int(static_cast<std::int64_t>(
-            desync + stale + mismatch + gc_skips));
+        return make_int(static_cast<std::int64_t>(desync + stale + mismatch + gc_skips));
     });
 
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
@@ -3520,61 +3283,64 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // integer literals, malformed s-exprs). This is a "cheap,
     // best-effort" check — full type-level validation is a
     // follow-up.
-    add("mutate:validate-against-schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return make_bool(false);
-        auto code_idx = as_string_idx(a[0]);
-        auto type_idx = as_string_idx(a[1]);
-        if (code_idx >= string_heap.size() || type_idx >= string_heap.size())
-            return make_bool(false);
-        std::string code = string_heap[code_idx];
-        std::string type_name = string_heap[type_idx];
-        if (!type_registry) {
-            type_registry = new aura::core::TypeRegistry();
-        }
-        auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry);
-        if (!treg)
-            return make_bool(false);
-        auto ty = treg->lookup_type(type_name);
-        if (!ty.valid())
-            return make_bool(false); // no schema; treat as "no constraint"
-        // Best-effort shape check on the code string. The
-        // registered schema (if any) is consulted for an
-        // `integer_min` / `integer_max` constraint; if the code
-        // string contains a literal that violates the constraint,
-        // we return a tagged violation pair.
-        //
-        // We deliberately keep this conservative: only literal
-        // integer overflow is detected. Function bodies, variable
-        // references, and dynamic values are not statically
-        // validated here — those are follow-up work. The point of
-        // the P0 ship is to give callers a *hook* for explicit
-        // pre-mutation checks (and a tagged error path), not to
-        // reimplement the type checker.
-        std::string violation_reason;
-        std::string violation_field;
-        if (!validate_code_against_schema_simple(code, type_name, violation_reason, violation_field)) {
-            // Build (list "schema-violation" <reason> <field>) pair
-            // in string_heap_ + pairs_.
-            auto reason_idx = string_heap.size();
-            string_heap.push_back(violation_reason);
-            auto field_idx = string_heap.size();
-            string_heap.push_back(violation_field);
-            // ("schema-violation" reason field)
-            auto reason_kw_idx = string_heap.size();
-            string_heap.push_back(std::string("schema-violation"));
-            // ... but keyword encoding goes through make_keyword in
-            // a more complex path. We build the pair as a string-
-            // tagged list (s-expression) and return it as a string
-            // — the caller can (eval) it. This keeps the primitive
-            // self-contained without needing a full keyword path.
-            std::string repr = "(schema-violation \"" + violation_reason + "\" \"" + violation_field + "\")";
-            auto repr_idx = string_heap.size();
-            string_heap.push_back(repr);
-            return make_string(repr_idx);
-        }
-        return make_bool(true);
-    });
+    add("mutate:validate-against-schema",
+        [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return make_bool(false);
+            auto code_idx = as_string_idx(a[0]);
+            auto type_idx = as_string_idx(a[1]);
+            if (code_idx >= string_heap.size() || type_idx >= string_heap.size())
+                return make_bool(false);
+            std::string code = string_heap[code_idx];
+            std::string type_name = string_heap[type_idx];
+            if (!type_registry) {
+                type_registry = new aura::core::TypeRegistry();
+            }
+            auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry);
+            if (!treg)
+                return make_bool(false);
+            auto ty = treg->lookup_type(type_name);
+            if (!ty.valid())
+                return make_bool(false); // no schema; treat as "no constraint"
+            // Best-effort shape check on the code string. The
+            // registered schema (if any) is consulted for an
+            // `integer_min` / `integer_max` constraint; if the code
+            // string contains a literal that violates the constraint,
+            // we return a tagged violation pair.
+            //
+            // We deliberately keep this conservative: only literal
+            // integer overflow is detected. Function bodies, variable
+            // references, and dynamic values are not statically
+            // validated here — those are follow-up work. The point of
+            // the P0 ship is to give callers a *hook* for explicit
+            // pre-mutation checks (and a tagged error path), not to
+            // reimplement the type checker.
+            std::string violation_reason;
+            std::string violation_field;
+            if (!validate_code_against_schema_simple(code, type_name, violation_reason,
+                                                     violation_field)) {
+                // Build (list "schema-violation" <reason> <field>) pair
+                // in string_heap_ + pairs_.
+                auto reason_idx = string_heap.size();
+                string_heap.push_back(violation_reason);
+                auto field_idx = string_heap.size();
+                string_heap.push_back(violation_field);
+                // ("schema-violation" reason field)
+                auto reason_kw_idx = string_heap.size();
+                string_heap.push_back(std::string("schema-violation"));
+                // ... but keyword encoding goes through make_keyword in
+                // a more complex path. We build the pair as a string-
+                // tagged list (s-expression) and return it as a string
+                // — the caller can (eval) it. This keeps the primitive
+                // self-contained without needing a full keyword path.
+                std::string repr =
+                    "(schema-violation \"" + violation_reason + "\" \"" + violation_field + "\")";
+                auto repr_idx = string_heap.size();
+                string_heap.push_back(repr);
+                return make_string(repr_idx);
+            }
+            return make_bool(true);
+        });
 
     // (query:occurrence-stale? if-node-id) — Issue #339:
     // returns #t when the if-node's occurrence-narrowing
@@ -3611,16 +3377,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (m) {
             stale_caught = m->narrow_stale_caught_total.load(std::memory_order_relaxed);
             blame_attached = m->narrow_blame_attached_total.load(std::memory_order_relaxed);
-            invalidation =
-                m->narrow_invalidation_post_mutate_total.load(std::memory_order_relaxed);
+            invalidation = m->narrow_invalidation_post_mutate_total.load(std::memory_order_relaxed);
             provenance_hits = m->narrowing_provenance_total.load(std::memory_order_relaxed);
             safe_fallbacks = m->narrow_safe_fallback_total.load(std::memory_order_relaxed);
         }
         if (auto* ws = ev.workspace_flat()) {
             invalidation += ws->narrow_invalidation_post_mutate_count();
         }
-        return make_int(static_cast<std::int64_t>(
-            stale_caught + blame_attached + invalidation + provenance_hits + safe_fallbacks));
+        return make_int(static_cast<std::int64_t>(stale_caught + blame_attached + invalidation +
+                                                  provenance_hits + safe_fallbacks));
     });
 
     // Issue #627: query:bidirectional-narrow-stats. Returns the sum
@@ -3640,8 +3405,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             m->post_mutate_narrow_consistency_total.load(std::memory_order_relaxed);
         const std::uint64_t stale_prevented =
             m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(check_hits + switches + consistency +
-                                                  stale_prevented));
+        return make_int(
+            static_cast<std::int64_t>(check_hits + switches + consistency + stale_prevented));
     });
 
     // Issue #467: query:occurrence-stats. Returns the sum of 4
@@ -3655,7 +3420,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:occurrence-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t dirty_recovery =
             m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
@@ -3668,9 +3434,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t stale_prevented =
             m ? m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
-        return make_int(static_cast<std::int64_t>(
-            dirty_recovery + blame_attached + blame_complete + stale_refresh +
-            stale_prevented + narrowing));
+        return make_int(static_cast<std::int64_t>(dirty_recovery + blame_attached + blame_complete +
+                                                  stale_refresh + stale_prevented + narrowing));
     });
 
     // Issue #576: query:occurrence-blame-stats. Returns the sum
@@ -3682,7 +3447,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("query:occurrence-blame-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
-        if (!ev) return make_int(0);
+        if (!ev)
+            return make_int(0);
         const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
         const std::uint64_t stale_prevented =
             m ? m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed) : 0;
@@ -3690,8 +3456,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
         const std::uint64_t provenance = ev->get_provenance_mismatch();
-        return make_int(static_cast<std::int64_t>(
-            stale_prevented + blame_preserved + narrowing + provenance));
+        return make_int(
+            static_cast<std::int64_t>(stale_prevented + blame_preserved + narrowing + provenance));
     });
 
     // Issue #609: query:occurrence-narrow-stats. Returns the sum
@@ -3705,7 +3471,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t narrow_recoveries =
             m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed) +
             m->narrowing_reanalyzed_total.load(std::memory_order_relaxed);
@@ -3716,8 +3483,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t stale_narrow_prevented =
             m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed);
         return make_int(static_cast<std::int64_t>(
-            narrow_recoveries + blame_attached + post_mutate_correctness +
-            stale_narrow_prevented));
+            narrow_recoveries + blame_attached + post_mutate_correctness + stale_narrow_prevented));
     });
 
     // Issue #537 / #518 Phase 2: query:occurrence-narrowing-stats.
@@ -3728,7 +3494,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         (void)a;
         const auto* m = static_cast<const CompilerMetrics*>(
             Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m) return make_int(0);
+        if (!m)
+            return make_int(0);
         const std::uint64_t stale_refreshes =
             m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
         const std::uint64_t blame_complete =
@@ -3796,12 +3563,14 @@ static bool validate_code_against_schema_simple(const std::string& code,
     bool in_string = false;
     for (std::size_t i = 0; i < code.size(); ++i) {
         char c = code[i];
-        if (c == '"' && (i == 0 || code[i-1] != '\\')) {
+        if (c == '"' && (i == 0 || code[i - 1] != '\\')) {
             in_string = !in_string;
             continue;
         }
-        if (in_string) continue;
-        if (c == '(') ++paren_depth;
+        if (in_string)
+            continue;
+        if (c == '(')
+            ++paren_depth;
         else if (c == ')') {
             --paren_depth;
             if (paren_depth < 0) {
@@ -3821,12 +3590,17 @@ static bool validate_code_against_schema_simple(const std::string& code,
     std::size_t i = 0;
     while (i < code.size()) {
         char c = code[i];
-        bool is_digit_start = (c >= '0' && c <= '9') ||
-                              (c == '-' && i + 1 < code.size() && code[i+1] >= '0' && code[i+1] <= '9');
-        if (!is_digit_start) { ++i; continue; }
+        bool is_digit_start = (c >= '0' && c <= '9') || (c == '-' && i + 1 < code.size() &&
+                                                         code[i + 1] >= '0' && code[i + 1] <= '9');
+        if (!is_digit_start) {
+            ++i;
+            continue;
+        }
         std::size_t j = i;
-        if (c == '-') ++j;
-        while (j < code.size() && code[j] >= '0' && code[j] <= '9') ++j;
+        if (c == '-')
+            ++j;
+        while (j < code.size() && code[j] >= '0' && code[j] <= '9')
+            ++j;
         std::string lit = code.substr(i, j - i);
         // int64 range check
         try {

@@ -65,8 +65,8 @@ bool test_task1_typed_mod_counters_reachable() {
     const auto sr0 = cs.evaluator().get_selective_recheck_count();
     const auto tc0 = cs.evaluator().get_touched_roots_conflict_count();
     const auto ge0 = cs.evaluator().get_guard_dirty_epoch_count();
-    std::println("  baseline: dirty_prop={} selective={} conflicts={} guard_epoch={}",
-                 dp0, sr0, tc0, ge0);
+    std::println("  baseline: dirty_prop={} selective={} conflicts={} guard_epoch={}", dp0, sr0,
+                 tc0, ge0);
     CHECK(dp0 == 0, "dirty_propagation_count starts at 0");
     CHECK(sr0 == 0, "selective_recheck_count starts at 0");
     CHECK(tc0 == 0, "touched_roots_conflict_count starts at 0");
@@ -83,13 +83,11 @@ bool test_query_typed_mutation_stats_task1() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:typed-mutation-stats-task1)");
     CHECK(r.has_value(), "(query:typed-mutation-stats-task1) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:typed-mutation-stats-task1) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:typed-mutation-stats-task1) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:typed-mutation-stats-task1 = {}", v);
-        CHECK(v >= 0,
-              "(query:typed-mutation-stats-task1) >= 0 (8 counters sum)");
+        CHECK(v >= 0, "(query:typed-mutation-stats-task1) >= 0 (8 counters sum)");
     }
     return true;
 }
@@ -106,18 +104,14 @@ bool test_guard_dirty_epoch_under_mutate() {
     // mutate:replace-value goes through Guard + bumps
     // guard_dirty_epoch + selective_recheck on successful dtor.
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+                      std::to_string(i) + "))");
     }
     const auto ge1 = cs.evaluator().get_guard_dirty_epoch_count();
     const auto sr1 = cs.evaluator().get_selective_recheck_count();
-    std::println("  guard_dirty_epoch: {} -> {} selective_recheck: {} -> {}",
-                 ge0, ge1, sr0, sr1);
-    CHECK(ge1 > ge0,
-          "guard_dirty_epoch_count bumped after Aura mutate (Guard dtor success)");
-    CHECK(sr1 > sr0,
-          "selective_recheck_count bumped after Aura mutate");
+    std::println("  guard_dirty_epoch: {} -> {} selective_recheck: {} -> {}", ge0, ge1, sr0, sr1);
+    CHECK(ge1 > ge0, "guard_dirty_epoch_count bumped after Aura mutate (Guard dtor success)");
+    CHECK(sr1 > sr0, "selective_recheck_count bumped after Aura mutate");
     return true;
 }
 
@@ -131,17 +125,14 @@ bool test_long_running_typed_selfmod_cycle() {
     const auto ge0 = cs.evaluator().get_guard_dirty_epoch_count();
     const auto sr0 = cs.evaluator().get_selective_recheck_count();
     for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(i) +
-            ") (define " + (i & 1 ? "a" : "b") + " " +
-            std::to_string(i) + "))";
+        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+                           " " + std::to_string(i) + ") (define " + (i & 1 ? "a" : "b") + " " +
+                           std::to_string(i) + "))";
         (void)cs.eval(code);
     }
     const auto ge1 = cs.evaluator().get_guard_dirty_epoch_count();
     const auto sr1 = cs.evaluator().get_selective_recheck_count();
-    std::println("  guard_dirty_epoch: {} -> {} selective_recheck: {} -> {}",
-                 ge0, ge1, sr0, sr1);
+    std::println("  guard_dirty_epoch: {} -> {} selective_recheck: {} -> {}", ge0, ge1, sr0, sr1);
     CHECK(ge1 >= ge0 + static_cast<std::uint64_t>(k_long_iters() - 5),
           "guard_dirty_epoch grew by >= ~iter count under typed cycle");
     CHECK(sr1 >= sr0 + static_cast<std::uint64_t>(k_long_iters() - 5),
@@ -157,19 +148,20 @@ bool test_dirty_propagation_cycle() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     constexpr int k_iters = 100;
     const auto dp0 = cs.evaluator().get_dirty_propagation_count();
     for (int i = 0; i < k_iters; ++i) {
         if (ws->size() > 0) {
-            ws->mark_dirty_upward(
-                static_cast<aura::ast::NodeId>(i % ws->size()));
+            ws->mark_dirty_upward(static_cast<aura::ast::NodeId>(i % ws->size()));
         }
     }
     const auto dp1 = cs.evaluator().get_dirty_propagation_count();
     std::println("  dirty_propagation: {} -> {} (delta {})", dp0, dp1, dp1 - dp0);
-    CHECK(dp1 >= dp0,
-          "dirty_propagation_count non-decreasing under mark_dirty_upward");
+    CHECK(dp1 >= dp0, "dirty_propagation_count non-decreasing under mark_dirty_upward");
     return true;
 }
 
@@ -201,22 +193,23 @@ bool test_eight_thread_concurrent_typed_selfmod() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define v" +
-                std::to_string(tid) + " " + std::to_string(i) +
-                ") (define v" + std::to_string(tid) + " " +
-                std::to_string(i) + "))";
+            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto ge = cs.evaluator().get_guard_dirty_epoch_count();
     const auto sr = cs.evaluator().get_selective_recheck_count();
-    std::println("  completed: {}/{} guard_dirty_epoch: {} selective_recheck: {}",
-                 completed.load(), n_threads * n_iters, ge, sr);
+    std::println("  completed: {}/{} guard_dirty_epoch: {} selective_recheck: {}", completed.load(),
+                 n_threads * n_iters, ge, sr);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent typed self-mod)");
     CHECK(ge >= static_cast<std::uint64_t>(n_threads * n_iters),
@@ -287,8 +280,12 @@ int run_tests() {
 
 } // namespace aura_issue_555_detail
 
-int aura_issue_555_run() { return aura_issue_555_detail::run_tests(); }
+int aura_issue_555_run() {
+    return aura_issue_555_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_555_run(); }
+int main() {
+    return aura_issue_555_run();
+}
 #endif

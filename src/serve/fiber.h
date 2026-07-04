@@ -12,19 +12,16 @@
 // Issue #438: C-linkage forward declaration of the
 // per-thread mutation boundary depth probe. Defined
 // in evaluator_fiber_mutation.cpp.
-extern "C" std::size_t
-aura_evaluator_mutation_boundary_depth();
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 
 // Issue #588: per-fiber mutation stack depth from opaque storage.
 // Used by is_at_mutation_boundary_safe() on the victim fiber
 // during work-steal (thief thread must not read thread_local).
-extern "C" std::size_t
-aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage);
+extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage);
 
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
-extern "C" std::uint64_t
-aura_fiber_static_gc_pause_attributed_to_mutation();
+extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation();
 
 namespace aura::serve {
 
@@ -145,8 +142,7 @@ public:
             return true;
         // Issue #588: read this fiber's stack depth, not the
         // thief thread's thread_local depth.
-        return aura_evaluator_mutation_stack_depth_from_ptr(
-                   mutation_stack_storage_) == 0;
+        return aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) == 0;
     }
 
     // Issue #451: yield_classification() — returns a
@@ -158,15 +154,18 @@ public:
     // + outermost vs MutationBoundary + inner).
     const char* yield_classification() const {
         switch (last_yield_reason_.load(std::memory_order_acquire)) {
-            case YieldReason::BlockingIO: return "BlockingIO";
+            case YieldReason::BlockingIO:
+                return "BlockingIO";
             case YieldReason::MutationBoundary:
-                return aura_evaluator_mutation_stack_depth_from_ptr(
-                           mutation_stack_storage_) == 0
-                    ? "MutationBoundary/outermost"
-                    : "MutationBoundary/inner";
-            case YieldReason::Explicit: return "Explicit";
-            case YieldReason::SchedulerSteal: return "SchedulerSteal";
-            case YieldReason::OperationBoundary: return "OperationBoundary";
+                return aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) == 0
+                           ? "MutationBoundary/outermost"
+                           : "MutationBoundary/inner";
+            case YieldReason::Explicit:
+                return "Explicit";
+            case YieldReason::SchedulerSteal:
+                return "SchedulerSteal";
+            case YieldReason::OperationBoundary:
+                return "OperationBoundary";
         }
         return "Unknown";
     }
@@ -198,10 +197,8 @@ public:
     [[nodiscard]] std::uint64_t gc_pause_attributed_to_mutation_count() const noexcept {
         return gc_pause_attributed_to_mutation_count_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] static std::uint64_t
-    static_gc_pause_attributed_to_mutation_total() noexcept {
-        return static_gc_pause_attributed_to_mutation_count_.load(
-            std::memory_order_relaxed);
+    [[nodiscard]] static std::uint64_t static_gc_pause_attributed_to_mutation_total() noexcept {
+        return static_gc_pause_attributed_to_mutation_count_.load(std::memory_order_relaxed);
     }
     // Issue #451: bump helpers (called by Fiber::yield()
     // + Fiber::check_gc_safepoint() + the work-steal path
@@ -313,8 +310,7 @@ private:
     // (query:orchestration-metrics) primitive reads
     // the static aggregate + sums the per-Fiber counters
     // for a process-wide total.
-    static std::atomic<std::uint64_t>
-        static_gc_pause_attributed_to_mutation_count_;
+    static std::atomic<std::uint64_t> static_gc_pause_attributed_to_mutation_count_;
 
     // Trampoline: called when fiber starts
     static void trampoline(uint32_t high, uint32_t low);

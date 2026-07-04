@@ -36,16 +36,29 @@ namespace aura_411fu3_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: per-DefUseIndex counters start at 0 ---");
@@ -55,10 +68,8 @@ bool test_initial_counters_zero() {
              "per_defuse_index_used_total == 0 on fresh service");
     CHECK_EQ(snap.per_defuse_index_walk_fallback_total, 0u,
              "per_defuse_index_walk_fallback_total == 0");
-    CHECK_EQ(snap.per_defuse_index_visited_total, 0u,
-             "per_defuse_index_visited_total == 0");
-    CHECK_EQ(snap.per_defuse_index_visited_avg_bp, 0u,
-             "per_defuse_index_visited_avg_bp == 0");
+    CHECK_EQ(snap.per_defuse_index_visited_total, 0u, "per_defuse_index_visited_total == 0");
+    CHECK_EQ(snap.per_defuse_index_visited_avg_bp, 0u, "per_defuse_index_visited_avg_bp == 0");
     return true;
 }
 
@@ -67,10 +78,9 @@ bool test_per_symbol_reinfer_stats_has_new_keys() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"per-defuse-index-used-total",
-                            "per-defuse-index-visited-total",
-                            "per-defuse-index-walk-fallback-total",
-                            "per-defuse-index-visited-avg-bp"}) {
+    for (const char* key :
+         {"per-defuse-index-used-total", "per-defuse-index-visited-total",
+          "per-defuse-index-walk-fallback-total", "per-defuse-index-visited-avg-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -86,8 +96,7 @@ bool test_per_symbol_reinfer_stats_has_new_keys() {
 bool test_typed_mutate_empty_tracker_takes_per_symbol() {
     std::println("\n--- AC3: typed_mutate with empty tracker takes per-symbol path ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     // Set up a top-level define with 1 use-site.
     cs.eval("(set-code \"(define f 1) (define g (+ f 1))\")");
     cs.eval("(eval-current)");
@@ -96,11 +105,14 @@ bool test_typed_mutate_empty_tracker_takes_per_symbol() {
     // fall back to per-symbol (O(n) walk), NOT
     // per-DefUseIndex.
     auto r = cs.eval("(mutate:rebind \"f\" \"10\" \"bump\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
     std::println("  per_symbol_used={} per_defuse_index_used={}",
-                 snap.per_symbol_reinfer_used_total,
-                 snap.per_defuse_index_used_total);
+                 snap.per_symbol_reinfer_used_total, snap.per_defuse_index_used_total);
     CHECK(snap.per_symbol_reinfer_used_total >= 1,
           "per_symbol_reinfer_used_total >= 1 (empty tracker → per-symbol path)");
     CHECK_EQ(snap.per_defuse_index_used_total, 0u,
@@ -111,8 +123,7 @@ bool test_typed_mutate_empty_tracker_takes_per_symbol() {
 bool test_typed_mutate_populated_tracker_takes_per_defuse_index() {
     std::println("\n--- AC4: typed_mutate with populated tracker takes per-DefUseIndex path ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define f 1) (define g (+ f 1))\")");
     cs.eval("(eval-current)");
     // Populate the per-DefUseIndex tracker with an entry.
@@ -124,19 +135,21 @@ bool test_typed_mutate_populated_tracker_takes_per_defuse_index() {
     cs.eval("(setup)");
     // Verify the tracker is populated.
     auto rst = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"index-count\")");
-    if (!rst || !aura::compiler::types::is_int(*rst) ||
-        aura::compiler::types::as_int(*rst) < 1) {
-        std::println("  FAIL: tracker not populated (index-count={})",
-                     rst ? rst->val : -1);
-        ++g_failed; return false;
+    if (!rst || !aura::compiler::types::is_int(*rst) || aura::compiler::types::as_int(*rst) < 1) {
+        std::println("  FAIL: tracker not populated (index-count={})", rst ? rst->val : -1);
+        ++g_failed;
+        return false;
     }
     // Now mutate:rebind — the per-DefUseIndex path should fire.
     auto r = cs.eval("(mutate:rebind \"f\" \"100\" \"bump2\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
     std::println("  per_defuse_index_used={} per_defuse_index_walk_fallback={} per_symbol_used={}",
-                 snap.per_defuse_index_used_total,
-                 snap.per_defuse_index_walk_fallback_total,
+                 snap.per_defuse_index_used_total, snap.per_defuse_index_walk_fallback_total,
                  snap.per_symbol_reinfer_used_total);
     CHECK(snap.per_defuse_index_used_total >= 1,
           "per_defuse_index_used_total >= 1 (populated tracker → per-DefUseIndex path)");
@@ -154,7 +167,7 @@ bool test_snapshot_has_per_defuse_index_fields() {
     return true;
 }
 
-}  // namespace aura_411fu3_detail
+} // namespace aura_411fu3_detail
 
 int main() {
     using namespace aura_411fu3_detail;
@@ -164,7 +177,7 @@ int main() {
     test_typed_mutate_empty_tracker_takes_per_symbol();
     test_typed_mutate_populated_tracker_takes_per_defuse_index();
     test_snapshot_has_per_defuse_index_fields();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

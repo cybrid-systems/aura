@@ -54,8 +54,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -66,12 +66,10 @@ namespace aura_issue_336_detail {
 
 // Build a small workspace (a few defines inside a
 // Begin block) so we have a parent chain to walk.
-static int build_workspace(
-    aura::compiler::CompilerService& cs, int n_defines) {
+static int build_workspace(aura::compiler::CompilerService& cs, int n_defines) {
     std::string code = "(begin ";
     for (int i = 0; i < n_defines; ++i) {
-        code += "(define v_" + std::to_string(i) + " " +
-                std::to_string(i) + ") ";
+        code += "(define v_" + std::to_string(i) + " " + std::to_string(i) + ") ";
     }
     code += ")";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
@@ -105,8 +103,7 @@ bool test_fast_path_early_exit() {
     // so the fast path hits the early-exit.
     flat.mark_dirty_upward_fast(a, static_cast<std::uint8_t>(ast::FlatAST::kGeneralDirty));
     const auto after = flat.dirty_upward_fast_fixed_point_count();
-    CHECK(after > before,
-          "fixed-point counter bumped on early-exit");
+    CHECK(after > before, "fixed-point counter bumped on early-exit");
     return true;
 }
 
@@ -130,14 +127,10 @@ bool test_clear_dirty_for_subtree() {
     // Clear the kGeneralDirty bit on the root and
     // all children. The root has children a, b, c.
     flat.clear_dirty_for_subtree(root, static_cast<std::uint8_t>(ast::FlatAST::kGeneralDirty));
-    CHECK(!flat.is_dirty(root),
-          "root kGeneralDirty cleared");
-    CHECK(!flat.is_dirty(a),
-          "child a kGeneralDirty cleared");
-    CHECK(!flat.is_dirty(b),
-          "child b kGeneralDirty cleared");
-    CHECK(!flat.is_dirty(c),
-          "child c kGeneralDirty cleared");
+    CHECK(!flat.is_dirty(root), "root kGeneralDirty cleared");
+    CHECK(!flat.is_dirty(a), "child a kGeneralDirty cleared");
+    CHECK(!flat.is_dirty(b), "child b kGeneralDirty cleared");
+    CHECK(!flat.is_dirty(c), "child c kGeneralDirty cleared");
     return true;
 }
 
@@ -149,22 +142,24 @@ bool test_compile_mark_dirty_upward_fast_primitive() {
     std::println("\n--- AC3: (compile:mark-dirty-upward-fast) primitive ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs, 3)) { ++g_failed; return false; }
+    if (!build_workspace(cs, 3)) {
+        ++g_failed;
+        return false;
+    }
     // The primitive takes (node-id [reasons]).
     // node-id 0 is typically the Begin node. We
     // just verify the primitive runs cleanly.
     auto r1 = cs.eval("(compile:mark-dirty-upward-fast 0)");
-    CHECK(r1.has_value(),
-          "(compile:mark-dirty-upward-fast 0) returns a value");
+    CHECK(r1.has_value(), "(compile:mark-dirty-upward-fast 0) returns a value");
     // Bad args return #f (not an error).
     auto r2 = cs.eval("(compile:mark-dirty-upward-fast)");
-    CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2)
-          && !aura::compiler::types::as_bool(*r2),
+    CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2) &&
+              !aura::compiler::types::as_bool(*r2),
           "(compile:mark-dirty-upward-fast) with no args returns #f");
     // Out-of-range returns #f.
     auto r3 = cs.eval("(compile:mark-dirty-upward-fast 99999)");
-    CHECK(r3.has_value() && aura::compiler::types::is_bool(*r3)
-          && !aura::compiler::types::as_bool(*r3),
+    CHECK(r3.has_value() && aura::compiler::types::is_bool(*r3) &&
+              !aura::compiler::types::as_bool(*r3),
           "(compile:mark-dirty-upward-fast 99999) returns #f");
     return true;
 }
@@ -177,7 +172,10 @@ bool test_ast_ops_stats_includes_fast_hits() {
     std::println("\n--- AC4: (compile:ast-ops-stats) includes fast-hits ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs, 3)) { ++g_failed; return false; }
+    if (!build_workspace(cs, 3)) {
+        ++g_failed;
+        return false;
+    }
     // The ast-ops-stats primitive returns a hash
     // with the fast-fixed-point-hits field. We
     // can't easily extract a hash field from
@@ -185,8 +183,7 @@ bool test_ast_ops_stats_includes_fast_hits() {
     // returns a value (it should always return
     // a hash when a workspace is loaded).
     auto r = cs.eval("(compile:ast-ops-stats)");
-    CHECK(r.has_value(),
-          "(compile:ast-ops-stats) returns a value");
+    CHECK(r.has_value(), "(compile:ast-ops-stats) returns a value");
     return true;
 }
 
@@ -198,7 +195,10 @@ bool test_end_to_end_fast_path_via_aura() {
     std::println("\n--- AC5: end-to-end fast path via Aura ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs, 3)) { ++g_failed; return false; }
+    if (!build_workspace(cs, 3)) {
+        ++g_failed;
+        return false;
+    }
     // Snapshot counter before.
     auto before = cs.eval("(compile:ast-ops-stats)");
     CHECK(before.has_value(), "pre-call: ast-ops-stats returns");
@@ -226,10 +226,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_336_detail
+} // namespace aura_issue_336_detail
 
-int aura_issue_336_run() { return aura_issue_336_detail::run_tests(); }
+int aura_issue_336_run() {
+    return aura_issue_336_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_336_run(); }
+int main() {
+    return aura_issue_336_run();
+}
 #endif

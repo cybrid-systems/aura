@@ -29,10 +29,10 @@ module;
 
 export module aura.compiler.sv_ir;
 import std;
-import aura.core.mutation;  // Issue #315: SymId for the structured
-                            // SVInterfaceIR / SVModportIR shapes.
-import aura.core.ast;       // Issue #315: FlatAST + StringPool for
-                            // the AST → IR mapping helper.
+import aura.core.mutation; // Issue #315: SymId for the structured
+                           // SVInterfaceIR / SVModportIR shapes.
+import aura.core.ast;      // Issue #315: FlatAST + StringPool for
+                           // the AST → IR mapping helper.
 
 namespace aura::compiler::sv_ir {
 
@@ -72,8 +72,7 @@ export struct InterfaceIR {
     std::vector<std::string> modport_names;
 };
 
-export InterfaceIR make_interface(std::string_view name,
-                                  std::vector<std::string> ports,
+export InterfaceIR make_interface(std::string_view name, std::vector<std::string> ports,
                                   std::vector<std::string> modport_names) noexcept;
 
 export std::string emit_interface(const InterfaceIR& i);
@@ -89,8 +88,7 @@ export struct ModportIR {
     std::vector<std::string> port_names;
 };
 
-export ModportIR make_modport(std::string_view name,
-                              std::vector<std::string> port_names) noexcept;
+export ModportIR make_modport(std::string_view name, std::vector<std::string> port_names) noexcept;
 
 export std::string emit_modport(const ModportIR& m);
 export std::string debug_modport(const ModportIR& m);
@@ -116,8 +114,7 @@ export struct ClassIR {
     std::vector<std::string> items;
 };
 
-export ClassIR make_class(std::string_view name,
-                          std::string_view base,
+export ClassIR make_class(std::string_view name, std::string_view base,
                           std::vector<std::string> items) noexcept;
 
 export std::string emit_class(const ClassIR& c);
@@ -137,7 +134,7 @@ export struct ConstraintIR {
 };
 
 export ConstraintIR make_constraint(std::string_view name,
-                                     std::vector<std::string> expressions) noexcept;
+                                    std::vector<std::string> expressions) noexcept;
 
 export std::string emit_constraint(const ConstraintIR& c);
 export std::string debug_constraint(const ConstraintIR& c);
@@ -156,8 +153,7 @@ export struct CoverpointIR {
     std::vector<std::string> bins;
 };
 
-export CoverpointIR make_coverpoint(std::string_view var,
-                                    std::vector<std::string> bins) noexcept;
+export CoverpointIR make_coverpoint(std::string_view var, std::vector<std::string> bins) noexcept;
 
 export std::string emit_coverpoint(const CoverpointIR& cp);
 export std::string debug_coverpoint(const CoverpointIR& cp);
@@ -177,8 +173,7 @@ export struct CovergroupIR {
     std::string event;
 };
 
-export CovergroupIR make_covergroup(std::string_view name,
-                                    std::vector<std::string> coverpoint_strs,
+export CovergroupIR make_covergroup(std::string_view name, std::vector<std::string> coverpoint_strs,
                                     std::string_view event = "") noexcept;
 
 export std::string emit_covergroup(const CovergroupIR& cg);
@@ -197,8 +192,7 @@ export struct SequenceIR {
     std::string expr;
 };
 
-export SequenceIR make_sequence(std::string_view name,
-                                std::string_view expr) noexcept;
+export SequenceIR make_sequence(std::string_view name, std::string_view expr) noexcept;
 
 export std::string emit_sequence(const SequenceIR& s);
 export std::string debug_sequence(const SequenceIR& s);
@@ -216,8 +210,7 @@ export struct PropertyIR {
     std::string expr;
 };
 
-export PropertyIR make_property(std::string_view name,
-                                std::string_view expr) noexcept;
+export PropertyIR make_property(std::string_view name, std::string_view expr) noexcept;
 
 export std::string emit_property(const PropertyIR& p);
 export std::string debug_property(const PropertyIR& p);
@@ -236,8 +229,7 @@ export struct WireIR {
 };
 
 // Build a structured wire declaration.
-export WireIR make_wire(std::string_view name, int width,
-                        WireKind kind) noexcept;
+export WireIR make_wire(std::string_view name, int width, WireKind kind) noexcept;
 
 // Emits the wire declaration as a single line of Verilog.
 // Result ends with ';' but no trailing newline.
@@ -261,13 +253,13 @@ export std::string debug_wire(const WireIR& w);
 // directly comparable. The std::string layer stays for the
 // emit path where human-readable text is the form.
 export struct SVModportIR {
-    aura::ast::SymId name = aura::ast::SymId{};     // INVALID_SYM = uninitialized
-    std::vector<aura::ast::SymId> port_names;        // ports referenced by this modport
+    aura::ast::SymId name = aura::ast::SymId{}; // INVALID_SYM = uninitialized
+    std::vector<aura::ast::SymId> port_names;   // ports referenced by this modport
 };
 
 export struct SVInterfaceIR {
     aura::ast::SymId name = aura::ast::SymId{};
-    std::vector<SVModportIR> modports;               // nested modport declarations
+    std::vector<SVModportIR> modports; // nested modport declarations
 };
 
 // Constructors.
@@ -280,15 +272,12 @@ export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
 // Convenience overload that takes 2 modports as separate args
 // (avoids the {a, b} initializer-list dance in callers — the
 // vector-only form is the canonical one for variadic use).
-export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
-                                       SVModportIR mp0,
+export SVInterfaceIR make_sv_interface(aura::ast::SymId name, SVModportIR mp0,
                                        SVModportIR mp1) noexcept;
 
 // Convenience overload that takes 3 modports (covers the
 // common bus-style 3-role interfaces: master/slave/monitor).
-export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
-                                       SVModportIR mp0,
-                                       SVModportIR mp1,
+export SVInterfaceIR make_sv_interface(aura::ast::SymId name, SVModportIR mp0, SVModportIR mp1,
                                        SVModportIR mp2) noexcept;
 
 // Issue #315: AST → IR mapping. Walks the body of an
@@ -304,43 +293,35 @@ export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
 // (query:by-tag :interface) or accept that some signals
 // aren't reflected in the IR (for tests that build the
 // AST directly).
-export std::optional<SVInterfaceIR>
-map_interface_node_to_ir(const aura::ast::FlatAST& flat,
-                         const aura::ast::StringPool& pool,
-                         aura::ast::NodeId id);
+export std::optional<SVInterfaceIR> map_interface_node_to_ir(const aura::ast::FlatAST& flat,
+                                                             const aura::ast::StringPool& pool,
+                                                             aura::ast::NodeId id);
 
 // Issue #694: AST tag → string-based SVA IR mappers.
-export std::optional<PropertyIR>
-map_property_node_to_ir(const aura::ast::FlatAST& flat,
-                        const aura::ast::StringPool& pool,
-                        aura::ast::NodeId id);
+export std::optional<PropertyIR> map_property_node_to_ir(const aura::ast::FlatAST& flat,
+                                                         const aura::ast::StringPool& pool,
+                                                         aura::ast::NodeId id);
 
-export std::optional<SequenceIR>
-map_sequence_node_to_ir(const aura::ast::FlatAST& flat,
-                      const aura::ast::StringPool& pool,
-                      aura::ast::NodeId id);
+export std::optional<SequenceIR> map_sequence_node_to_ir(const aura::ast::FlatAST& flat,
+                                                         const aura::ast::StringPool& pool,
+                                                         aura::ast::NodeId id);
 
-export std::optional<CoverpointIR>
-map_coverpoint_node_to_ir(const aura::ast::FlatAST& flat,
-                          const aura::ast::StringPool& pool,
-                          aura::ast::NodeId id);
+export std::optional<CoverpointIR> map_coverpoint_node_to_ir(const aura::ast::FlatAST& flat,
+                                                             const aura::ast::StringPool& pool,
+                                                             aura::ast::NodeId id);
 
-export std::optional<CovergroupIR>
-map_covergroup_node_to_ir(const aura::ast::FlatAST& flat,
-                          const aura::ast::StringPool& pool,
-                          aura::ast::NodeId id);
+export std::optional<CovergroupIR> map_covergroup_node_to_ir(const aura::ast::FlatAST& flat,
+                                                             const aura::ast::StringPool& pool,
+                                                             aura::ast::NodeId id);
 
-export std::optional<PropertyIR>
-map_assert_node_to_ir(const aura::ast::FlatAST& flat,
-                      const aura::ast::StringPool& pool,
-                      aura::ast::NodeId id);
+export std::optional<PropertyIR> map_assert_node_to_ir(const aura::ast::FlatAST& flat,
+                                                       const aura::ast::StringPool& pool,
+                                                       aura::ast::NodeId id);
 
 // Debug helpers (SymId-aware — resolve via the pool).
-export std::string debug_sv_modport(const SVModportIR& m,
-                                     const aura::ast::StringPool& pool);
+export std::string debug_sv_modport(const SVModportIR& m, const aura::ast::StringPool& pool);
 
-export std::string debug_sv_interface(const SVInterfaceIR& i,
-                                      const aura::ast::StringPool& pool);
+export std::string debug_sv_interface(const SVInterfaceIR& i, const aura::ast::StringPool& pool);
 
 // ═════════════════════════════════════════════════════════════════
 // Issue #316 — SystemVerilog emit (symid IR variant)
@@ -366,8 +347,7 @@ export std::string debug_sv_interface(const SVInterfaceIR& i,
 // Emit a modport declaration as a single line (no trailing
 // newline). Example output:
 //   modport master(input data, output valid);
-export std::string emit_sv_modport(const SVModportIR& m,
-                                   const aura::ast::StringPool& pool);
+export std::string emit_sv_modport(const SVModportIR& m, const aura::ast::StringPool& pool);
 
 // Emit a complete interface block. The returned text is ready
 // to append to a .sv file (the caller adds the trailing newline
@@ -375,8 +355,7 @@ export std::string emit_sv_modport(const SVModportIR& m,
 //   interface Bus();
 //     modport master(input data, output valid);
 //   endinterface
-export std::string emit_sv_interface(const SVInterfaceIR& i,
-                                    const aura::ast::StringPool& pool);
+export std::string emit_sv_interface(const SVInterfaceIR& i, const aura::ast::StringPool& pool);
 
 // Issue #693: SV closed-loop emit helpers.
 export struct SvReemitResult {
@@ -390,11 +369,10 @@ export std::string emit_sv_diff(std::string_view before_sv, std::string_view aft
 export std::int64_t estimate_ppa_savings(std::string_view before_sv, std::string_view after_sv);
 
 export std::string emit_commercial_simulator_do_file(std::string_view simulator,
-                                                   std::string_view sv_filename);
+                                                     std::string_view sv_filename);
 
 export SvReemitResult reemit_sv_node(const aura::ast::FlatAST& flat,
-                                     const aura::ast::StringPool& pool,
-                                     aura::ast::NodeId id,
+                                     const aura::ast::StringPool& pool, aura::ast::NodeId id,
                                      std::string_view simulator = "vcs");
 
 // Issue #698: mock SV emit validator (balanced delimiters + construct keywords).

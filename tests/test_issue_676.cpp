@@ -35,7 +35,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -46,7 +46,8 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t sec_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:security-stats) '{}')", key));
-    if (!r || !aura::compiler::types::is_int(*r)) return -1;
+    if (!r || !aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -54,12 +55,18 @@ static bool is_error_val(const aura::compiler::types::EvalValue& v) {
     return aura::compiler::types::is_error(v);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
-}  // namespace aura_issue_676_detail
+} // namespace aura_issue_676_detail
 
 int main() {
     using namespace aura_issue_676_detail;
@@ -130,13 +137,13 @@ int main() {
     // AC7: stats:list
     {
         std::println("\n--- AC7: stats:list includes security primitives ---");
-        auto r = run_on(cs,
-            "(letrec ((find? (lambda (needle hay) "
-            "                (if (pair? hay) "
-            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-            "                    #f)))) "
-            "  (and (find? \"query:security-stats\" (stats:list)) "
-            "       (find? \"query:mutation-audit-log\" (stats:list))))");
+        auto r = run_on(
+            cs, "(letrec ((find? (lambda (needle hay) "
+                "                (if (pair? hay) "
+                "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+                "                    #f)))) "
+                "  (and (find? \"query:security-stats\" (stats:list)) "
+                "       (find? \"query:mutation-audit-log\" (stats:list))))");
         CHECK(aura::compiler::types::is_bool(r) && aura::compiler::types::as_bool(r),
               "stats:list includes query:security-stats and query:mutation-audit-log");
     }

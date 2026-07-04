@@ -48,17 +48,16 @@
 #include "serve/metrics.h"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 namespace aura_issue_363_detail {
 
-template <typename A>
-bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(timeout_ms);
+template <typename A> bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (counter.load() < expected) {
-        if (std::chrono::steady_clock::now() >= deadline) return false;
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;
@@ -87,7 +86,8 @@ bool test_scheduler_load_increments_metrics() {
             // dispatch. The metric that matters is the
             // spawned/completed count, not the work itself.
             std::atomic<int> sink{0};
-            for (int j = 0; j < 100; ++j) sink.fetch_add(j);
+            for (int j = 0; j < 100; ++j)
+                sink.fetch_add(j);
             completed.fetch_add(1);
         });
     }
@@ -111,11 +111,9 @@ bool test_scheduler_load_increments_metrics() {
     // least one worker.
     int total_executed = 0;
     for (size_t w = 0; w < gm.num_workers(); ++w) {
-        total_executed += static_cast<int>(
-            gm.worker(w).fibers_executed.load());
+        total_executed += static_cast<int>(gm.worker(w).fibers_executed.load());
     }
-    CHECK(total_executed >= NUM_FIBERS,
-          "fibers_executed across workers >= NUM_FIBERS");
+    CHECK(total_executed >= NUM_FIBERS, "fibers_executed across workers >= NUM_FIBERS");
 
     return true;
 }
@@ -173,10 +171,10 @@ bool test_work_stealing_under_uneven_load() {
     // distribution failed).
     int workers_used = 0;
     for (size_t w = 0; w < gm.num_workers(); ++w) {
-        if (gm.worker(w).fibers_executed.load() > 0) ++workers_used;
+        if (gm.worker(w).fibers_executed.load() > 0)
+            ++workers_used;
     }
-    CHECK(workers_used >= 2,
-          "fibers were distributed across >= 2 workers");
+    CHECK(workers_used >= 2, "fibers were distributed across >= 2 workers");
 
     // Steal attempts may or may not have happened depending
     // on timing — log it but don''t assert non-zero (some
@@ -188,9 +186,8 @@ bool test_work_stealing_under_uneven_load() {
         }
         return total;
     }();
-    std::println("       [info] steal_attempts: {} -> {} (delta={})",
-                 steal_attempts_before, steal_attempts_after,
-                 steal_attempts_after - steal_attempts_before);
+    std::println("       [info] steal_attempts: {} -> {} (delta={})", steal_attempts_before,
+                 steal_attempts_after, steal_attempts_after - steal_attempts_before);
 
     return true;
 }
@@ -211,6 +208,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_363_detail
+} // namespace aura_issue_363_detail
 
-int aura_issue_363_run() { return aura_issue_363_detail::run_tests(); }
+int aura_issue_363_run() {
+    return aura_issue_363_detail::run_tests();
+}

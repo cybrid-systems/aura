@@ -10,8 +10,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
@@ -65,7 +65,7 @@ bool test_validate_aborts_on_stale_nodeid() {
         auto id = flat.add_literal(1);
         flat.bump_generation();
         flat.validate(id);
-        _exit(0);  // should not reach
+        _exit(0); // should not reach
     }
     int status = 0;
     waitpid(pid, &status, 0);
@@ -121,10 +121,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_273_detail
+} // namespace aura_issue_273_detail
 
-int aura_issue_273_run() { return aura_issue_273_detail::run_tests(); }
+int aura_issue_273_run() {
+    return aura_issue_273_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_273_run(); }
+int main() {
+    return aura_issue_273_run();
+}
 #endif

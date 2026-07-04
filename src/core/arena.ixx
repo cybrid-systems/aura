@@ -159,8 +159,7 @@ public:
 
     // Issue #685: fraction of small-pool bytes in use [0,1].
     [[nodiscard]] double utilization() const noexcept {
-        return static_cast<double>(allocated_from_small_) /
-               static_cast<double>(kSmallPoolSize);
+        return static_cast<double>(allocated_from_small_) / static_cast<double>(kSmallPoolSize);
     }
 
 private:
@@ -218,9 +217,7 @@ public:
     // request / clear, acquire-release for the read in the
     // safepoint check (so the fiber sees the most recent flag
     // state across threads).
-    void request_defrag() noexcept {
-        defrag_requested_.store(true, std::memory_order_release);
-    }
+    void request_defrag() noexcept { defrag_requested_.store(true, std::memory_order_release); }
     [[nodiscard]] bool defrag_requested() const noexcept {
         return defrag_requested_.load(std::memory_order_acquire);
     }
@@ -230,9 +227,7 @@ public:
 
     // Issue #685: optional hook invoked after compact()/defrag()
     // reclaims bytes (ShapeProfiler invalidate, dirty cascade).
-    void set_on_compact_hook(std::function<void()> hook) {
-        on_compact_hook_ = std::move(hook);
-    }
+    void set_on_compact_hook(std::function<void()> hook) { on_compact_hook_ = std::move(hook); }
 
     ~ASTArena() {
         // Call all registered destructors in reverse construction
@@ -582,8 +577,8 @@ private:
         stats_.auto_alloc_trigger_count++;
         const double frag_after = stats().fragmentation_ratio();
         if (frag_before > frag_after) {
-            stats_.frag_reduced_bp += static_cast<std::size_t>(
-                (frag_before - frag_after) * 10000.0);
+            stats_.frag_reduced_bp +=
+                static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
     }
 
@@ -633,8 +628,7 @@ public:
 
     // Get or create an arena for a module
     ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024)
-        pre(!name.empty())
-        pre(initial_size >= 1024) {
+        pre(!name.empty()) pre(initial_size >= 1024) {
         auto it = arenas_.find(name);
         if (it != arenas_.end())
             return *it->second;
@@ -685,7 +679,8 @@ public:
     // critical threshold.
     [[nodiscard]] bool should_auto_compact(const std::string& name) const {
         auto it = arenas_.find(name);
-        if (it == arenas_.end()) return false;
+        if (it == arenas_.end())
+            return false;
         const double frag = it->second->stats().fragmentation_ratio();
         // Adaptive threshold: lower the base threshold when
         // recent compactions saved a lot (the previous
@@ -694,10 +689,8 @@ public:
         // little (the previous compact was wasteful →
         // trigger later).
         const double ema = savings_ema_for(name);
-        const double adjusted = std::clamp(
-            compact_threshold_ - ema * kEmaGain,
-            kMinThreshold,
-            kMaxThreshold);
+        const double adjusted =
+            std::clamp(compact_threshold_ - ema * kEmaGain, kMinThreshold, kMaxThreshold);
         return frag >= adjusted;
     }
 
@@ -706,7 +699,8 @@ public:
     // the trigger counter. Returns bytes reclaimed.
     [[nodiscard]] std::size_t adaptive_compact(const std::string& name) {
         auto it = arenas_.find(name);
-        if (it == arenas_.end()) return 0;
+        if (it == arenas_.end())
+            return 0;
         // Pre-snapshot so we can compute savings without
         // recomputing stats from scratch.
         const auto before = it->second->stats();
@@ -720,9 +714,9 @@ public:
         // compaction shifts the next trigger sooner but
         // the effect decays over time.
         const double& ema_ref = savings_ema_[name];
-        const double new_ema = (ema_ref == 0.0)
-            ? static_cast<double>(saved)
-            : kEmaAlpha * static_cast<double>(saved) + (1.0 - kEmaAlpha) * ema_ref;
+        const double new_ema =
+            (ema_ref == 0.0) ? static_cast<double>(saved)
+                             : kEmaAlpha * static_cast<double>(saved) + (1.0 - kEmaAlpha) * ema_ref;
         savings_ema_[name] = new_ema;
         auto_compact_trigger_count_.fetch_add(1, std::memory_order_relaxed);
         return saved;
@@ -824,14 +818,14 @@ public:
     // sparingly — compaction is O(capacity) and can
     // stall the worker thread.
     enum class CompactPolicy {
-        Force,  // always compact
-        Auto,   // consult adaptive threshold
-        Skip,   // never compact
+        Force, // always compact
+        Auto,  // consult adaptive threshold
+        Skip,  // never compact
     };
-    [[nodiscard]] std::size_t compact_with_policy(const std::string& name,
-                                                  CompactPolicy policy) {
+    [[nodiscard]] std::size_t compact_with_policy(const std::string& name, CompactPolicy policy) {
         auto it = arenas_.find(name);
-        if (it == arenas_.end()) return 0;
+        if (it == arenas_.end())
+            return 0;
         switch (policy) {
             case CompactPolicy::Skip: {
                 auto_compact_skip_count_.fetch_add(1, std::memory_order_relaxed);
@@ -844,10 +838,9 @@ public:
                 // update the EMA + trigger counter.
                 const std::size_t saved = it->second->compact();
                 const double& ema_ref = savings_ema_[name];
-                const double new_ema = (ema_ref == 0.0)
-                    ? static_cast<double>(saved)
-                    : kEmaAlpha * static_cast<double>(saved) +
-                          (1.0 - kEmaAlpha) * ema_ref;
+                const double new_ema = (ema_ref == 0.0) ? static_cast<double>(saved)
+                                                        : kEmaAlpha * static_cast<double>(saved) +
+                                                              (1.0 - kEmaAlpha) * ema_ref;
                 savings_ema_[name] = new_ema;
                 auto_compact_trigger_count_.fetch_add(1, std::memory_order_relaxed);
                 return saved;
@@ -872,10 +865,11 @@ public:
     // N samples). Bounded ring buffer (default N=8) so
     // the history has bounded memory. Returns the
     // history in chronological order (oldest first).
-    [[nodiscard]] std::vector<double> module_frag_history(
-        const std::string& name, std::size_t max_samples = 8) const {
+    [[nodiscard]] std::vector<double> module_frag_history(const std::string& name,
+                                                          std::size_t max_samples = 8) const {
         auto it = arenas_.find(name);
-        if (it == arenas_.end()) return {};
+        if (it == arenas_.end())
+            return {};
         // The history lives on the ASTArena's per-arena
         // fragmentation log (we record a sample every
         // adaptive_compact() call). For now we just return
@@ -884,7 +878,8 @@ public:
         // populated on subsequent compact calls.
         std::vector<double> out;
         const double cur = it->second->stats().fragmentation_ratio();
-        for (std::size_t i = 0; i < max_samples; ++i) out.push_back(cur);
+        for (std::size_t i = 0; i < max_samples; ++i)
+            out.push_back(cur);
         return out;
     }
 
@@ -942,15 +937,15 @@ public:
                     esc_name += '\\';
                 esc_name += c;
             }
-            out += std::format("{{\"name\":\"{}\",\"used\":{},\"capacity\":{},"
-                               "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
-                               "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                               "\"fragmentation_ratio\":{:.3f},"
-                               "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}",
-                               esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
-                               s.compaction_count, s.last_compaction_saved,
-                               s.total_compaction_saved, s.fragmentation_ratio(),
-                               s.defrag_attempted_count, s.last_defrag_saved);
+            out +=
+                std::format("{{\"name\":\"{}\",\"used\":{},\"capacity\":{},"
+                            "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                            "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                            "\"fragmentation_ratio\":{:.3f},"
+                            "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}",
+                            esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
+                            s.compaction_count, s.last_compaction_saved, s.total_compaction_saved,
+                            s.fragmentation_ratio(), s.defrag_attempted_count, s.last_defrag_saved);
         }
         out += "],\"compact_threshold\":" + std::to_string(compact_threshold_) + "}";
         return out;
@@ -978,7 +973,7 @@ private:
     // threshold (which would defeat the safety net).
     std::unordered_map<std::string, double> savings_ema_;
     static constexpr double kEmaAlpha = 0.3;
-    static constexpr double kEmaGain = 0.0001;  // 0.01% per saved byte per module
+    static constexpr double kEmaGain = 0.0001; // 0.01% per saved byte per module
     static constexpr double kMinThreshold = 0.05;
     static constexpr double kMaxThreshold = 0.95;
     // Counters for the adaptive path. atomic so the
@@ -1004,8 +999,7 @@ private:
     // formula so the two stay in sync.
     [[nodiscard]] double threshold_for(const std::string& name) const {
         const double ema = savings_ema_for(name);
-        return std::clamp(compact_threshold_ - ema * kEmaGain,
-                          kMinThreshold, kMaxThreshold);
+        return std::clamp(compact_threshold_ - ema * kEmaGain, kMinThreshold, kMaxThreshold);
     }
 };
 

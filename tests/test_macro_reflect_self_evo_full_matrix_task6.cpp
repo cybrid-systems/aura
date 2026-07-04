@@ -66,7 +66,8 @@ static int k_concurrent_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !aura::compiler::types::is_int(*r)) return -1;
+    if (!r || !aura::compiler::types::is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
 }
 
@@ -114,9 +115,8 @@ bool test_query_macro_reflect_self_evo_stats() {
     CHECK(s0 >= 0, "combined stats starts >= 0");
     for (int i = 0; i < 5; ++i) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:replace-value (define user-val " +
-            std::to_string(100 + i) + ") (define user-val " +
-            std::to_string(100 + i) + "))");
+        (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(100 + i) +
+                      ") (define user-val " + std::to_string(100 + i) + "))");
         (void)cs.eval("(eval-current)");
     }
     const auto s1 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
@@ -159,16 +159,14 @@ bool test_macro_introduced_marker_preserved() {
     auto m0 = cs.eval("(syntax-marker-counts)");
     CHECK(m0.has_value(), "(syntax-marker-counts) callable pre-mutate");
     for (int i = 0; i < 3; ++i) {
-        (void)cs.eval("(mutate:replace-value (define user-val " +
-            std::to_string(i) + ") (define user-val " +
-            std::to_string(50 + i) + "))");
+        (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(i) +
+                      ") (define user-val " + std::to_string(50 + i) + "))");
         (void)cs.eval("(eval-current)");
     }
     auto m1 = cs.eval("(syntax-marker-counts)");
     CHECK(m1.has_value(), "(syntax-marker-counts) callable post-mutate");
     auto by_marker = cs.eval("(query:by-marker \"MacroIntroduced\")");
-    CHECK(by_marker.has_value(),
-          "(query:by-marker \"MacroIntroduced\") callable after cycles");
+    CHECK(by_marker.has_value(), "(query:by-marker \"MacroIntroduced\") callable after cycles");
     return true;
 }
 
@@ -181,11 +179,9 @@ bool test_default_hygiene_filter() {
     (void)cs.eval("(query:pattern \"v\")");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     std::println("  macro_introduced_skipped: {} -> {}", skips0, skips1);
-    CHECK(skips1 >= skips0,
-          "macro_introduced_skipped monotonic after query:pattern");
+    CHECK(skips1 >= skips0, "macro_introduced_skipped monotonic after query:pattern");
     auto r = cs.eval("(query:pattern \"v\" :respect-hygiene #f)");
-    CHECK(r.has_value(),
-          "(query:pattern :respect-hygiene #f) recognized");
+    CHECK(r.has_value(), "(query:pattern :respect-hygiene #f) recognized");
     return true;
 }
 
@@ -207,8 +203,7 @@ bool test_epoch_dirty_propagation() {
                  epoch0, epoch1, snap0, snap1, dirty0, dirty1, impact1);
     CHECK(epoch1 > epoch0, "defuse_version epoch advanced after mutate");
     CHECK(snap1 > snap0, "impact_snapshot bumped after Guard mutate");
-    CHECK(dirty0 >= 0 && dirty1 >= 0,
-          "dirty-impact observable + non-negative");
+    CHECK(dirty0 >= 0 && dirty1 >= 0, "dirty-impact observable + non-negative");
     CHECK(impact1 >= 0, "mutation-impact observable post-mutate");
     return true;
 }
@@ -221,14 +216,13 @@ bool test_guard_reflect_counters_bump() {
     const auto snap0 = cs.evaluator().get_impact_snapshot_count();
     const auto commit0 = cs.evaluator().get_panic_checkpoint_commit_count();
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define user-val " +
-            std::to_string(i) + ") (define user-val " +
-            std::to_string(10 + i) + "))");
+        (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(i) +
+                      ") (define user-val " + std::to_string(10 + i) + "))");
     }
     const auto snap1 = cs.evaluator().get_impact_snapshot_count();
     const auto commit1 = cs.evaluator().get_panic_checkpoint_commit_count();
-    std::println("  impact_snapshot: {} -> {} panic_commit: {} -> {}",
-                 snap0, snap1, commit0, commit1);
+    std::println("  impact_snapshot: {} -> {} panic_commit: {} -> {}", snap0, snap1, commit0,
+                 commit1);
     CHECK(snap1 > snap0, "impact_snapshot_count bumped (reflect path)");
     CHECK(commit1 >= commit0, "panic_checkpoint_commit monotonic");
     return true;
@@ -236,8 +230,7 @@ bool test_guard_reflect_counters_bump() {
 
 // ── AC8: Fuzz — macro + self-evo + panic injection ────────
 bool test_fuzz_macro_self_evo_panic() {
-    std::println("\n--- AC8: {} iters fuzz (macro + self-evo + panic) ---",
-                 k_fuzz_iters());
+    std::println("\n--- AC8: {} iters fuzz (macro + self-evo + panic) ---", k_fuzz_iters());
     CompilerService cs;
     CHECK(setup_macro_workspace(cs), "macro workspace for fuzz");
     std::mt19937 rng(597u);
@@ -247,46 +240,44 @@ bool test_fuzz_macro_self_evo_panic() {
     const auto stats0 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         switch (op_dist(rng)) {
-        case 0:
-            (void)cs.eval("(query:pattern \"user-val\")");
-            break;
-        case 1:
-            (void)cs.eval("(mutate:replace-value (define user-val " +
-                std::to_string(val_dist(rng)) + ") (define user-val " +
-                std::to_string(val_dist(rng)) + "))");
-            break;
-        case 2:
-            (void)cs.eval("(query:epoch-delta-since-last-query)");
-            break;
-        case 3:
-            (void)cs.eval("(query:macro-reflect-self-evo-stats)");
-            break;
-        default:
-            (void)cs.eval("(panic-checkpoint)");
-            (void)cs.eval("(mutate:replace-value (define user-val " +
-                std::to_string(val_dist(rng)) + ") (define user-val " +
-                std::to_string(val_dist(rng)) + "))");
-            (void)cs.eval("(panic-restore)");
-            ++panics;
-            break;
+            case 0:
+                (void)cs.eval("(query:pattern \"user-val\")");
+                break;
+            case 1:
+                (void)cs.eval("(mutate:replace-value (define user-val " +
+                              std::to_string(val_dist(rng)) + ") (define user-val " +
+                              std::to_string(val_dist(rng)) + "))");
+                break;
+            case 2:
+                (void)cs.eval("(query:epoch-delta-since-last-query)");
+                break;
+            case 3:
+                (void)cs.eval("(query:macro-reflect-self-evo-stats)");
+                break;
+            default:
+                (void)cs.eval("(panic-checkpoint)");
+                (void)cs.eval("(mutate:replace-value (define user-val " +
+                              std::to_string(val_dist(rng)) + ") (define user-val " +
+                              std::to_string(val_dist(rng)) + "))");
+                (void)cs.eval("(panic-restore)");
+                ++panics;
+                break;
         }
     }
     const auto stats1 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
     const auto rollback = cs.evaluator().get_rollback_success_on_panic();
-    std::println("  panics: {} stats: {} -> {} rollback_success: {}",
-                 panics, stats0, stats1, rollback);
+    std::println("  panics: {} stats: {} -> {} rollback_success: {}", panics, stats0, stats1,
+                 rollback);
     CHECK(stats1 >= stats0, "combined stats monotonic under fuzz");
     if (panics > 0) {
-        CHECK(rollback > 0,
-              "rollback_success bumped after panic injection");
+        CHECK(rollback > 0, "rollback_success bumped after panic injection");
     }
     return true;
 }
 
 // ── AC9: 8-thread concurrent full matrix ────────────────────
 bool test_eight_thread_concurrent_matrix() {
-    std::println("\n--- AC9: 8 threads × {} iters concurrent matrix ---",
-                 k_concurrent_iters());
+    std::println("\n--- AC9: 8 threads × {} iters concurrent matrix ---", k_concurrent_iters());
     CompilerService cs;
     CHECK(setup_macro_workspace(cs), "macro workspace for concurrent matrix");
     constexpr int n_threads = 8;
@@ -299,9 +290,10 @@ bool test_eight_thread_concurrent_matrix() {
             std::lock_guard<std::mutex> lk(mtx);
             (void)cs.eval("(query:pattern \"user-val\")");
             std::string code = "(mutate:replace-value (define user-val " +
-                std::to_string(tid * 1000 + i) + ") (define user-val " +
-                std::to_string(tid * 1000 + i) + "))";
-            if (!cs.eval(code)) errors.fetch_add(1);
+                               std::to_string(tid * 1000 + i) + ") (define user-val " +
+                               std::to_string(tid * 1000 + i) + "))";
+            if (!cs.eval(code))
+                errors.fetch_add(1);
             if ((i & 15) == 0) {
                 (void)cs.eval("(query:macro-reflect-self-evo-stats)");
             }
@@ -310,16 +302,17 @@ bool test_eight_thread_concurrent_matrix() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     const auto violations = cs.evaluator().get_hygiene_violation_count();
-    std::println("  completed: {}/{} errors: {} hygiene_violations: {} ms: {}",
-                 completed.load(), n_threads * n_iters, errors.load(),
-                 violations, ms);
-    CHECK(completed.load() == n_threads * n_iters,
-          "all concurrent ops completed (no deadlock)");
+    std::println("  completed: {}/{} errors: {} hygiene_violations: {} ms: {}", completed.load(),
+                 n_threads * n_iters, errors.load(), violations, ms);
+    CHECK(completed.load() == n_threads * n_iters, "all concurrent ops completed (no deadlock)");
     CHECK(errors.load() == 0, "no eval errors under concurrent matrix");
     CHECK(violations == 0, "zero hygiene violations under concurrent load");
     CHECK(ms < 120000, "completed within 120s wall-clock budget");
@@ -345,22 +338,22 @@ bool test_fiber_yield_at_mutation_boundary() {
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed > 30000) break;
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+        if (elapsed > 30000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
     std::println("  fibers done: {}/{}", done.load(), k_fibers);
-    CHECK(done.load() == k_fibers,
-          "all fibers completed MutationBoundary yields (no stall)");
+    CHECK(done.load() == k_fibers, "all fibers completed MutationBoundary yields (no stall)");
     return true;
 }
 
 // ── AC11: Long-running stress (bounded iter count) ──────────
 bool test_long_running_self_evo_stress() {
-    std::println("\n--- AC11a: {} iters long-running self-evo stress ---",
-                 k_stress_iters());
+    std::println("\n--- AC11a: {} iters long-running self-evo stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_macro_workspace(cs), "macro workspace for stress");
     const auto s0 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
@@ -368,9 +361,8 @@ bool test_long_running_self_evo_stress() {
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:replace-value (define user-val " +
-            std::to_string(val_dist(rng)) + ") (define user-val " +
-            std::to_string(val_dist(rng)) + "))");
+        (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(val_dist(rng)) +
+                      ") (define user-val " + std::to_string(val_dist(rng)) + "))");
     }
     (void)cs.eval("(eval-current)");
     const auto s1 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
@@ -432,8 +424,12 @@ int run_tests() {
 
 } // namespace aura_issue_597_detail
 
-int aura_issue_597_run() { return aura_issue_597_detail::run_tests(); }
+int aura_issue_597_run() {
+    return aura_issue_597_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_597_run(); }
+int main() {
+    return aura_issue_597_run();
+}
 #endif

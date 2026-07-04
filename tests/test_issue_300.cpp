@@ -27,8 +27,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -40,36 +40,48 @@ namespace test_300_detail {
 // pair (1..4) or the terminal int (5). The terminal is recognized by
 // is_int(cdr), not by a sentinel value.
 static bool extract_5tuple(aura::compiler::CompilerService& cs,
-                           const aura::compiler::types::EvalValue& v,
-                           int64_t& e1, int64_t& e2, int64_t& e3,
-                           int64_t& e4, int64_t& e5) {
-    if (!aura::compiler::types::is_pair(v)) return false;
+                           const aura::compiler::types::EvalValue& v, int64_t& e1, int64_t& e2,
+                           int64_t& e3, int64_t& e4, int64_t& e5) {
+    if (!aura::compiler::types::is_pair(v))
+        return false;
     auto p1_idx = aura::compiler::types::as_pair_idx(v);
     auto& pairs = cs.evaluator().pairs();
-    if (p1_idx >= pairs.size()) return false;
+    if (p1_idx >= pairs.size())
+        return false;
     auto& p1 = pairs[p1_idx];
-    if (!aura::compiler::types::is_int(p1.car)) return false;
+    if (!aura::compiler::types::is_int(p1.car))
+        return false;
     e1 = aura::compiler::types::as_int(p1.car);
-    if (!aura::compiler::types::is_pair(p1.cdr)) return false;
+    if (!aura::compiler::types::is_pair(p1.cdr))
+        return false;
     auto p2_idx = aura::compiler::types::as_pair_idx(p1.cdr);
-    if (p2_idx >= pairs.size()) return false;
+    if (p2_idx >= pairs.size())
+        return false;
     auto& p2 = pairs[p2_idx];
-    if (!aura::compiler::types::is_int(p2.car)) return false;
+    if (!aura::compiler::types::is_int(p2.car))
+        return false;
     e2 = aura::compiler::types::as_int(p2.car);
-    if (!aura::compiler::types::is_pair(p2.cdr)) return false;
+    if (!aura::compiler::types::is_pair(p2.cdr))
+        return false;
     auto p3_idx = aura::compiler::types::as_pair_idx(p2.cdr);
-    if (p3_idx >= pairs.size()) return false;
+    if (p3_idx >= pairs.size())
+        return false;
     auto& p3 = pairs[p3_idx];
-    if (!aura::compiler::types::is_int(p3.car)) return false;
+    if (!aura::compiler::types::is_int(p3.car))
+        return false;
     e3 = aura::compiler::types::as_int(p3.car);
-    if (!aura::compiler::types::is_pair(p3.cdr)) return false;
+    if (!aura::compiler::types::is_pair(p3.cdr))
+        return false;
     auto p4_idx = aura::compiler::types::as_pair_idx(p3.cdr);
-    if (p4_idx >= pairs.size()) return false;
+    if (p4_idx >= pairs.size())
+        return false;
     auto& p4 = pairs[p4_idx];
-    if (!aura::compiler::types::is_int(p4.car)) return false;
+    if (!aura::compiler::types::is_int(p4.car))
+        return false;
     e4 = aura::compiler::types::as_int(p4.car);
     // Terminal: p4.cdr is the int e5 (dotted pair chain)
-    if (!aura::compiler::types::is_int(p4.cdr)) return false;
+    if (!aura::compiler::types::is_int(p4.cdr))
+        return false;
     e5 = aura::compiler::types::as_int(p4.cdr);
     return true;
 }
@@ -78,7 +90,11 @@ bool test_returns_5tuple() {
     std::println("\n--- AC #1: returns 5-tuple ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(arena:defrag-stats)");
-    if (!r) { ++g_failed; std::println(std::cerr, "eval returned null"); return false; }
+    if (!r) {
+        ++g_failed;
+        std::println(std::cerr, "eval returned null");
+        return false;
+    }
     int64_t e1, e2, e3, e4, e5;
     bool ok = extract_5tuple(cs, *r, e1, e2, e3, e4, e5);
     CHECK(ok, "result is a 5-tuple");
@@ -93,10 +109,15 @@ bool test_empty_workspace_zero() {
     std::println("\n--- AC #2: empty workspace → 0 counters ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(arena:defrag-stats)");
-    if (!r) { ++g_failed; return false; }
+    if (!r) {
+        ++g_failed;
+        return false;
+    }
     int64_t e1, e2, e3, e4, e5;
     if (!extract_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
-        ++g_failed; std::println(std::cerr, "not a 5-tuple"); return false;
+        ++g_failed;
+        std::println(std::cerr, "not a 5-tuple");
+        return false;
     }
     CHECK(e1 == 0, "compaction-count == 0 (got " + std::to_string(e1) + ")");
     CHECK(e2 == 0, "defrag-attempted-count == 0 (got " + std::to_string(e2) + ")");
@@ -124,7 +145,10 @@ bool test_5tuple_shape_via_aura() {
                      "       (integer? (car (cdr t)))"
                      "       (integer? (car (cdr (cdr t))))"
                      "       (integer? (car (cdr (cdr (cdr t)))))))");
-    if (!r) { ++g_failed; return false; }
+    if (!r) {
+        ++g_failed;
+        return false;
+    }
     auto& v = *r;
     bool is_t = aura::compiler::types::is_bool(v) && aura::compiler::types::as_bool(v);
     CHECK(is_t, "5-tuple has correct shape (4 pairs + terminal int, all int cars)");
@@ -139,25 +163,35 @@ bool test_5tuple_stable_across_calls() {
     cs.eval("(set-code \"(define a 1) (define b 2)\")");
     // Capture pre-defrag snapshot
     auto r0 = cs.eval("(arena:defrag-stats)");
-    if (!r0) { ++g_failed; return false; }
+    if (!r0) {
+        ++g_failed;
+        return false;
+    }
     int64_t e1, e2, e3, e4, e5;
     if (!extract_5tuple(cs, *r0, e1, e2, e3, e4, e5)) {
-        ++g_failed; return false; }
+        ++g_failed;
+        return false;
+    }
     int64_t defrag_before = e2;
     int64_t compact_est_before = e5;
     // Call defrag (B foundation: trims the unused tail, increments
     // stats_.defrag_attempted_count + last_defrag_saved).
     cs.eval("(arena:defrag)");
     auto r = cs.eval("(arena:defrag-stats)");
-    if (!r) { ++g_failed; return false; }
+    if (!r) {
+        ++g_failed;
+        return false;
+    }
     if (!extract_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
-        ++g_failed; return false; }
-    CHECK(e2 == defrag_before + 1,
-          "defrag-attempted-count incremented by 1 (was " + std::to_string(defrag_before)
-          + ", now " + std::to_string(e2) + ")");
-    CHECK(e5 <= compact_est_before,
-          "compact-estimate did not grow (was " + std::to_string(compact_est_before)
-          + ", now " + std::to_string(e5) + ")");
+        ++g_failed;
+        return false;
+    }
+    CHECK(e2 == defrag_before + 1, "defrag-attempted-count incremented by 1 (was " +
+                                       std::to_string(defrag_before) + ", now " +
+                                       std::to_string(e2) + ")");
+    CHECK(e5 <= compact_est_before, "compact-estimate did not grow (was " +
+                                        std::to_string(compact_est_before) + ", now " +
+                                        std::to_string(e5) + ")");
     CHECK(e3 >= 0 && e3 <= 10000,
           "fragmentation-bp in [0, 10000] (got " + std::to_string(e3) + ")");
     return true;
@@ -172,33 +206,50 @@ bool test_5tuple_request_defrag_safepoint() {
     aura::compiler::CompilerService cs;
     // 1. Fresh: not requested
     auto r0 = cs.eval("(arena:defrag-requested?)");
-    if (!r0) { ++g_failed; return false; }
+    if (!r0) {
+        ++g_failed;
+        return false;
+    }
     auto& v0 = *r0;
     if (!(aura::compiler::types::is_bool(v0) && !aura::compiler::types::as_bool(v0))) {
-        ++g_failed; std::println(std::cerr, "fresh should report #f"); return false;
+        ++g_failed;
+        std::println(std::cerr, "fresh should report #f");
+        return false;
     }
     // 2. Request defrag
     auto r1 = cs.eval("(arena:request-defrag)");
-    if (!r1) { ++g_failed; return false; }
+    if (!r1) {
+        ++g_failed;
+        return false;
+    }
     auto& v1 = *r1;
     if (!(aura::compiler::types::is_bool(v1) && aura::compiler::types::as_bool(v1))) {
-        ++g_failed; std::println(std::cerr, "first request should report #t (newly set)");
+        ++g_failed;
+        std::println(std::cerr, "first request should report #t (newly set)");
         return false;
     }
     // 3. Now flagged
     auto r2 = cs.eval("(arena:defrag-requested?)");
-    if (!r2) { ++g_failed; return false; }
+    if (!r2) {
+        ++g_failed;
+        return false;
+    }
     auto& v2 = *r2;
     if (!(aura::compiler::types::is_bool(v2) && aura::compiler::types::as_bool(v2))) {
-        ++g_failed; std::println(std::cerr, "after request should report #t");
+        ++g_failed;
+        std::println(std::cerr, "after request should report #t");
         return false;
     }
     // 4. Re-request: should return #f (already set, no new request)
     auto r3 = cs.eval("(arena:request-defrag)");
-    if (!r3) { ++g_failed; return false; }
+    if (!r3) {
+        ++g_failed;
+        return false;
+    }
     auto& v3 = *r3;
     if (!(aura::compiler::types::is_bool(v3) && !aura::compiler::types::as_bool(v3))) {
-        ++g_failed; std::println(std::cerr, "duplicate request should return #f");
+        ++g_failed;
+        std::println(std::cerr, "duplicate request should return #f");
         return false;
     }
     // 5. (arena:defrag) runs and clears the request as a side-effect
@@ -206,10 +257,14 @@ bool test_5tuple_request_defrag_safepoint() {
     cs.eval("(set-code \"(define x 1)\")");
     cs.eval("(arena:defrag)");
     auto r4 = cs.eval("(arena:defrag-requested?)");
-    if (!r4) { ++g_failed; return false; }
+    if (!r4) {
+        ++g_failed;
+        return false;
+    }
     auto& v4 = *r4;
     if (!(aura::compiler::types::is_bool(v4) && !aura::compiler::types::as_bool(v4))) {
-        ++g_failed; std::println(std::cerr, "after defrag should clear the flag");
+        ++g_failed;
+        std::println(std::cerr, "after defrag should clear the flag");
         return false;
     }
     CHECK(true, "defrag request flag: fresh=#f, request=#t, set=#t, "
@@ -224,15 +279,19 @@ int run_tests() {
     test_5tuple_shape_via_aura();
     test_5tuple_stable_across_calls();
     test_5tuple_request_defrag_safepoint();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_300_detail
+
+int aura_issue_300_run() {
+    return test_300_detail::run_tests();
 }
 
-int aura_issue_300_run() { return test_300_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_300_run(); }
+int main() {
+    return aura_issue_300_run();
+}
 #endif

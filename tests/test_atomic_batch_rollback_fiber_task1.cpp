@@ -59,13 +59,11 @@ bool test_query_mutation_log_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:mutation-log-stats)");
     CHECK(r.has_value(), "(query:mutation-log-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:mutation-log-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:mutation-log-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:mutation-log-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:mutation-log-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(query:mutation-log-stats) >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -89,7 +87,10 @@ bool test_atomic_batch_happy_path_single_bump() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     // atomic_batch_count_ (Evaluator counter, bumped by the
     // Aura primitive on commit) is the reliable accessor
     // for Aura-level batches. The FlatAST-level
@@ -100,18 +101,16 @@ bool test_atomic_batch_happy_path_single_bump() {
     const auto bumps_saved0 = cs.evaluator().atomic_batch_bumps_saved_total();
     const auto g0 = ws->generation();
     auto r = cs.eval("(mutate:atomic-batch "
-                    "(list) "
-                    "\"test happy path\")");
+                     "(list) "
+                     "\"test happy path\")");
     CHECK(r.has_value(), "(mutate:atomic-batch) returns");
     const auto batch_count1 = cs.evaluator().atomic_batch_count();
     const auto bumps_saved1 = cs.evaluator().atomic_batch_bumps_saved_total();
     const auto g1 = ws->generation();
-    std::println("  batch_count: {} -> {} bumps_saved: {} -> {} gen: {} -> {}",
-                 batch_count0, batch_count1, bumps_saved0, bumps_saved1, g0, g1);
-    CHECK(batch_count1 > batch_count0,
-          "atomic_batch_count bumped after successful batch");
-    CHECK(g1 > g0,
-          "generation_ bumped after successful batch commit");
+    std::println("  batch_count: {} -> {} bumps_saved: {} -> {} gen: {} -> {}", batch_count0,
+                 batch_count1, bumps_saved0, bumps_saved1, g0, g1);
+    CHECK(batch_count1 > batch_count0, "atomic_batch_count bumped after successful batch");
+    CHECK(g1 > g0, "generation_ bumped after successful batch commit");
     return true;
 }
 
@@ -123,23 +122,24 @@ bool test_atomic_batch_rollback_path() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto rollbacks0 = cs.evaluator().atomic_batch_rollbacks();
     // Try to make a batch fail — pass a list with a bad
     // argument. The first mutate fails, the whole batch
     // rolls back. Even if the exact failure path differs,
     // we expect atomic_batch_rollbacks to be reachable.
     auto r = cs.eval("(mutate:atomic-batch "
-                    "(list "
-                    "(mutate:replace-value 999 \"bad node id\") "
-                    ") "
-                    "\"test rollback path\")");
-    CHECK(r.has_value() || !r.has_value(),
-          "(mutate:atomic-batch) returns (success or error)");
+                     "(list "
+                     "(mutate:replace-value 999 \"bad node id\") "
+                     ") "
+                     "\"test rollback path\")");
+    CHECK(r.has_value() || !r.has_value(), "(mutate:atomic-batch) returns (success or error)");
     const auto rollbacks1 = cs.evaluator().atomic_batch_rollbacks();
     std::println("  rollbacks: {} -> {}", rollbacks0, rollbacks1);
-    CHECK(rollbacks1 >= rollbacks0,
-          "atomic_batch_rollbacks observable + monotonic");
+    CHECK(rollbacks1 >= rollbacks0, "atomic_batch_rollbacks observable + monotonic");
     return true;
 }
 
@@ -150,19 +150,23 @@ bool test_atomic_batch_stress() {
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto batch_count0 = cs.evaluator().atomic_batch_count();
     const auto g0 = ws->generation();
     for (int i = 0; i < k_stress_iters(); ++i) {
         // Minimal atomic batch: empty op list (vacuous success).
         std::string code = std::string("(mutate:atomic-batch "
-            "(list) \"stress iter ") + std::to_string(i) + "\")";
+                                       "(list) \"stress iter ") +
+                           std::to_string(i) + "\")";
         (void)cs.eval(code);
     }
     const auto batch_count1 = cs.evaluator().atomic_batch_count();
     const auto g1 = ws->generation();
-    std::println("  batch_count: {} -> {} (delta {}) gen: {} -> {}",
-                 batch_count0, batch_count1, batch_count1 - batch_count0, g0, g1);
+    std::println("  batch_count: {} -> {} (delta {}) gen: {} -> {}", batch_count0, batch_count1,
+                 batch_count1 - batch_count0, g0, g1);
     CHECK(batch_count1 >= batch_count0 + static_cast<std::uint64_t>(k_stress_iters()),
           "atomic_batch_count grew by iter count under stress");
     CHECK(g1 > g0, "generation_ bumped under stress");
@@ -186,23 +190,24 @@ bool test_concurrent_atomic_batches() {
             // just exercises the Aura primitive path under
             // concurrent load.
             std::string code = std::string("(mutate:atomic-batch "
-                "(list) \"concurrent ") +
-                std::to_string(tid * 100 + i) + "\")";
+                                           "(list) \"concurrent ") +
+                               std::to_string(tid * 100 + i) + "\")";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto batch_count = cs.evaluator().atomic_batch_count();
-    std::println("  completed: {}/{} atomic_batch_count: {}",
-                 completed.load(), n_threads * n_iters, batch_count);
+    std::println("  completed: {}/{} atomic_batch_count: {}", completed.load(), n_threads * n_iters,
+                 batch_count);
     CHECK(completed.load() == n_threads * n_iters,
           "all 80 batches completed (no crash under concurrent)");
-    CHECK(batch_count > 0,
-          "atomic_batch_count > 0 after concurrent batches");
+    CHECK(batch_count > 0, "atomic_batch_count > 0 after concurrent batches");
     return true;
 }
 
@@ -242,10 +247,8 @@ bool test_mutation_log_stats_accessibility() {
           "query:mutation-log-stats after second batch");
     const auto v1 = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
     const auto v2 = static_cast<std::int64_t>(aura::compiler::types::as_int(*r2));
-    std::println("  mutation-log-stats: {} -> {} (delta {})",
-                 v1, v2, v2 - v1);
-    CHECK(v2 > v1,
-          "mutation-log-stats grew after second batch (commits + bumps_saved)");
+    std::println("  mutation-log-stats: {} -> {} (delta {})", v1, v2, v2 - v1);
+    CHECK(v2 > v1, "mutation-log-stats grew after second batch (commits + bumps_saved)");
     return true;
 }
 
@@ -298,8 +301,12 @@ int run_tests() {
 
 } // namespace aura_issue_553_detail
 
-int aura_issue_553_run() { return aura_issue_553_detail::run_tests(); }
+int aura_issue_553_run() {
+    return aura_issue_553_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_553_run(); }
+int main() {
+    return aura_issue_553_run();
+}
 #endif

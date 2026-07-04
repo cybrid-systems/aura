@@ -31,8 +31,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -42,9 +42,11 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_184_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: defuse_version_ is std::atomic<std::uint64_t> ──
 //
@@ -55,8 +57,7 @@ bool test_defuse_version_is_atomic() {
     using EV = aura::compiler::Evaluator;
     // We can't access the private member directly; check via
     // get_defuse_version()'s return type instead.
-    static_assert(std::is_same_v<decltype(std::declval<EV>().get_defuse_version()),
-                                 std::uint64_t>,
+    static_assert(std::is_same_v<decltype(std::declval<EV>().get_defuse_version()), std::uint64_t>,
                   "get_defuse_version() must return std::uint64_t");
     CHECK(true, "get_defuse_version() return type is std::uint64_t");
     return true;
@@ -76,8 +77,7 @@ bool test_guard_is_move_only() {
                   "MutationBoundaryGuard must not be copy-assignable");
     static_assert(std::is_move_constructible_v<G>,
                   "MutationBoundaryGuard must be move-constructible");
-    static_assert(std::is_move_assignable_v<G>,
-                  "MutationBoundaryGuard must be move-assignable");
+    static_assert(std::is_move_assignable_v<G>, "MutationBoundaryGuard must be move-assignable");
     CHECK(true, "MutationBoundaryGuard is move-only (no copy, supports move)");
     return true;
 }
@@ -226,8 +226,8 @@ bool test_typed_mutate_records_in_log() {
     cs.typed_mutate("(mutate:rebind \"x\" \"42\" \"bump x\")");
     auto log_after = cs.query_mutation_log(aura::ast::NULL_NODE);
     CHECK(log_after.size() > size_before,
-          std::format("mutation log grew ({} → {}) after typed_mutate",
-                      size_before, log_after.size()));
+          std::format("mutation log grew ({} → {}) after typed_mutate", size_before,
+                      log_after.size()));
     return true;
 }
 
@@ -246,8 +246,7 @@ bool test_typed_mutate_version_monotonic() {
         cs.typed_mutate(std::format("(mutate:rebind \"x\" \"{}\" \"bump\")", i));
     }
     auto v10 = cs.evaluator().get_defuse_version();
-    CHECK(v10 >= v0 + 10,
-          "defuse_version_ incremented by >= 10 across 10 typed_mutate calls");
+    CHECK(v10 >= v0 + 10, "defuse_version_ incremented by >= 10 across 10 typed_mutate calls");
     return true;
 }
 
@@ -289,7 +288,8 @@ int run_tests() {
     std::print("========================================\n");
     return g_failed == 0 ? 0 : 1;
 }
-}  // namespace aura_issue_184_detail
+} // namespace aura_issue_184_detail
 
-int aura_issue_184_run() { return aura_issue_184_detail::run_tests(); }
-
+int aura_issue_184_run() {
+    return aura_issue_184_detail::run_tests();
+}

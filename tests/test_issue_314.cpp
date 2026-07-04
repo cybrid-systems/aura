@@ -58,22 +58,24 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
 namespace aura_issue_314_detail {
-#define CHECK_EQ_LOCAL(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ_LOCAL(a, b, msg)                                                                  \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════
 // AC1: Interface structural mutation → mutation_log_ record
@@ -88,15 +90,13 @@ bool test_interface_set_child_logs_to_mutation_log() {
     auto sig1 = flat.add_variable(pool.intern("data"));
     auto sig2 = flat.add_variable(pool.intern("valid"));
     std::vector<NodeId> initial_body{sig1};
-    auto iface = flat.add_interface(pool.intern("Bus"),
-                                    std::span<const NodeId>(initial_body));
+    auto iface = flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(initial_body));
     auto root = flat.add_begin({iface});
     flat.root = root;
     // Pre-condition: mutation log is empty.
     CHECK_EQ_LOCAL(flat.mutation_count(), std::size_t{0},
                    "mutation_log_ starts empty (pre-mutation)");
-    CHECK_EQ_LOCAL(flat.generation(), std::uint16_t{1},
-                   "generation_ starts at 1 (pre-mutation)");
+    CHECK_EQ_LOCAL(flat.generation(), std::uint16_t{1}, "generation_ starts at 1 (pre-mutation)");
     // Mutate: replace signal1 (idx 0) with signal2.
     flat.set_child(iface, 0, sig2);
     // AC1: mutation log has 1 record.
@@ -104,18 +104,14 @@ bool test_interface_set_child_logs_to_mutation_log() {
                    "Interface set_child creates 1 mutation log entry");
     // The record has the right shape.
     auto records = flat.all_mutations();
-    CHECK_EQ_LOCAL(records[0].target_node, iface,
-                   "mutation target == interface id");
-    CHECK_EQ_LOCAL(records[0].field_offset, std::uint32_t{0},
-                   "mutation child_idx == 0");
+    CHECK_EQ_LOCAL(records[0].target_node, iface, "mutation target == interface id");
+    CHECK_EQ_LOCAL(records[0].field_offset, std::uint32_t{0}, "mutation child_idx == 0");
     CHECK_EQ_LOCAL(records[0].old_value, static_cast<std::uint64_t>(sig1),
                    "mutation old_value == sig1");
     CHECK_EQ_LOCAL(records[0].new_value, static_cast<std::uint64_t>(sig2),
                    "mutation new_value == sig2");
-    CHECK(records[0].has_rollback_data,
-          "mutation record has rollback data set (AC3)");
-    CHECK(records[0].operator_name.find("structural-set-child")
-              != std::string::npos,
+    CHECK(records[0].has_rollback_data, "mutation record has rollback data set (AC3)");
+    CHECK(records[0].operator_name.find("structural-set-child") != std::string::npos,
           "mutation op_name is 'structural-set-child'");
     return true;
 }
@@ -136,11 +132,9 @@ bool test_modport_insert_child_logs_to_mutation_log() {
     //  the Interface body's modport slot.)
     auto port1 = pool.intern("data");
     std::vector<SymId> mp_ports{port1};
-    auto mp = flat.add_modport(pool.intern("master"),
-                               std::span<const SymId>(mp_ports));
+    auto mp = flat.add_modport(pool.intern("master"), std::span<const SymId>(mp_ports));
     std::vector<NodeId> initial_body{mp};
-    auto iface = flat.add_interface(pool.intern("Bus"),
-                                    std::span<const NodeId>(initial_body));
+    auto iface = flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(initial_body));
     flat.root = flat.add_begin({iface});
     CHECK_EQ_LOCAL(flat.mutation_count(), std::size_t{0},
                    "pre-mutation log empty for Interface→Modport scenario");
@@ -154,10 +148,8 @@ bool test_modport_insert_child_logs_to_mutation_log() {
                    "insert mutation child_idx == 1 (append position)");
     CHECK_EQ_LOCAL(records[0].new_value, static_cast<std::uint64_t>(new_sig),
                    "insert mutation new_value == new_sig");
-    CHECK(records[0].has_rollback_data,
-          "insert mutation has rollback data");
-    CHECK(records[0].operator_name.find("structural-insert-child")
-              != std::string::npos,
+    CHECK(records[0].has_rollback_data, "insert mutation has rollback data");
+    CHECK(records[0].operator_name.find("structural-insert-child") != std::string::npos,
           "insert mutation op_name is 'structural-insert-child'");
     return true;
 }
@@ -173,15 +165,12 @@ bool test_interface_mutation_marks_dirty_upward() {
     StringPool pool;
     auto sig = flat.add_variable(pool.intern("data"));
     std::vector<NodeId> body{sig};
-    auto iface = flat.add_interface(pool.intern("Bus"),
-                                    std::span<const NodeId>(body));
+    auto iface = flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(body));
     auto root = flat.add_begin({iface});
     flat.root = root;
     // Pre-mutation: nothing is dirty.
-    CHECK_EQ_LOCAL(flat.is_dirty(iface), false,
-                   "interface starts NOT dirty");
-    CHECK_EQ_LOCAL(flat.is_dirty(root), false,
-                   "root starts NOT dirty");
+    CHECK_EQ_LOCAL(flat.is_dirty(iface), false, "interface starts NOT dirty");
+    CHECK_EQ_LOCAL(flat.is_dirty(root), false, "root starts NOT dirty");
     // Mutate via remove_child (replaces target child with NULL).
     flat.remove_child(iface, 0);
     // AC2: parent (interface) + root are now dirty via
@@ -204,8 +193,7 @@ bool test_mutation_rollback_and_generation() {
     StringPool pool;
     auto sig = flat.add_variable(pool.intern("data"));
     std::vector<NodeId> body{sig};
-    auto iface = flat.add_interface(pool.intern("Bus"),
-                                    std::span<const NodeId>(body));
+    auto iface = flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(body));
     flat.root = flat.add_begin({iface});
     const auto gen_before = flat.generation();
     const auto count_before = flat.mutation_count();
@@ -219,8 +207,7 @@ bool test_mutation_rollback_and_generation() {
     // AC3: rollback data is set + old/new_value preserved.
     auto records = flat.all_mutations();
     auto& rec = records.back();
-    CHECK(rec.has_rollback_data,
-          "rollback data set (AC3 — caller can restore via snapshot)");
+    CHECK(rec.has_rollback_data, "rollback data set (AC3 — caller can restore via snapshot)");
     CHECK(rec.old_value != rec.new_value,
           "old_value != new_value (the roll-forward is non-trivial)");
     return true;
@@ -238,8 +225,7 @@ bool test_verification_dirty_not_auto_triggered() {
     StringPool pool;
     auto sig = flat.add_variable(pool.intern("data"));
     std::vector<NodeId> body{sig};
-    auto iface = flat.add_interface(pool.intern("Bus"),
-                                    std::span<const NodeId>(body));
+    auto iface = flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(body));
     flat.root = flat.add_begin({iface});
     // Pure structural mutation — verification channel should
     // stay clean. (Per the close comment, callers that need
@@ -264,10 +250,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_314_detail
+} // namespace aura_issue_314_detail
 
-int aura_issue_314_run() { return aura_issue_314_detail::run_tests(); }
+int aura_issue_314_run() {
+    return aura_issue_314_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_314_run(); }
+int main() {
+    return aura_issue_314_run();
+}
 #endif

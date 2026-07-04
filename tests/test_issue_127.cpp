@@ -23,14 +23,13 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.diag;
 import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.value;
-
 
 
 // ── Test 1: alias type identity ──────────────────────────
@@ -45,12 +44,9 @@ bool test_alias_type_identity() {
     using R3 = aura::diag::LowerResult<int>;
     using R4 = aura::diag::CompileResult<int>;
 
-    CHECK((std::is_same_v<R1, R2>),
-          "ParseResult<int> is the same type as Result<int>");
-    CHECK((std::is_same_v<R1, R3>),
-          "LowerResult<int> is the same type as Result<int>");
-    CHECK((std::is_same_v<R1, R4>),
-          "CompileResult<int> is the same type as Result<int>");
+    CHECK((std::is_same_v<R1, R2>), "ParseResult<int> is the same type as Result<int>");
+    CHECK((std::is_same_v<R1, R3>), "LowerResult<int> is the same type as Result<int>");
+    CHECK((std::is_same_v<R1, R4>), "CompileResult<int> is the same type as Result<int>");
 
     // VoidResult is Result<void>
     CHECK((std::is_same_v<aura::diag::VoidResult, aura::diag::Result<void>>),
@@ -66,7 +62,8 @@ bool test_result_error_channel() {
     // Ok case
     aura::diag::Result<int> ok = 42;
     CHECK(ok.has_value(), "Ok result has value");
-    if (ok) CHECK(*ok == 42, "Ok result unwraps to 42");
+    if (ok)
+        CHECK(*ok == 42, "Ok result unwraps to 42");
 
     // Error case
     aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError, "test error"};
@@ -74,8 +71,7 @@ bool test_result_error_channel() {
     CHECK(!err.has_value(), "Err result does not have value");
     CHECK(err.error().kind == aura::diag::ErrorKind::TypeError,
           "Err result carries the diagnostic kind");
-    CHECK(err.error().message == "test error",
-          "Err result carries the diagnostic message");
+    CHECK(err.error().message == "test error", "Err result carries the diagnostic message");
 
     // LowerResult<int> works the same way
     aura::diag::LowerResult<int> lr = std::unexpected(d);
@@ -92,7 +88,8 @@ bool test_monadic_chain() {
     auto r1 = aura::diag::Result<int>(42);
     auto r2 = r1.transform([](int x) { return x * 2; });
     CHECK(r2.has_value(), "transform on Ok produces Ok");
-    if (r2) CHECK(*r2 == 84, "transformed value is 84");
+    if (r2)
+        CHECK(*r2 == 84, "transformed value is 84");
 
     // Chain: Err -> Err (preserves the error)
     aura::diag::Diagnostic d{aura::diag::ErrorKind::InternalError, "fail"};
@@ -102,11 +99,9 @@ bool test_monadic_chain() {
     CHECK(r4.error().message == "fail", "preserved error message");
 
     // and_then: chain two Results
-    auto r5 = aura::diag::Result<int>(10)
-        .and_then([&d](int x) -> aura::diag::Result<int> {
-            return x > 0 ? aura::diag::Result<int>(x * 3)
-                         : aura::diag::Result<int>(std::unexpected(d));
-        });
+    auto r5 = aura::diag::Result<int>(10).and_then([&d](int x) -> aura::diag::Result<int> {
+        return x > 0 ? aura::diag::Result<int>(x * 3) : aura::diag::Result<int>(std::unexpected(d));
+    });
     CHECK(r5.has_value() && *r5 == 30, "and_then on Ok produces Ok(30)");
 
     return true;
@@ -116,13 +111,13 @@ int run_tests() {
     std::println("═══ Issue #127 verification tests ═══\n");
     test_alias_type_identity();
     test_result_error_channel();
-        test_monadic_chain();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    test_monadic_chain();
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_127_detail
+} // namespace aura_issue_127_detail
 
-int aura_issue_127_run() { return aura_issue_127_detail::run_tests(); }
-
+int aura_issue_127_run() {
+    return aura_issue_127_detail::run_tests();
+}

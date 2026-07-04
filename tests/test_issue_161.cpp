@@ -21,15 +21,17 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.parser.parser;
 
 
-
 namespace aura_issue_161_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: parse_to_flat exists and is callable (no FlatParser needed) ──
 bool test_parse_to_flat_basic() {
@@ -145,9 +147,11 @@ bool test_edge_cases() {
         aura::ast::FlatAST flat;
         aura::ast::StringPool pool;
         std::string deep = "(";
-        for (int i = 0; i < 50; ++i) deep += "(";
+        for (int i = 0; i < 50; ++i)
+            deep += "(";
         deep += "1";
-        for (int i = 0; i < 50; ++i) deep += ")";
+        for (int i = 0; i < 50; ++i)
+            deep += ")";
         deep += ")";
         auto r = aura::parser::parse_to_flat(deep, flat, pool);
         CHECK(r.success, "deeply nested (51 levels) parsed without recursion overflow");
@@ -156,9 +160,11 @@ bool test_edge_cases() {
         aura::ast::FlatAST flat;
         aura::ast::StringPool pool;
         std::string too_deep = "(";
-        for (int i = 0; i < 510; ++i) too_deep += "(";
+        for (int i = 0; i < 510; ++i)
+            too_deep += "(";
         too_deep += "1";
-        for (int i = 0; i < 510; ++i) too_deep += ")";
+        for (int i = 0; i < 510; ++i)
+            too_deep += ")";
         too_deep += ")";
         auto r = aura::parser::parse_to_flat(too_deep, flat, pool);
         CHECK(!r.success, "over-recursion (>500 levels) rejected by depth guard");
@@ -208,7 +214,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_161_detail
+} // namespace aura_issue_161_detail
 
-int aura_issue_161_run() { return aura_issue_161_detail::run_tests(); }
-
+int aura_issue_161_run() {
+    return aura_issue_161_detail::run_tests();
+}

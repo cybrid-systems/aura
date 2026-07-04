@@ -53,12 +53,12 @@ enum class MemberKind : std::uint8_t {
     UInt64,
     Bool,
     String,
-    StringView,  // Issue #217 Cycle 2: std::string_view
+    StringView, // Issue #217 Cycle 2: std::string_view
     Float,
     Double,
     Array,
     Vector,
-    Span,  // Issue #217 Cycle 6: std::span<T, N>
+    Span, // Issue #217 Cycle 6: std::span<T, N>
     Struct,
     Other,
     Unknown
@@ -85,7 +85,8 @@ template <typename T> constexpr bool is_std_string_view_v = is_std_string_view<T
 
 // Issue #217 Cycle 6: std::span detection
 template <typename T> struct is_std_span : std::false_type {};
-template <typename T, std::size_t Extent> struct is_std_span<std::span<T, Extent>> : std::true_type {};
+template <typename T, std::size_t Extent>
+struct is_std_span<std::span<T, Extent>> : std::true_type {};
 template <typename T> constexpr bool is_std_span_v = is_std_span<T>::value;
 
 template <typename T> struct is_std_vector : std::false_type {};
@@ -233,11 +234,10 @@ template <typename T> consteval std::array<MemberInfo, member_count<T>()> reflec
             .name = identifier_of(m),
             .offset = offset_of(m).bytes,
             .kind = kind,
-            .elem_size =
-                (kind == MemberKind::Array || kind == MemberKind::Vector ||
-                 kind == MemberKind::Span)
-                    ? elem_size_of(type)
-                    : 0,
+            .elem_size = (kind == MemberKind::Array || kind == MemberKind::Vector ||
+                          kind == MemberKind::Span)
+                             ? elem_size_of(type)
+                             : 0,
             .array_len = (kind == MemberKind::Array) ? array_size_of(type) : 0,
         };
     }
@@ -264,8 +264,7 @@ template <typename T> consteval std::array<MemberInfo, member_count<T>()> reflec
 //   - AI Agent: discover a module's surface area
 //   - IDE: autocomplete candidate generation
 //   - EDSL: validate `require` references statically
-template <typename T, std::size_t MaxExports = 64>
-struct ModuleExports {
+template <typename T, std::size_t MaxExports = 64> struct ModuleExports {
     std::array<std::string_view, MaxExports> data{};
     std::size_t size = 0;
     constexpr std::string_view operator[](std::size_t i) const { return data[i]; }
@@ -278,8 +277,10 @@ consteval ModuleExports<T, MaxExports> module_exports() {
     auto members = std::meta::members_of(^^T, std::meta::access_context::unchecked());
     ModuleExports<T, MaxExports> me{};
     for (auto m : members) {
-        if (me.size >= MaxExports) break;
-        if (!std::meta::has_identifier(m)) continue;
+        if (me.size >= MaxExports)
+            break;
+        if (!std::meta::has_identifier(m))
+            continue;
         me.data[me.size++] = std::meta::identifier_of(m);
     }
     return me;
@@ -410,7 +411,8 @@ inline std::string prettify_json(const std::string& compact) {
         } else if (c == '}' || c == ']') {
             out += '\n';
             --indent;
-            if (indent < 0) indent = 0;
+            if (indent < 0)
+                indent = 0;
             out.append(static_cast<std::size_t>(indent * 2), ' ');
             out += c;
         } else if (c == ',') {
@@ -452,20 +454,16 @@ void auto_serialize(std::vector<char>& buf, const std::string_view& sv);
 // call (for non-trivially-copyable element types like
 // MutationRecord) can't find the struct overload because
 // it hasn't been declared yet.
-template <typename T>
-void auto_serialize(std::vector<char>& buf, const T& obj);
+template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj);
 
 // std::vector<T> overload (any T)
-template <typename T>
-void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
+template <typename T> void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
     auto sz = static_cast<std::uint32_t>(vec.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
-               reinterpret_cast<char*>(&sz) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
     if constexpr (std::is_trivially_copyable_v<T>) {
         // POD: write raw bytes (faster)
         if (!vec.empty())
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(vec.data()),
+            buf.insert(buf.end(), reinterpret_cast<const char*>(vec.data()),
                        reinterpret_cast<const char*>(vec.data()) + vec.size() * sizeof(T));
     } else {
         // Non-POD: recurse on each element
@@ -477,8 +475,7 @@ void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
 // std::string overload (top-level + recursion target)
 inline void auto_serialize(std::vector<char>& buf, const std::string& s) {
     std::uint32_t len = static_cast<std::uint32_t>(s.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&len),
-               reinterpret_cast<char*>(&len) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
     buf.insert(buf.end(), s.begin(), s.end());
 }
 
@@ -487,21 +484,18 @@ inline void auto_serialize(std::vector<char>& buf, const std::string& s) {
 // used for recursion targets (e.g. a vector<string_view>).
 inline void auto_serialize(std::vector<char>& buf, const std::string_view& sv) {
     std::uint32_t len = static_cast<std::uint32_t>(sv.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&len),
-               reinterpret_cast<char*>(&len) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
     buf.insert(buf.end(), sv.data(), sv.data() + sv.size());
 }
 
 // std::optional<T> overload
-template <typename T>
-void auto_serialize(std::vector<char>& buf, const std::optional<T>& opt) {
+template <typename T> void auto_serialize(std::vector<char>& buf, const std::optional<T>& opt) {
     char has_value = opt.has_value() ? 1 : 0;
     buf.push_back(has_value);
     if (opt.has_value()) {
         if constexpr (std::is_trivially_copyable_v<T> && !is_std_string_v<T>) {
             // POD: raw bytes
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(&*opt),
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&*opt),
                        reinterpret_cast<const char*>(&*opt) + sizeof(T));
         } else {
             // Non-POD: recurse
@@ -514,18 +508,18 @@ void auto_serialize(std::vector<char>& buf, const std::optional<T>& opt) {
 template <typename... Ts>
 void auto_serialize(std::vector<char>& buf, const std::variant<Ts...>& v) {
     std::uint32_t idx = static_cast<std::uint32_t>(v.index());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&idx),
-               reinterpret_cast<char*>(&idx) + 4);
-    std::visit([&buf](const auto& inner) {
-        using InnerT = std::remove_cv_t<std::remove_reference_t<decltype(inner)>>;
-        if constexpr (std::is_trivially_copyable_v<InnerT> && !is_std_string_v<InnerT>) {
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(&inner),
-                       reinterpret_cast<const char*>(&inner) + sizeof(InnerT));
-        } else {
-            auto_serialize(buf, inner);
-        }
-    }, v);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&idx), reinterpret_cast<char*>(&idx) + 4);
+    std::visit(
+        [&buf](const auto& inner) {
+            using InnerT = std::remove_cv_t<std::remove_reference_t<decltype(inner)>>;
+            if constexpr (std::is_trivially_copyable_v<InnerT> && !is_std_string_v<InnerT>) {
+                buf.insert(buf.end(), reinterpret_cast<const char*>(&inner),
+                           reinterpret_cast<const char*>(&inner) + sizeof(InnerT));
+            } else {
+                auto_serialize(buf, inner);
+            }
+        },
+        v);
 }
 
 // std::array<T, N> overload (for non-POD T or as top-level)
@@ -534,8 +528,7 @@ void auto_serialize(std::vector<char>& buf, const std::array<T, N>& arr) {
     if constexpr (std::is_trivially_copyable_v<T>) {
         // POD: raw bytes
         if (N > 0)
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(arr.data()),
+            buf.insert(buf.end(), reinterpret_cast<const char*>(arr.data()),
                        reinterpret_cast<const char*>(arr.data()) + N * sizeof(T));
     } else {
         // Non-POD: recurse
@@ -546,8 +539,7 @@ void auto_serialize(std::vector<char>& buf, const std::array<T, N>& arr) {
 
 // ── Generic flat-struct serialization (POD/flat case) ──
 
-template <typename T>
-void auto_serialize(std::vector<char>& buf, const T& obj) {
+template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) {
     constexpr auto members = reflect_members<T>();
     const auto* base = reinterpret_cast<const char*>(&obj);
     for (auto& m : members) {
@@ -692,11 +684,9 @@ template <typename T> std::vector<char> auto_serialize(const T& obj) {
 // Forward declarations (Issue #215): the inner dispatcher
 // and struct path are defined later; the container
 // overloads below use them via these declarations.
-template <typename T>
-T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos);
+template <typename T> T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos);
 
-template <typename T>
-T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos);
+template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos);
 
 // std::vector<T> overload — reads size + elements (recursive)
 template <typename T>
@@ -739,7 +729,8 @@ std::array<T, N> auto_deserialize_arr(const std::vector<char>& buf, std::size_t&
 template <typename T>
 std::optional<T> auto_deserialize_opt(const std::vector<char>& buf, std::size_t& pos) {
     char has_value = buf[pos++];
-    if (!has_value) return std::nullopt;
+    if (!has_value)
+        return std::nullopt;
     if constexpr (std::is_trivially_copyable_v<T> && !is_std_string_v<T>) {
         T val;
         std::memcpy(&val, &buf[pos], sizeof(T));
@@ -752,9 +743,8 @@ std::optional<T> auto_deserialize_opt(const std::vector<char>& buf, std::size_t&
 
 // std::variant<Ts...> overload
 template <std::size_t I, typename... Ts>
-std::variant<Ts...> auto_deserialize_variant_at(const std::vector<char>& buf,
-                                                  std::size_t& pos,
-                                                  std::uint32_t idx) {
+std::variant<Ts...> auto_deserialize_variant_at(const std::vector<char>& buf, std::size_t& pos,
+                                                std::uint32_t idx) {
     if constexpr (I < sizeof...(Ts)) {
         using CurT = std::variant_alternative_t<I, std::variant<Ts...>>;
         if (I == idx) {
@@ -774,8 +764,7 @@ std::variant<Ts...> auto_deserialize_variant_at(const std::vector<char>& buf,
     }
 }
 template <typename... Ts>
-std::variant<Ts...> auto_deserialize_var(const std::vector<char>& buf,
-                                          std::size_t& pos) {
+std::variant<Ts...> auto_deserialize_var(const std::vector<char>& buf, std::size_t& pos) {
     std::uint32_t idx;
     std::memcpy(&idx, &buf[pos], 4);
     pos += 4;
@@ -787,8 +776,7 @@ std::variant<Ts...> auto_deserialize_var(const std::vector<char>& buf,
 // auto_deserialize<T> routes container types to the
 // per-container overloads above; this dispatcher handles
 // the element types.
-template <typename T>
-T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos) {
+template <typename T> T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos) {
     if constexpr (is_std_string_v<T>) {
         std::uint32_t len;
         std::memcpy(&len, &buf[pos], 4);
@@ -906,9 +894,8 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 uint32_t byte_count;
                 std::memcpy(&byte_count, &buf[pos], 4);
                 pos += 4;
-                const std::size_t elem_count = m.elem_size > 0
-                                                   ? byte_count / m.elem_size
-                                                   : byte_count;
+                const std::size_t elem_count =
+                    m.elem_size > 0 ? byte_count / m.elem_size : byte_count;
                 const std::span<const char> sp(buf.data() + pos, elem_count);
                 std::memcpy(field, &sp, sizeof(sp));
                 pos += byte_count;
@@ -979,20 +966,18 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
 //   - scalar/string        → auto_deserialize_inner<T>
 namespace detail {
 
-// Variant dispatch helper. Expands the variant's
-// alternative types into a parameter pack and calls
-// auto_deserialize_var.
-template <typename Variant, std::size_t... Is>
-Variant auto_deserialize_variant_impl(const std::vector<char>& buf,
-                                        std::size_t& pos,
-                                        std::index_sequence<Is...>) {
-    return auto_deserialize_var<typename std::variant_alternative_t<Is, Variant>...>(buf, pos);
-}
+    // Variant dispatch helper. Expands the variant's
+    // alternative types into a parameter pack and calls
+    // auto_deserialize_var.
+    template <typename Variant, std::size_t... Is>
+    Variant auto_deserialize_variant_impl(const std::vector<char>& buf, std::size_t& pos,
+                                          std::index_sequence<Is...>) {
+        return auto_deserialize_var<typename std::variant_alternative_t<Is, Variant>...>(buf, pos);
+    }
 
 } // namespace detail
 
-template <typename T>
-T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+template <typename T> T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
     if constexpr (is_std_vector_v<T>) {
         using Inner = typename T::value_type;
         return auto_deserialize_vec<Inner>(buf, pos);
@@ -1005,8 +990,7 @@ T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
         return auto_deserialize_opt<Inner>(buf, pos);
     } else if constexpr (is_std_variant_v<T>) {
         constexpr std::size_t N = std::variant_size_v<T>;
-        return detail::auto_deserialize_variant_impl<T>(
-            buf, pos, std::make_index_sequence<N>{});
+        return detail::auto_deserialize_variant_impl<T>(buf, pos, std::make_index_sequence<N>{});
     } else if constexpr (is_std_string_v<T> || std::is_arithmetic_v<T>) {
         // Scalar/string element types: use the inner
         // dispatcher (raw memcpy for POD, length-prefix
@@ -1093,8 +1077,8 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                 auto& sv = *reinterpret_cast<const std::string_view*>(field);
                 if (sv.size() > 100000000) {
                     if (error)
-                        *error =
-                            std::string(m.name) + " string_view too long: " + std::to_string(sv.size());
+                        *error = std::string(m.name) +
+                                 " string_view too long: " + std::to_string(sv.size());
                     ok = false;
                 }
                 break;

@@ -49,6 +49,6 @@ inline bool ccache_disabled() noexcept {
     return false;
 }
 
-}  // namespace aura::ci
+} // namespace aura::ci
 
-#endif  // AURA_COMPILER_CI_BUILD_INFO_H
+#endif // AURA_COMPILER_CI_BUILD_INFO_H

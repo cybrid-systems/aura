@@ -67,8 +67,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: version snapshot stale detection ---");
     auto snap = cs.eval("(concurrency:version-snapshot)");
     CHECK(snap && is_int(*snap), "version-snapshot returns int");
-    auto fresh = cs.eval(
-        "(concurrency:version-current? (concurrency:version-snapshot))");
+    auto fresh = cs.eval("(concurrency:version-current? (concurrency:version-snapshot))");
     CHECK(fresh && is_bool(*fresh), "version-current? returns bool");
 
     std::println("\n--- AC4: mutate bumps defuse epoch ---");
@@ -91,8 +90,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = defuse_version_stats(cs);
     const auto ver6a = ev.current_defuse_version();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = defuse_version_stats(cs);

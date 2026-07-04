@@ -42,16 +42,29 @@ namespace aura_per_defuse_index_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_empty_tracker() {
     std::println("\n--- AC1: fresh PerDefUseIndexTracker is empty ---");
@@ -64,8 +77,8 @@ bool test_empty_tracker() {
 bool test_add_and_get_for_one_index() {
     std::println("\n--- AC2: add_caller + get_callers for one DefUseIndex ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     // Issue #411 fu1 fu4: Caller is now {NodeId node_id}
     // (was {std::string location}). Use distinct NodeIds
     // for each test.
@@ -80,8 +93,8 @@ bool test_add_and_get_for_one_index() {
 bool test_per_index_isolation() {
     std::println("\n--- AC3: per-DefUseIndex isolation ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     // Populate defuse_index_1 with 2 callers, defuse_index_2
     // with 1 caller. Verify that each DefUseIndex's caller
     // list is independent — adding to one doesn't leak into
@@ -110,8 +123,8 @@ bool test_per_index_isolation() {
 bool test_get_callers_for_unregistered_index() {
     std::println("\n--- AC4: get_callers for unregistered DefUseIndex returns empty ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     t.add_caller(DefUseIndex{"foo"}, Caller{999});
     auto missing = t.get_callers(DefUseIndex{"missing"});
     CHECK_EQ(missing.size(), 0u, "unregistered index returns empty caller list");
@@ -121,24 +134,23 @@ bool test_get_callers_for_unregistered_index() {
 bool test_size_for_index() {
     std::println("\n--- AC5: size_for_index reports the correct per-index count ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     t.add_caller(DefUseIndex{"foo"}, Caller{1});
     t.add_caller(DefUseIndex{"foo"}, Caller{2});
     t.add_caller(DefUseIndex{"foo"}, Caller{3});
     t.add_caller(DefUseIndex{"bar"}, Caller{1});
     CHECK_EQ(t.size_for_index(DefUseIndex{"foo"}), 3u, "foo has 3 callers");
     CHECK_EQ(t.size_for_index(DefUseIndex{"bar"}), 1u, "bar has 1 caller");
-    CHECK_EQ(t.size_for_index(DefUseIndex{"missing"}), 0u,
-             "missing has 0 callers");
+    CHECK_EQ(t.size_for_index(DefUseIndex{"missing"}), 0u, "missing has 0 callers");
     return true;
 }
 
 bool test_total_size() {
     std::println("\n--- AC6: total_size sums across all indexes ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     t.add_caller(DefUseIndex{"foo"}, Caller{1});
     t.add_caller(DefUseIndex{"foo"}, Caller{2});
     t.add_caller(DefUseIndex{"bar"}, Caller{1});
@@ -151,11 +163,11 @@ bool test_total_size() {
 bool test_index_count() {
     std::println("\n--- AC7: index_count reports the distinct count ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     t.add_caller(DefUseIndex{"foo"}, Caller{1});
-    t.add_caller(DefUseIndex{"foo"}, Caller{2});  // same index
-    t.add_caller(DefUseIndex{"bar"}, Caller{1});  // new index
+    t.add_caller(DefUseIndex{"foo"}, Caller{2}); // same index
+    t.add_caller(DefUseIndex{"bar"}, Caller{1}); // new index
     CHECK_EQ(t.index_count(), 2u, "index_count == 2 (foo + bar, dedup'd)");
     return true;
 }
@@ -163,8 +175,8 @@ bool test_index_count() {
 bool test_clear() {
     std::println("\n--- AC8: clear() removes all state ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     t.add_caller(DefUseIndex{"foo"}, Caller{1});
     t.add_caller(DefUseIndex{"bar"}, Caller{1});
     CHECK(t.total_size() > 0, "tracker non-empty before clear");
@@ -194,8 +206,8 @@ bool test_equality() {
 bool test_copyable_and_movable() {
     std::println("\n--- AC10: copyable + movable ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
-    using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
+    using aura::compiler::per_defuse_index::DefUseIndex;
     t.add_caller(DefUseIndex{"foo"}, Caller{1});
     // Copy ctor
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t2(t);
@@ -210,7 +222,7 @@ bool test_copyable_and_movable() {
     return true;
 }
 
-}  // namespace aura_per_defuse_index_detail
+} // namespace aura_per_defuse_index_detail
 
 int main() {
     using namespace aura_per_defuse_index_detail;
@@ -225,7 +237,7 @@ int main() {
     test_clear();
     test_equality();
     test_copyable_and_movable();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

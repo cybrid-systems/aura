@@ -281,11 +281,9 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
 
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        m->delta_conflict_reverify_total.fetch_add(
-            1, std::memory_order_relaxed);
+        m->delta_conflict_reverify_total.fetch_add(1, std::memory_order_relaxed);
         if (truncated) {
-            m->reverify_truncated_total.fetch_add(
-                1, std::memory_order_relaxed);
+            m->reverify_truncated_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -302,8 +300,7 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         if (!ok) {
             if (metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->delta_conflict_detected_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
             }
             record_cross_delta_blame_hit();
             delta_record_mode_ = saved_record;
@@ -579,13 +576,10 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
             // |r2 entries|) — no need to rewrite r1's
             // vec.
             {
-                auto it_r2 = var_to_constraints_.find(
-                    static_cast<std::uint32_t>(r2));
+                auto it_r2 = var_to_constraints_.find(static_cast<std::uint32_t>(r2));
                 if (it_r2 != var_to_constraints_.end()) {
-                    auto& dst = var_to_constraints_[static_cast<
-                        std::uint32_t>(r1)];
-                    dst.insert(dst.end(), it_r2->second.begin(),
-                                it_r2->second.end());
+                    auto& dst = var_to_constraints_[static_cast<std::uint32_t>(r1)];
+                    dst.insert(dst.end(), it_r2->second.begin(), it_r2->second.end());
                     var_to_constraints_.erase(it_r2);
                 }
             }
@@ -619,10 +613,8 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     // Dynamic + Forall + Occurrence mixtures; this
     // slice ships the observability foundation.
     if (metrics_) {
-        auto* m = static_cast<struct CompilerMetrics*>(
-            metrics_);
-        m->consistent_unify_total.fetch_add(
-            1, std::memory_order_relaxed);
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->consistent_unify_total.fetch_add(1, std::memory_order_relaxed);
     }
     const auto orig_lhs = t1;
     const auto orig_rhs = t2;
@@ -696,10 +688,8 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
     // counter for observability. See consistent_unify
     // above for the full rationale.
     if (metrics_) {
-        auto* m = static_cast<struct CompilerMetrics*>(
-            metrics_);
-        m->consistent_subtype_total.fetch_add(
-            1, std::memory_order_relaxed);
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->consistent_subtype_total.fetch_add(1, std::memory_order_relaxed);
     }
     sub = find(sub);
     sup = find(sup);
@@ -867,8 +857,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         for (const auto& [rep, indices] : var_to_constraints_) {
             (void)rep;
             for (auto idx : indices) {
-                if (idx < constraint_dirty_.size() &&
-                    constraint_dirty_[idx] && !seen[idx]) {
+                if (idx < constraint_dirty_.size() && constraint_dirty_[idx] && !seen[idx]) {
                     worklist.push_back(idx);
                     seen[idx] = true;
                 }
@@ -888,10 +877,8 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // signal but not surfaced.
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        m->delta_constraints_processed_total.fetch_add(
-            worklist.size(), std::memory_order_relaxed);
-        m->delta_constraints_total.fetch_add(
-            dirty_count_, std::memory_order_relaxed);
+        m->delta_constraints_processed_total.fetch_add(worklist.size(), std::memory_order_relaxed);
+        m->delta_constraints_total.fetch_add(dirty_count_, std::memory_order_relaxed);
     }
     std::size_t max_passes = 10;
     // Issue #383: worklist_restart detection. The
@@ -931,8 +918,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             if (!ok) {
                 if (metrics_) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                    m->delta_conflict_detected_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 record_cross_delta_blame_hit();
                 if (!touched_roots_.empty() && on_cross_delta_conflict_)
@@ -949,28 +935,20 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         // observability.
         if (dirty_count_ > dirty_before) {
             if (metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(
-                    metrics_);
-                m->worklist_restart_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->worklist_restart_total.fetch_add(1, std::memory_order_relaxed);
             }
             // Re-scan constraint_dirty_ for new
             // entries that weren't in the original
             // worklist. We walk the full dirty
             // vector (cheap) and pick up any new
             // dirty entries.
-            for (std::size_t i = 0;
-                 i < constraint_dirty_.size(); ++i) {
+            for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
                 if (constraint_dirty_[i]) {
                     bool already_in =
-                        std::find(worklist.begin(),
-                                  worklist.end(),
-                                  i) != worklist.end();
+                        std::find(worklist.begin(), worklist.end(), i) != worklist.end();
                     bool was_in_initial =
-                        std::find(
-                            current.begin(),
-                            current.end(),
-                            i) != current.end();
+                        std::find(current.begin(), current.end(), i) != current.end();
                     if (!already_in && !was_in_initial) {
                         worklist.push_back(i);
                     }
@@ -1632,8 +1610,9 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
 
 // Forward decl for #280 follow-up #1: combine-bits path uses
 // compute_narrowing_evidence to walk each or-branch predicate.
-static std::optional<std::uint32_t> compute_narrowing_evidence(
-    const FlatAST& flat, const StringPool& pool, NodeId cond_id, TypeRegistry& reg);
+static std::optional<std::uint32_t> compute_narrowing_evidence(const FlatAST& flat,
+                                                               const StringPool& pool,
+                                                               NodeId cond_id, TypeRegistry& reg);
 
 static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& flat,
                                                                 const StringPool& pool,
@@ -1654,7 +1633,10 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
         if (fn_name == "not" && cond.children.size() >= 2) {
             bool m1, j1;
             auto inner = analyze_predicate_flat(flat, pool, cond.child(1), reg, m1, j1);
-            if (inner) { meet_used |= m1; join_used |= j1; }
+            if (inner) {
+                meet_used |= m1;
+                join_used |= j1;
+            }
             if (inner) {
                 inner->is_negation = !inner->is_negation;
                 return inner;
@@ -1676,7 +1658,8 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 bool mi, ji;
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg, mi, ji);
-                meet_used |= mi; join_used |= ji;
+                meet_used |= mi;
+                join_used |= ji;
                 if (auto bit = compute_narrowing_evidence(flat, pool, cond.child(i), reg))
                     combined_evidence |= *bit;
                 if (inner) {
@@ -1700,9 +1683,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                         // the meet helper is the right
                         // extension point when real
                         // intersection types land.
-                        result->refined_type =
-                            reg.meet(result->refined_type,
-                                     inner->refined_type);
+                        result->refined_type = reg.meet(result->refined_type, inner->refined_type);
                         // Issue #338: the meet helper was
                         // called. The bump happens at the
                         // call site in synthesize_flat_if
@@ -1748,8 +1729,10 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 bool mi, ji;
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg, mi, ji);
-                meet_used |= mi; join_used |= ji;
-                if (!inner) continue;
+                meet_used |= mi;
+                join_used |= ji;
+                if (!inner)
+                    continue;
                 // Compute the predicate name's bitmask and OR it in.
                 // The call to narrowing_bit_for walks the predicate
                 // node the same way Issue #280 does for the
@@ -1768,9 +1751,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     // types, so unconditional is
                     // safe and consistent with the
                     // meet path in the and branch).
-                    result->refined_type =
-                        reg.join(result->refined_type,
-                                 inner->refined_type);
+                    result->refined_type = reg.join(result->refined_type, inner->refined_type);
                     // The join helper was called. Bump
                     // happens at the call site.
                     join_used = true;
@@ -1807,9 +1788,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     // diagnostics can attach a
                     // BlameInfo with the Narrowing
                     // party.
-                    OccurrenceInfoFlat occ{
-                        std::string(pool.resolve(var_node.sym_id)),
-                        type_id};
+                    OccurrenceInfoFlat occ{std::string(pool.resolve(var_node.sym_id)), type_id};
                     occ.predicate_name = "type?";
                     occ.source_cond_id = cond_id;
                     return occ;
@@ -1828,15 +1807,13 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                 // OccurrenceInfoFlat with provenance
                 // fields populated (predicate_name +
                 // source_cond_id).
-                auto make_occ = [&](const std::string& pname,
-                                     aura::core::TypeId tid) {
+                auto make_occ = [&](const std::string& pname, aura::core::TypeId tid) {
                     OccurrenceInfoFlat occ{std::string(var_name), tid};
                     occ.predicate_name = pname;
                     occ.source_cond_id = cond_id;
                     return occ;
                 };
-                auto make_occ_sv = [&](std::string_view pname,
-                                        aura::core::TypeId tid) {
+                auto make_occ_sv = [&](std::string_view pname, aura::core::TypeId tid) {
                     return make_occ(std::string(pname), tid);
                 };
                 if (fn_name == "string?")
@@ -1888,9 +1865,8 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     // The registry lives in aura.core.mutation
                     // (shared by both this module and the
                     // evaluator module's Aura primitive).
-                    if (auto custom_type_name =
-                            aura::ast::mutation::lookup_custom_predicate_type(
-                                std::string(fn_name))) {
+                    if (auto custom_type_name = aura::ast::mutation::lookup_custom_predicate_type(
+                            std::string(fn_name))) {
                         auto tid = reg.lookup_type(*custom_type_name);
                         if (tid.valid())
                             return make_occ_sv(fn_name, tid);
@@ -1927,22 +1903,20 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                        cond_node, mutation_id, narrow_ev);
         if (cs_.metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
-            m->coercion_post_narrow_elim_opportunities_total.fetch_add(
-                1, std::memory_order_relaxed);
+            m->coercion_post_narrow_elim_opportunities_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             if (cond_node != 0 && mutation_id != 0)
-                m->coercion_narrow_blame_chain_hits_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                m->coercion_narrow_blame_chain_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     } else {
         coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col);
     }
 }
 
-void InferenceEngine::seed_mutation_touched_roots(
-    const FlatAST& flat, const StringPool& pool,
-    const std::vector<NodeId>& occurrence_targets, std::uint64_t mutation_id) {
-    std::unordered_set<NodeId> target_set(occurrence_targets.begin(),
-                                          occurrence_targets.end());
+void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const StringPool& pool,
+                                                  const std::vector<NodeId>& occurrence_targets,
+                                                  std::uint64_t mutation_id) {
+    std::unordered_set<NodeId> target_set(occurrence_targets.begin(), occurrence_targets.end());
     for (const auto& nr : flat.all_narrowings()) {
         if (nr.source_mutation_id != 0 && nr.source_mutation_id != mutation_id)
             continue;
@@ -2012,8 +1986,7 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     else {
         if (cs_.metrics_ && incremental_delta_record_) {
             static_cast<struct CompilerMetrics*>(cs_.metrics_)
-                ->solve_delta_full_solve_fallback_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                ->solve_delta_full_solve_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
         solve_status = cs_.solve(&unresolved);
         if (incremental_delta_record_)
@@ -2991,7 +2964,7 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
 }
 
 TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v,
-                                                 TypeId expected_type) {
+                                               TypeId expected_type) {
     // body = v.child(0), params = v.params (span of SymId)
     env_.push_scope();
     ownership_env_.push_scope();
@@ -3096,28 +3069,28 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
 // list.
 static std::uint32_t narrowing_bit_for(const std::string& pred_name) {
     if (pred_name == "number?" || pred_name == "integer?")
-        return 1u << 0;  // kNarrowNumber
+        return 1u << 0; // kNarrowNumber
     if (pred_name == "string?")
-        return 1u << 1;  // kNarrowString
+        return 1u << 1; // kNarrowString
     if (pred_name == "boolean?")
-        return 1u << 2;  // kNarrowBool
+        return 1u << 2; // kNarrowBool
     if (pred_name == "null?" || pred_name == "void?")
-        return 1u << 3;  // kNarrowVoid
+        return 1u << 3; // kNarrowVoid
     if (pred_name == "pair?")
-        return 1u << 4;  // kNarrowPair
+        return 1u << 4; // kNarrowPair
     if (pred_name == "list?")
-        return 1u << 5;  // kNarrowList
+        return 1u << 5; // kNarrowList
     if (pred_name == "float?")
-        return 1u << 6;  // kNarrowFloat
+        return 1u << 6; // kNarrowFloat
     if (pred_name == "hash?")
-        return 1u << 7;  // kNarrowHash
+        return 1u << 7; // kNarrowHash
     if (pred_name == "symbol?")
-        return 1u << 8;  // kNarrowSymbol
+        return 1u << 8; // kNarrowSymbol
     if (pred_name == "procedure?")
-        return 1u << 9;  // kNarrowProc
+        return 1u << 9; // kNarrowProc
     if (pred_name == "type?")
         return 1u << 10; // kNarrowCustom
-    return 0;             // unknown / unrecognized predicate
+    return 0;            // unknown / unrecognized predicate
 }
 
 
@@ -3126,36 +3099,43 @@ static std::uint32_t narrowing_bit_for(const std::string& pred_name) {
 // as the single-predicate case, then maps the predicate name to
 // its kNarrow* bit. Returns std::nullopt if the cond doesn't
 // resolve to a recognized predicate.
-static std::optional<std::uint32_t> compute_narrowing_evidence(
-    const FlatAST& flat, const StringPool& pool, NodeId cond_id, TypeRegistry& /*reg*/) {
+static std::optional<std::uint32_t> compute_narrowing_evidence(const FlatAST& flat,
+                                                               const StringPool& pool,
+                                                               NodeId cond_id,
+                                                               TypeRegistry& /*reg*/) {
     auto cond = flat.get(cond_id);
-    if (cond.tag != NodeTag::Call) return std::nullopt;
+    if (cond.tag != NodeTag::Call)
+        return std::nullopt;
     std::string pred_name;
     auto c = cond;
     for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
-        if (c.children.empty()) return std::nullopt;
+        if (c.children.empty())
+            return std::nullopt;
         auto fn_id = c.child(0);
         auto fn = flat.get(fn_id);
-        if (fn.tag != NodeTag::Variable) return std::nullopt;
+        if (fn.tag != NodeTag::Variable)
+            return std::nullopt;
         auto n = std::string(pool.resolve(fn.sym_id));
         if (n == "not") {
-            if (c.children.size() < 2) return std::nullopt;
+            if (c.children.size() < 2)
+                return std::nullopt;
             c = flat.get(c.child(1));
             continue;
         }
         pred_name = n;
         break;
     }
-    if (pred_name.empty()) return std::nullopt;
+    if (pred_name.empty())
+        return std::nullopt;
     return narrowing_bit_for(pred_name);
 }
 
 // Issue #639: detect stale narrowing records at if-context use.
 // Invalidates predicate memo and emits blame diagnostic.
 static bool handle_stale_narrowing_at_if(aura::ast::FlatAST& flat, aura::ast::NodeId if_id,
-                                        std::uint64_t cache_epoch, ConstraintSystem& cs,
-                                        aura::diag::DiagnosticCollector& diag,
-                                        aura::diag::SourceLocation loc) {
+                                         std::uint64_t cache_epoch, ConstraintSystem& cs,
+                                         aura::diag::DiagnosticCollector& diag,
+                                         aura::diag::SourceLocation loc) {
     if (!flat.has_stale_narrowing_for_if(if_id, cache_epoch))
         return false;
     if (cs.metrics_) {
@@ -3165,13 +3145,13 @@ static bool handle_stale_narrowing_at_if(aura::ast::FlatAST& flat, aura::ast::No
     for (const auto& rec : flat.all_narrowings()) {
         if (rec.if_node != if_id || !rec.stale)
             continue;
-        diag.report(aura::diag::Diagnostic(
-                        aura::diag::ErrorKind::Warning,
-                        "stale occurrence narrowing at if-node " + std::to_string(if_id) +
-                            " — predicate '" + rec.predicate_src +
-                            "' invalidated by mutation (epoch " +
-                            std::to_string(rec.capture_epoch) + ")",
-                        loc)
+        diag.report(aura::diag::Diagnostic(aura::diag::ErrorKind::Warning,
+                                           "stale occurrence narrowing at if-node " +
+                                               std::to_string(if_id) + " — predicate '" +
+                                               rec.predicate_src +
+                                               "' invalidated by mutation (epoch " +
+                                               std::to_string(rec.capture_epoch) + ")",
+                                           loc)
                         .with_blame(aura::diag::BlameInfo{aura::diag::BlameParty::System,
                                                           rec.predicate_src, "narrow"})
                         .with_suggestion("re-run typecheck; narrowing will be re-analyzed"));
@@ -3201,9 +3181,9 @@ static bool is_deep_predicate_cond_node(const FlatAST& flat, const StringPool& p
 
 // Issue #689: collect IfExpr nodes whose cond uses deep and/or/not
 // predicates anywhere in `root`'s subtree (mutation-affected paths).
-static void collect_deep_predicate_if_exprs_in_subtree(
-    const FlatAST& flat, const StringPool& pool, NodeId root,
-    std::vector<NodeId>& out, std::unordered_set<NodeId>& seen) {
+static void collect_deep_predicate_if_exprs_in_subtree(const FlatAST& flat, const StringPool& pool,
+                                                       NodeId root, std::vector<NodeId>& out,
+                                                       std::unordered_set<NodeId>& seen) {
     if (root == NULL_NODE || root >= flat.size())
         return;
     std::vector<NodeId> stack;
@@ -3228,9 +3208,9 @@ static void collect_deep_predicate_if_exprs_in_subtree(
 
 // Issue #518: collect IfExpr nodes in `root`'s subtree that
 // carry kOccurrenceDirty or the occurrence-stale column.
-static void collect_occurrence_dirty_if_exprs_in_subtree(
-    const FlatAST& flat, NodeId root, std::vector<NodeId>& out,
-    std::unordered_set<NodeId>& seen) {
+static void collect_occurrence_dirty_if_exprs_in_subtree(const FlatAST& flat, NodeId root,
+                                                         std::vector<NodeId>& out,
+                                                         std::unordered_set<NodeId>& seen) {
     if (root == NULL_NODE || root >= flat.size())
         return;
     const std::uint8_t kOccurrenceBit =
@@ -3249,7 +3229,7 @@ static void collect_occurrence_dirty_if_exprs_in_subtree(
             out.push_back(id);
         }
         if (!v.children.empty()) {
-            for (std::size_t i = v.children.size(); i-- > 0; ) {
+            for (std::size_t i = v.children.size(); i-- > 0;) {
                 const auto c = v.children[i];
                 if (c != NULL_NODE)
                     stack.push_back(c);
@@ -3261,10 +3241,11 @@ static void collect_occurrence_dirty_if_exprs_in_subtree(
 // Issue #537 / #518 Phase 2: record refreshed narrowing
 // provenance after post-mutation re-narrow. Appends a new
 // NarrowingRecord with capture_epoch + source_mutation_id.
-static void record_refreshed_narrowing_provenance(
-    FlatAST& flat, StringPool& pool, TypeRegistry& reg, NodeId if_id, NodeId cond_id,
-    const OccurrenceInfoFlat& occ, std::uint32_t narrow_evidence, std::uint64_t cache_epoch,
-    void* metrics) {
+static void record_refreshed_narrowing_provenance(FlatAST& flat, StringPool& pool,
+                                                  TypeRegistry& reg, NodeId if_id, NodeId cond_id,
+                                                  const OccurrenceInfoFlat& occ,
+                                                  std::uint32_t narrow_evidence,
+                                                  std::uint64_t cache_epoch, void* metrics) {
     if (occ.is_negation)
         return;
     std::string refined_str;
@@ -3306,8 +3287,7 @@ static void record_refreshed_narrowing_provenance(
     if (metrics) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics);
         m->occurrence_stale_refreshes_total.fetch_add(1, std::memory_order_relaxed);
-        if (rec.source_mutation_id != 0 && !occ.predicate_name.empty() &&
-            occ.source_cond_id != 0) {
+        if (rec.source_mutation_id != 0 && !occ.predicate_name.empty() && occ.source_cond_id != 0) {
             m->occurrence_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
             m->provenance_completeness_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
@@ -3315,19 +3295,19 @@ static void record_refreshed_narrowing_provenance(
             m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
         }
         if (narrow_evidence != 0) {
-            m->coercion_post_narrow_elim_opportunities_total.fetch_add(
-                1, std::memory_order_relaxed);
+            m->coercion_post_narrow_elim_opportunities_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             if (rec.source_mutation_id != 0 && occ.source_cond_id != 0)
-                m->coercion_narrow_blame_chain_hits_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                m->coercion_narrow_blame_chain_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
 
 // Issue #518 P0 Phase 1: refresh OccurrenceInfoFlat for dirty
 // if-contexts and clear per-node occurrence dirty/stale bits.
-std::size_t InferenceEngine::reanalyze_occurrence_contexts(
-    FlatAST& flat, StringPool& pool, const std::vector<NodeId>& affected_ids) {
+std::size_t
+InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
+                                               const std::vector<NodeId>& affected_ids) {
     const std::uint8_t kOccurrenceBit =
         static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
     std::size_t refreshed = 0;
@@ -3373,8 +3353,8 @@ std::size_t InferenceEngine::reanalyze_occurrence_contexts(
         if (occ)
             narrow_ev = compute_narrowing_evidence(flat, pool, cond_id, reg_).value_or(0);
         if (occ)
-            record_refreshed_narrowing_provenance(flat, pool, reg_, id, cond_id, *occ,
-                                                  narrow_ev, cache_epoch_, cs_.metrics_);
+            record_refreshed_narrowing_provenance(flat, pool, reg_, id, cond_id, *occ, narrow_ev,
+                                                  cache_epoch_, cs_.metrics_);
 
         ++refreshed;
 
@@ -3389,8 +3369,8 @@ std::size_t InferenceEngine::reanalyze_occurrence_contexts(
 // Issue #518 P0 Phase 1: after occurrence refresh, ensure
 // narrowed-variable use-sites in the if branches are in the
 // affected set for the subsequent infer loop.
-void InferenceEngine::propagate_narrowing_to_uses(
-    FlatAST& flat, StringPool& pool, std::vector<NodeId>& affected) {
+void InferenceEngine::propagate_narrowing_to_uses(FlatAST& flat, StringPool& pool,
+                                                  std::vector<NodeId>& affected) {
     std::unordered_set<NodeId> in_affected(affected.begin(), affected.end());
     auto add_unique = [&](NodeId nid) {
         if (nid == NULL_NODE || nid >= flat.size())
@@ -3453,9 +3433,10 @@ void InferenceEngine::propagate_narrowing_to_uses(
     }
 }
 
-std::uint32_t InferenceEngine::compute_if_narrowing_evidence_mask(
-    const FlatAST& flat, const StringPool& pool, NodeId cond_id,
-    const OccurrenceInfoFlat& occ) const {
+std::uint32_t
+InferenceEngine::compute_if_narrowing_evidence_mask(const FlatAST& flat, const StringPool& pool,
+                                                    NodeId cond_id,
+                                                    const OccurrenceInfoFlat& occ) const {
     if (occ.is_negation)
         return 0;
     auto cond = flat.get(cond_id);
@@ -3496,8 +3477,9 @@ std::uint32_t InferenceEngine::compute_if_narrowing_evidence_mask(
     return narrowing_bit_for(pred_name);
 }
 
-InferenceEngine::IfPredicateResolve InferenceEngine::resolve_if_predicate_occurrence(
-    FlatAST& flat, StringPool& pool, NodeId if_id, NodeId cond_id, bool check_mode) {
+InferenceEngine::IfPredicateResolve
+InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool, NodeId if_id,
+                                                 NodeId cond_id, bool check_mode) {
     IfPredicateResolve out;
     const std::uint8_t kOccurrenceBit =
         static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
@@ -3561,7 +3543,8 @@ InferenceEngine::IfPredicateResolve InferenceEngine::resolve_if_predicate_occurr
     return out;
 }
 
-TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeId if_id, NodeView v) {
+TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeId if_id,
+                                           NodeView v) {
     // children: 0=condition, 1=then_branch, 2=else_branch (can be NULL_NODE)
     if (v.children.empty()) {
         last_if_narrowing_ = 0;
@@ -3607,15 +3590,10 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             // has predicate_name + source_cond_id
             // populated. Pre-#342 this was always
             // false (the fields didn't exist).
-            if (!occ->predicate_name.empty() &&
-                occ->source_cond_id != 0) {
+            if (!occ->predicate_name.empty() && occ->source_cond_id != 0) {
                 if (cs_.metrics_) {
-                    auto* m = static_cast<
-                        struct CompilerMetrics*>(
-                        cs_.metrics_);
-                    m->narrowing_provenance_total
-                        .fetch_add(1,
-                            std::memory_order_relaxed);
+                    auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                    m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
                 }
             }
             env_.bind(occ->var_name, occ->refined_type);
@@ -3652,7 +3630,8 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             std::string refined_str;
             if (occ->refined_type.index != 0) {
                 auto name_opt = reg_.name_of(occ->refined_type);
-                if (!name_opt.empty()) refined_str = std::string(name_opt);
+                if (!name_opt.empty())
+                    refined_str = std::string(name_opt);
             }
             // Predicate source: stringify the cond node as a
             // canonical source. For nested (and / or / not), the
@@ -3675,7 +3654,8 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
                             }
                         }
                     }
-                    if (s.size() > 80) s.resize(80);
+                    if (s.size() > 80)
+                        s.resize(80);
                     pred_src = s;
                 }
             }
@@ -3697,8 +3677,8 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
                 m->coercion_post_narrow_elim_opportunities_total.fetch_add(
                     1, std::memory_order_relaxed);
                 if (occ->source_cond_id != 0 && captured_mutation_id != 0)
-                    m->coercion_narrow_blame_chain_hits_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    m->coercion_narrow_blame_chain_hits_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
             }
         }
         return lub(then_type, else_type);
@@ -3759,9 +3739,10 @@ static bool is_syntactic_value(NodeId id, const FlatAST& flat) {
 }
 
 // Issue #260: shared ADT exhaustiveness logic for typecheck + post-mutation.
-static std::vector<std::string>
-adt_match_missing_constructors(TypeRegistry& reg, const StringPool& pool,
-                               const MatchClauseInfo& minfo, TypeId subject_type) {
+static std::vector<std::string> adt_match_missing_constructors(TypeRegistry& reg,
+                                                               const StringPool& pool,
+                                                               const MatchClauseInfo& minfo,
+                                                               TypeId subject_type) {
     if (minfo.has_wildcard)
         return {};
 
@@ -3828,9 +3809,8 @@ adt_match_missing_constructors(TypeRegistry& reg, const StringPool& pool,
     return missing;
 }
 
-std::vector<std::string>
-analyze_match_exhaustiveness(const FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
-                             NodeId let_node) {
+std::vector<std::string> analyze_match_exhaustiveness(const FlatAST& flat, const StringPool& pool,
+                                                      TypeRegistry& reg, NodeId let_node) {
     if (let_node == NULL_NODE || let_node >= flat.size())
         return {};
     auto v = flat.get(let_node);
@@ -3917,10 +3897,8 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         // observability (every __match_tmp let processed
         // by the type checker bumps it).
         if (cs_.metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(
-                cs_.metrics_);
-            m->match_subject_total.fetch_add(
-                1, std::memory_order_relaxed);
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->match_subject_total.fetch_add(1, std::memory_order_relaxed);
         }
         TypeId subject_type = val_norm;
         // Issue #341: if the value is a Variable node
@@ -3936,10 +3914,8 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         // subject type.
         if (!v.children.empty() && v.child(0) != NULL_NODE) {
             auto val_v = flat.get(v.child(0));
-            if (val_v.tag == NodeTag::Variable &&
-                val_v.sym_id != INVALID_SYM) {
-                auto var_name = std::string(
-                    pool.resolve(val_v.sym_id));
+            if (val_v.tag == NodeTag::Variable && val_v.sym_id != INVALID_SYM) {
+                auto var_name = std::string(pool.resolve(val_v.sym_id));
                 if (env_.is_bound(var_name)) {
                     auto env_type = env_.lookup(var_name);
                     // Only use the env-bound type if it's
@@ -3947,15 +3923,10 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                     // — type vars are not narrowed). This
                     // filters out the case where env_ has
                     // a fresh var (the let-poly path).
-                    if (reg_.tag_of(env_type) !=
-                        TypeTag::TYPE_VAR) {
+                    if (reg_.tag_of(env_type) != TypeTag::TYPE_VAR) {
                         if (cs_.metrics_) {
-                            auto* m = static_cast<
-                                struct CompilerMetrics*>(
-                                cs_.metrics_);
-                            m->match_subject_narrowed_total
-                                .fetch_add(1,
-                                    std::memory_order_relaxed);
+                            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                            m->match_subject_narrowed_total.fetch_add(1, std::memory_order_relaxed);
                         }
                         subject_type = env_type;
                     }
@@ -4002,8 +3973,8 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                         suggest += ", ";
                     suggest += "'" + missing[mi] + "'";
                 }
-                diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                 .with_suggestion(suggest));
+                diag_.report(
+                    Diagnostic(ErrorKind::TypeError, msg, cur_loc_).with_suggestion(suggest));
             }
         }
     }
@@ -4111,97 +4082,99 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             const auto pred = resolve_if_predicate_occurrence(flat, pool, id, cond_id,
                                                               /*check_mode=*/true);
             auto occ = pred.occ;
-        if (occ && !occ->is_negation) {
-            // Then-branch: variable has refined type
-            env_.push_scope();
-            ownership_env_.push_scope();
-            if (env_.is_bound(occ->var_name))
-                env_.bind(occ->var_name, occ->refined_type);
-            // Linear ownership: narrowed bindings are Owned
-            // (the predicate guarantees presence; use is
-            // permitted). This mirrors the original-type
-            // default of `Owned` for unknown vars.
-            ownership_env_.mark(occ->var_name, OwnershipState::Owned);
-            // Issue #283 follow-up #3: also capture provenance
-            // in check-mode. This mirrors the synthesize_flat_if
-            // capture so (query:provenance-of var) works
-            // whether the workspace was last typechecked via
-            // synthesize or check. The capture_epoch is the
-            // current inference engine's epoch.
-            {
-                std::string refined_str;
-                if (occ->refined_type.index != 0) {
-                    auto n = reg_.name_of(occ->refined_type);
-                    if (!n.empty()) refined_str = std::string(n);
-                }
-                std::string pred_src = "(...)";
-                if (cond_id < flat.size()) {
-                    auto cn = flat.get(cond_id);
-                    if (cn.tag == NodeTag::Call && !cn.children.empty()) {
-                        auto fn = flat.get(cn.child(0));
-                        if (fn.tag == NodeTag::Variable) {
-                            pred_src = std::string(pool.resolve(fn.sym_id));
-                            if (cn.children.size() >= 2) {
-                                auto arg = flat.get(cn.child(1));
-                                if (arg.tag == NodeTag::Variable)
-                                    pred_src += " " + std::string(pool.resolve(arg.sym_id));
+            if (occ && !occ->is_negation) {
+                // Then-branch: variable has refined type
+                env_.push_scope();
+                ownership_env_.push_scope();
+                if (env_.is_bound(occ->var_name))
+                    env_.bind(occ->var_name, occ->refined_type);
+                // Linear ownership: narrowed bindings are Owned
+                // (the predicate guarantees presence; use is
+                // permitted). This mirrors the original-type
+                // default of `Owned` for unknown vars.
+                ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+                // Issue #283 follow-up #3: also capture provenance
+                // in check-mode. This mirrors the synthesize_flat_if
+                // capture so (query:provenance-of var) works
+                // whether the workspace was last typechecked via
+                // synthesize or check. The capture_epoch is the
+                // current inference engine's epoch.
+                {
+                    std::string refined_str;
+                    if (occ->refined_type.index != 0) {
+                        auto n = reg_.name_of(occ->refined_type);
+                        if (!n.empty())
+                            refined_str = std::string(n);
+                    }
+                    std::string pred_src = "(...)";
+                    if (cond_id < flat.size()) {
+                        auto cn = flat.get(cond_id);
+                        if (cn.tag == NodeTag::Call && !cn.children.empty()) {
+                            auto fn = flat.get(cn.child(0));
+                            if (fn.tag == NodeTag::Variable) {
+                                pred_src = std::string(pool.resolve(fn.sym_id));
+                                if (cn.children.size() >= 2) {
+                                    auto arg = flat.get(cn.child(1));
+                                    if (arg.tag == NodeTag::Variable)
+                                        pred_src += " " + std::string(pool.resolve(arg.sym_id));
+                                }
                             }
                         }
                     }
+                    NarrowingRecord rec;
+                    rec.var_name = occ->var_name;
+                    rec.predicate_src = pred_src;
+                    rec.refined_type_str = refined_str;
+                    rec.if_node = id; // check_flat's id param
+                    rec.cond_node = cond_id;
+                    rec.is_negation = false;
+                    rec.narrow_evidence = last_if_narrowing_;
+                    rec.capture_epoch = cache_epoch_;
+                    flat.record_narrowing(std::move(rec));
                 }
-                NarrowingRecord rec;
-                rec.var_name = occ->var_name;
-                rec.predicate_src = pred_src;
-                rec.refined_type_str = refined_str;
-                rec.if_node = id; // check_flat's id param
-                rec.cond_node = cond_id;
-                rec.is_negation = false;
-                rec.narrow_evidence = last_if_narrowing_;
-                rec.capture_epoch = cache_epoch_;
-                flat.record_narrowing(std::move(rec));
-            }
-            check_flat(flat, pool, then_id, expected);
-            ownership_env_.pop_scope();
-            env_.pop_scope();
-        } else if (occ && occ->is_negation) {
-            // Negation: else-branch gets the refinement.
-            env_.push_scope();
-            ownership_env_.push_scope();
-            if (env_.is_bound(occ->var_name))
-                env_.bind(occ->var_name, occ->refined_type);
-            ownership_env_.mark(occ->var_name, OwnershipState::Owned);
-            // Issue #283 follow-up #3: capture provenance for
-            // the negation case (else-branch gets refinement).
-            {
-                std::string refined_str;
-                if (occ->refined_type.index != 0) {
-                    auto n = reg_.name_of(occ->refined_type);
-                    if (!n.empty()) refined_str = std::string(n);
+                check_flat(flat, pool, then_id, expected);
+                ownership_env_.pop_scope();
+                env_.pop_scope();
+            } else if (occ && occ->is_negation) {
+                // Negation: else-branch gets the refinement.
+                env_.push_scope();
+                ownership_env_.push_scope();
+                if (env_.is_bound(occ->var_name))
+                    env_.bind(occ->var_name, occ->refined_type);
+                ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+                // Issue #283 follow-up #3: capture provenance for
+                // the negation case (else-branch gets refinement).
+                {
+                    std::string refined_str;
+                    if (occ->refined_type.index != 0) {
+                        auto n = reg_.name_of(occ->refined_type);
+                        if (!n.empty())
+                            refined_str = std::string(n);
+                    }
+                    NarrowingRecord rec;
+                    rec.var_name = occ->var_name;
+                    rec.predicate_src = "(not (...))";
+                    rec.refined_type_str = refined_str;
+                    rec.if_node = id;
+                    rec.cond_node = cond_id;
+                    rec.is_negation = true;
+                    rec.narrow_evidence = 0;
+                    rec.capture_epoch = cache_epoch_;
+                    flat.record_narrowing(std::move(rec));
                 }
-                NarrowingRecord rec;
-                rec.var_name = occ->var_name;
-                rec.predicate_src = "(not (...))";
-                rec.refined_type_str = refined_str;
-                rec.if_node = id;
-                rec.cond_node = cond_id;
-                rec.is_negation = true;
-                rec.narrow_evidence = 0;
-                rec.capture_epoch = cache_epoch_;
-                flat.record_narrowing(std::move(rec));
+                if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                    check_flat(flat, pool, v.child(2), expected);
+                ownership_env_.pop_scope();
+                env_.pop_scope();
+                // Then-branch: no refinement
+                check_flat(flat, pool, then_id, expected);
+            } else {
+                // No narrowing predicate — fall back to original
+                // uniform check.
+                check_flat(flat, pool, then_id, expected);
+                if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                    check_flat(flat, pool, v.child(2), expected);
             }
-            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
-                check_flat(flat, pool, v.child(2), expected);
-            ownership_env_.pop_scope();
-            env_.pop_scope();
-            // Then-branch: no refinement
-            check_flat(flat, pool, then_id, expected);
-        } else {
-            // No narrowing predicate — fall back to original
-            // uniform check.
-            check_flat(flat, pool, then_id, expected);
-            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
-                check_flat(flat, pool, v.child(2), expected);
-        }
         } // end bidirectional_mode_ opt-out
     } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
         // Let in check mode: check value, then check body against expected
@@ -4338,8 +4311,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                                 1, std::memory_order_relaxed);
                             m->coercion_cast_elim_from_narrow_total.fetch_add(
                                 1, std::memory_order_relaxed);
-                            if (last_predicate_cond_id_ != 0 &&
-                                !flat.all_mutations().empty()) {
+                            if (last_predicate_cond_id_ != 0 && !flat.all_mutations().empty()) {
                                 m->coercion_narrow_blame_chain_hits_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             }
@@ -4395,8 +4367,8 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
                     }
                 }
             } else {
-                add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, v.id, type_tag,
-                                      expected.index, v.line, v.col);
+                add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, v.id, type_tag, expected.index,
+                                      v.line, v.col);
             }
         } else {
             auto msg = "call return type mismatch: expected " +
@@ -4612,10 +4584,10 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
 // (i.e. NOT just cache hits). The IncrementalStats
 // Issue #688: collect linear binding names under affected nodes for
 // post-mutate OwnershipEnv revalidate in infer_flat_partial.
-static void collect_linear_bindings_under_nodes(
-    const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
-    const std::vector<aura::ast::NodeId>& nodes,
-    std::unordered_set<std::string>& out) {
+static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
+                                                const aura::ast::StringPool& pool,
+                                                const std::vector<aura::ast::NodeId>& nodes,
+                                                std::unordered_set<std::string>& out) {
     std::function<void(aura::ast::NodeId)> walk = [&](aura::ast::NodeId id) {
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             return;
@@ -4693,8 +4665,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
         auto tgv = flat.get(rec.target_node);
         if (tgv.sym_id != aura::ast::INVALID_SYM &&
-            (tgv.tag == aura::ast::NodeTag::Define ||
-             tgv.tag == aura::ast::NodeTag::Let ||
+            (tgv.tag == aura::ast::NodeTag::Define || tgv.tag == aura::ast::NodeTag::Let ||
              tgv.tag == aura::ast::NodeTag::LetRec)) {
             sym_for_lookup = tgv.sym_id;
         }
@@ -4727,9 +4698,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // tracker count for the metric (cheap) and
         // still run the O(n) walk to get the actual
         // NodeIds (for the inference loop).
-        const auto* tracker = static_cast<
-            const per_defuse_index::PerDefUseIndexTracker*>(
-                per_defuse_index_tracker);
+        const auto* tracker =
+            static_cast<const per_defuse_index::PerDefUseIndexTracker*>(per_defuse_index_tracker);
         // Look up the tracker entry by sym's lexical
         // name. Note: the tracker keys on string
         // names, not SymId. The caller is expected to
@@ -4789,11 +4759,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // populated for OTHER syms), fall through to the
         // O(n) walk (bump walk_fallback).
         if (sym_for_lookup != aura::ast::INVALID_SYM) {
-            const auto* tracker = static_cast<
-                const per_defuse_index::PerDefUseIndexTracker*>(
-                    per_defuse_index_tracker);
-            const std::string sym_name(
-                pool.resolve(sym_for_lookup));
+            const auto* tracker = static_cast<const per_defuse_index::PerDefUseIndexTracker*>(
+                per_defuse_index_tracker);
+            const std::string sym_name(pool.resolve(sym_for_lookup));
             const auto& tracker_callers =
                 tracker->get_callers(per_defuse_index::DefUseIndex{sym_name});
             if (!tracker_callers.empty()) {
@@ -4803,13 +4771,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 affected.reserve(tracker_callers.size());
                 for (const auto& c : tracker_callers)
                     affected.push_back(c.node_id);
-                stats_.per_defuse_index_visited_total +=
-                    affected.size();
+                stats_.per_defuse_index_visited_total += affected.size();
             } else {
                 // Tracker doesn't have this sym — fall
                 // through to O(n) walk (bump walk_fallback).
-                affected = affected_subtree_for_symbol(
-                    flat, sym_for_lookup);
+                affected = affected_subtree_for_symbol(flat, sym_for_lookup);
                 ++stats_.per_defuse_index_walk_fallback_total;
                 stats_.per_symbol_visited_total += affected.size();
             }
@@ -4838,10 +4804,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // (the IR re-lower decision — happens
         // downstream of the affected set).
         if (metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(
-                metrics_);
-            m->affected_subtree_total.fetch_add(
-                1, std::memory_order_relaxed);
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->affected_subtree_total.fetch_add(1, std::memory_order_relaxed);
         }
         ++stats_.ancestor_used_total;
         stats_.ancestor_visited_total += affected.size();
@@ -4866,21 +4830,20 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     std::unordered_set<NodeId> occurrence_seen;
     occurrence_targets.reserve(affected.size());
     for (auto id : affected)
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, id, occurrence_targets,
-                                                     occurrence_seen);
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, id, occurrence_targets, occurrence_seen);
     if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.target_node,
-                                                     occurrence_targets, occurrence_seen);
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.target_node, occurrence_targets,
+                                                     occurrence_seen);
     if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id,
-                                                     occurrence_targets, occurrence_seen);
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id, occurrence_targets,
+                                                     occurrence_seen);
     // Issue #689: deep and/or/not predicates in mutation-affected subtrees.
     for (auto id : affected)
         collect_deep_predicate_if_exprs_in_subtree(flat, pool, id, occurrence_targets,
                                                    occurrence_seen);
     if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-        collect_deep_predicate_if_exprs_in_subtree(flat, pool, rec.target_node,
-                                                 occurrence_targets, occurrence_seen);
+        collect_deep_predicate_if_exprs_in_subtree(flat, pool, rec.target_node, occurrence_targets,
+                                                   occurrence_seen);
     {
         const std::uint8_t kOccurrenceBit =
             static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
@@ -4896,9 +4859,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     InferenceEngine engine(types, diag);
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
-    engine.set_strict(strict_);           // Issue #79: plumb strict mode
-    engine.set_cache_epoch(cache_epoch_); // Issue #168
-    engine.set_metrics(metrics_);         // Issue #537: provenance refresh metrics
+    engine.set_strict(strict_);                         // Issue #79: plumb strict mode
+    engine.set_cache_epoch(cache_epoch_);               // Issue #168
+    engine.set_metrics(metrics_);                       // Issue #537: provenance refresh metrics
     engine.set_bidirectional_mode(bidirectional_mode_); // Issue #627
     engine.bind_declared_sigs();
     engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
@@ -4911,9 +4874,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // Issue #518: re-narrow dirty if-contexts before the infer
     // loop, then propagate narrowed-variable use-sites into the
     // affected set.
-    last_occurrence_refresh_count_ =
-        engine.reanalyze_occurrence_contexts(flat, const_cast<StringPool&>(pool),
-                                             occurrence_targets);
+    last_occurrence_refresh_count_ = engine.reanalyze_occurrence_contexts(
+        flat, const_cast<StringPool&>(pool), occurrence_targets);
     engine.propagate_narrowing_to_uses(flat, const_cast<StringPool&>(pool), affected);
     engine.seed_mutation_touched_roots(flat, pool, occurrence_targets, rec.mutation_id);
     if (on_touched_roots_snapshot_)
@@ -4939,25 +4901,26 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // is also in the affected set.
         bool ancestor_in_affected = false;
         for (std::size_t bi = 0; bi < affected.size(); ++bi) {
-            if (bi == ai) continue;
+            if (bi == ai)
+                continue;
             auto other = affected[bi];
             // Walk up from `id` toward root and check if any step
             // is `other` (also in the affected set). Bounded by
             // flat.size() for the (impossible-but-safe) cycle case.
             NodeId cur = flat.parent_of(id);
             std::size_t safety = 0;
-            while (cur != aura::ast::NULL_NODE && cur < flat.size() &&
-                   safety++ < flat.size()) {
+            while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
                 if (cur == other) {
                     ancestor_in_affected = true;
                     break;
                 }
                 cur = flat.parent_of(cur);
             }
-            if (ancestor_in_affected) break;
+            if (ancestor_in_affected)
+                break;
         }
         if (ancestor_in_affected) {
-            continue;  // ancestor's recursive walk will cover us
+            continue; // ancestor's recursive walk will cover us
         }
         // Issue #466: preserve ConstraintSystem across affected
         // nodes; first node full-solves + mark_clean, subsequent
@@ -4965,8 +4928,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         engine.set_incremental_delta_mode(true, ai > 0);
         auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id,
                                       /*preserve_cs=*/ai > 0);
-        max_narrow_evidence =
-            std::max(max_narrow_evidence, engine.last_narrowing_evidence());
+        max_narrow_evidence = std::max(max_narrow_evidence, engine.last_narrowing_evidence());
         if (type != types.dynamic_type()) {
             ++re_inferred;
         }
@@ -5012,12 +4974,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         std::unordered_set<std::string> linear_bindings;
         collect_linear_bindings_under_nodes(flat, pool, affected, linear_bindings);
         if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
-            collect_linear_bindings_under_nodes(flat, pool, {rec.target_node},
-                                                linear_bindings);
+            collect_linear_bindings_under_nodes(flat, pool, {rec.target_node}, linear_bindings);
         }
         if (rec.parent_id != aura::ast::NULL_NODE && rec.parent_id < flat.size()) {
-            collect_linear_bindings_under_nodes(flat, pool, {rec.parent_id},
-                                                linear_bindings);
+            collect_linear_bindings_under_nodes(flat, pool, {rec.parent_id}, linear_bindings);
         }
         if (sym_for_lookup != aura::ast::INVALID_SYM) {
             const auto sym_name = std::string(pool.resolve(sym_for_lookup));
@@ -5032,8 +4992,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                                      ownership_pass);
             if (metrics_) {
                 static_cast<struct CompilerMetrics*>(metrics_)
-                    ->linear_dirty_revalidate_count.fetch_add(
-                        1, std::memory_order_relaxed);
+                    ->linear_dirty_revalidate_count.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
@@ -5469,12 +5428,12 @@ namespace {
             // narrowing. (Skip if not an if-context with a narrowing
             // predicate — avoids emitting spurious notes.)
             bool m3, j3;
-        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg, m3, j3);
-        // Issue #338: meet/join counters aren't
-        // bumped here — this is a static function
-        // outside the InferenceEngine. The counters
-        // are bumped at the call sites in
-        // synthesize_flat_if / check_flat_if.
+            auto occ = analyze_predicate_flat(flat, pool, cond_id, reg, m3, j3);
+            // Issue #338: meet/join counters aren't
+            // bumped here — this is a static function
+            // outside the InferenceEngine. The counters
+            // are bumped at the call sites in
+            // synthesize_flat_if / check_flat_if.
             if (!occ)
                 continue;
             if (!has_occ_bit && !has_general_only)
@@ -5500,9 +5459,8 @@ namespace {
     }
 
     // Issue #612: collect constructor names from a DefineType node.
-    static std::vector<std::string> collect_define_type_ctor_names(const FlatAST& flat,
-                                                                   const StringPool& pool,
-                                                                   NodeId id) {
+    static std::vector<std::string>
+    collect_define_type_ctor_names(const FlatAST& flat, const StringPool& pool, NodeId id) {
         std::vector<std::string> ctors;
         if (id == NULL_NODE || id >= flat.size())
             return ctors;
@@ -5534,7 +5492,8 @@ namespace {
         return ctors;
     }
 
-    static void invalidate_match_exhaust_for_adt_type(FlatAST& flat, TypeId adt_tid, void* metrics) {
+    static void invalidate_match_exhaust_for_adt_type(FlatAST& flat, TypeId adt_tid,
+                                                      void* metrics) {
         auto* m = static_cast<CompilerMetrics*>(metrics);
         for (NodeId id = 0; id < flat.size(); ++id) {
             if (!flat.has_match_info(id))
@@ -5573,12 +5532,12 @@ namespace {
             auto let_v = flat.get(id);
             bool had_subject_type = false;
             bool narrowed_subject = false;
-            if (let_v.tag == NodeTag::Let && !let_v.children.empty() && let_v.child(0) != NULL_NODE) {
+            if (let_v.tag == NodeTag::Let && !let_v.children.empty() &&
+                let_v.child(0) != NULL_NODE) {
                 auto tid_raw = flat.type_id(let_v.child(0));
                 had_subject_type = tid_raw > 0 && tid_raw < reg.size();
                 if (auto* mi = flat.get_match_info(id)) {
-                    narrowed_subject =
-                        mi->subject_type_id > 0 && mi->subject_type_id != tid_raw;
+                    narrowed_subject = mi->subject_type_id > 0 && mi->subject_type_id != tid_raw;
                 }
             }
             if (narrowed_subject && m)
@@ -5595,8 +5554,8 @@ namespace {
                 OwnershipNote note;
                 note.node = id;
                 note.kind = "MissingConstructorInNestedMatch";
-                note.message = "match exhaustiveness stale after mutation: missing '" +
-                               missing[0] + "'";
+                note.message =
+                    "match exhaustiveness stale after mutation: missing '" + missing[0] + "'";
                 if (missing.size() > 1) {
                     note.message += " (and " + std::to_string(missing.size() - 1) + " more)";
                 }
@@ -5629,10 +5588,8 @@ namespace {
                 // signature changed", the conservative path
                 // to "something in the dirty scope changed".
                 const std::uint8_t kOccurrenceBit =
-                    static_cast<std::uint8_t>(
-                        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
-                const bool has_occ_bit =
-                    flat.is_dirty_for(id, kOccurrenceBit);
+                    static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+                const bool has_occ_bit = flat.is_dirty_for(id, kOccurrenceBit);
                 // Skip clean match nodes (same as #240 IfExpr
                 // path). This is the high-value case: a
                 // narrow mutation in a deep workspace no
@@ -5642,16 +5599,13 @@ namespace {
                     continue;
                 OwnershipNote note;
                 note.node = id;
-                note.kind = has_occ_bit
-                    ? "invalidated-match-narrowing"
-                    : "invalidated-match-pattern";
-                note.message = std::string("match pattern in dirty scope ") +
-                               (has_occ_bit ? "narrowing"
-                                             : "may be invalidated") +
-                               " by mutation (used " +
-                               std::to_string(mi->used_constructors.size()) +
-                               " constructors, has_wildcard=" +
-                               (mi->has_wildcard ? "true" : "false") + ")";
+                note.kind =
+                    has_occ_bit ? "invalidated-match-narrowing" : "invalidated-match-pattern";
+                note.message =
+                    std::string("match pattern in dirty scope ") +
+                    (has_occ_bit ? "narrowing" : "may be invalidated") + " by mutation (used " +
+                    std::to_string(mi->used_constructors.size()) +
+                    " constructors, has_wildcard=" + (mi->has_wildcard ? "true" : "false") + ")";
                 attach_mutation_blame(note, rec);
                 notes_out.push_back(std::move(note));
             }
@@ -5677,8 +5631,7 @@ namespace {
                 auto v = flat.get(id);
                 if (v.tag == NodeTag::DefineType && seen_dt.insert(id).second)
                     define_types.push_back(id);
-                if (v.tag == NodeTag::Let &&
-                    std::string(pool.resolve(v.sym_id)) == "__match_tmp" &&
+                if (v.tag == NodeTag::Let && std::string(pool.resolve(v.sym_id)) == "__match_tmp" &&
                     seen_match.insert(id).second) {
                     match_lets.push_back(id);
                 }
@@ -5688,9 +5641,11 @@ namespace {
         }
     }
 
-    static void record_match_pattern_narrowing_provenance(
-        FlatAST& flat, const StringPool& pool, TypeRegistry& reg, NodeId match_let,
-        std::uint64_t mutation_id, std::uint64_t cache_epoch, void* metrics) {
+    static void record_match_pattern_narrowing_provenance(FlatAST& flat, const StringPool& pool,
+                                                          TypeRegistry& reg, NodeId match_let,
+                                                          std::uint64_t mutation_id,
+                                                          std::uint64_t cache_epoch,
+                                                          void* metrics) {
         if (match_let == NULL_NODE || match_let >= flat.size() || !flat.has_match_info(match_let))
             return;
         auto v = flat.get(match_let);
@@ -5759,14 +5714,14 @@ namespace {
 } // anonymous namespace
 
 void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const StringPool& pool,
-                                                      TypeRegistry& reg,
-                                                      const std::vector<NodeId>& dirty_nodes,
-                                                      void* metrics) {
+                                                     TypeRegistry& reg,
+                                                     const std::vector<NodeId>& dirty_nodes,
+                                                     void* metrics) {
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
 }
 
-void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool,
-                                         TypeRegistry& reg, const std::vector<NodeId>& subtree_roots,
+void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
+                                         const std::vector<NodeId>& subtree_roots,
                                          const MutationRecord& rec, std::uint64_t cache_epoch,
                                          void* metrics) {
     std::vector<NodeId> define_types;
@@ -5788,8 +5743,8 @@ void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool,
             if (auto* mi = flat.get_match_info(id)) {
                 if (mi->subject_type_id > 0 && mi->subject_type_id != tid_raw && metrics) {
                     static_cast<CompilerMetrics*>(metrics)
-                        ->adt_occurrence_narrow_in_match_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        ->adt_occurrence_narrow_in_match_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
                 }
             }
         }
@@ -5805,8 +5760,8 @@ void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool,
                 updated.subject_type_id = flat.type_id(let_v.child(0));
             flat.set_match_info(id, std::move(updated));
         }
-        record_match_pattern_narrowing_provenance(flat, pool, reg, id, rec.mutation_id,
-                                                  cache_epoch, metrics);
+        record_match_pattern_narrowing_provenance(flat, pool, reg, id, rec.mutation_id, cache_epoch,
+                                                  metrics);
     }
 }
 
@@ -5877,15 +5832,14 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     discover_linear_bindings(flat, pool, dirty_nodes, linear_bindings);
     if (!linear_bindings.empty() && flat.root != NULL_NODE && flat.root < flat.size()) {
         const auto notes_before = notes_out.size();
-        const bool ownership_pass = OwnershipEnv::validate_ownership(
-            flat, pool, flat.root, linear_bindings, notes_out);
+        const bool ownership_pass =
+            OwnershipEnv::validate_ownership(flat, pool, flat.root, linear_bindings, notes_out);
         std::vector<OwnershipNote> ownership_notes;
         if (notes_out.size() > notes_before) {
             ownership_notes.assign(notes_out.begin() + static_cast<std::ptrdiff_t>(notes_before),
-                                 notes_out.end());
+                                   notes_out.end());
         }
-        record_linear_ownership_mutation_metrics(metrics, true, ownership_notes,
-                                                 ownership_pass);
+        record_linear_ownership_mutation_metrics(metrics, true, ownership_notes, ownership_pass);
     }
 
     // ── Occurrence-narrowing re-check on dirty nodes ─────────────
@@ -5979,9 +5933,8 @@ affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
 // node itself (a Define/Let binding S) is NOT included —
 // Variable nodes are use-sites only; the def re-checks itself
 // via its own cached type lookup in synthesize_flat.
-std::vector<aura::ast::NodeId>
-affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
-                            aura::ast::SymId sym_id) {
+std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
+                                                           aura::ast::SymId sym_id) {
     using namespace aura::ast;
     std::vector<NodeId> affected;
     if (sym_id == INVALID_SYM)

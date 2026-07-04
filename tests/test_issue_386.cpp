@@ -1,5 +1,6 @@
 // @category: integration
-// @reason: uses CompilerService + occurrence-typing to verify narrowing observability + let/if combination
+// @reason: uses CompilerService + occurrence-typing to verify narrowing observability + let/if
+// combination
 
 // test_issue_386.cpp — Issue #386: Deep Occurrence Typing
 // narrowing integration (scope-limited close).
@@ -50,16 +51,29 @@ namespace aura_386_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: narrowing_* counters start at 0 ---");
@@ -108,8 +122,8 @@ bool test_occurrence_typing_stats_primitive() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define ots (compile:occurrence-typing-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"applied-total", "skipped-total",
-                            "reanalyzed-total", "applied-ratio-bp"}) {
+    for (const char* key :
+         {"applied-total", "skipped-total", "reanalyzed-total", "applied-ratio-bp"}) {
         std::string check = std::string("(hash-ref ots \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -134,14 +148,12 @@ bool test_repeated_typing_uses_memo() {
     // substantially.
     cs.eval("(eval-current)");
     auto snap1 = cs.snapshot();
-    std::println("  narrowing_reanalyzed: {} -> {}",
-                 snap0.narrowing_reanalyzed_total,
+    std::println("  narrowing_reanalyzed: {} -> {}", snap0.narrowing_reanalyzed_total,
                  snap1.narrowing_reanalyzed_total);
     // Allow some growth (cold memo start) but not
     // unbounded.
-    CHECK(snap1.narrowing_reanalyzed_total -
-                  snap0.narrowing_reanalyzed_total < 10u,
-              "narrowing_reanalyzed didn't blow up on repeated eval (memo works)");
+    CHECK(snap1.narrowing_reanalyzed_total - snap0.narrowing_reanalyzed_total < 10u,
+          "narrowing_reanalyzed didn't blow up on repeated eval (memo works)");
     return true;
 }
 
@@ -151,13 +163,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define w 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define w 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_386_detail
+} // namespace aura_386_detail
 
 int main() {
     using namespace aura_386_detail;
@@ -168,7 +179,7 @@ int main() {
     test_occurrence_typing_stats_primitive();
     test_repeated_typing_uses_memo();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

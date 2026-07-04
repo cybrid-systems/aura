@@ -46,30 +46,39 @@ namespace aura_385_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → poly_*_total == 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: poly counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.poly_register_total, 0u,
-             "poly_register_total == 0");
-    CHECK_EQ(snap.poly_dedup_hits_total, 0u,
-             "poly_dedup_hits_total == 0");
-    CHECK_EQ(snap.poly_instantiate_total, 0u,
-             "poly_instantiate_total == 0");
-    CHECK_EQ(snap.poly_dedup_ratio_bp, 0u,
-             "poly_dedup_ratio_bp == 0");
+    CHECK_EQ(snap.poly_register_total, 0u, "poly_register_total == 0");
+    CHECK_EQ(snap.poly_dedup_hits_total, 0u, "poly_dedup_hits_total == 0");
+    CHECK_EQ(snap.poly_instantiate_total, 0u, "poly_instantiate_total == 0");
+    CHECK_EQ(snap.poly_dedup_ratio_bp, 0u, "poly_dedup_ratio_bp == 0");
     return true;
 }
 
@@ -91,8 +100,8 @@ bool test_let_poly_stats_primitive() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define lps (compile:let-poly-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"register-total", "dedup-hits-total",
-                            "instantiate-total", "dedup-ratio-bp"}) {
+    for (const char* key :
+         {"register-total", "dedup-hits-total", "instantiate-total", "dedup-ratio-bp"}) {
         std::string check = std::string("(hash-ref lps \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -114,20 +123,14 @@ bool test_let_poly_stats_primitive() {
 bool test_typecheck_bumps_counters() {
     std::println("\n--- AC4: typecheck on a poly expression bumps counters ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.typecheck(
-        "(define (id x) x) (id 5) (id \"hello\")");
+    auto r = cs.typecheck("(define (id x) x) (id 5) (id \"hello\")");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  poly_register_total: {}",
-                 snap.poly_register_total);
-    std::println("  poly_dedup_hits_total: {}",
-                 snap.poly_dedup_hits_total);
-    std::println("  poly_instantiate_total: {}",
-                 snap.poly_instantiate_total);
-    std::println("  poly_dedup_ratio_bp: {}",
-                 snap.poly_dedup_ratio_bp);
-    CHECK(snap.poly_register_total > 0u,
-          "poly_register_total > 0 (register_forall fired)");
+    std::println("  poly_register_total: {}", snap.poly_register_total);
+    std::println("  poly_dedup_hits_total: {}", snap.poly_dedup_hits_total);
+    std::println("  poly_instantiate_total: {}", snap.poly_instantiate_total);
+    std::println("  poly_dedup_ratio_bp: {}", snap.poly_dedup_ratio_bp);
+    CHECK(snap.poly_register_total > 0u, "poly_register_total > 0 (register_forall fired)");
     // poly_instantiate_total may be 0 — the typecheck
     // path may not call instantiate_forall (it's
     // primarily called at use sites during
@@ -143,13 +146,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define lpe 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define lpe 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_385_detail
+} // namespace aura_385_detail
 
 int main() {
     using namespace aura_385_detail;
@@ -159,7 +161,7 @@ int main() {
     test_let_poly_stats_primitive();
     test_typecheck_bumps_counters();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -97,8 +97,8 @@ struct BenchFlatAST {
     std::vector<double> float_val_;
     std::vector<std::uint32_t> sym_id_;
     // Issue #220: per-node children as 2 columns
-    std::vector<std::uint32_t> child_count_per_node_;  // u32 per node
-    std::vector<std::uint32_t> child_data_;            // NodeId (flat concat)
+    std::vector<std::uint32_t> child_count_per_node_; // u32 per node
+    std::vector<std::uint32_t> child_data_;           // NodeId (flat concat)
     std::vector<std::uint32_t> parent_;
     std::vector<std::uint32_t> param_begin_;
     std::vector<std::uint32_t> param_count_;
@@ -120,19 +120,19 @@ struct BenchFlatAST {
 
 inline void bench_flatast_serialize(std::vector<char>& buf, const BenchFlatAST& ast) {
     uint32_t version = 1;
-    buf.insert(buf.end(), reinterpret_cast<char*>(&version),
-               reinterpret_cast<char*>(&version) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&version), reinterpret_cast<char*>(&version) + 4);
     uint32_t num_nodes = static_cast<uint32_t>(ast.tag_.size());
     buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
                reinterpret_cast<char*>(&num_nodes) + 4);
     auto write_column = [&buf](const auto& col) {
         uint32_t count = static_cast<uint32_t>(col.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
         if (!col.empty()) {
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(col.data()),
-                       reinterpret_cast<const char*>(col.data()) + col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+            buf.insert(
+                buf.end(), reinterpret_cast<const char*>(col.data()),
+                reinterpret_cast<const char*>(col.data()) +
+                    col.size() *
+                        sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
         }
     };
     write_column(ast.tag_);
@@ -169,8 +169,7 @@ inline void bench_flatast_serialize(std::vector<char>& buf, const BenchFlatAST& 
 // ═══════════════════════════════════════════════════════════════
 // Timing helper
 // ═══════════════════════════════════════════════════════════════
-template <typename F>
-double benchmark_median(F&& f, int runs = 5) {
+template <typename F> double benchmark_median(F&& f, int runs = 5) {
     std::vector<double> times;
     times.reserve(runs);
     // Warmup
@@ -182,7 +181,7 @@ double benchmark_median(F&& f, int runs = 5) {
         times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
     }
     std::sort(times.begin(), times.end());
-    return times[runs / 2];  // median
+    return times[runs / 2]; // median
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -204,8 +203,8 @@ void bench_flatast(std::vector<BenchResult>& results) {
         ast.float_val_.resize(N, 3.14);
         ast.sym_id_.resize(N, 0xABCD);
         // Issue #220: per-node children as 2 columns
-        ast.child_count_per_node_.resize(N, 3);  // 3 children per node
-        ast.child_data_.resize(N * 3);  // N nodes * 3 children (flat concat)
+        ast.child_count_per_node_.resize(N, 3); // 3 children per node
+        ast.child_data_.resize(N * 3);          // N nodes * 3 children (flat concat)
         ast.parent_.resize(N, 0);
         ast.param_begin_.resize(N, 0);
         ast.param_count_.resize(N, 0);
@@ -246,8 +245,10 @@ void bench_flatast(std::vector<BenchResult>& results) {
             std::size_t pos = 0;
             uint64_t sum = 0;
             uint32_t version, num_nodes;
-            std::memcpy(&version, &buf[pos], 4); pos += 4;
-            std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+            std::memcpy(&version, &buf[pos], 4);
+            pos += 4;
+            std::memcpy(&num_nodes, &buf[pos], 4);
+            pos += 4;
             sum += version + num_nodes;
             // The 22 columns have variable-size data. To avoid
             // hardcoding the size math, we just scan the rest of
@@ -260,9 +261,10 @@ void bench_flatast(std::vector<BenchResult>& results) {
 
         double ser_mb_s = (buf_size / 1e6) / (ser_ms / 1000.0);
         double readback_mb_s = (buf_size / 1e6) / (readback_ms / 1000.0);
-        std::println("  N={:>7} nodes, buf={:>10} bytes ({:>6.2f} MB)", N, buf_size, buf_size / 1e6);
-        std::println("    serialize: {:>8.3f} ms ({:>7.1f} MB/s, {:>7.0f} nodes/s)",
-                     ser_ms, ser_mb_s, N / (ser_ms / 1000.0));
+        std::println("  N={:>7} nodes, buf={:>10} bytes ({:>6.2f} MB)", N, buf_size,
+                     buf_size / 1e6);
+        std::println("    serialize: {:>8.3f} ms ({:>7.1f} MB/s, {:>7.0f} nodes/s)", ser_ms,
+                     ser_mb_s, N / (ser_ms / 1000.0));
         std::println("    read-back:  {:>8.3f} ms ({:>7.1f} MB/s)", readback_ms, readback_mb_s);
         results.push_back({"flatast_serialize", N, ser_ms, buf_size});
         results.push_back({"flatast_readback", N, readback_ms, buf_size});
@@ -281,15 +283,15 @@ void bench_node_view(std::vector<BenchResult>& results) {
         std::vector<std::vector<std::uint32_t>> children_storage(N, {1, 2, 3});
         for (std::size_t i = 0; i < N; ++i) {
             views[i].id = static_cast<std::uint32_t>(i);
-            views[i].tag = 0x03;  // Call
+            views[i].tag = 0x03; // Call
             views[i].int_value = static_cast<std::int64_t>(i);
             views[i].float_value = 1.5 * static_cast<double>(i);
             views[i].sym_id = 0xABCD;
             views[i].line = static_cast<std::uint32_t>(i % 1000);
             views[i].col = static_cast<std::uint32_t>(i % 80);
             views[i].type_id = 0;
-            views[i].children = std::span<const std::uint32_t>(
-                children_storage[i].data(), children_storage[i].size());
+            views[i].children = std::span<const std::uint32_t>(children_storage[i].data(),
+                                                               children_storage[i].size());
             views[i].marker = 0;
         }
 
@@ -307,10 +309,10 @@ void bench_node_view(std::vector<BenchResult>& results) {
             total_bytes += b.size();
         }
         double ser_mb_s = (total_bytes / 1e6) / (ser_ms / 1000.0);
-        std::println("  N={:>7} views, total bytes={:>10} ({:>6.2f} MB)",
-                     N, total_bytes, total_bytes / 1e6);
-        std::println("    serialize: {:>8.3f} ms ({:>7.1f} MB/s, {:>7.0f} views/s)",
-                     ser_ms, ser_mb_s, N / (ser_ms / 1000.0));
+        std::println("  N={:>7} views, total bytes={:>10} ({:>6.2f} MB)", N, total_bytes,
+                     total_bytes / 1e6);
+        std::println("    serialize: {:>8.3f} ms ({:>7.1f} MB/s, {:>7.0f} views/s)", ser_ms,
+                     ser_mb_s, N / (ser_ms / 1000.0));
         results.push_back({"node_view_serialize", N, ser_ms, total_bytes});
     }
 }
@@ -321,7 +323,7 @@ void bench_node_view(std::vector<BenchResult>& results) {
 // ═══════════════════════════════════════════════════════════════
 void bench_vector_string(std::vector<BenchResult>& results) {
     std::println("\n══════════ Bench 3: vector<string> (length-prefixed vs flat) ══════════");
-    const std::string sample = "hello wo";  // 8 chars
+    const std::string sample = "hello wo"; // 8 chars
     for (std::size_t N : {std::size_t{1000}, std::size_t{10000}, std::size_t{100000}}) {
         std::vector<std::string> vec(N, sample);
 
@@ -346,7 +348,8 @@ void bench_vector_string(std::vector<BenchResult>& results) {
         double path_b_ms = benchmark_median([&] {
             std::vector<char> buf;
             uint32_t total_len = 0;
-            for (const auto& s : vec) total_len += static_cast<uint32_t>(s.size());
+            for (const auto& s : vec)
+                total_len += static_cast<uint32_t>(s.size());
             buf.insert(buf.end(), reinterpret_cast<char*>(&total_len),
                        reinterpret_cast<char*>(&total_len) + 4);
             for (const auto& s : vec)
@@ -357,7 +360,8 @@ void bench_vector_string(std::vector<BenchResult>& results) {
         {
             std::vector<char> b;
             uint32_t total_len = 0;
-            for (const auto& s : vec) total_len += static_cast<uint32_t>(s.size());
+            for (const auto& s : vec)
+                total_len += static_cast<uint32_t>(s.size());
             b.insert(b.end(), reinterpret_cast<char*>(&total_len),
                      reinterpret_cast<char*>(&total_len) + 4);
             for (const auto& s : vec)
@@ -371,8 +375,7 @@ void bench_vector_string(std::vector<BenchResult>& results) {
         std::println("    Path B (flat byte buffer):   {:>8.3f} ms, {:>6} bytes, {:>6.1f} MB/s",
                      path_b_ms, path_b_bytes, (path_b_bytes / 1e6) / (path_b_ms / 1000.0));
         std::println("    Overhead: A/B size ratio = {:.2f}x, A/B time ratio = {:.2f}x",
-                     static_cast<double>(path_a_bytes) / path_b_bytes,
-                     path_a_ms / path_b_ms);
+                     static_cast<double>(path_a_bytes) / path_b_bytes, path_a_ms / path_b_ms);
         results.push_back({"vector_string_path_a", N, path_a_ms, path_a_bytes});
         results.push_back({"vector_string_path_b", N, path_b_ms, path_b_bytes});
     }
@@ -417,7 +420,8 @@ void bench_columnar_scan(std::vector<BenchResult>& results) {
         // (simulated by extracting type_id into a separate vector
         // first, then iterating).
         std::vector<std::uint32_t> type_ids(N);
-        for (std::size_t i = 0; i < N; ++i) type_ids[i] = views[i].type_id;
+        for (std::size_t i = 0; i < N; ++i)
+            type_ids[i] = views[i].type_id;
         double col_ms = benchmark_median([&] {
             std::uint64_t sum = 0;
             for (auto t : type_ids) {
@@ -462,7 +466,8 @@ int main() {
             f << "    {\"name\": \"" << r.name << "\", \"n\": " << r.n
               << ", \"median_ms\": " << std::fixed << std::setprecision(3) << r.median_ms
               << ", \"buf_bytes\": " << r.buf_bytes << "}";
-            if (i + 1 < results.size()) f << ",";
+            if (i + 1 < results.size())
+                f << ",";
             f << "\n";
         }
         f << "  ]\n";

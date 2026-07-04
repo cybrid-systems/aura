@@ -67,8 +67,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats3a = metadata_stats(cs);
     auto jit = cs.eval("(eval-current :jit)");
     const auto stats3b = metadata_stats(cs);
-    std::println("  jit eval ok={} stats: {} -> {}",
-                 jit.has_value(), stats3a, stats3b);
+    std::println("  jit eval ok={} stats: {} -> {}", jit.has_value(), stats3a, stats3b);
     CHECK(jit.has_value(), "eval-current :jit succeeds");
     CHECK(stats3b >= stats3a, "JIT path monotonic for metadata stats");
 
@@ -84,8 +83,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round eval matrix ---");
     const auto stats5a = metadata_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(eval-current :jit)");
     }

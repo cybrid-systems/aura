@@ -97,8 +97,8 @@ export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, 
 // always a bug (the caller probably meant to add at least one
 // pass). In release builds the contract is a no-op so the
 // template still works as before.
-export template <Pass... Passes> bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes)
-    pre(sizeof...(Passes) > 0) {
+export template <Pass... Passes>
+bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Passes) > 0) {
     return (run_one(mod, passes) && ...);
 }
 
@@ -109,8 +109,9 @@ export template <Pass... Passes> bool run_pipeline(aura::ir::IRModule& mod, Pass
 // "no error → return true" invariant. The post is informational
 // (the return value is observable, so callers can already
 // verify it); the pre is the load-bearing guard.
-export template <Pass P> bool run_one(aura::ir::IRModule& mod, P& pass)
-    pre(&pass != nullptr) post(!pass.has_error() || true) {
+export template <Pass P>
+bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
+    post(!pass.has_error() || true) {
     pass.run(mod);
     return !pass.has_error();
 }
@@ -168,10 +169,11 @@ concept PureAnalysisPass = AnalysisPass<P> && requires(const P& p, aura::ir::IRM
 // and add the concept `static_assert`. The new
 // `run_incremental_pipeline` template uses this concept.
 export template <typename P>
-concept IncrementalPass = Pass<P> && requires(P& p, aura::ir::IRFunction& f, aura::ir::BasicBlock& b) {
-    { p.run(f) } -> std::same_as<void>;
-    { p.run(b) } -> std::same_as<void>;
-};
+concept IncrementalPass =
+    Pass<P> && requires(P& p, aura::ir::IRFunction& f, aura::ir::BasicBlock& b) {
+        { p.run(f) } -> std::same_as<void>;
+        { p.run(b) } -> std::same_as<void>;
+    };
 
 // ── Issue #381: DirtyAwarePass concept ──────────────────────────
 //
@@ -430,8 +432,7 @@ public:
                                       aura::ast::NodeId root,
                                       aura::core::TypeRegistry& type_registry,
                                       aura::diag::DiagnosticCollector& diag,
-                                      std::uint64_t cache_epoch = 0,
-                                      void* metrics = nullptr) {
+                                      std::uint64_t cache_epoch = 0, void* metrics = nullptr) {
         aura::compiler::TypeChecker tc(type_registry);
         tc.set_bidirectional_mode(bidirectional_mode_);
         tc.set_cache_epoch(cache_epoch);
@@ -448,9 +449,9 @@ public:
         // memo/epoch and bidirectional narrow counters stay
         // fresh post partial re-check / mutation.
         auto result = aura::compiler::type_check_flat_pure(flat, pool, root, type_registry, diag,
-                                                    /*sigs=*/{}, /*module_src=*/{},
-                                                    /*strict=*/false, cache_epoch, metrics,
-                                                    bidirectional_mode_);
+                                                           /*sigs=*/{}, /*module_src=*/{},
+                                                           /*strict=*/false, cache_epoch, metrics,
+                                                           bidirectional_mode_);
         last_narrowing_evidence_ = result.narrow_evidence;
         // Apply deferred coercions now, before lowering reads
         // the AST. apply_coercion_map is idempotent — calling
@@ -483,12 +484,8 @@ public:
     // Occurrence Typing narrowing in check_flat. Set false to
     // disable the narrowing application (fall back to legacy
     // uniform check). Default true (matches post-#283).
-    void set_bidirectional_mode(bool b) noexcept {
-        bidirectional_mode_ = b;
-    }
-    [[nodiscard]] bool bidirectional_mode() const noexcept {
-        return bidirectional_mode_;
-    }
+    void set_bidirectional_mode(bool b) noexcept { bidirectional_mode_ = b; }
+    [[nodiscard]] bool bidirectional_mode() const noexcept { return bidirectional_mode_; }
 
 private:
     std::vector<aura::diag::Diagnostic> last_diags_;
@@ -981,12 +978,10 @@ public:
     // Issue #611: when dirty_blocks is non-empty and matches
     // func.blocks.size(), only dirty blocks are processed.
     // Empty span means "all blocks" (full-function DCE).
-    void run_function(aura::ir::IRFunction& func,
-                      std::span<const std::uint8_t> dirty_blocks = {}) {
+    void run_function(aura::ir::IRFunction& func, std::span<const std::uint8_t> dirty_blocks = {}) {
         if (keep_for_debug_)
             return;
-        const bool dirty_only =
-            !dirty_blocks.empty() && dirty_blocks.size() == func.blocks.size();
+        const bool dirty_only = !dirty_blocks.empty() && dirty_blocks.size() == func.blocks.size();
         for (auto& block : func.blocks) {
             if (dirty_only) {
                 const auto bid = block.id;
@@ -2212,8 +2207,7 @@ private:
             // is_inlinable_branch_aware (callee side). The
             // call-site check is the new piece: don't bring
             // user code into a macro-introduced caller context.
-            if (respect_macro_hygiene_ &&
-                instr.source_marker == 1 /*MacroIntroduced*/ &&
+            if (respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/ &&
                 callee->marker != 1) {
                 ++macro_hygiene_skipped_;
                 continue;
@@ -2410,8 +2404,7 @@ private:
         //      (defense in depth: also re-check here)
         // The instruction marker is 0=User, 1=MacroIntroduced.
         if (respect_macro_hygiene_) {
-            if (call_instr.source_marker == 1 /*MacroIntroduced*/ &&
-                callee.marker != 1) {
+            if (call_instr.source_marker == 1 /*MacroIntroduced*/ && callee.marker != 1) {
                 return false; // case 1 above
             }
             if (callee.marker == 1 && call_instr.source_marker != 1) {
@@ -3428,8 +3421,7 @@ public:
 
     // Test seam: cycle the pass with a known escape map
     // (production wires this from EscapeAnalysisPass).
-    void set_escape_map(std::string function_name,
-                        std::vector<std::uint8_t> escape) {
+    void set_escape_map(std::string function_name, std::vector<std::uint8_t> escape) {
         escape_maps_[std::move(function_name)] = std::move(escape);
     }
 
@@ -3462,24 +3454,22 @@ private:
                 // → the move is provably a no-op, replace
                 // with Nop.
                 if (instr.opcode == aura::ir::IROpcode::MoveOp) {
-                    auto src_slot = instr.operands.size() > 1
-                        ? instr.operands[1] : 0;
-                    if (src_slot < func.local_count &&
-                        escape_map[src_slot] == 0) {
+                    auto src_slot = instr.operands.size() > 1 ? instr.operands[1] : 0;
+                    if (src_slot < func.local_count && escape_map[src_slot] == 0) {
                         // Find the IRInstruction with this
                         // result that has linear_ownership_state
                         // == 1 (Owned).
                         bool src_owned = false;
                         for (const auto& prev_block : func.blocks) {
                             for (const auto& prev : prev_block.instructions) {
-                                if (!prev.operands.empty() &&
-                                    prev.operands[0] == src_slot &&
+                                if (!prev.operands.empty() && prev.operands[0] == src_slot &&
                                     prev.linear_ownership_state == 1) {
                                     src_owned = true;
                                     break;
                                 }
                             }
-                            if (src_owned) break;
+                            if (src_owned)
+                                break;
                         }
                         if (src_owned) {
                             instr.opcode = aura::ir::IROpcode::Nop;
@@ -3540,10 +3530,10 @@ private:
 // Phase 2 SoA→AoS migration; subsequent cycles replace
 // the AoS side with a SoA-aware overload of the same Pass
 // (e.g. ConstantFoldingWrap::run_soa).
-export template <typename P>
-class SoAtoAoSBridgePass {
+export template <typename P> class SoAtoAoSBridgePass {
 public:
-    explicit SoAtoAoSBridgePass(P& pass) : pass_(pass) {}
+    explicit SoAtoAoSBridgePass(P& pass)
+        : pass_(pass) {}
 
     // Run the bridge: convert each SoA function to AoS, run
     // the wrapped AoS pass on the AoS view, bump counters.

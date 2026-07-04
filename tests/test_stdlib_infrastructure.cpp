@@ -33,8 +33,7 @@ import std;
 
 namespace aura_issue_565_detail {
 
-static int count_occurrences(const std::string& haystack,
-                             const std::string& needle) {
+static int count_occurrences(const std::string& haystack, const std::string& needle) {
     int count = 0;
     std::size_t pos = 0;
     while ((pos = haystack.find(needle, pos + 1)) != std::string::npos) {
@@ -47,8 +46,7 @@ static std::string read_file(const std::string& path) {
     std::ifstream f(path);
     std::string content;
     if (f.good()) {
-        content.assign((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
+        content.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     }
     f.close();
     return content;
@@ -62,10 +60,9 @@ static std::vector<std::string> discover_stdlib_modules() {
     // to keep the test fast (no directory scan). When new
     // modules ship, update this list.
     return {
-        "adaptive", "agent", "algorithm", "ast", "capability",
-        "combinators", "core", "data", "INDEX", "query",
-        "rules", "synthesize", "stats",
-        "agent",  // intentionally duplicate to test dedup logic
+        "adaptive",  "agent", "algorithm", "ast",   "capability", "combinators", "core",
+        "data",      "INDEX", "query",     "rules", "synthesize", "stats",
+        "agent", // intentionally duplicate to test dedup logic
         "workspace",
     };
 }
@@ -73,19 +70,14 @@ static std::vector<std::string> discover_stdlib_modules() {
 // ── AC1: stdlib-organization-spec.md present + required sections
 bool test_organization_spec_doc_present() {
     std::println("\n--- AC1: stdlib-organization-spec.md present ---");
-    std::string content =
-        read_file("/home/dev/code/aura/docs/design/stdlib-organization-spec.md");
+    std::string content = read_file("/home/dev/code/aura/docs/design/stdlib-organization-spec.md");
     CHECK(!content.empty(), "stdlib-organization-spec.md exists on disk");
-    const bool has_directory = content.find("Directory structure")
-        != std::string::npos;
+    const bool has_directory = content.find("Directory structure") != std::string::npos;
     const bool has_naming = content.find("Naming rules") != std::string::npos;
-    const bool has_export = content.find("Export conventions")
-        != std::string::npos;
-    const bool has_test_template = content.find("Test template")
-        != std::string::npos;
+    const bool has_export = content.find("Export conventions") != std::string::npos;
+    const bool has_test_template = content.find("Test template") != std::string::npos;
     const bool has_index = content.find("INDEX.aura") != std::string::npos;
-    const bool has_migration = content.find("Migration path")
-        != std::string::npos;
+    const bool has_migration = content.find("Migration path") != std::string::npos;
     std::println("  spec doc: present + 6 sections (directory/naming/export/test/index/migration)");
     CHECK(has_directory, "doc has Directory structure section");
     CHECK(has_naming, "doc has Naming rules section");
@@ -102,20 +94,16 @@ bool test_index_aura_present() {
     std::println("\n--- AC2: lib/std/INDEX.aura present + 5 exports ---");
     std::string content = read_file("/home/dev/code/aura/lib/std/INDEX.aura");
     CHECK(!content.empty(), "lib/std/INDEX.aura exists on disk");
-    CHECK(content.find("(export") != std::string::npos,
-          "INDEX.aura has (export ...) line");
-    CHECK(content.find("(stdlib:list") != std::string::npos,
-          "INDEX.aura exports (stdlib:list)");
-    CHECK(content.find("(stdlib:help") != std::string::npos,
-          "INDEX.aura exports (stdlib:help)");
+    CHECK(content.find("(export") != std::string::npos, "INDEX.aura has (export ...) line");
+    CHECK(content.find("(stdlib:list") != std::string::npos, "INDEX.aura exports (stdlib:list)");
+    CHECK(content.find("(stdlib:help") != std::string::npos, "INDEX.aura exports (stdlib:help)");
     CHECK(content.find("(stdlib:examples") != std::string::npos,
           "INDEX.aura exports (stdlib:examples)");
     CHECK(content.find("(stdlib:by-prefix") != std::string::npos,
           "INDEX.aura exports (stdlib:by-prefix)");
     CHECK(content.find("(stdlib:by-tag") != std::string::npos,
           "INDEX.aura exports (stdlib:by-tag)");
-    std::string type_content = read_file(
-        "/home/dev/code/aura/lib/std/INDEX.aura-type");
+    std::string type_content = read_file("/home/dev/code/aura/lib/std/INDEX.aura-type");
     CHECK(!type_content.empty(), "INDEX.aura-type exists on disk");
     return true;
 }
@@ -136,22 +124,19 @@ bool test_stdlib_modules_have_matching_type_files() {
     modules.push_back("INDEX");
     int present = 0;
     for (const auto& m : modules) {
-        const std::string aura_path = "/home/dev/code/aura/lib/std/"
-            + m + ".aura";
-        const std::string type_path = "/home/dev/code/aura/lib/std/"
-            + m + ".aura-type";
+        const std::string aura_path = "/home/dev/code/aura/lib/std/" + m + ".aura";
+        const std::string type_path = "/home/dev/code/aura/lib/std/" + m + ".aura-type";
         std::ifstream fa(aura_path);
         std::ifstream ft(type_path);
         const bool has_aura = fa.good();
         const bool has_type = ft.good();
-        if (has_aura && has_type) ++present;
-        std::println("  lib/std/{}{}: aura={} type={}",
-                     m, has_aura ? ".aura" : ".aura missing!",
+        if (has_aura && has_type)
+            ++present;
+        std::println("  lib/std/{}{}: aura={} type={}", m, has_aura ? ".aura" : ".aura missing!",
                      has_aura, has_type);
     }
-    CHECK(present >= 5,
-          ">= 5 stdlib modules shipped in #558-#565 have "
-          "matching .aura + .aura-type files");
+    CHECK(present >= 5, ">= 5 stdlib modules shipped in #558-#565 have "
+                        "matching .aura + .aura-type files");
     return true;
 }
 
@@ -161,12 +146,9 @@ bool test_every_stdlib_file_has_export() {
     // Hardcoded list of stdlib files to verify (avoid
     // directory scan for speed).
     std::vector<std::string> files = {
-        "/home/dev/code/aura/lib/std/stats.aura",
-        "/home/dev/code/aura/lib/std/synthesize.aura",
-        "/home/dev/code/aura/lib/std/query.aura",
-        "/home/dev/code/aura/lib/std/ast.aura",
-        "/home/dev/code/aura/lib/std/workspace.aura",
-        "/home/dev/code/aura/lib/std/core.aura",
+        "/home/dev/code/aura/lib/std/stats.aura",     "/home/dev/code/aura/lib/std/synthesize.aura",
+        "/home/dev/code/aura/lib/std/query.aura",     "/home/dev/code/aura/lib/std/ast.aura",
+        "/home/dev/code/aura/lib/std/workspace.aura", "/home/dev/code/aura/lib/std/core.aura",
         "/home/dev/code/aura/lib/std/INDEX.aura",
     };
     int with_export = 0;
@@ -176,10 +158,9 @@ bool test_every_stdlib_file_has_export() {
             ++with_export;
         }
     }
-    std::println("  stdlib files with (export ...): {}/{}",
-                 with_export, static_cast<int>(files.size()));
-    CHECK(with_export >= static_cast<int>(files.size()),
-          "every stdlib file has (export ...) line");
+    std::println("  stdlib files with (export ...): {}/{}", with_export,
+                 static_cast<int>(files.size()));
+    CHECK(with_export >= static_cast<int>(files.size()), "every stdlib file has (export ...) line");
     return true;
 }
 
@@ -191,14 +172,14 @@ bool test_stdlib_aura_type_consistency() {
     // line in the .aura file mentions each function name from
     // the .aura-type file (presence check, not strict parse).
     std::vector<std::string> modules = {
-        "stats", "synthesize", "query", "ast", "workspace",
-        "core", "INDEX",
+        "stats", "synthesize", "query", "ast", "workspace", "core", "INDEX",
     };
     int consistent = 0;
     for (const auto& m : modules) {
         std::string aura = read_file("/home/dev/code/aura/lib/std/" + m + ".aura");
         std::string type = read_file("/home/dev/code/aura/lib/std/" + m + ".aura-type");
-        if (aura.empty() || type.empty()) continue;
+        if (aura.empty() || type.empty())
+            continue;
         // Count function names in .aura-type (lines with `: ->`)
         // and verify they're all mentioned in the .aura
         // (export ...) line.
@@ -217,11 +198,9 @@ bool test_stdlib_aura_type_consistency() {
         // .aura export line at least once. We do a simple
         // presence check on a few signature tokens.
         std::size_t export_pos = aura.find("(export");
-        std::size_t export_end = (export_pos != std::string::npos)
-            ? aura.find(')', export_pos) : 0;
+        std::size_t export_end = (export_pos != std::string::npos) ? aura.find(')', export_pos) : 0;
         if (export_pos != std::string::npos && export_end > export_pos) {
-            std::string export_line = aura.substr(export_pos,
-                                                  export_end - export_pos);
+            std::string export_line = aura.substr(export_pos, export_end - export_pos);
             // Count occurrences of ":" in the export line
             // (each stdlib export has a `:` separator like
             // "stats:get", so this is a coarse sanity check).
@@ -229,14 +208,12 @@ bool test_stdlib_aura_type_consistency() {
             if (colons_in_export >= fn_count - 1) {
                 ++consistent;
             }
-            std::println("  {}: type signatures={} export colons={}",
-                         m, fn_count, colons_in_export);
+            std::println("  {}: type signatures={} export colons={}", m, fn_count,
+                         colons_in_export);
         }
     }
-    std::println("  consistent modules: {}/{}", consistent,
-                 static_cast<int>(modules.size()));
-    CHECK(consistent >= 5,
-          ">= 5 stdlib modules have consistent .aura + .aura-type");
+    std::println("  consistent modules: {}/{}", consistent, static_cast<int>(modules.size()));
+    CHECK(consistent >= 5, ">= 5 stdlib modules have consistent .aura + .aura-type");
     return true;
 }
 
@@ -256,8 +233,12 @@ int run_tests() {
 
 } // namespace aura_issue_565_detail
 
-int aura_issue_565_run() { return aura_issue_565_detail::run_tests(); }
+int aura_issue_565_run() {
+    return aura_issue_565_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_565_run(); }
+int main() {
+    return aura_issue_565_run();
+}
 #endif

@@ -17,8 +17,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -31,7 +31,6 @@ import aura.compiler.type_checker;
 import aura.parser.parser;
 
 
-
 namespace aura_issue_159_detail {
 static std::string run_str(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
@@ -42,7 +41,8 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
     auto& v = *r;
     if (aura::compiler::types::is_string(v)) {
         auto idx = aura::compiler::types::as_string_idx(v);
-        if (idx < 0) return "(invalid string)";
+        if (idx < 0)
+            return "(invalid string)";
         // peek into the evaluator's string_heap_ to get the value
         // (we don't have direct access here, so we just check it's a string)
         return "(string)";
@@ -52,9 +52,11 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
-    if (!aura::compiler::types::is_int(v)) return -1;
+    if (!aura::compiler::types::is_int(v))
+        return -1;
     return aura::compiler::types::as_int(v);
 }
 
@@ -105,7 +107,8 @@ bool test_primitive_returns_count() {
         // We can't easily extract the string content from here
         // (the string is in the evaluator's string_heap_), but
         // the type check above confirms the call succeeded.
-        std::println("  PASS: result is a string (count not asserted — see test_issue_148 for InferFlatStats checks)");
+        std::println("  PASS: result is a string (count not asserted — see test_issue_148 for "
+                     "InferFlatStats checks)");
         ++g_passed;
     }
     return true;
@@ -165,11 +168,11 @@ bool test_eval_current_partial_reuse() {
     // last form is `(+ a 2)` which evaluates to 3.
     auto set_r = cs.eval("(set-code \"(define a 1) (+ a 2)\")");
     CHECK(set_r ? "ok" : "err", "set-code succeeded");
-    if (!set_r) return true;  // can't continue
+    if (!set_r)
+        return true; // can't continue
     // First eval_current: should return 3 (1 + 2).
     auto r1 = cs.eval("(eval-current)");
-    if (r1 && aura::compiler::types::is_int(*r1) &&
-        aura::compiler::types::as_int(*r1) == 3) {
+    if (r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 3) {
         std::println("  PASS: initial eval: 1 + 2 = 3");
         ++g_passed;
     } else {
@@ -187,15 +190,14 @@ bool test_eval_current_partial_reuse() {
     // subtree is clean → reuse cache → result is 3.
     // Without Phase 2, full re-eval happens → result is 1001.
     auto r2 = cs.eval("(eval-current)");
-    if (r2 && aura::compiler::types::is_int(*r2) &&
-        aura::compiler::types::as_int(*r2) == 3) {
+    if (r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 3) {
         std::println("  PASS: Phase 2 — cached result reused (last form clean) → 3");
         ++g_passed;
     } else if (r2 && aura::compiler::types::is_int(*r2) &&
                aura::compiler::types::as_int(*r2) == 1001) {
         std::println("  NOTE: Phase 2 not wired — full re-eval gave 1001 (cache miss)");
         std::println("        This is the pre-Phase-2 behavior. Marking as known limit.");
-        ++g_passed;  // count as pass (either behavior is acceptable)
+        ++g_passed; // count as pass (either behavior is acceptable)
     } else {
         std::println("  FAIL: unexpected result type or value");
         ++g_failed;
@@ -216,7 +218,8 @@ bool test_typecheck_current_cache_reuse() {
     // First typecheck — full traversal, populates cache.
     auto r1 = cs.eval("(typecheck-current)");
     CHECK(r1 ? "ok" : "err", "first typecheck-current succeeded (full traversal)");
-    if (!r1) return true;
+    if (!r1)
+        return true;
     // Second typecheck — workspace still clean, should reuse cache.
     // We can't easily measure the latency from here (it's hidden
     // inside the primitive), but we can verify it doesn't crash
@@ -251,7 +254,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_159_detail
+} // namespace aura_issue_159_detail
 
-int aura_issue_159_run() { return aura_issue_159_detail::run_tests(); }
-
+int aura_issue_159_run() {
+    return aura_issue_159_detail::run_tests();
+}

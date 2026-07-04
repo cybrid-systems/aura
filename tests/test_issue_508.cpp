@@ -28,21 +28,34 @@ namespace aura_508_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println(std::cerr, "  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}  ({} != {})", msg, _a, _b);                        \
+        }                                                                                          \
+    } while (0)
 
-using aura::ir::IRModule;
 using aura::ir::IRFunction;
-using aura::ir::IROpcode;
 using aura::ir::IRInstruction;
+using aura::ir::IRModule;
+using aura::ir::IROpcode;
 
 // Count CastOps in a module.
 static std::size_t count_cast_ops(const IRModule& mod) {
@@ -50,7 +63,8 @@ static std::size_t count_cast_ops(const IRModule& mod) {
     for (const auto& f : mod.functions)
         for (const auto& b : f.blocks)
             for (const auto& i : b.instructions)
-                if (i.opcode == IROpcode::CastOp) ++n;
+                if (i.opcode == IROpcode::CastOp)
+                    ++n;
     return n;
 }
 
@@ -74,9 +88,9 @@ bool test_dynamic_passthrough() {
     // interpreter is `locals[ops[0]] = val` — pure passthrough.
     // The pass should elide this CastOp.
     auto mod = make_module_with({
-        {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},     // slot0 = 42, type_id=1
-        {IROpcode::CastOp,   {1, 0, 3, 0}, 0, 0},      // cast slot0 → Dynamic (tag 3)
-        {IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+        {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1}, // slot0 = 42, type_id=1
+        {IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},    // cast slot0 → Dynamic (tag 3)
+        {IROpcode::Return, {1, 0, 0, 0}, 0, 0},
     });
     std::size_t before = count_cast_ops(mod);
     aura::compiler::DeadCoercionEliminationPass dce;
@@ -96,8 +110,8 @@ bool test_dynamic_passthrough_unknown_source() {
     // — the lowering pass may have inserted the CastOp for a
     // reason (e.g. boundary with external code).
     auto mod = make_module_with({
-        {IROpcode::Arg,    {0, 0, 0, 0}, 0, 0},        // slot0, no type info
-        {IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},        // cast to Dynamic
+        {IROpcode::Arg, {0, 0, 0, 0}, 0, 0},    // slot0, no type info
+        {IROpcode::CastOp, {1, 0, 3, 0}, 0, 0}, // cast to Dynamic
         {IROpcode::Return, {1, 0, 0, 0}, 0, 0},
     });
     std::size_t before = count_cast_ops(mod);
@@ -115,9 +129,9 @@ bool test_dynamic_passthrough_chain() {
     std::println("\n--- AC1c: chain of Dynamic passthroughs collapses ---");
     auto mod = make_module_with({
         {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-        {IROpcode::CastOp,   {1, 0, 3, 0}, 0, 0},   // ground → Dynamic
-        {IROpcode::CastOp,   {2, 1, 3, 0}, 0, 0},   // Dynamic → Dynamic
-        {IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+        {IROpcode::CastOp, {1, 0, 3, 0}, 0, 0}, // ground → Dynamic
+        {IROpcode::CastOp, {2, 1, 3, 0}, 0, 0}, // Dynamic → Dynamic
+        {IROpcode::Return, {2, 0, 0, 0}, 0, 0},
     });
     aura::compiler::DeadCoercionEliminationPass dce;
     dce.run(mod);
@@ -125,8 +139,7 @@ bool test_dynamic_passthrough_chain() {
     // then second cast (Dynamic → Dynamic) becomes Local (slot2 = slot1).
     std::size_t after = count_cast_ops(mod);
     CHECK_EQ(after, std::size_t{0}, "Both Dynamic CastOps elided via chain");
-    CHECK(dce.eliminated_count() >= 2,
-          "eliminated_count >= 2 (chain collapses through)");
+    CHECK(dce.eliminated_count() >= 2, "eliminated_count >= 2 (chain collapses through)");
     return true;
 }
 
@@ -135,23 +148,21 @@ bool test_keep_for_debug() {
     std::println("\n--- AC2: keep_for_debug disables elision ---");
     auto mod = make_module_with({
         {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-        {IROpcode::CastOp,   {1, 0, 3, 0}, 0, 0},
-        {IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+        {IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},
+        {IROpcode::Return, {1, 0, 0, 0}, 0, 0},
     });
     aura::compiler::DeadCoercionEliminationPass dce;
     dce.set_keep_for_debug(true);
     dce.run(mod);
     std::size_t after = count_cast_ops(mod);
     CHECK_EQ(after, std::size_t{1}, "CastOp preserved with keep_for_debug");
-    CHECK_EQ(dce.eliminated_count(), std::size_t{0},
-             "eliminated_count == 0 in debug mode");
-    CHECK_EQ(dce.kept_for_debug_count(), std::size_t{1},
-             "kept_for_debug_count == 1");
+    CHECK_EQ(dce.eliminated_count(), std::size_t{0}, "eliminated_count == 0 in debug mode");
+    CHECK_EQ(dce.kept_for_debug_count(), std::size_t{1}, "kept_for_debug_count == 1");
     // Disable and re-run on a fresh module to verify the toggle.
     auto mod2 = make_module_with({
         {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-        {IROpcode::CastOp,   {1, 0, 3, 0}, 0, 0},
-        {IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+        {IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},
+        {IROpcode::Return, {1, 0, 0, 0}, 0, 0},
     });
     dce.set_keep_for_debug(false);
     dce.run(mod2);
@@ -172,8 +183,8 @@ bool test_elapsed_us_snapshot() {
     cs.eval("(set-code \"(define q 42)\")");
     cs.eval("(eval-current)");
     auto snap1 = cs.snapshot();
-    std::println("  elapsed_us_total before: {}, after: {}",
-                 t0, snap1.dead_coercion_elapsed_us_total);
+    std::println("  elapsed_us_total before: {}, after: {}", t0,
+                 snap1.dead_coercion_elapsed_us_total);
     CHECK(snap1.dead_coercion_elapsed_us_total >= t0,
           "elapsed_us_total is monotonic non-decreasing");
     return true;
@@ -184,8 +195,7 @@ bool test_elapsed_us_primitive() {
     std::println("\n--- AC3b: (compile:dead-coercion-elapsed) primitive ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(compile:dead-coercion-elapsed)");
-    CHECK(r && aura::compiler::types::is_int(*r),
-          "(compile:dead-coercion-elapsed) returns int");
+    CHECK(r && aura::compiler::types::is_int(*r), "(compile:dead-coercion-elapsed) returns int");
     if (r && aura::compiler::types::is_int(*r)) {
         std::int64_t v = aura::compiler::types::as_int(*r);
         CHECK(v >= 0, "elapsed_us >= 0");
@@ -230,8 +240,7 @@ bool test_e2e_gradual() {
         CHECK(rs.has_value(), std::string("set-code #") + std::to_string(i) + " ok");
         auto r = cs.eval("(eval-current)");
         CHECK(r.has_value(), std::string("Mutation #") + std::to_string(i) + " eval succeeds");
-        std::println("    iter {}: v={} dead_coercion_elim_total={}",
-                     i,
+        std::println("    iter {}: v={} dead_coercion_elim_total={}", i,
                      r ? std::to_string(aura::compiler::types::as_int(*r)) : "<err>",
                      cs.snapshot().dead_coercion_eliminated_total);
     }
@@ -268,7 +277,7 @@ int main() {
     test_kept_for_debug_primitive();
     test_e2e_gradual();
     test_e2e_gradual_mixed();
-    std::println("\nDead coercion elimination (#508): {}/{}/{} passed/failed/total",
-                 g_passed, g_failed, g_passed + g_failed);
+    std::println("\nDead coercion elimination (#508): {}/{}/{} passed/failed/total", g_passed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

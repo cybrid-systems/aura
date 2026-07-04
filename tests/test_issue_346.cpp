@@ -49,8 +49,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -60,13 +60,11 @@ import aura.compiler.service;
 namespace aura_issue_346_detail {
 
 // Build a small workspace.
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define a 1) "
-        "  (define b 2) "
-        "  (define c 3))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define a 1) "
+                       "  (define b 2) "
+                       "  (define c 3))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -82,10 +80,12 @@ bool test_mutation_log_primitive() {
     std::println("\n--- AC1: (query:mutation-log) returns a pair-list ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto r = cs.eval("(query:mutation-log)");
-    CHECK(r.has_value(),
-          "(query:mutation-log) returns a value");
+    CHECK(r.has_value(), "(query:mutation-log) returns a value");
     return true;
 }
 
@@ -97,13 +97,14 @@ bool test_mutation_log_n_primitive() {
     std::println("\n--- AC2: (query:mutation-log N) returns at most N ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto r1 = cs.eval("(query:mutation-log 3)");
-    CHECK(r1.has_value(),
-          "(query:mutation-log 3) returns a value");
+    CHECK(r1.has_value(), "(query:mutation-log 3) returns a value");
     auto r2 = cs.eval("(query:mutation-log 100)");
-    CHECK(r2.has_value(),
-          "(query:mutation-log 100) returns a value");
+    CHECK(r2.has_value(), "(query:mutation-log 100) returns a value");
     // Bad arg (non-int) returns void.
     auto r3 = cs.eval("(query:mutation-log \"x\")");
     CHECK(r3.has_value() && aura::compiler::types::is_void(*r3),
@@ -119,7 +120,10 @@ bool test_mutations_since_primitive() {
     std::println("\n--- AC3: (query:mutations-since <id>) ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // No arg returns void.
     auto r0 = cs.eval("(query:mutations-since)");
     CHECK(r0.has_value() && aura::compiler::types::is_void(*r0),
@@ -130,8 +134,7 @@ bool test_mutations_since_primitive() {
           "(query:mutations-since \"x\") returns void");
     // since=0 — returns the full log (or void if empty).
     auto r2 = cs.eval("(query:mutations-since 0)");
-    CHECK(r2.has_value(),
-          "(query:mutations-since 0) returns a value");
+    CHECK(r2.has_value(), "(query:mutations-since 0) returns a value");
     // since=99999 — too high, returns void.
     auto r3 = cs.eval("(query:mutations-since 99999)");
     CHECK(r3.has_value() && aura::compiler::types::is_void(*r3),
@@ -148,26 +151,25 @@ bool test_end_to_end_in_mutate_context() {
     std::println("\n--- AC4: end-to-end in mutate context ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // Run a mutate (the existing test primitive).
     // The mutation log accumulates; the query
     // primitives should be able to read it.
-    auto r1 = cs.eval(
-        "(mutate:query-and-replace (query:defines) "
-        "\"(define a 99)\" \"test-refine-for-346\")");
-    CHECK(r1.has_value(),
-          "mutate:query-and-replace runs");
+    auto r1 = cs.eval("(mutate:query-and-replace (query:defines) "
+                      "\"(define a 99)\" \"test-refine-for-346\")");
+    CHECK(r1.has_value(), "mutate:query-and-replace runs");
     // (query:mutation-log) should now return a list
     // that includes the mutation we just made (or at
     // least returns a value).
     auto r2 = cs.eval("(query:mutation-log)");
-    CHECK(r2.has_value(),
-          "post-mutate: (query:mutation-log) returns a value");
+    CHECK(r2.has_value(), "post-mutate: (query:mutation-log) returns a value");
     // (query:mutations-since 0) should return the
     // same (or a non-empty list).
     auto r3 = cs.eval("(query:mutations-since 0)");
-    CHECK(r3.has_value(),
-          "post-mutate: (query:mutations-since 0) returns a value");
+    CHECK(r3.has_value(), "post-mutate: (query:mutations-since 0) returns a value");
     return true;
 }
 
@@ -182,10 +184,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_346_detail
+} // namespace aura_issue_346_detail
 
-int aura_issue_346_run() { return aura_issue_346_detail::run_tests(); }
+int aura_issue_346_run() {
+    return aura_issue_346_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_346_run(); }
+int main() {
+    return aura_issue_346_run();
+}
 #endif

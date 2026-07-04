@@ -40,8 +40,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -52,10 +52,9 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_196_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -277,15 +276,12 @@ bool test_mark_define_dirty_cascades_to_blocks() {
     // doesn't expose mark_define_dirty directly; it goes
     // through mutate:rebind). We test the C++ API directly
     // to verify the per-block cascade.
-    cs.store_define_v2("f", "(define (f x) (* x 2))",
-                       std::vector<aura::ir::IRFunction>{},
-                       std::vector<aura::ir::ClosureBridgeData>{},
-                       std::vector<std::string>{});
+    cs.store_define_v2("f", "(define (f x) (* x 2))", std::vector<aura::ir::IRFunction>{},
+                       std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
     // store_define_v2 left the entry with 0 IRs, but the
     // per-block bitmask is sized to 0 (no blocks). So dirty
     // count is 0.
-    CHECK(cs.dirty_block_count_v2("f") == 0,
-          "freshly-stored entry has 0 dirty blocks");
+    CHECK(cs.dirty_block_count_v2("f") == 0, "freshly-stored entry has 0 dirty blocks");
     // Now mark dirty — should be a no-op for the per-block
     // bitmask (still 0 functions / 0 blocks), but flips
     // entry.dirty to true.
@@ -334,7 +330,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_196_detail
+} // namespace aura_issue_196_detail
 
-int aura_issue_196_run() { return aura_issue_196_detail::run_tests(); }
-
+int aura_issue_196_run() {
+    return aura_issue_196_detail::run_tests();
+}

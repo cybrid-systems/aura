@@ -19,8 +19,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 
@@ -40,8 +40,7 @@ bool test_query_fiber_migration_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:fiber-migration-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:fiber-migration-stats returns an integer");
     return true;
 }
 
@@ -49,8 +48,7 @@ bool test_query_fiber_migration_stats() {
 bool test_c_linkage_shim() {
     std::println("\n--- AC2: C-linkage shim aura_evaluator_mutation_boundary_depth ---");
     const auto depth = aura_evaluator_mutation_boundary_depth();
-    CHECK(depth == 0,
-          "depth is 0 when no guard is active (single-thread test)");
+    CHECK(depth == 0, "depth is 0 when no guard is active (single-thread test)");
     return true;
 }
 
@@ -63,17 +61,14 @@ bool test_evaluator_accessors() {
         ++g_failed;
         return false;
     }
-    const auto baseline =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     auto r1 = cs.eval("(query:fiber-migration-stats)");
     if (!r1) {
         ++g_failed;
         return false;
     }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(after >= baseline,
-          "query:fiber-migration-stats is monotonic (>= baseline)");
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(after >= baseline, "query:fiber-migration-stats is monotonic (>= baseline)");
     return true;
 }
 
@@ -127,13 +122,13 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 15 27) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 15 27) == 42 (regression)");
     return true;
 }
 
 int run_tests() {
-    std::println("Issue #438 (Complete per-fiber MutationBoundary stack migration + work-stealing safety)\n");
+    std::println("Issue #438 (Complete per-fiber MutationBoundary stack migration + work-stealing "
+                 "safety)\n");
     test_query_fiber_migration_stats();
     test_c_linkage_shim();
     test_evaluator_accessors();
@@ -146,8 +141,12 @@ int run_tests() {
 
 } // namespace aura_issue_438_detail
 
-int aura_issue_438_run() { return aura_issue_438_detail::run_tests(); }
+int aura_issue_438_run() {
+    return aura_issue_438_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_438_run(); }
+int main() {
+    return aura_issue_438_run();
+}
 #endif

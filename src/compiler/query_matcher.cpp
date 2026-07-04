@@ -16,17 +16,15 @@ import aura.core.mutation;
 
 namespace aura::compiler {
 
-QueryMatcher::QueryMatcher(FlatAST* ws_flat,
-                           StringPool* ws_pool,
-                           FlatAST* pat_flat,
-                           StringPool* pat_pool,
-                           SymId wildcard_sym,
-                           bool nested_arity,
+QueryMatcher::QueryMatcher(FlatAST* ws_flat, StringPool* ws_pool, FlatAST* pat_flat,
+                           StringPool* pat_pool, SymId wildcard_sym, bool nested_arity,
                            bool skip_macro_introduced)
-    : ws_flat_(ws_flat), ws_pool_(ws_pool),
-      pat_flat_(pat_flat), pat_pool_(pat_pool),
-      wildcard_sym_(wildcard_sym),
-      skip_macro_introduced_(skip_macro_introduced) {
+    : ws_flat_(ws_flat)
+    , ws_pool_(ws_pool)
+    , pat_flat_(pat_flat)
+    , pat_pool_(pat_pool)
+    , wildcard_sym_(wildcard_sym)
+    , skip_macro_introduced_(skip_macro_introduced) {
     state.nested_arity = nested_arity;
     // Issue #292: intern ":guard" so the matcher can detect
     // (:guard <sub-pat> "expr") forms in the pattern.
@@ -55,8 +53,7 @@ bool QueryMatcher::is_wildcard(NodeId pid) const {
     if (pid == NULL_NODE || pid >= pat_flat_->size())
         return false;
     auto pn = pat_flat_->get(pid);
-    return pn.tag == NodeTag::Variable &&
-           pn.sym_id == wildcard_sym_;
+    return pn.tag == NodeTag::Variable && pn.sym_id == wildcard_sym_;
 }
 
 bool QueryMatcher::is_capture(NodeId pid) const {
@@ -118,8 +115,7 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
                         return bound.float_value == ws_node.float_value;
                     case NodeTag::Variable:
                     case NodeTag::LiteralString:
-                        return ws_pool_->resolve(bound.sym_id) ==
-                               ws_pool_->resolve(ws_node.sym_id);
+                        return ws_pool_->resolve(bound.sym_id) == ws_pool_->resolve(ws_node.sym_id);
                     default:
                         // Composite node: fall back to identity
                         return kv.second == ws_id;
@@ -137,28 +133,23 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
     // The matcher extracts the sub-pattern, recurses on it,
     // and stashes (captures, guard-expr) for the caller to
     // evaluate. The guard sym is interned in the constructor.
-    if (pat_node.tag == NodeTag::Call &&
-        pat_node.children.size() >= 2 &&
-        pat_node.children[0] != NULL_NODE &&
-        pat_node.children[0] < pat_flat_->size()) {
+    if (pat_node.tag == NodeTag::Call && pat_node.children.size() >= 2 &&
+        pat_node.children[0] != NULL_NODE && pat_node.children[0] < pat_flat_->size()) {
         auto head_node = pat_flat_->get(pat_node.children[0]);
-        if (head_node.tag == NodeTag::Variable &&
-            head_node.sym_id == guard_sym_) {
+        if (head_node.tag == NodeTag::Variable && head_node.sym_id == guard_sym_) {
             // Form: (:guard <sub-pat> "guard-expr")
             // children[1] is the sub-pattern root
             // children[2] (if LiteralString) is the guard expression
             std::string guard_expr;
             NodeId sub_pat = NULL_NODE;
-            if (pat_node.children.size() >= 3 &&
-                pat_node.children[1] != NULL_NODE &&
+            if (pat_node.children.size() >= 3 && pat_node.children[1] != NULL_NODE &&
                 pat_node.children[1] < pat_flat_->size()) {
                 auto expr_node = pat_flat_->get(pat_node.children[1]);
                 if (expr_node.tag == NodeTag::LiteralString) {
                     guard_expr = pat_pool_->resolve(expr_node.sym_id);
                 }
             }
-            if (pat_node.children.size() >= 3 &&
-                pat_node.children[2] != NULL_NODE) {
+            if (pat_node.children.size() >= 3 && pat_node.children[2] != NULL_NODE) {
                 sub_pat = pat_node.children[2];
             }
             // Recurse on sub-pattern.
@@ -190,8 +181,7 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
             return ws_node.float_value == pat_node.float_value;
         case NodeTag::Variable:
         case NodeTag::LiteralString:
-            return ws_pool_->resolve(ws_node.sym_id) ==
-                   pat_pool_->resolve(pat_node.sym_id);
+            return ws_pool_->resolve(ws_node.sym_id) == pat_pool_->resolve(pat_node.sym_id);
         case NodeTag::MacroDef:
             return true;
         default: {
@@ -211,8 +201,7 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
     }
 }
 
-bool QueryMatcher::match_list(std::span<const NodeId> ws_ch,
-                              std::span<const NodeId> pat_ch) {
+bool QueryMatcher::match_list(std::span<const NodeId> ws_ch, std::span<const NodeId> pat_ch) {
     if (++state.depth > 64)
         return false;
     if (pat_ch.empty() && ws_ch.empty())
@@ -275,4 +264,4 @@ bool QueryMatcher::pat_has_ellipsis_rec(NodeId pid) {
     return false;
 }
 
-}  // namespace aura::compiler
+} // namespace aura::compiler

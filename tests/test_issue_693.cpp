@@ -17,20 +17,26 @@ namespace aura_issue_693_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:hardware-backend-sv-closedloop-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:hardware-backend-sv-closedloop-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_693_detail
+} // namespace aura_issue_693_detail
 
 int main() {
     using namespace aura_issue_693_detail;
@@ -48,8 +54,7 @@ int main() {
         CHECK(stat_int(cs, "commercial-reemits") >= 0, "commercial-reemits present");
         CHECK(stat_int(cs, "feedback-mutate-hits") >= 0, "feedback-mutate-hits present");
         CHECK(stat_int(cs, "ppa-savings") >= 0, "ppa-savings present");
-        CHECK(stat_int(cs, "verification-loop-success") >= 0,
-              "verification-loop-success present");
+        CHECK(stat_int(cs, "verification-loop-success") >= 0, "verification-loop-success present");
     }
 
     const auto hook_before = stat_int(cs, "hook-calls");
@@ -63,39 +68,31 @@ int main() {
         cs.eval("(set-code \"(define cg 1)\")");
         cs.eval("(eval-current)");
         auto r = cs.eval("(mutate:sv-add-coverpoint 0 \"my_cp\")");
-        CHECK(r && aura::compiler::types::is_bool(*r) &&
-                  aura::compiler::types::as_bool(*r),
+        CHECK(r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
               "mutate:sv-add-coverpoint succeeds");
         const auto hook_after = stat_int(cs, "hook-calls");
         const auto reemit_after = stat_int(cs, "commercial-reemits");
         CHECK(hook_after > hook_before,
               std::format("hook-calls grew ({} -> {})", hook_before, hook_after));
         CHECK(reemit_after > reemit_before,
-              std::format("commercial-reemits grew ({} -> {})",
-                          reemit_before, reemit_after));
+              std::format("commercial-reemits grew ({} -> {})", reemit_before, reemit_after));
     }
 
     // AC3: eda:run-verification-feedback closed-loop
     {
         std::println("\n--- AC3: eda:run-verification-feedback ---");
-        auto r = cs.eval(
-            "(eda:run-verification-feedback \"coverage.log\" \"0 hole_a\")");
-        CHECK(r && aura::compiler::types::is_bool(*r) &&
-                  aura::compiler::types::as_bool(*r),
+        auto r = cs.eval("(eda:run-verification-feedback \"coverage.log\" \"0 hole_a\")");
+        CHECK(r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
               "eda:run-verification-feedback coverage succeeds");
-        auto r2 = cs.eval(
-            "(eda:run-verification-feedback \"assert-fail.log\" \"0 fail_msg\")");
-        CHECK(r2 && aura::compiler::types::is_bool(*r2) &&
-                  aura::compiler::types::as_bool(*r2),
+        auto r2 = cs.eval("(eda:run-verification-feedback \"assert-fail.log\" \"0 fail_msg\")");
+        CHECK(r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2),
               "eda:run-verification-feedback assert-fail succeeds");
         const auto feedback_after = stat_int(cs, "feedback-mutate-hits");
         const auto loop_after = stat_int(cs, "verification-loop-success");
         CHECK(feedback_after > feedback_before,
-              std::format("feedback-mutate-hits grew ({} -> {})",
-                          feedback_before, feedback_after));
+              std::format("feedback-mutate-hits grew ({} -> {})", feedback_before, feedback_after));
         CHECK(loop_after > loop_before,
-              std::format("verification-loop-success grew ({} -> {})",
-                          loop_before, loop_after));
+              std::format("verification-loop-success grew ({} -> {})", loop_before, loop_after));
     }
 
     // AC4: stats:count
@@ -117,10 +114,8 @@ int main() {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(typecheck-current)");
-                auto r = cs.eval(
-                    "(eda:run-verification-feedback \"coverage.log\" \"0 stress\")");
-                if (r && aura::compiler::types::is_bool(*r) &&
-                    aura::compiler::types::as_bool(*r))
+                auto r = cs.eval("(eda:run-verification-feedback \"coverage.log\" \"0 stress\")");
+                if (r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
         };
@@ -129,8 +124,7 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() > 0,
-              std::format("fiber stress produced {} successful feedback loops",
-                          ok_count.load()));
+              std::format("fiber stress produced {} successful feedback loops", ok_count.load()));
     }
 
     aura::compiler::hardware::clear_structural_mutation_hook();

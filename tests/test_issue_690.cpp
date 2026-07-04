@@ -20,14 +20,19 @@ namespace aura_issue_690_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:constraint-typed-mutate-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:constraint-typed-mutate-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -48,7 +53,7 @@ static constexpr const char* k_prog = R"(
           0))))
 )";
 
-}  // namespace aura_issue_690_detail
+} // namespace aura_issue_690_detail
 
 int main() {
     using namespace aura_issue_690_detail;
@@ -72,8 +77,7 @@ int main() {
     }
 
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Lazy);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
 
     // AC2: stats hash fields
     {
@@ -84,8 +88,7 @@ int main() {
         CHECK(stat_int(cs, "reverify-scans") >= 0, "reverify-scans present");
         CHECK(stat_int(cs, "cross-delta-conflicts-caught") >= 0,
               "cross-delta-conflicts-caught present");
-        CHECK(stat_int(cs, "blame-chain-completeness") >= 0,
-              "blame-chain-completeness present");
+        CHECK(stat_int(cs, "blame-chain-completeness") >= 0, "blame-chain-completeness present");
         CHECK(stat_int(cs, "truncated-reverify") >= 0, "truncated-reverify present");
     }
 
@@ -101,9 +104,9 @@ int main() {
 
     const auto reverify_before = stat_int(cs, "reverify-scans");
     const auto blame_before = cs.eval("(query:constraint-delta-blame-stats)");
-    const auto blame_before_i =
-        blame_before && aura::compiler::types::is_int(*blame_before)
-            ? aura::compiler::types::as_int(*blame_before) : 0;
+    const auto blame_before_i = blame_before && aura::compiler::types::is_int(*blame_before)
+                                    ? aura::compiler::types::as_int(*blame_before)
+                                    : 0;
 
     // AC4: nested predicate + linear mutate:rebind
     {
@@ -112,32 +115,29 @@ int main() {
         cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
         (void)cs.eval("(g 5)");
-        auto r = cs.eval(
-            "(mutate:rebind \"g\" "
-            "\"(lambda (x) (if (and (number? x) (not (pair? x))) "
-            "(+ x 2) (if (or (string? x) (not (number? x))) "
-            "(let ((l2 (Linear 2))) (move l2)) 0)))\" "
-            "\"issue-690\")");
-        CHECK(r && aura::compiler::types::is_bool(*r) &&
-                  aura::compiler::types::as_bool(*r),
+        auto r = cs.eval("(mutate:rebind \"g\" "
+                         "\"(lambda (x) (if (and (number? x) (not (pair? x))) "
+                         "(+ x 2) (if (or (string? x) (not (number? x))) "
+                         "(let ((l2 (Linear 2))) (move l2)) 0)))\" "
+                         "\"issue-690\")");
+        CHECK(r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
               "mutate:rebind on nested predicate g succeeds");
         cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
         auto g5 = cs.eval("(g 5)");
-        CHECK(g5 && aura::compiler::types::is_int(*g5) &&
-                  aura::compiler::types::as_int(*g5) == 7,
+        CHECK(g5 && aura::compiler::types::is_int(*g5) && aura::compiler::types::as_int(*g5) == 7,
               "g 5 == 7 after rebind (+ x 2)");
         const auto reverify_after = stat_int(cs, "reverify-scans");
         CHECK(reverify_after >= reverify_before,
-              std::format("reverify-scans non-decreasing ({} -> {})",
-                          reverify_before, reverify_after));
+              std::format("reverify-scans non-decreasing ({} -> {})", reverify_before,
+                          reverify_after));
         auto blame_after = cs.eval("(query:constraint-delta-blame-stats)");
-        const auto blame_after_i =
-            blame_after && aura::compiler::types::is_int(*blame_after)
-                ? aura::compiler::types::as_int(*blame_after) : 0;
+        const auto blame_after_i = blame_after && aura::compiler::types::is_int(*blame_after)
+                                       ? aura::compiler::types::as_int(*blame_after)
+                                       : 0;
         CHECK(blame_after_i >= blame_before_i,
-              std::format("constraint-delta-blame-stats non-decreasing ({} -> {})",
-                          blame_before_i, blame_after_i));
+              std::format("constraint-delta-blame-stats non-decreasing ({} -> {})", blame_before_i,
+                          blame_after_i));
     }
 
     // AC5: stats:count regression
@@ -170,8 +170,7 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() > 0,
-              std::format("fiber stress produced {} successful g 3 evals",
-                          ok_count.load()));
+              std::format("fiber stress produced {} successful g 3 evals", ok_count.load()));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

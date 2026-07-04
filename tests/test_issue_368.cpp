@@ -27,8 +27,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
@@ -65,8 +65,7 @@ bool test_normal_mutate_does_not_advance_wrap_epoch() {
     cs.eval("(set-code \"(define x 1)\")");
     // Stats primitive should still work after set-code + eval.
     auto r = cs.eval("(ast:generation-stats)");
-    CHECK(r.has_value(),
-          "ast:generation-stats returns a hash after set-code");
+    CHECK(r.has_value(), "ast:generation-stats returns a hash after set-code");
     return true;
 }
 
@@ -84,8 +83,7 @@ bool test_wrap_counter_increments_on_simulated_wrap() {
         cs.eval("(display (+ 1 2))");
     }
     auto r = cs.eval("(ast:generation-stats)");
-    CHECK(r.has_value(),
-          "ast:generation-stats still works after 50 normal evals");
+    CHECK(r.has_value(), "ast:generation-stats still works after 50 normal evals");
     return true;
 }
 
@@ -106,10 +104,8 @@ bool test_stable_ref_carries_wrap_epoch() {
 
     auto captured_epoch = ref.wrap_epoch;
     auto current_epoch = flat.wrap_epoch();
-    CHECK(captured_epoch == current_epoch,
-          "captured ref.wrap_epoch == current wrap_epoch()");
-    CHECK(captured_epoch == 0,
-          "fresh FlatAST has wrap_epoch = 0 (no wraps yet)");
+    CHECK(captured_epoch == current_epoch, "captured ref.wrap_epoch == current wrap_epoch()");
+    CHECK(captured_epoch == 0, "fresh FlatAST has wrap_epoch = 0 (no wraps yet)");
     return true;
 }
 
@@ -129,10 +125,8 @@ bool test_post_mutate_ref_validity_via_wrap_epoch() {
     CHECK(gen_before >= 1, "generation_ before mutate is at least 1");
 
     flat.set_child(n0, 0, n1);
-    CHECK(!flat.is_valid(ref),
-          "is_valid returns false after structural mutate (gen mismatch)");
-    CHECK(flat.wrap_epoch() == 0,
-          "wrap_epoch still 0 (one wrap = 65535 bumps; not reached)");
+    CHECK(!flat.is_valid(ref), "is_valid returns false after structural mutate (gen mismatch)");
+    CHECK(flat.wrap_epoch() == 0, "wrap_epoch still 0 (one wrap = 65535 bumps; not reached)");
     return true;
 }
 
@@ -161,6 +155,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_368_detail
+} // namespace aura_issue_368_detail
 
-int aura_issue_368_run() { return aura_issue_368_detail::run_tests(); }
+int aura_issue_368_run() {
+    return aura_issue_368_detail::run_tests();
+}

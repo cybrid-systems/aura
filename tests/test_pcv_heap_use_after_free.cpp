@@ -26,7 +26,8 @@ int main() {
     std::println("step 3: defrag");
     cs.eval("(arena:defrag)");
     std::println("step 4: defrag-stats");
-    auto r = cs.eval("(arena:defrag-stats)"); (void)r;
+    auto r = cs.eval("(arena:defrag-stats)");
+    (void)r;
     std::println("step 5: about to destruct CS (UAF expected under ASan)");
     return 0;
 }

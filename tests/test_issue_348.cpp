@@ -51,8 +51,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -64,12 +64,10 @@ namespace aura_issue_348_detail {
 // Build a workspace with a function that has an
 // if-expr in its body. The (define f ...) form
 // is the target for the rebind test.
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define f (lambda (x) (if (> x 0) 'pos 'neg))) "
-        "  (define g 42))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define f (lambda (x) (if (> x 0) 'pos 'neg))) "
+                       "  (define g 42))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -153,8 +151,7 @@ bool test_walker_only_marks_if_nodes() {
     using namespace aura;
     ast::FlatAST flat;
     const auto var = flat.add_variable(0);
-    const auto def = flat.add_define(
-        static_cast<aura::ast::SymId>(1), {var});
+    const auto def = flat.add_define(static_cast<aura::ast::SymId>(1), {var});
     // The walker only marks IfExpr; variables + defines
     // are not touched.
     // (The test bypasses the actual walker call; the
@@ -173,24 +170,24 @@ bool test_end_to_end_rebind_auto_mark() {
     std::println("\n--- AC4: end-to-end rebind auto-mark ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // Rebind `g` to a value that includes an
     // if-expr: (define g (if (> 0 0) 1 2))
     // The new body has 1 if-expr, so after the rebind,
     // the kOccurrenceDirty bit on the if-node should
     // be set (via the auto-wire).
-    auto r = cs.eval(
-        "(mutate:rebind \"g\" \"(if (> 0 0) 1 2)\" "
-        "\"test-rebind-with-if #348\")");
-    CHECK(r.has_value(),
-          "mutate:rebind runs");
+    auto r = cs.eval("(mutate:rebind \"g\" \"(if (> 0 0) 1 2)\" "
+                     "\"test-rebind-with-if #348\")");
+    CHECK(r.has_value(), "mutate:rebind runs");
     // The (query:dirty-nodes "occurrence") from #344
     // returns a pair-list of NodeIds dirty for
     // kOccurrenceDirty. The list should now include
     // the new if-node (or at least return a value).
     auto r2 = cs.eval("(query:dirty-nodes \"occurrence\")");
-    CHECK(r2.has_value(),
-          "post-rebind: (query:dirty-nodes \"occurrence\") returns a value");
+    CHECK(r2.has_value(), "post-rebind: (query:dirty-nodes \"occurrence\") returns a value");
     return true;
 }
 
@@ -205,10 +202,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_348_detail
+} // namespace aura_issue_348_detail
 
-int aura_issue_348_run() { return aura_issue_348_detail::run_tests(); }
+int aura_issue_348_run() {
+    return aura_issue_348_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_348_run(); }
+int main() {
+    return aura_issue_348_run();
+}
 #endif

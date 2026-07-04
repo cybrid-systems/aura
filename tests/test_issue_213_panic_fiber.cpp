@@ -39,8 +39,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -50,9 +50,8 @@ import aura.compiler.value;
 import aura.compiler.ir;
 
 
-
 namespace aura_issue_213_panic_fiber_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Test 5: Concurrent fibers don't see each other's checkpoints ───
 //
@@ -102,7 +101,8 @@ bool test_concurrent_fiber_isolation() {
         aura::serve::g_current_fiber->yield();
         // Re-check after yield
         int d2 = aura::compiler::Evaluator::mutation_boundary_depth();
-        if (d2 != d) fiber_a_depths.store(-d2);  // mark mismatch
+        if (d2 != d)
+            fiber_a_depths.store(-d2); // mark mismatch
         ev.exit_mutation_boundary(true);
         fibers_done.fetch_add(1);
     });
@@ -172,10 +172,9 @@ bool test_panic_abort_mid_mutation() {
     try {
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
         flat.set_int(node, 999);
-        flat.add_mutation_with_rollback(
-            node, "tweak", "Int", "Int", "42 -> 999",
-            aura::ast::MutationStatus::Committed,
-            /*field_offset=*/0, /*old=*/42, /*new=*/999, true);
+        flat.add_mutation_with_rollback(node, "tweak", "Int", "Int", "42 -> 999",
+                                        aura::ast::MutationStatus::Committed,
+                                        /*field_offset=*/0, /*old=*/42, /*new=*/999, true);
         CHECK(flat.int_val(node) == 999, "mid-boundary value is 999");
         // Simulate panic — flag the guard as failed AND throw
         // a C++ exception. The flag handles the in-band
@@ -193,13 +192,13 @@ bool test_panic_abort_mid_mutation() {
     // record is preserved, just status-changed to RolledBack
     CHECK(flat.all_mutations().size() == pre_log_size + 1,
           "mutation log size = pre + 1 (record status-changed, not truncated)");
-    CHECK(ev.defuse_version_snapshot() > pre_version,
-          "defuse_version_ bumped (RAII exit fired)");
+    CHECK(ev.defuse_version_snapshot() > pre_version, "defuse_version_ bumped (RAII exit fired)");
 
     // Count rolled-back records
     std::size_t rolled_back = 0;
     for (const auto& r : flat.all_mutations()) {
-        if (r.status == aura::ast::MutationStatus::RolledBack) ++rolled_back;
+        if (r.status == aura::ast::MutationStatus::RolledBack)
+            ++rolled_back;
     }
     CHECK(rolled_back >= 1, "at least one mutation marked RolledBack");
     return true;
@@ -242,8 +241,7 @@ bool test_stress_1000_iterations() {
                     // Alternate commit / rollback to exercise
                     // both paths
                     bool want_commit = ((f + i) % 3 != 0);
-                    aura::compiler::Evaluator::MutationBoundaryGuard
-                        guard(ev, nullptr);
+                    aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, nullptr);
 
                     // Synthesize a mutation: bump a counter
                     // in the workspace
@@ -285,12 +283,10 @@ bool test_stress_1000_iterations() {
     sched.stop();
     t.join();
 
-    CHECK(fibers_done.load() == num_fibers,
-          "all 4 fibers completed");
+    CHECK(fibers_done.load() == num_fibers, "all 4 fibers completed");
     CHECK(total_iterations.load() == num_fibers * iterations_per_fiber,
           "all 1000 iterations completed");
-    CHECK(total_commits.load() + total_rollbacks.load() ==
-              num_fibers * iterations_per_fiber,
+    CHECK(total_commits.load() + total_rollbacks.load() == num_fibers * iterations_per_fiber,
           "commits + rollbacks = total iterations");
     CHECK(total_commits.load() > 0, "at least one commit happened");
     CHECK(total_rollbacks.load() > 0, "at least one rollback happened");
@@ -316,7 +312,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_213_panic_fiber_detail
+} // namespace aura_issue_213_panic_fiber_detail
 
-int aura_issue_213_panic_fiber_run() { return aura_issue_213_panic_fiber_detail::run_tests(); }
-
+int aura_issue_213_panic_fiber_run() {
+    return aura_issue_213_panic_fiber_detail::run_tests();
+}

@@ -26,8 +26,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -96,12 +96,9 @@ bool test_cross_pool_symid_mismatch() {
 
     auto p_sym = parent.intern("my-fn");
     auto c_sym = child.intern("my-fn");
-    CHECK(p_sym != c_sym,
-          "SymIds differ across pools (the problem we're solving)");
-    CHECK(parent.resolve(p_sym) == "my-fn",
-          "parent resolves to name");
-    CHECK(child.resolve(c_sym) == "my-fn",
-          "child resolves to same name");
+    CHECK(p_sym != c_sym, "SymIds differ across pools (the problem we're solving)");
+    CHECK(parent.resolve(p_sym) == "my-fn", "parent resolves to name");
+    CHECK(child.resolve(c_sym) == "my-fn", "child resolves to same name");
     return true;
 }
 
@@ -110,11 +107,10 @@ bool test_cross_pool_symid_mismatch() {
 // separate (flat, pool) pairs and verify the lookup works in each.
 bool test_cross_pool_find_define_by_name() {
     std::println("\n--- AC3: cross-pool find_define_by_name ---");
-    const std::string src =
-        "(begin "
-        "  (define alpha 1) "
-        "  (define beta 2) "
-        "  (define gamma 3))";
+    const std::string src = "(begin "
+                            "  (define alpha 1) "
+                            "  (define beta 2) "
+                            "  (define gamma 3))";
 
     aura::ast::FlatAST parent_flat;
     aura::ast::StringPool parent_pool;
@@ -169,8 +165,7 @@ bool test_workspace_find_define_primitive() {
     auto r_foo = cs.eval("(workspace:find-define \"foo\")");
     CHECK(r_foo.has_value(), "find-define foo returns Some");
     if (r_foo && aura::compiler::types::is_int(*r_foo)) {
-        CHECK(aura::compiler::types::as_int(*r_foo) >= 1,
-              "find-define foo returns a valid NodeId");
+        CHECK(aura::compiler::types::as_int(*r_foo) >= 1, "find-define foo returns a valid NodeId");
     } else {
         CHECK(false, "find-define foo returns an Int NodeId");
     }
@@ -178,12 +173,10 @@ bool test_workspace_find_define_primitive() {
     auto r_bar = cs.eval("(workspace:find-define \"bar\")");
     CHECK(r_bar.has_value(), "find-define bar returns Some");
     if (r_bar && aura::compiler::types::is_int(*r_bar)) {
-        CHECK(aura::compiler::types::as_int(*r_bar) >= 1,
-              "find-define bar returns a valid NodeId");
+        CHECK(aura::compiler::types::as_int(*r_bar) >= 1, "find-define bar returns a valid NodeId");
         // Different NodeIds for foo vs bar
         if (r_foo && aura::compiler::types::is_int(*r_foo))
-            CHECK(aura::compiler::types::as_int(*r_foo)
-                      != aura::compiler::types::as_int(*r_bar),
+            CHECK(aura::compiler::types::as_int(*r_foo) != aura::compiler::types::as_int(*r_bar),
                   "foo and bar have different NodeIds");
     } else {
         CHECK(false, "find-define bar returns an Int NodeId");
@@ -192,8 +185,7 @@ bool test_workspace_find_define_primitive() {
     auto r_miss = cs.eval("(workspace:find-define \"nonexistent\")");
     CHECK(r_miss.has_value(), "find-define miss returns Some (void)");
     if (r_miss)
-        CHECK(aura::compiler::types::is_void(*r_miss),
-              "find-define miss is void");
+        CHECK(aura::compiler::types::is_void(*r_miss), "find-define miss is void");
 
     return true;
 }
@@ -214,20 +206,18 @@ bool test_cow_layer_name_reresolves() {
     aura::compiler::CompilerService cs;
 
     // Install my-fn + other-fn into the workspace via set-code.
-    cs.eval(
-        "(set-code \"(begin (define my-fn (lambda (x) x)) "
-        "(define other-fn (lambda (y) y)))\")");
+    cs.eval("(set-code \"(begin (define my-fn (lambda (x) x)) "
+            "(define other-fn (lambda (y) y)))\")");
 
     // Create a child workspace, switch into it, mutate my-fn (which
     // triggers COW on first mutate), switch back, and resolve by
     // name in both layers.
-    auto setup = cs.eval(
-        "(begin "
-        "  (workspace:create \"exp\") "
-        "  (workspace:switch 1) "
-        "  (mutate:rebind \"my-fn\" \"(lambda (x) (+ x 1))\" \"\") "
-        "  (workspace:switch 0) "
-        "  (workspace:find-define \"my-fn\"))");
+    auto setup = cs.eval("(begin "
+                         "  (workspace:create \"exp\") "
+                         "  (workspace:switch 1) "
+                         "  (mutate:rebind \"my-fn\" \"(lambda (x) (+ x 1))\" \"\") "
+                         "  (workspace:switch 0) "
+                         "  (workspace:find-define \"my-fn\"))");
     CHECK(setup.has_value(), "end-to-end setup+COW+switch+find succeeded");
     if (!setup || !aura::compiler::types::is_int(*setup))
         return false;
@@ -236,10 +226,9 @@ bool test_cow_layer_name_reresolves() {
     CHECK(parent_id >= 1, "parent find-define returned a valid NodeId");
 
     // Now resolve in the child (layer 1).
-    auto child_lookup = cs.eval(
-        "(begin "
-        "  (workspace:switch 1) "
-        "  (workspace:find-define \"my-fn\"))");
+    auto child_lookup = cs.eval("(begin "
+                                "  (workspace:switch 1) "
+                                "  (workspace:find-define \"my-fn\"))");
     CHECK(child_lookup.has_value(), "child find-define eval succeeded");
     if (child_lookup && aura::compiler::types::is_int(*child_lookup)) {
         auto child_id = aura::compiler::types::as_int(*child_lookup);
@@ -265,10 +254,14 @@ int run_tests() {
     return (ok && g_failed == 0) ? 0 : 1;
 }
 
-}  // namespace aura_issue_372_detail
+} // namespace aura_issue_372_detail
 
-int aura_issue_372_run() { return aura_issue_372_detail::run_tests(); }
+int aura_issue_372_run() {
+    return aura_issue_372_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_372_run(); }
+int main() {
+    return aura_issue_372_run();
+}
 #endif

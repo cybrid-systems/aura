@@ -109,8 +109,7 @@ export inline EvalValue make_bool(bool v) noexcept {
     return EvalValue(v ? 7 : 3); // #t=7, #f=3
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Special &&
-           (v.val == 3 || v.val == 7);
+    return classify_eval_value_tag(v.val) == EvalValueTag::Special && (v.val == 3 || v.val == 7);
 }
 export inline bool as_bool(const EvalValue& v) noexcept {
     contract_assert(is_bool(v));
@@ -121,8 +120,7 @@ export inline EvalValue make_void() noexcept {
     return EvalValue(11); // void sentinel = 11
 }
 export inline bool is_void(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Special &&
-           v.val == 11;
+    return classify_eval_value_tag(v.val) == EvalValueTag::Special && v.val == 11;
 }
 
 export inline EvalValue make_float(double d) {

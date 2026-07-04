@@ -50,9 +50,7 @@ namespace aura::compiler::per_defuse_index {
 // POD-style for cheap construction in tight loops.
 struct DefUseIndex {
     std::string name;
-    bool operator==(const DefUseIndex& other) const noexcept {
-        return name == other.name;
-    }
+    bool operator==(const DefUseIndex& other) const noexcept { return name == other.name; }
 };
 
 // Caller — a per-DefUseIndex call site. The `node_id`
@@ -148,9 +146,7 @@ public:
     // index_count — number of distinct DefUseIndexes
     // registered. Used by the metric that tracks the
     // number of DefUseIndexes in flight.
-    std::size_t index_count() const noexcept {
-        return per_index_.size();
-    }
+    std::size_t index_count() const noexcept { return per_index_.size(); }
 
     // clear — remove all callers. Used between
     // typecheck-current invocations to reset state
@@ -161,7 +157,7 @@ private:
     std::unordered_map<std::string, std::vector<Caller>> per_index_;
 };
 
-}  // namespace aura::compiler::per_defuse_index
+} // namespace aura::compiler::per_defuse_index
 
 // hash specialization for DefUseIndex (so it can be used as
 // a key in std::unordered_map directly without the .name
@@ -170,10 +166,9 @@ private:
 // (#258 / #410 / #411 work) to avoid the std::hash<std::string>
 // collision pattern.
 namespace std {
-template <>
-struct hash<aura::compiler::per_defuse_index::DefUseIndex> {
-    std::size_t operator()(
-        const aura::compiler::per_defuse_index::DefUseIndex& idx) const noexcept {
+template <> struct hash<aura::compiler::per_defuse_index::DefUseIndex> {
+    std::size_t
+    operator()(const aura::compiler::per_defuse_index::DefUseIndex& idx) const noexcept {
         std::size_t h = 0xcbf29ce484222325ull;
         for (char c : idx.name) {
             h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
@@ -181,4 +176,4 @@ struct hash<aura::compiler::per_defuse_index::DefUseIndex> {
         return h;
     }
 };
-}  // namespace std
+} // namespace std

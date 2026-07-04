@@ -35,22 +35,24 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
 namespace aura_issue_311_detail {
-#define CHECK_EQ_LOCAL(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ_LOCAL(a, b, msg)                                                                  \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════
 // AC1: add_interface returns a valid NodeId
@@ -68,14 +70,11 @@ bool test_add_interface_returns_valid_id() {
     auto sig3 = flat.add_variable(pool.intern("ready"));
     std::vector<NodeId> body{sig1, sig2, sig3};
     auto iface = flat.add_interface(if_name, std::span<const NodeId>(body.data(), body.size()));
-    CHECK_EQ_LOCAL(iface == aura::ast::NULL_NODE, false,
-                  "add_interface returns a non-null NodeId");
+    CHECK_EQ_LOCAL(iface == aura::ast::NULL_NODE, false, "add_interface returns a non-null NodeId");
     CHECK_EQ_LOCAL(static_cast<std::uint32_t>(iface) < static_cast<std::uint32_t>(flat.size()),
                    true, "returned id < flat.size()");
-    CHECK(flat.get(iface).tag == NodeTag::Interface,
-          "interface node has NodeTag::Interface");
-    CHECK_EQ_LOCAL(flat.sym_id(iface), if_name,
-                   "interface sym_id matches the name");
+    CHECK(flat.get(iface).tag == NodeTag::Interface, "interface node has NodeTag::Interface");
+    CHECK_EQ_LOCAL(flat.sym_id(iface), if_name, "interface sym_id matches the name");
     return true;
 }
 
@@ -96,14 +95,11 @@ bool test_add_modport_returns_valid_id() {
         pool.intern("valid"),
     };
     auto mp = flat.add_modport(mp_name, std::span<const SymId>(ports.data(), ports.size()));
-    CHECK_EQ_LOCAL(mp == aura::ast::NULL_NODE, false,
-                  "add_modport returns a non-null NodeId");
-    CHECK_EQ_LOCAL(static_cast<std::uint32_t>(mp) < static_cast<std::uint32_t>(flat.size()),
-                   true, "returned id < flat.size()");
-    CHECK(flat.get(mp).tag == NodeTag::Modport,
-          "modport node has NodeTag::Modport");
-    CHECK_EQ_LOCAL(flat.sym_id(mp), mp_name,
-                   "modport sym_id matches the name");
+    CHECK_EQ_LOCAL(mp == aura::ast::NULL_NODE, false, "add_modport returns a non-null NodeId");
+    CHECK_EQ_LOCAL(static_cast<std::uint32_t>(mp) < static_cast<std::uint32_t>(flat.size()), true,
+                   "returned id < flat.size()");
+    CHECK(flat.get(mp).tag == NodeTag::Modport, "modport node has NodeTag::Modport");
+    CHECK_EQ_LOCAL(flat.sym_id(mp), mp_name, "modport sym_id matches the name");
     return true;
 }
 
@@ -133,8 +129,7 @@ bool test_interface_children_stored_in_pcv() {
         (void)cid;
         ++visited;
     }
-    CHECK_EQ_LOCAL(visited, std::size_t{2},
-                   "children(interface) yields 2 body items");
+    CHECK_EQ_LOCAL(visited, std::size_t{2}, "children(interface) yields 2 body items");
     // Same shape via span size().
     CHECK_EQ_LOCAL(flat.children(iface).size(), std::size_t{2},
                    "children(interface) span has size 2");
@@ -159,11 +154,9 @@ bool test_modport_uses_param_data_side_table() {
     auto p0_sym = flat.param_at(mp, 0);
     CHECK(p0_sym != aura::ast::INVALID_SYM,
           "param_at(mp, 0) returns a valid sym (first port present)");
-    CHECK_EQ_LOCAL(p0_sym, ports[0],
-                   "param_at(mp, 0) matches the first port symbol");
+    CHECK_EQ_LOCAL(p0_sym, ports[0], "param_at(mp, 0) matches the first port symbol");
     auto p1_sym = flat.param_at(mp, 1);
-    CHECK_EQ_LOCAL(p1_sym, ports[1],
-                   "param_at(mp, 1) matches the second port symbol");
+    CHECK_EQ_LOCAL(p1_sym, ports[1], "param_at(mp, 1) matches the second port symbol");
     return true;
 }
 
@@ -204,12 +197,11 @@ bool test_interface_pcv_cow_semantics() {
     // Copy-construct b from a (the COW path).
     FlatAST b(a);
     // The copied interface should have the same payload.
-    auto b_iface = b.add_variable(pool.intern("dummy"));  // ensure copy is independent
+    auto b_iface = b.add_variable(pool.intern("dummy")); // ensure copy is independent
     (void)b_iface;
     // The copy should preserve the interface id (PCV's stable
     // pointer invariant) and the body item should be readable.
-    CHECK_EQ_LOCAL(static_cast<std::uint32_t>(iface) < static_cast<std::uint32_t>(b.size()),
-                   true,
+    CHECK_EQ_LOCAL(static_cast<std::uint32_t>(iface) < static_cast<std::uint32_t>(b.size()), true,
                    "copied FlatAST contains the original interface id");
     CHECK_EQ_LOCAL(b.children(iface).size(), std::size_t{1},
                    "copied interface preserves the body count");
@@ -239,18 +231,16 @@ bool test_sv_interface_e2e_pattern() {
 
     // Nested modport nodes first (so they have valid IDs).
     std::vector<SymId> master_ports{pool.intern("data"), pool.intern("valid")};
-    auto master_mp = flat.add_modport(pool.intern("master"),
-                                      std::span<const SymId>(master_ports.data(),
-                                                             master_ports.size()));
+    auto master_mp = flat.add_modport(
+        pool.intern("master"), std::span<const SymId>(master_ports.data(), master_ports.size()));
     std::vector<SymId> slave_ports{pool.intern("valid"), pool.intern("data")};
-    auto slave_mp = flat.add_modport(pool.intern("slave"),
-                                     std::span<const SymId>(slave_ports.data(),
-                                                            slave_ports.size()));
+    auto slave_mp = flat.add_modport(
+        pool.intern("slave"), std::span<const SymId>(slave_ports.data(), slave_ports.size()));
 
     // Interface body: the 2 signals + 2 modports (4 items total).
     std::vector<NodeId> body{data_sig, valid_sig, master_mp, slave_mp};
-    auto bus = flat.add_interface(pool.intern("Bus"),
-                                 std::span<const NodeId>(body.data(), body.size()));
+    auto bus =
+        flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(body.data(), body.size()));
 
     // Verify the interface's children are the 4 body items.
     CHECK_EQ_LOCAL(flat.children(bus).size(), std::size_t{4},
@@ -261,8 +251,7 @@ bool test_sv_interface_e2e_pattern() {
         if (flat.get(cid).tag == NodeTag::Modport)
             ++seen_modports;
     }
-    CHECK_EQ_LOCAL(seen_modports, std::size_t{2},
-                   "Bus interface body contains 2 Modport nodes");
+    CHECK_EQ_LOCAL(seen_modports, std::size_t{2}, "Bus interface body contains 2 Modport nodes");
     // The master modport has 2 ports in param_data_.
     CHECK(flat.param_at(master_mp, 0) != aura::ast::INVALID_SYM,
           "master modport port 0 is a valid sym");
@@ -285,10 +274,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_311_detail
+} // namespace aura_issue_311_detail
 
-int aura_issue_311_run() { return aura_issue_311_detail::run_tests(); }
+int aura_issue_311_run() {
+    return aura_issue_311_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_311_run(); }
+int main() {
+    return aura_issue_311_run();
+}
 #endif

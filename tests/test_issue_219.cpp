@@ -42,9 +42,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -94,7 +93,8 @@ void test_2_insert_positions() {
     // Insert at the front.
     gb.insert(0, 0);
     CHECK(gb.size() == 5, "size 5 after front insert");
-    CHECK(gb[0] == 0 && gb[1] == 1 && gb[2] == 2 && gb[3] == 3 && gb[4] == 5, "[0,1,2,3,5] after front insert");
+    CHECK(gb[0] == 0 && gb[1] == 1 && gb[2] == 2 && gb[3] == 3 && gb[4] == 5,
+          "[0,1,2,3,5] after front insert");
 
     // Insert at the end (push_back equivalent).
     gb.insert(gb.size(), 6);
@@ -114,18 +114,20 @@ void test_2_insert_positions() {
 void test_3_erase_positions() {
     PRINTLN("\n--- Test 3: erase at arbitrary positions ---");
     GB gb;
-    for (std::uint32_t i = 0; i < 5; ++i) gb.push_back(i * 10);
+    for (std::uint32_t i = 0; i < 5; ++i)
+        gb.push_back(i * 10);
     // gb: [0, 10, 20, 30, 40]
 
-    gb.erase(2);  // remove the '20'
+    gb.erase(2); // remove the '20'
     CHECK(gb.size() == 4, "size 4 after middle erase");
-    CHECK(gb[0] == 0 && gb[1] == 10 && gb[2] == 30 && gb[3] == 40, "[0,10,30,40] after middle erase");
+    CHECK(gb[0] == 0 && gb[1] == 10 && gb[2] == 30 && gb[3] == 40,
+          "[0,10,30,40] after middle erase");
 
-    gb.erase(0);  // remove from front
+    gb.erase(0); // remove from front
     CHECK(gb.size() == 3, "size 3 after front erase");
     CHECK(gb[0] == 10 && gb[1] == 30 && gb[2] == 40, "[10,30,40] after front erase");
 
-    gb.erase(gb.size() - 1);  // remove from end
+    gb.erase(gb.size() - 1); // remove from end
     CHECK(gb.size() == 2, "size 2 after end erase");
     CHECK(gb[0] == 10 && gb[1] == 30, "[10,30] after end erase");
 
@@ -143,7 +145,8 @@ void test_4_perf_insert() {
     PRINTLN("\n--- Test 4: 5000-element insert: 100 ops, each < 100µs ---");
     // Pre-build a 5000-element buffer (sequential, gap at end).
     GB gb;
-    for (std::uint32_t i = 0; i < 5000; ++i) gb.push_back(i);
+    for (std::uint32_t i = 0; i < 5000; ++i)
+        gb.push_back(i);
     CHECK(gb.size() == 5000, "pre-built size 5000");
 
     // 100 inserts at random positions.
@@ -162,8 +165,8 @@ void test_4_perf_insert() {
     auto end = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     auto per_op_us = static_cast<double>(us) / 100.0;
-    std::fprintf(stdout, "  INFO: 100 inserts took %ld µs (%.2f µs/op)\n",
-                 static_cast<long>(us), per_op_us);
+    std::fprintf(stdout, "  INFO: 100 inserts took %ld µs (%.2f µs/op)\n", static_cast<long>(us),
+                 per_op_us);
     CHECK(per_op_us < 100.0, "per-op < 100µs (perf smoke, #219)");
 }
 
@@ -171,11 +174,13 @@ void test_4_perf_insert() {
 void test_5_perf_erase() {
     PRINTLN("\n--- Test 5: 5000-element remove: 100 ops, each < 100µs ---");
     GB gb;
-    for (std::uint32_t i = 0; i < 5000; ++i) gb.push_back(i);
+    for (std::uint32_t i = 0; i < 5000; ++i)
+        gb.push_back(i);
     CHECK(gb.size() == 5000, "pre-built size 5000");
 
     std::mt19937 rng(54321);
-    std::uniform_int_distribution<std::uint32_t> pos_dist(0, static_cast<std::uint32_t>(gb.size()) - 1);
+    std::uniform_int_distribution<std::uint32_t> pos_dist(0, static_cast<std::uint32_t>(gb.size()) -
+                                                                 1);
 
     // Warm-up: do a few erases first.
     for (int i = 0; i < 5; ++i) {
@@ -189,8 +194,8 @@ void test_5_perf_erase() {
     auto end = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     auto per_op_us = static_cast<double>(us) / 100.0;
-    std::fprintf(stdout, "  INFO: 100 erases took %ld µs (%.2f µs/op)\n",
-                 static_cast<long>(us), per_op_us);
+    std::fprintf(stdout, "  INFO: 100 erases took %ld µs (%.2f µs/op)\n", static_cast<long>(us),
+                 per_op_us);
     CHECK(per_op_us < 100.0, "per-op < 100µs (perf smoke, #219)");
 }
 
@@ -198,7 +203,8 @@ void test_5_perf_erase() {
 void test_6_perf_mixed() {
     PRINTLN("\n--- Test 6: 1000 inserts + 1000 erases + 1 compact: < 10ms ---");
     GB gb;
-    for (int i = 0; i < 100; ++i) gb.push_back(i);
+    for (int i = 0; i < 100; ++i)
+        gb.push_back(i);
 
     auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < 1000; ++i) {
@@ -218,14 +224,16 @@ void test_6_perf_mixed() {
 void test_7_clear_reconstruct() {
     PRINTLN("\n--- Test 7: clear + reconstruct ---");
     GB gb;
-    for (std::uint32_t i = 0; i < 100; ++i) gb.push_back(i * 7);
+    for (std::uint32_t i = 0; i < 100; ++i)
+        gb.push_back(i * 7);
     CHECK(gb.size() == 100, "pre-clear size 100");
 
     gb.clear();
     CHECK(gb.empty(), "empty after clear");
 
     // Reconstruct.
-    for (std::uint32_t i = 0; i < 50; ++i) gb.push_back(i * 11);
+    for (std::uint32_t i = 0; i < 50; ++i)
+        gb.push_back(i * 11);
     CHECK(gb.size() == 50, "size 50 after reconstruct");
     for (std::uint32_t i = 0; i < 50; ++i) {
         CHECK(gb[i] == i * 11, "reconstructed element matches");
@@ -240,7 +248,8 @@ void test_8_reserve_grow() {
     CHECK(gb.capacity() >= 100, "capacity >= 100 after reserve(100)");
     CHECK(gb.size() == 0, "size still 0 after reserve");
 
-    for (std::uint32_t i = 0; i < 200; ++i) gb.push_back(i);
+    for (std::uint32_t i = 0; i < 200; ++i)
+        gb.push_back(i);
     CHECK(gb.size() == 200, "size 200 after pushes");
     // Capacity should have grown (initial 100, then doubled).
     CHECK(gb.capacity() >= 200, "capacity grew to >= 200");
@@ -269,7 +278,8 @@ void test_9_ast_pattern() {
 
     // Random inserts and removes.
     std::mt19937 rng(99999);
-    std::uniform_int_distribution<std::uint32_t> pos_dist(0, static_cast<std::uint32_t>(gb.size()) - 1);
+    std::uniform_int_distribution<std::uint32_t> pos_dist(0, static_cast<std::uint32_t>(gb.size()) -
+                                                                 1);
     std::uniform_int_distribution<int> op_dist(0, 1);
 
     auto start = std::chrono::steady_clock::now();
@@ -285,8 +295,8 @@ void test_9_ast_pattern() {
     auto end = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     auto per_op_us = static_cast<double>(us) / 100.0;
-    std::fprintf(stdout, "  INFO: 100 mixed ops took %ld µs (%.2f µs/op)\n",
-                 static_cast<long>(us), per_op_us);
+    std::fprintf(stdout, "  INFO: 100 mixed ops took %ld µs (%.2f µs/op)\n", static_cast<long>(us),
+                 per_op_us);
     CHECK(per_op_us < 100.0, "per-op < 100µs (mixed insert/erase)");
 }
 
@@ -297,27 +307,28 @@ void test_10_wire_format() {
     // [u32 count] + count * 4 bytes raw.
     GB gb;
     constexpr std::uint32_t num_children = 1000;
-    for (std::uint32_t i = 0; i < num_children; ++i) gb.push_back(i * 13);
+    for (std::uint32_t i = 0; i < num_children; ++i)
+        gb.push_back(i * 13);
 
     // Serialize (using the columnar format the production uses).
     std::vector<char> buf;
     std::uint32_t count = static_cast<std::uint32_t>(gb.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-               reinterpret_cast<char*>(&count) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
     for (std::uint32_t i = 0; i < count; ++i) {
         std::uint32_t v = gb[i];
-        buf.insert(buf.end(), reinterpret_cast<char*>(&v),
-                   reinterpret_cast<char*>(&v) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 4);
     }
     CHECK(buf.size() == 4 + num_children * 4, "serialized buf size matches");
 
     // Deserialize back into a new GapBuffer.
     GB gb2;
     std::size_t pos = 0;
-    std::memcpy(&count, &buf[pos], 4); pos += 4;
+    std::memcpy(&count, &buf[pos], 4);
+    pos += 4;
     for (std::uint32_t i = 0; i < count; ++i) {
         std::uint32_t v;
-        std::memcpy(&v, &buf[pos], 4); pos += 4;
+        std::memcpy(&v, &buf[pos], 4);
+        pos += 4;
         gb2.push_back(v);
     }
     CHECK(gb2.size() == num_children, "deserialized size matches");

@@ -50,8 +50,8 @@ import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── Test 1: bridge_invalidations_count is exposed ───────────
 
@@ -59,8 +59,7 @@ namespace aura_issue_225_bridge_invalidation_detail {
 bool test_bridge_invalidations_metric_exposed() {
     std::println("\n--- Test 1.1: bridge_invalidations_count metric is exposed ---");
     aura::compiler::CompilerService cs;
-    auto n = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
+    auto n = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
     CHECK(n == 0, "bridge_invalidations_count starts at 0");
     return true;
 }
@@ -70,17 +69,14 @@ bool test_bridge_invalidations_metric_exposed() {
 bool test_public_invalidate_bumps_metric() {
     std::println("\n--- Test 1.2: public_invalidate_bridges_for bumps metric ---");
     aura::compiler::CompilerService cs;
-    auto n0 = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
+    auto n0 = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
     // Call the public hook. If the entry doesn't exist, the
     // helper is a no-op (no metric bump). The test
     // demonstrates the metric is wired correctly; the entry
     // doesn't have to exist for the hook to be callable.
     cs.public_invalidate_bridges_for("nonexistent");
-    auto n1 = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
-    CHECK(n1 == n0,
-          "no metric bump when entry doesn't exist (helper is a no-op)");
+    auto n1 = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
+    CHECK(n1 == n0, "no metric bump when entry doesn't exist (helper is a no-op)");
     return true;
 }
 
@@ -105,16 +101,13 @@ bool test_bridge_epoch_advances() {
 bool test_metric_monotonic() {
     std::println("\n--- Test 1.4: bridge_invalidations_count is monotonic ---");
     aura::compiler::CompilerService cs;
-    auto n0 = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
+    auto n0 = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
     // Multiple eval calls (each may trigger a mutation
     // path internally). The metric should be monotonic.
     for (int i = 0; i < 3; ++i) {
         cs.eval(std::string("(begin (define (k) (* 2 2)) (k))"));
-        auto n = cs.metrics().bridge_invalidations_count.load(
-            std::memory_order_relaxed);
-        CHECK(n >= n0,
-              "metric non-decreasing across calls");
+        auto n = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
+        CHECK(n >= n0, "metric non-decreasing across calls");
     }
     return true;
 }
@@ -129,8 +122,7 @@ bool test_public_hook_idempotent() {
     for (int i = 0; i < 5; ++i) {
         cs.public_invalidate_bridges_for("definitely_does_not_exist");
     }
-    auto n = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
+    auto n = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
     CHECK(n == 0, "5 calls on non-existent entry → metric stays 0 (idempotent)");
     return true;
 }
@@ -170,7 +162,8 @@ int run_tests() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-}  // namespace aura_issue_225_bridge_invalidation_detail
+} // namespace aura_issue_225_bridge_invalidation_detail
 
-int aura_issue_225_bridge_invalidation_run() { return aura_issue_225_bridge_invalidation_detail::run_tests(); }
-
+int aura_issue_225_bridge_invalidation_run() {
+    return aura_issue_225_bridge_invalidation_detail::run_tests();
+}

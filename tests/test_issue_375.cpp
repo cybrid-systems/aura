@@ -59,7 +59,7 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
 import aura.compiler.value;
-import aura.compiler.ir;       // Issue #375: IRStatsSnapshot + compute_ir_stats
+import aura.compiler.ir; // Issue #375: IRStatsSnapshot + compute_ir_stats
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
@@ -67,22 +67,42 @@ namespace aura_issue_375_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_GE(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a >= _b) { ++g_passed; std::println("  PASS: {}  ({} >= {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} < {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_GE(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a >= _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} >= {})", msg, _a, _b);                                   \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} < {})", msg, _a, _b);                                    \
+        }                                                                                          \
+    } while (0)
 
 // Helper: run a workload through the IR pipeline and return
 // the resulting snapshot. We use cs.eval_ir() (NOT cs.eval())
@@ -91,9 +111,8 @@ static int g_failed = 0;
 // pipeline (which sets last_ir_mod_ + last_ir_stats_).
 //
 // Returns a copy of the IRStatsSnapshot.
-aura::ir::IRStatsSnapshot run_workload_and_get_stats(
-    aura::compiler::CompilerService& cs,
-    const std::string& workload) {
+aura::ir::IRStatsSnapshot run_workload_and_get_stats(aura::compiler::CompilerService& cs,
+                                                     const std::string& workload) {
     auto r = cs.eval_ir(workload);
     if (!r) {
         std::println("  [helper] eval_ir failed: {}", workload);
@@ -121,15 +140,12 @@ bool test_initial_snapshot_zero() {
 bool test_snapshot_updates_on_workload() {
     std::println("\n--- AC2: snapshot populates after a simple expression workload ---");
     aura::compiler::CompilerService cs;
-    const auto& s = run_workload_and_get_stats(cs,
-        "((lambda (n) (* n n)) 7)");
+    const auto& s = run_workload_and_get_stats(cs, "((lambda (n) (* n n)) 7)");
     // A single lambda body (ConstI64 n, Mul, Return) should
     // have ≥ 3 instructions. The exact count depends on the
     // lowering pass + capture handling; we just want > 0 here.
-    CHECK(s.total_instructions > 0,
-          "total-instructions > 0 after eval(f 7)");
-    CHECK(s.total_functions >= 1,
-          "total-functions >= 1 (the lambda body)");
+    CHECK(s.total_instructions > 0, "total-instructions > 0 after eval(f 7)");
+    CHECK(s.total_functions >= 1, "total-functions >= 1 (the lambda body)");
     CHECK(s.aos_bytes_total == s.total_instructions * 40,
           "aos-bytes-total = total-instr * 40 (verified field math)");
     CHECK(s.padding_bytes_total == s.total_instructions * 3,
@@ -146,14 +162,13 @@ bool test_snapshot_updates_on_workload() {
 bool test_compact_ratio_in_range() {
     std::println("\n--- AC3: compact-ratio-bp is in [0, 10000] on a realistic workload ---");
     aura::compiler::CompilerService cs;
-    const auto& s = run_workload_and_get_stats(cs,
-        "((lambda (n)\n"
-        "  (let loop ((i 0) (acc 0))\n"
-        "    (if (>= i n) acc (loop (+ i 1) (+ acc i)))))\n"
-        " 10)");
+    const auto& s =
+        run_workload_and_get_stats(cs, "((lambda (n)\n"
+                                       "  (let loop ((i 0) (acc 0))\n"
+                                       "    (if (>= i n) acc (loop (+ i 1) (+ acc i)))))\n"
+                                       " 10)");
     CHECK(s.total_instructions > 0, "sum-to lowered to > 0 instructions");
-    CHECK(s.compact_ratio_bp <= 10000,
-          "compact-ratio-bp <= 10000 (no overflow)");
+    CHECK(s.compact_ratio_bp <= 10000, "compact-ratio-bp <= 10000 (no overflow)");
     CHECK(s.operands_used_sum > 0,
           "operands-used-sum > 0 (at least one instruction uses operands)");
     // A workload with Let, If, Add, comparison, call patterns
@@ -161,8 +176,7 @@ bool test_compact_ratio_in_range() {
     // be 50-75% of the AoS bytes (not 99%, not 5%).
     // (Strict check would be brittle; we just verify the
     // math is in a sane range.)
-    CHECK(s.compact_bytes_projection > 0,
-          "compact-bytes-projection > 0");
+    CHECK(s.compact_bytes_projection > 0, "compact-bytes-projection > 0");
     CHECK(s.compact_bytes_projection < s.aos_bytes_total,
           "compact-bytes-projection < aos-bytes-total (otherwise why bother)");
     std::println("       [baseline] total-instr={} avg-ops={}/100 aos={} compact={} ratio={}bp",
@@ -181,15 +195,14 @@ bool test_compact_ratio_in_range() {
 bool test_heavier_workload() {
     std::println("\n--- AC4: heavier recursive workload has more instructions ---");
     aura::compiler::CompilerService cs;
-    const auto& s = run_workload_and_get_stats(cs,
-        "((lambda (n)\n"
-        "  (if (<= n 1) 1\n"
-        "    (* n ((lambda (m)\n"
-        "      (if (<= m 1) 1 (* m ((lambda (k) (if (<= k 1) 1 (* k 1))) (- m 1)))))\n"
-        "      (- n 1)))))\n"
-        " 5)");
-    CHECK(s.total_instructions >= 5,
-          "fact lowered to >= 5 instructions (recursion + if + mul)");
+    const auto& s = run_workload_and_get_stats(
+        cs, "((lambda (n)\n"
+            "  (if (<= n 1) 1\n"
+            "    (* n ((lambda (m)\n"
+            "      (if (<= m 1) 1 (* m ((lambda (k) (if (<= k 1) 1 (* k 1))) (- m 1)))))\n"
+            "      (- n 1)))))\n"
+            " 5)");
+    CHECK(s.total_instructions >= 5, "fact lowered to >= 5 instructions (recursion + if + mul)");
     bool any_op_count_nonzero = false;
     for (std::size_t i = 0; i < 5; ++i) {
         if (s.operand_count_distribution[i] > 0) {
@@ -197,12 +210,14 @@ bool test_heavier_workload() {
             break;
         }
     }
-    CHECK(any_op_count_nonzero,
-          "operand-count-distribution has at least one non-zero bucket");
+    CHECK(any_op_count_nonzero, "operand-count-distribution has at least one non-zero bucket");
     // Opcode histogram should have at least one non-zero bucket.
     bool any_opcode_nonzero = false;
     for (auto c : s.opcode_histogram) {
-        if (c > 0) { any_opcode_nonzero = true; break; }
+        if (c > 0) {
+            any_opcode_nonzero = true;
+            break;
+        }
     }
     CHECK(any_opcode_nonzero, "opcode-histogram has at least one non-zero bucket");
     return true;
@@ -217,22 +232,19 @@ bool test_no_regression() {
     auto r = cs.eval("(+ 1 2 3 4 5)");
     CHECK(r.has_value(), "(+ 1 2 3 4 5) returns a value");
     if (r) {
-        CHECK(aura::compiler::types::is_int(*r),
-              "(+ 1 2 3 4 5) returns an int");
-        CHECK_EQ(aura::compiler::types::as_int(*r), 15,
-                 "(+ 1 2 3 4 5) == 15");
+        CHECK(aura::compiler::types::is_int(*r), "(+ 1 2 3 4 5) returns an int");
+        CHECK_EQ(aura::compiler::types::as_int(*r), 15, "(+ 1 2 3 4 5) == 15");
     }
     // And a closure-heavy eval:
     auto r2 = cs.eval("(define g (lambda (x) (+ x 10))) (g 5)");
     CHECK(r2.has_value(), "(g 5) returns a value");
     if (r2) {
-        CHECK_EQ(aura::compiler::types::as_int(*r2), 15,
-                 "(g 5) == 15");
+        CHECK_EQ(aura::compiler::types::as_int(*r2), 15, "(g 5) == 15");
     }
     return true;
 }
 
-}  // namespace aura_issue_375_detail
+} // namespace aura_issue_375_detail
 
 int aura_issue_375_run() {
     using namespace aura_issue_375_detail;
@@ -248,5 +260,7 @@ int aura_issue_375_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_375_run(); }
+int main() {
+    return aura_issue_375_run();
+}
 #endif

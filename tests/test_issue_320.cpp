@@ -52,8 +52,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -75,16 +75,12 @@ bool test_column_plumbed() {
     const auto a = flat.add_variable(0);
     const auto b = flat.add_variable(1);
     const auto c = flat.add_define(2, {});
-    CHECK(flat.last_seen_epoch(a) == 0,
-          "fresh variable has epoch 0");
-    CHECK(flat.last_seen_epoch(b) == 0,
-          "fresh variable (2nd) has epoch 0");
-    CHECK(flat.last_seen_epoch(c) == 0,
-          "fresh define has epoch 0");
+    CHECK(flat.last_seen_epoch(a) == 0, "fresh variable has epoch 0");
+    CHECK(flat.last_seen_epoch(b) == 0, "fresh variable (2nd) has epoch 0");
+    CHECK(flat.last_seen_epoch(c) == 0, "fresh define has epoch 0");
     // Out-of-range returns 0 (consistent with other
     // accessors' "default 0" semantics).
-    CHECK(flat.last_seen_epoch(99999) == 0,
-          "out-of-range returns 0 (default)");
+    CHECK(flat.last_seen_epoch(99999) == 0, "out-of-range returns 0 (default)");
     return true;
 }
 
@@ -97,18 +93,14 @@ bool test_mark_dirty_bumps_column() {
     using namespace aura;
     ast::FlatAST flat;
     const auto a = flat.add_variable(0);
-    CHECK(flat.last_seen_epoch(a) == 0,
-          "pre-mark: epoch is 0");
+    CHECK(flat.last_seen_epoch(a) == 0, "pre-mark: epoch is 0");
     flat.mark_dirty(a);
-    CHECK(flat.last_seen_epoch(a) == 1,
-          "post-mark_dirty: epoch bumped to 1");
+    CHECK(flat.last_seen_epoch(a) == 1, "post-mark_dirty: epoch bumped to 1");
     flat.mark_dirty(a);
-    CHECK(flat.last_seen_epoch(a) == 2,
-          "post-mark_dirty (2nd): epoch bumped to 2");
+    CHECK(flat.last_seen_epoch(a) == 2, "post-mark_dirty (2nd): epoch bumped to 2");
     // Other nodes untouched.
     const auto b = flat.add_variable(1);
-    CHECK(flat.last_seen_epoch(b) == 0,
-          "untouched sibling: still 0");
+    CHECK(flat.last_seen_epoch(b) == 0, "untouched sibling: still 0");
     return true;
 }
 
@@ -122,16 +114,13 @@ bool test_mark_dirty_for_reinfer() {
     ast::FlatAST flat;
     const auto a = flat.add_variable(0);
     flat.mark_dirty_for_reinfer(a, 42);
-    CHECK(flat.last_seen_epoch(a) == 42,
-          "mark_dirty_for_reinfer(a, 42) sets epoch=42");
+    CHECK(flat.last_seen_epoch(a) == 42, "mark_dirty_for_reinfer(a, 42) sets epoch=42");
     // Plain mark_dirty still uses the +1 bump path.
     flat.mark_dirty(a);
-    CHECK(flat.last_seen_epoch(a) == 43,
-          "subsequent plain mark_dirty bumps to 43");
+    CHECK(flat.last_seen_epoch(a) == 43, "subsequent plain mark_dirty bumps to 43");
     // Direct stamp (separate from mark_dirty).
     flat.stamp_last_seen_epoch(a, 100);
-    CHECK(flat.last_seen_epoch(a) == 100,
-          "stamp_last_seen_epoch(100) overrides to 100");
+    CHECK(flat.last_seen_epoch(a) == 100, "stamp_last_seen_epoch(100) overrides to 100");
     return true;
 }
 
@@ -155,10 +144,8 @@ bool test_mark_dirty_upward_propagates() {
     // marked (the upward walk hits the parent).
     flat.mark_dirty_upward(a);
     CHECK(flat.last_seen_epoch(a) >= 1, "child a: bumped");
-    CHECK(flat.last_seen_epoch(parent) >= 1,
-          "parent: bumped (upward walk)");
-    CHECK(flat.last_seen_epoch(b) == 0,
-          "child b: NOT touched (not in upward chain)");
+    CHECK(flat.last_seen_epoch(parent) >= 1, "parent: bumped (upward walk)");
+    CHECK(flat.last_seen_epoch(b) == 0, "child b: NOT touched (not in upward chain)");
     return true;
 }
 
@@ -173,16 +160,19 @@ bool test_end_to_end_typed_mutate_bumps() {
     compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(begin (define a 1) (define b 2) (define c 3))\")").has_value()) {
         std::println("  FAIL: set-code failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(eval-current)").has_value()) {
         std::println("  FAIL: eval-current failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto* ws = cs.workspace_flat();
     if (!ws) {
         std::println("  FAIL: workspace_flat is null");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Count nodes with non-zero epoch before mutation.
     auto count_bumped = [ws]() {
@@ -200,8 +190,7 @@ bool test_end_to_end_typed_mutate_bumps() {
         ws->mark_dirty(static_cast<aura::ast::NodeId>(0));
     }
     const auto after = count_bumped();
-    CHECK(after > before,
-          "mark_dirty bumps last_seen_epoch_ (count went up)");
+    CHECK(after > before, "mark_dirty bumps last_seen_epoch_ (count went up)");
     return true;
 }
 
@@ -231,15 +220,13 @@ bool test_regression_227_coarse_gate() {
     const auto a = flat.add_variable(0);
     flat.mark_dirty(a);
     flat.mark_dirty_upward(a);
-    CHECK(flat.last_seen_epoch(a) >= 1,
-          "post-dirty: epoch bumped");
+    CHECK(flat.last_seen_epoch(a) >= 1, "post-dirty: epoch bumped");
     // Re-add many nodes — the column grows with the
     // flat (so subsequent reads are valid).
     for (int i = 0; i < 10; ++i) {
         flat.add_variable(static_cast<aura::ast::SymId>(i));
     }
-    CHECK(flat.last_seen_epoch(a) >= 1,
-          "epoch preserved across subsequent add_node calls");
+    CHECK(flat.last_seen_epoch(a) >= 1, "epoch preserved across subsequent add_node calls");
     return true;
 }
 
@@ -256,10 +243,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_320_detail
+} // namespace aura_issue_320_detail
 
-int aura_issue_320_run() { return aura_issue_320_detail::run_tests(); }
+int aura_issue_320_run() {
+    return aura_issue_320_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_320_run(); }
+int main() {
+    return aura_issue_320_run();
+}
 #endif

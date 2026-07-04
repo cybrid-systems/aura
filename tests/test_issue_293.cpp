@@ -11,8 +11,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.compiler.value;
 import aura.compiler.evaluator;
@@ -26,7 +26,8 @@ namespace test_293_detail {
 // string (for keyword symbols like 'none, 'incremental, 'full).
 static std::string run_str(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return "<null>";
+    if (!r)
+        return "<null>";
     auto& v = *r;
     if (aura::compiler::types::is_string(v)) {
         auto sidx = aura::compiler::types::as_string_idx(v);
@@ -38,16 +39,19 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
         // Resolve keyword sym_id through string_heap_
         auto kidx = aura::compiler::types::as_keyword_idx(v);
         const auto& kwt = cs.evaluator().keyword_table();
-        if (kidx < kwt.size()) return std::string(":") + kwt[kidx];
+        if (kidx < kwt.size())
+            return std::string(":") + kwt[kidx];
     }
     return "<other>";
 }
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
-    if (!aura::compiler::types::is_int(v)) return -1;
+    if (!aura::compiler::types::is_int(v))
+        return -1;
     return aura::compiler::types::as_int(v);
 }
 
@@ -69,8 +73,7 @@ bool test_strategy_unknown() {
             ((integer? r) "integer")
             (else "other")))
     )AU");
-    CHECK(s == "keyword",
-          "non-cached fn returns a keyword (got \"" + s + "\")");
+    CHECK(s == "keyword", "non-cached fn returns a keyword (got \"" + s + "\")");
     return true;
 }
 
@@ -81,8 +84,7 @@ bool test_strategy_none() {
     // estimate_relower_blocks(0) returns 0 → 'none
     // We test the pure function directly (no Aura roundtrip needed)
     auto v0 = aura::compiler::estimate_relower_blocks(0);
-    CHECK(v0 == 0, "estimate_relower_blocks(0) == 0 (got " +
-          std::to_string(v0) + ")");
+    CHECK(v0 == 0, "estimate_relower_blocks(0) == 0 (got " + std::to_string(v0) + ")");
     return true;
 }
 
@@ -91,9 +93,8 @@ bool test_estimate_incremental_range() {
     std::println("\n--- AC #3: estimate_relower_blocks(1..7) ---");
     for (std::size_t i = 1; i <= 7; ++i) {
         auto v = aura::compiler::estimate_relower_blocks(i);
-        CHECK(v == i, "estimate_relower_blocks(" + std::to_string(i) +
-              ") == " + std::to_string(i) + " (got " +
-              std::to_string(v) + ")");
+        CHECK(v == i, "estimate_relower_blocks(" + std::to_string(i) + ") == " + std::to_string(i) +
+                          " (got " + std::to_string(v) + ")");
     }
     return true;
 }
@@ -103,12 +104,10 @@ bool test_estimate_full_threshold() {
     std::println("\n--- AC #4: estimate_relower_blocks(8+) ---");
     auto v8 = aura::compiler::estimate_relower_blocks(8);
     CHECK(v8 == static_cast<std::size_t>(-1),
-          "estimate_relower_blocks(8) == SIZE_MAX (got " +
-          std::to_string(v8) + ")");
+          "estimate_relower_blocks(8) == SIZE_MAX (got " + std::to_string(v8) + ")");
     auto v100 = aura::compiler::estimate_relower_blocks(100);
     CHECK(v100 == static_cast<std::size_t>(-1),
-          "estimate_relower_blocks(100) == SIZE_MAX (got " +
-          std::to_string(v100) + ")");
+          "estimate_relower_blocks(100) == SIZE_MAX (got " + std::to_string(v100) + ")");
     return true;
 }
 
@@ -120,25 +119,20 @@ bool test_summarize_block_dirty() {
     //   f1: 3 dirty blocks (incremental)
     //   f2: 10 dirty blocks (full)
     std::vector<std::vector<std::uint8_t>> masks(3);
-    masks[0] = {0, 0, 0, 0, 0};          // 0 dirty
-    masks[1] = {1, 1, 1, 0, 0};          // 3 dirty
-    masks[2] = std::vector<std::uint8_t>(10, 1);  // 10 dirty
+    masks[0] = {0, 0, 0, 0, 0};                  // 0 dirty
+    masks[1] = {1, 1, 1, 0, 0};                  // 3 dirty
+    masks[2] = std::vector<std::uint8_t>(10, 1); // 10 dirty
     auto s = aura::compiler::summarize_block_dirty(masks);
     CHECK(s.total_dirty_blocks == 13,
-          "total_dirty_blocks == 13 (got " +
-          std::to_string(s.total_dirty_blocks) + ")");
+          "total_dirty_blocks == 13 (got " + std::to_string(s.total_dirty_blocks) + ")");
     CHECK(s.functions_with_dirty == 2,
-          "functions_with_dirty == 2 (got " +
-          std::to_string(s.functions_with_dirty) + ")");
+          "functions_with_dirty == 2 (got " + std::to_string(s.functions_with_dirty) + ")");
     CHECK(s.functions_total == 3,
-          "functions_total == 3 (got " +
-          std::to_string(s.functions_total) + ")");
+          "functions_total == 3 (got " + std::to_string(s.functions_total) + ")");
     CHECK(s.incremental_candidates == 1,
-          "incremental_candidates == 1 (got " +
-          std::to_string(s.incremental_candidates) + ")");
+          "incremental_candidates == 1 (got " + std::to_string(s.incremental_candidates) + ")");
     CHECK(s.full_relower_candidates == 1,
-          "full_relower_candidates == 1 (got " +
-          std::to_string(s.full_relower_candidates) + ")");
+          "full_relower_candidates == 1 (got " + std::to_string(s.full_relower_candidates) + ")");
     return true;
 }
 
@@ -151,7 +145,9 @@ bool test_cache_stats_3tuple() {
     // The 3-tuple structure is ((dirty-blocks . dirty-funcs) . incremental-cands).
     auto r = cs.eval("(query:compiler-cache-stats)");
     if (!r) {
-        ++g_failed; std::println(std::cerr, "eval returned null");return false;
+        ++g_failed;
+        std::println(std::cerr, "eval returned null");
+        return false;
     }
     auto& v = *r;
     if (!aura::compiler::types::is_pair(v)) {
@@ -175,8 +171,7 @@ bool test_strategy_bad_arg() {
             (else "other")))
     )AU");
     // The primitive returns #f on bad args
-    CHECK(s == "false" || s == "boolean",
-          "non-string arg returns boolean (got \"" + s + "\")");
+    CHECK(s == "false" || s == "boolean", "non-string arg returns boolean (got \"" + s + "\")");
     return true;
 }
 
@@ -189,15 +184,19 @@ int run_tests() {
     test_summarize_block_dirty();
     test_cache_stats_3tuple();
     test_strategy_bad_arg();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_293_detail
+
+int aura_issue_293_run() {
+    return test_293_detail::run_tests();
 }
 
-int aura_issue_293_run() { return test_293_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_293_run(); }
+int main() {
+    return aura_issue_293_run();
+}
 #endif

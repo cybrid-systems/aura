@@ -71,11 +71,9 @@ static void test_equal_cross_delta_conflict() {
     TypeRegistry reg;
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "first delta T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) == SolveResult::CONFLICT,
           "second delta T~String conflicts on clean binding");
 }
 
@@ -85,14 +83,11 @@ static void test_merge_binding_conflict() {
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
     const auto u = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, u, reg.string_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, u, reg.string_type()}) == SolveResult::SOLVED,
           "U~String solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, u}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, u}) == SolveResult::CONFLICT,
           "T~U merge conflicts across clean constraints");
 }
 
@@ -129,14 +124,12 @@ static void test_conflict_matrix() {
         const auto t = cs.fresh_var();
         (void)solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.dynamic_type()});
         ++conflict_injected;
-        if (solve_delta_with(cs, {Constraint::CONSISTENT, t, linear}) ==
-            SolveResult::CONFLICT)
+        if (solve_delta_with(cs, {Constraint::CONSISTENT, t, linear}) == SolveResult::CONFLICT)
             ++conflict_detected;
     }
 
     std::println("  conflict_detected={}/{}", conflict_detected, conflict_injected);
-    CHECK(conflict_detected * 2 >= conflict_injected,
-          "≥50% injected conflict scenarios detected");
+    CHECK(conflict_detected * 2 >= conflict_injected, "≥50% injected conflict scenarios detected");
 }
 
 static void run_integration_matrix(CompilerService& cs) {
@@ -149,9 +142,8 @@ static void run_integration_matrix(CompilerService& cs) {
     std::println("\n--- AC4: predicate mutate → narrowing + local recheck ---");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
     const auto sel0 = cs.evaluator().get_selective_recheck_count();
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
-        "\"issue-573-if\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
+                  "\"issue-573-if\")");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto sel1 = cs.evaluator().get_selective_recheck_count();
     std::println("  narrowing_refresh: {} -> {}", n0, n1);
@@ -160,24 +152,20 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(sel1 >= sel0, "selective_recheck monotonic on predicate mutate");
 
     std::println("\n--- AC5: delta_solve_time_us observable after incremental ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
-        "\"issue-573-solve\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+                  "\"issue-573-solve\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
     const auto snap = cs.snapshot();
     std::println("  delta_solve_time_us={}", snap.delta_solve_time_us);
-    CHECK(snap.delta_solve_time_us >= 0,
-          "delta_solve_time_us observable after incremental infer");
+    CHECK(snap.delta_solve_time_us >= 0, "delta_solve_time_us observable after incremental infer");
 
     std::println("\n--- AC6: occurrence-stale-count == 0 after re-narrow ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
-        "\"issue-573-stale\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+                  "\"issue-573-stale\")");
     auto stale = cs.eval("(query:occurrence-stale-count)");
-    const auto stale_count =
-        stale && is_int(*stale) ? as_int(*stale) : -1;
+    const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
     std::println("  occurrence-stale-count = {}", stale_count);
     CHECK(stale_count == 0, "no stale occurrence nodes after auto re-narrow");
 
@@ -191,15 +179,13 @@ static void run_integration_matrix(CompilerService& cs) {
     const auto stats9a = typed_incremental_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string f_body =
-            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 11) +
-            ") 0))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" +
-                      std::to_string(round) + "-f\")");
+            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 11) + ") 0))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+                      "-f\")");
         auto rf = cs.eval("(f 3)");
         CHECK(rf && is_int(*rf), "f eval ok round " + std::to_string(round));
         if (rf && is_int(*rf))
-            CHECK(as_int(*rf) == 3 + round + 11,
-                  "narrow semantics round " + std::to_string(round));
+            CHECK(as_int(*rf) == 3 + round + 11, "narrow semantics round " + std::to_string(round));
     }
     const auto stats9b = typed_incremental_stats(cs);
     std::println("  typed-incremental-stats: {} -> {}", stats9a, stats9b);

@@ -26,8 +26,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -36,7 +36,6 @@ import aura.diag;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 // Build a minimal Aura source and eval it via the parser +
@@ -104,9 +103,8 @@ bool test_orch_parallel_many_fns() {
     std::println("\n--- Test: orch:parallel with many functions ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(orch:parallel (list (lambda (x) x) (lambda (x) x) (lambda (x) x) "
-        "(lambda (x) x) (lambda (x) x)) 42 1.0)");
+    auto root = parse(e, "(orch:parallel (list (lambda (x) x) (lambda (x) x) (lambda (x) x) "
+                         "(lambda (x) x) (lambda (x) x)) 42 1.0)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "orch:parallel with 5 fns + timeout returns a valid type");
@@ -122,8 +120,7 @@ bool test_spawn_join_roundtrip_shape() {
     // The idiomatic spawn+join pattern:
     //   (let ((id (fiber:spawn (lambda () work-fn args))))
     //     (fiber:join id))
-    auto root = parse(e,
-        "(let ((id (fiber:spawn (lambda () (+ 1 2))))) (fiber:join id))");
+    auto root = parse(e, "(let ((id (fiber:spawn (lambda () (+ 1 2))))) (fiber:join id))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "spawn+join roundtrip returns a valid type");
@@ -149,10 +146,11 @@ bool test_fuzz_spawn_join() {
     std::println("\n--- Test: fuzz — spawn+join shape variety ---");
 
     const std::vector<std::string> inputs = {
-        "(fiber:join 1)",                       // numeric fid (no spawn)
+        "(fiber:join 1)", // numeric fid (no spawn)
         "(fiber:join (fiber:spawn (lambda () 1)))",
         "(fiber:join (fiber:spawn (lambda () (fiber:join (fiber:spawn (lambda () 2))))))",
-        "(let ((a (fiber:spawn (lambda () 1))) (b (fiber:spawn (lambda () 2)))) (+ (fiber:join a) (fiber:join b)))",
+        "(let ((a (fiber:spawn (lambda () 1))) (b (fiber:spawn (lambda () 2)))) (+ (fiber:join a) "
+        "(fiber:join b)))",
         "(orch:parallel (quote ()) 0)",
         "(orch:parallel (list (lambda (x) x)) 42)",
     };
@@ -161,7 +159,8 @@ bool test_fuzz_spawn_join() {
     for (auto& src : inputs) {
         auto e = make_env();
         auto root = parse(e, src);
-        if (root == aura::ast::NULL_NODE) continue;
+        if (root == aura::ast::NULL_NODE)
+            continue;
         aura::diag::DiagnosticCollector diag;
         try {
             e.tc->infer_flat(*e.flat, *e.pool, root, diag);
@@ -185,12 +184,12 @@ int run_tests() {
     test_spawn_join_roundtrip_shape();
     test_orch_parallel_empty();
     test_fuzz_spawn_join();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_119_detail
+} // namespace aura_issue_119_detail
 
-int aura_issue_119_run() { return aura_issue_119_detail::run_tests(); }
-
+int aura_issue_119_run() {
+    return aura_issue_119_detail::run_tests();
+}

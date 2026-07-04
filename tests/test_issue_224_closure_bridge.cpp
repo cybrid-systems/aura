@@ -38,8 +38,8 @@ import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── Test 1: shared_ptr keeps FlatAST alive after arena reset ─
 
@@ -58,8 +58,7 @@ bool test_shared_ptr_keeps_flat_alive() {
     bd.body_id = 0;
 
     // shared_ptrs hold references; refcount = 2 (flat_ptr, bd.flat)
-    CHECK(flat_ptr.use_count() == 2,
-          "shared_ptr refcount = 2 after copying to bd.flat");
+    CHECK(flat_ptr.use_count() == 2, "shared_ptr refcount = 2 after copying to bd.flat");
 
     // Drop our local references. The arena is the actual
     // owner of the FlatAST memory; the shared_ptrs are
@@ -69,10 +68,8 @@ bool test_shared_ptr_keeps_flat_alive() {
     flat_ptr.reset();
     pool_ptr.reset();
     // bd still holds shared_ptrs (now with use_count = 1)
-    CHECK(bd.flat.use_count() == 1,
-          "bd.flat still valid after local reset (use_count = 1)");
-    CHECK(bd.pool.use_count() == 1,
-          "bd.pool still valid after local reset (use_count = 1)");
+    CHECK(bd.flat.use_count() == 1, "bd.flat still valid after local reset (use_count = 1)");
+    CHECK(bd.pool.use_count() == 1, "bd.pool still valid after local reset (use_count = 1)");
 
     // The arena can be reset (analogous to a major mutation
     // invalidating the lowering arena). The shared_ptrs
@@ -83,10 +80,8 @@ bool test_shared_ptr_keeps_flat_alive() {
     // the shared_ptr refcount keeps the memory alive.
     // (For this test we don't actually dereference; we just
     // check that the shared_ptr is still valid.)
-    CHECK(bd.flat != nullptr,
-          "bd.flat is still valid after arena reset");
-    CHECK(bd.pool != nullptr,
-          "bd.pool is still valid after arena reset");
+    CHECK(bd.flat != nullptr, "bd.flat is still valid after arena reset");
+    CHECK(bd.pool != nullptr, "bd.pool is still valid after arena reset");
     return true;
 }
 
@@ -105,16 +100,14 @@ bool test_shared_ptr_cycles() {
         bd.pool = pool_ptr;
 
         // Both flat_ptr and bd.flat hold a reference.
-        CHECK(flat_ptr.use_count() == 2,
-              "refcount = 2 after copy to bd");
+        CHECK(flat_ptr.use_count() == 2, "refcount = 2 after copy to bd");
 
         // Drop our local references.
         flat_ptr.reset();
         pool_ptr.reset();
 
         // Only bd holds a reference now.
-        CHECK(bd.flat.use_count() == 1,
-              "refcount = 1 after local reset");
+        CHECK(bd.flat.use_count() == 1, "refcount = 1 after local reset");
     }
     // After bd goes out of scope, refcount drops to 0 and
     // the underlying object is destroyed.
@@ -138,16 +131,14 @@ bool test_shared_ptr_with_bridge_epoch() {
     bd.flat = flat_ptr;
     bd.pool = pool_ptr;
     bd.body_id = 0;
-    bd.bridge_epoch = 42;  // captured at construction
+    bd.bridge_epoch = 42; // captured at construction
 
     // The bridge_epoch_ is independent of the shared_ptr
     // ownership. It's the "fingerprint" that detects stale
     // bridges (Issue #223). shared_ptr keeps the FlatAST
     // alive (Issue #224); bridge_epoch detects staleness.
-    CHECK(bd.bridge_epoch == 42,
-          "bridge_epoch is preserved alongside shared_ptr");
-    CHECK(bd.flat != nullptr,
-          "shared_ptr is valid alongside bridge_epoch");
+    CHECK(bd.bridge_epoch == 42, "bridge_epoch is preserved alongside shared_ptr");
+    CHECK(bd.flat != nullptr, "shared_ptr is valid alongside bridge_epoch");
 
     // Simulate a mutation: increment the service's epoch.
     // The bridge's epoch would mismatch, signaling staleness.
@@ -155,8 +146,7 @@ bool test_shared_ptr_with_bridge_epoch() {
     // that the two are independent fields.)
     constexpr std::uint64_t kNewEpoch = 100;
     bool would_be_stale = (bd.bridge_epoch != kNewEpoch);
-    CHECK(would_be_stale,
-          "bridge_epoch_ mismatch signals staleness (composes with #223)");
+    CHECK(would_be_stale, "bridge_epoch_ mismatch signals staleness (composes with #223)");
     return true;
 }
 
@@ -173,7 +163,8 @@ bool test_field_type_consistency() {
     using CLType = decltype(aura::compiler::IRClosure::flat);
     static_assert(std::is_same_v<BDType, CLType>,
                   "ClosureBridgeData::flat and IRClosure::flat have the same type");
-    std::println("  PASS: static_assert holds — both fields are std::shared_ptr<const ast::FlatAST>");
+    std::println(
+        "  PASS: static_assert holds — both fields are std::shared_ptr<const ast::FlatAST>");
     return true;
 }
 
@@ -192,13 +183,11 @@ bool test_shared_ptr_copy_move() {
     // Copy bd1 to bd2 — refcount bumps again.
     aura::ir::ClosureBridgeData bd2 = bd1;
     CHECK(flat_ptr.use_count() == 3, "refcount = 3 after copy to bd2");
-    CHECK(bd1.flat.get() == bd2.flat.get(),
-          "bd1.flat and bd2.flat point to the same object");
+    CHECK(bd1.flat.get() == bd2.flat.get(), "bd1.flat and bd2.flat point to the same object");
 
     // Drop bd2 — refcount drops.
     bd2 = aura::ir::ClosureBridgeData{};
-    CHECK(flat_ptr.use_count() == 2,
-          "refcount = 2 after bd2 cleared");
+    CHECK(flat_ptr.use_count() == 2, "refcount = 2 after bd2 cleared");
     return true;
 }
 
@@ -213,9 +202,11 @@ bool test_end_to_end_via_compiler_service() {
     aura::compiler::CompilerService cs;
     int64_t r1 = -1, r2 = -1;
     auto eval1 = cs.eval("(begin (define (square x) (* x x)) (square 5))");
-    if (eval1) r1 = aura::compiler::types::as_int(*eval1);
+    if (eval1)
+        r1 = aura::compiler::types::as_int(*eval1);
     auto eval2 = cs.eval("(begin (define (square x) (* x x)) (square 5))");
-    if (eval2) r2 = aura::compiler::types::as_int(*eval2);
+    if (eval2)
+        r2 = aura::compiler::types::as_int(*eval2);
     CHECK(r1 == 25, "first eval: (square 5) = 25");
     CHECK(r2 == 25, "second eval: (square 5) = 25 (bridge shared_ptr alive across cache)");
     return true;
@@ -239,7 +230,8 @@ int run_tests() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-}  // namespace aura_issue_224_closure_bridge_detail
+} // namespace aura_issue_224_closure_bridge_detail
 
-int aura_issue_224_closure_bridge_run() { return aura_issue_224_closure_bridge_detail::run_tests(); }
-
+int aura_issue_224_closure_bridge_run() {
+    return aura_issue_224_closure_bridge_detail::run_tests();
+}

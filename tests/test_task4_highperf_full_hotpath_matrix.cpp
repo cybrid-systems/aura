@@ -65,7 +65,8 @@ static int k_concurrent_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !aura::compiler::types::is_int(*r)) return -1;
+    if (!r || !aura::compiler::types::is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
 }
 
@@ -120,11 +121,9 @@ bool test_mutation_stability_under_mutate() {
     CHECK(setup_hotpath_workspace(cs), "workspace for mutation stability");
     const auto m0 = eval_int(cs, "(query:task4-mutation-stability)");
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:rebind \"base\" \"" +
-            std::to_string(100 + i) + "\")");
-        (void)cs.eval("(mutate:replace-value (define acc " +
-            std::to_string(i) + ") (define acc " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(100 + i) + "\")");
+        (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(i) + ") (define acc " +
+                      std::to_string(i) + "))");
     }
     const auto m1 = eval_int(cs, "(query:task4-mutation-stability)");
     std::println("  task4-mutation-stability: {} -> {}", m0, m1);
@@ -138,14 +137,10 @@ bool test_combined_task4_stats_bundle() {
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for stats bundle");
     const char* stats[] = {
-        "(query:task4-hotpath-safety-score)",
-        "(query:task4-cache-locality-win)",
-        "(query:task4-mutation-stability)",
-        "(query:pattern-index-stats)",
-        "(query:typed-mutation-stats)",
-        "(query:typed-mutation-stats-task1)",
-        "(query:incremental-effectiveness)",
-        "(gc-arena-stats)",
+        "(query:task4-hotpath-safety-score)", "(query:task4-cache-locality-win)",
+        "(query:task4-mutation-stability)",   "(query:pattern-index-stats)",
+        "(query:typed-mutation-stats)",       "(query:typed-mutation-stats-task1)",
+        "(query:incremental-effectiveness)",  "(gc-arena-stats)",
     };
     for (const char* prim : stats) {
         auto r = cs.eval(prim);
@@ -154,8 +149,7 @@ bool test_combined_task4_stats_bundle() {
     auto soa = cs.eval("(compile:ir-soa-stats)");
     CHECK(soa.has_value(), "(compile:ir-soa-stats) returns a value");
     auto inline_stats = cs.eval("(compile:inline-pass-stats)");
-    CHECK(inline_stats.has_value(),
-          "(compile:inline-pass-stats) returns a value");
+    CHECK(inline_stats.has_value(), "(compile:inline-pass-stats) returns a value");
     return true;
 }
 
@@ -166,7 +160,8 @@ bool test_soa_dirty_hook_under_mutate() {
     CHECK(setup_hotpath_workspace(cs), "workspace for SoA dirty");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() reachable");
-    if (!ws) return false;
+    if (!ws)
+        return false;
     ws->rebuild_tag_arity_index();
     const auto d0 = ws->tag_arity_index_dirty_marks();
     (void)cs.eval("(mutate:rebind \"tmp\" \"99\")");
@@ -187,10 +182,8 @@ bool test_shape_profiler_post_eval() {
     }
     const auto tracked = cs.is_shape_stable("add1");
     const auto metrics = cs.shape_metrics("add1");
-    std::println("  add1 stable={} total_calls={}",
-                 tracked, metrics.total_calls);
-    CHECK(metrics.total_calls >= 0,
-          "shape_metrics.total_calls observable");
+    std::println("  add1 stable={} total_calls={}", tracked, metrics.total_calls);
+    CHECK(metrics.total_calls >= 0, "shape_metrics.total_calls observable");
     return true;
 }
 
@@ -199,13 +192,10 @@ bool test_mutate_eval_hotpath_matrix() {
     std::println("\n--- AC7: mutate + eval hot path matrix ---");
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for hot path");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"42\")").has_value(),
-          "mutate:rebind succeeds");
-    CHECK(cs.eval("(set-code \"(define base 100) (define acc 7)\")")
-              .has_value(),
+    CHECK(cs.eval("(mutate:rebind \"base\" \"42\")").has_value(), "mutate:rebind succeeds");
+    CHECK(cs.eval("(set-code \"(define base 100) (define acc 7)\")").has_value(),
           "set-code succeeds");
-    CHECK(cs.eval("(eval-current)").has_value(),
-          "eval-current succeeds");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current succeeds");
     (void)cs.eval("(add1 5)");
     const auto v = prompt6_violations(cs);
     CHECK(v == 0, "zero Prompt6 violations after hot-path mutate+eval");
@@ -218,9 +208,8 @@ bool test_arena_gc_integration() {
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for arena/GC");
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define tmp " +
-            std::to_string(i) + ") (define tmp " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define tmp " + std::to_string(i) + ") (define tmp " +
+                      std::to_string(i) + "))");
     }
     auto gc = cs.eval("(gc-heap)");
     CHECK(gc.has_value(), "(gc-heap) callable under arena pressure");
@@ -231,8 +220,7 @@ bool test_arena_gc_integration() {
 
 // ── AC9: Fuzz — mutate/query/eval + GC ────────────────────
 bool test_fuzz_hotpath_sequences() {
-    std::println("\n--- AC9: {} iters fuzz (mutate + query + GC) ---",
-                 k_fuzz_iters());
+    std::println("\n--- AC9: {} iters fuzz (mutate + query + GC) ---", k_fuzz_iters());
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for fuzz");
     std::mt19937 rng(607u);
@@ -241,27 +229,25 @@ bool test_fuzz_hotpath_sequences() {
     const auto v0 = prompt6_violations(cs);
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         switch (op_dist(rng)) {
-        case 0:
-            (void)cs.eval("(mutate:rebind \"base\" \"" +
-                std::to_string(val_dist(rng)) + "\")");
-            break;
-        case 1:
-            (void)cs.eval("(mutate:replace-value (define acc " +
-                std::to_string(val_dist(rng)) + ") (define acc " +
-                std::to_string(val_dist(rng)) + "))");
-            break;
-        case 2:
-            (void)cs.eval("(query:tag-arity-count 32 0)");
-            break;
-        case 3:
-            (void)cs.eval("(query:pattern-index-stats)");
-            break;
-        case 4:
-            (void)cs.eval("(gc-heap)");
-            break;
-        default:
-            (void)cs.eval("(add1 " + std::to_string(val_dist(rng) % 100) + ")");
-            break;
+            case 0:
+                (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
+                break;
+            case 1:
+                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+                              ") (define acc " + std::to_string(val_dist(rng)) + "))");
+                break;
+            case 2:
+                (void)cs.eval("(query:tag-arity-count 32 0)");
+                break;
+            case 3:
+                (void)cs.eval("(query:pattern-index-stats)");
+                break;
+            case 4:
+                (void)cs.eval("(gc-heap)");
+                break;
+            default:
+                (void)cs.eval("(add1 " + std::to_string(val_dist(rng) % 100) + ")");
+                break;
         }
     }
     const auto v1 = prompt6_violations(cs);
@@ -272,8 +258,7 @@ bool test_fuzz_hotpath_sequences() {
 
 // ── AC10: 8-thread concurrent hot-path load ────────────────
 bool test_eight_thread_concurrent_hotpath() {
-    std::println("\n--- AC10: 8 threads × {} iters concurrent ---",
-                 k_concurrent_iters());
+    std::println("\n--- AC10: 8 threads × {} iters concurrent ---", k_concurrent_iters());
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for concurrent");
     constexpr int n_threads = 8;
@@ -287,14 +272,12 @@ bool test_eight_thread_concurrent_hotpath() {
             if ((i & 3) == 0) {
                 (void)cs.eval("(query:tag-arity-count 32 0)");
             } else if ((i & 3) == 1) {
-                (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                    std::to_string(tid * 1000 + i) + "\")");
+                (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(tid * 1000 + i) + "\")");
             } else if ((i & 3) == 2) {
                 (void)cs.eval("(gc-heap)");
             } else {
-                (void)cs.eval("(mutate:replace-value (define tmp " +
-                    std::to_string(i) + ") (define tmp " +
-                    std::to_string(tid + i) + "))");
+                (void)cs.eval("(mutate:replace-value (define tmp " + std::to_string(i) +
+                              ") (define tmp " + std::to_string(tid + i) + "))");
             }
             if (!cs.eval("(query:task4-hotpath-safety-score)")) {
                 errors.fetch_add(1);
@@ -304,15 +287,17 @@ bool test_eight_thread_concurrent_hotpath() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     const auto v = prompt6_violations(cs);
-    std::println("  completed: {}/{} errors: {} violations: {} ms: {}",
-                 completed.load(), n_threads * n_iters, errors.load(), v, ms);
-    CHECK(completed.load() == n_threads * n_iters,
-          "all concurrent ops completed (no deadlock)");
+    std::println("  completed: {}/{} errors: {} violations: {} ms: {}", completed.load(),
+                 n_threads * n_iters, errors.load(), v, ms);
+    CHECK(completed.load() == n_threads * n_iters, "all concurrent ops completed (no deadlock)");
     CHECK(errors.load() == 0, "no eval errors under concurrent load");
     CHECK(v == 0, "zero violations under concurrent Task4 hot-path");
     CHECK(ms < 120000, "completed within 120s wall-clock budget");
@@ -337,23 +322,22 @@ bool test_fiber_yield_hotpath() {
     std::thread io_thread([&sched]() { sched.run(); });
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count() > 30000) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                  t0)
+                .count() > 30000) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
-    CHECK(done.load() == k_fibers,
-          "all fibers completed yields (no stall)");
+    CHECK(done.load() == k_fibers, "all fibers completed yields (no stall)");
     return true;
 }
 
 // ── AC12: Long-running stress ──────────────────────────────
 bool test_long_running_hotpath_stress() {
-    std::println("\n--- AC12: {} iters long-running stress ---",
-                 k_stress_iters());
+    std::println("\n--- AC12: {} iters long-running stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for stress");
     const auto s0 = eval_int(cs, "(query:task4-hotpath-safety-score)");
@@ -362,23 +346,21 @@ bool test_long_running_hotpath_stress() {
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
         if ((i & 1) == 0) {
-            (void)cs.eval("(mutate:rebind \"base\" \"" +
-                std::to_string(val_dist(rng)) + "\")");
+            (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
         } else {
-            (void)cs.eval("(mutate:replace-value (define acc " +
-                std::to_string(val_dist(rng)) + ") (define acc " +
-                std::to_string(val_dist(rng)) + "))");
+            (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+                          ") (define acc " + std::to_string(val_dist(rng)) + "))");
         }
         if ((i & 15) == 0) {
             (void)cs.eval("(query:tag-arity-count 32 0)");
         }
-        if ((i & 31) == 0) (void)cs.eval("(gc-heap)");
+        if ((i & 31) == 0)
+            (void)cs.eval("(gc-heap)");
     }
     const auto s1 = eval_int(cs, "(query:task4-hotpath-safety-score)");
     const auto m1 = eval_int(cs, "(query:task4-mutation-stability)");
     const auto v = prompt6_violations(cs);
-    std::println("  hotpath: {} -> {} stability: {} -> {} violations: {}",
-                 s0, s1, m0, m1, v);
+    std::println("  hotpath: {} -> {} stability: {} -> {} violations: {}", s0, s1, m0, m1, v);
     CHECK(s1 >= s0, "hotpath-safety-score monotonic under stress");
     CHECK(m1 >= m0, "mutation-stability monotonic under stress");
     CHECK(v == 0, "zero violations under long-running stress");
@@ -435,8 +417,12 @@ int run_tests() {
 
 } // namespace aura_issue_607_detail
 
-int aura_issue_607_run() { return aura_issue_607_detail::run_tests(); }
+int aura_issue_607_run() {
+    return aura_issue_607_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_607_run(); }
+int main() {
+    return aura_issue_607_run();
+}
 #endif

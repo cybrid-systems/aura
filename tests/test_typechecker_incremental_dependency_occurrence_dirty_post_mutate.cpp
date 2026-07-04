@@ -61,9 +61,8 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: define+if mutate → stats grow + narrow eval ---");
     const auto stats0 = type_incremental_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
-        "\"issue-608-if\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
+                  "\"issue-608-if\")");
     const auto stats1 = type_incremental_stats(cs);
     std::println("  type-incremental-stats: {} -> {}", stats0, stats1);
     CHECK(stats1 >= stats0, "type-incremental-stats monotonic after if mutate");
@@ -74,8 +73,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: closure rebind selective + eval ---");
     const auto sel0 = cs.evaluator().get_selective_recheck_count();
-    (void)cs.eval(
-        "(mutate:rebind \"g\" \"(lambda (y) (+ y 20))\" \"issue-608-closure\")");
+    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (y) (+ y 20))\" \"issue-608-closure\")");
     const auto sel1 = cs.evaluator().get_selective_recheck_count();
     std::println("  selective_recheck: {} -> {}", sel0, sel1);
     CHECK(sel1 >= sel0, "selective_recheck monotonic on closure rebind");
@@ -85,43 +83,36 @@ static void run_matrix(CompilerService& cs) {
         CHECK(as_int(*r3) == 22, "closure body (+ y 20) correct");
 
     std::println("\n--- AC4: delta_constraints_processed after incremental ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
-        "\"issue-608-dep\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+                  "\"issue-608-dep\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
     const auto snap4 = cs.snapshot();
-    std::println("  delta_constraints_processed={}",
-                 snap4.delta_constraints_processed_total);
+    std::println("  delta_constraints_processed={}", snap4.delta_constraints_processed_total);
     CHECK(snap4.delta_constraints_processed_total >= 0,
           "delta_constraints_processed_total observable");
 
     std::println("\n--- AC5: narrowing_dirty_recovery bumps ---");
     const auto snap5a = cs.snapshot();
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
-        "\"issue-608-occ\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
+                  "\"issue-608-occ\")");
     const auto snap5b = cs.snapshot();
-    std::println("  narrowing_dirty_recovery: {} -> {}",
-                 snap5a.narrowing_dirty_recovery_total,
+    std::println("  narrowing_dirty_recovery: {} -> {}", snap5a.narrowing_dirty_recovery_total,
                  snap5b.narrowing_dirty_recovery_total);
-    CHECK(snap5b.narrowing_dirty_recovery_total >=
-              snap5a.narrowing_dirty_recovery_total,
+    CHECK(snap5b.narrowing_dirty_recovery_total >= snap5a.narrowing_dirty_recovery_total,
           "narrowing_dirty_recovery monotonic on predicate mutate");
 
     std::println("\n--- AC6: multi-round define+closure mutate matrix ---");
     const auto stats6a = type_incremental_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string f_body =
-            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 6) +
-            ") 0))";
-        const std::string g_body =
-            "(lambda (y) (+ y " + std::to_string(round + 30) + "))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" +
-                      std::to_string(round) + "-f\")");
-        (void)cs.eval("(mutate:rebind \"g\" \"" + g_body + "\" \"r" +
-                      std::to_string(round) + "-g\")");
+            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 6) + ") 0))";
+        const std::string g_body = "(lambda (y) (+ y " + std::to_string(round + 30) + "))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+                      "-f\")");
+        (void)cs.eval("(mutate:rebind \"g\" \"" + g_body + "\" \"r" + std::to_string(round) +
+                      "-g\")");
         auto rf = cs.eval("(f 1)");
         auto rg = cs.eval("(g 1)");
         CHECK(rf && is_int(*rf), "f eval ok round " + std::to_string(round));
@@ -134,10 +125,8 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: sequential query/eval stress under mutate ---");
     std::int64_t stress_sum = 0;
     for (int i = 0; i < 8; ++i) {
-        (void)cs.eval(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
-            std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) +
-            "\")");
+        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+                      std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
         auto qs = cs.eval("(query:type-incremental-stats)");
         CHECK(qs && is_int(*qs), "query:type-incremental-stats during stress");
         if (qs && is_int(*qs))

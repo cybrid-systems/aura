@@ -48,28 +48,38 @@ namespace aura_341_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → match_subject_* = 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: match_subject_* counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.match_subject_narrowed_total, 0u,
-             "match_subject_narrowed_total == 0");
-    CHECK_EQ(snap.match_subject_total, 0u,
-             "match_subject_total == 0");
-    CHECK_EQ(snap.match_narrowed_ratio_bp, 0u,
-             "match_narrowed_ratio_bp == 0");
+    CHECK_EQ(snap.match_subject_narrowed_total, 0u, "match_subject_narrowed_total == 0");
+    CHECK_EQ(snap.match_subject_total, 0u, "match_subject_total == 0");
+    CHECK_EQ(snap.match_narrowed_ratio_bp, 0u, "match_narrowed_ratio_bp == 0");
     return true;
 }
 
@@ -111,14 +121,11 @@ bool test_match_subject_counter_bumps() {
     // route through synthesize_flat_let's __match_tmp
     // branch (depends on lowering). The test just
     // confirms the counter is plumbed end-to-end.
-    auto r = cs.typecheck(
-        "(define x 5) x");
+    auto r = cs.typecheck("(define x 5) x");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  match_subject_total: {}",
-                 snap.match_subject_total);
-    std::println("  match_subject_narrowed_total: {}",
-                 snap.match_subject_narrowed_total);
+    std::println("  match_subject_total: {}", snap.match_subject_total);
+    std::println("  match_subject_narrowed_total: {}", snap.match_subject_narrowed_total);
     CHECK(true, "match narrowing counters plumbed end-to-end");
     return true;
 }
@@ -130,13 +137,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define mne 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define mne 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_341_detail
+} // namespace aura_341_detail
 
 int main() {
     using namespace aura_341_detail;
@@ -146,7 +152,7 @@ int main() {
     test_match_narrowing_stats_primitive();
     test_match_subject_counter_bumps();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

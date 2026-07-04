@@ -33,8 +33,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -66,8 +66,7 @@ bool test_refresh_bumps_frame_version() {
     // the current defuse_version_, silencing future staleness
     // checks for this frame.
     ev.refresh_stale_frame_in_walk(id, "test_refresh_bumps_frame_version");
-    CHECK(!ev.is_env_frame_stale(id),
-          "frame is no longer stale after refresh_stale_frame_in_walk");
+    CHECK(!ev.is_env_frame_stale(id), "frame is no longer stale after refresh_stale_frame_in_walk");
 
     auto v_after = ev.defuse_version_for_test();
     CHECK(ev.env_frame(id).version_ == v_after,
@@ -85,8 +84,7 @@ bool test_refresh_bumps_stats_counter() {
     ev.refresh_stale_frame_in_walk(id, "test_refresh_bumps_stats_counter");
     auto after = ev.get_envframe_stale_refresh_count();
 
-    CHECK(after == before + 1,
-          "envframe_stale_refresh_count_ incremented by exactly 1");
+    CHECK(after == before + 1, "envframe_stale_refresh_count_ incremented by exactly 1");
     return true;
 }
 
@@ -99,8 +97,7 @@ bool test_refresh_idempotent_when_already_fresh() {
     auto before = ev.get_envframe_stale_refresh_count();
     ev.refresh_stale_frame_in_walk(id, "test_refresh_idempotent_when_already_fresh");
     auto after = ev.get_envframe_stale_refresh_count();
-    CHECK(after == before,
-          "stats counter unchanged for fresh frame");
+    CHECK(after == before, "stats counter unchanged for fresh frame");
     return true;
 }
 
@@ -110,11 +107,9 @@ bool test_refresh_safe_on_invalid_id() {
     auto before = ev.get_envframe_stale_refresh_count();
     // NULL_ENV_ID — the helper should early-return without
     // touching the stats counter.
-    ev.refresh_stale_frame_in_walk(aura::compiler::NULL_ENV_ID,
-                                   "test_refresh_safe_on_invalid_id");
+    ev.refresh_stale_frame_in_walk(aura::compiler::NULL_ENV_ID, "test_refresh_safe_on_invalid_id");
     auto after_null = ev.get_envframe_stale_refresh_count();
-    CHECK(after_null == before,
-          "NULL_ENV_ID is a no-op (no counter increment)");
+    CHECK(after_null == before, "NULL_ENV_ID is a no-op (no counter increment)");
     return true;
 }
 
@@ -142,8 +137,7 @@ bool test_lookup_by_symid_chain_refreshes_stale_frame() {
     (void)result; // we only care about side effects on the frame
 
     auto stats_after = ev.get_envframe_stale_refresh_count();
-    CHECK(stats_after >= stats_before + 1,
-          "lookup_by_symid_chain bumped stale_refresh_count_");
+    CHECK(stats_after >= stats_before + 1, "lookup_by_symid_chain bumped stale_refresh_count_");
     CHECK(!ev.is_env_frame_stale(fid),
           "frame refreshed (no longer stale) after lookup_by_symid_chain walk");
     return true;
@@ -166,8 +160,7 @@ bool test_walk_env_frame_roots_refreshes_stale_frame() {
     ev.walk_env_frame_roots(pair_roots, closure_roots);
 
     auto stats_after = ev.get_envframe_stale_refresh_count();
-    CHECK(stats_after >= stats_before + 1,
-          "walk_env_frame_roots bumped stale_refresh_count_");
+    CHECK(stats_after >= stats_before + 1, "walk_env_frame_roots bumped stale_refresh_count_");
     CHECK(!ev.is_env_frame_stale(fid),
           "frame refreshed (no longer stale) after walk_env_frame_roots");
     return true;
@@ -196,8 +189,7 @@ bool test_env_lookup_cell_ptr_refreshes_stale_frame() {
     (void)p; // we only care about side effects on the frame
 
     auto stats_after = ev.get_envframe_stale_refresh_count();
-    CHECK(stats_after >= stats_before + 1,
-          "Env::lookup_cell_ptr bumped stale_refresh_count_");
+    CHECK(stats_after >= stats_before + 1, "Env::lookup_cell_ptr bumped stale_refresh_count_");
     CHECK(!ev.is_env_frame_stale(fid),
           "frame refreshed (no longer stale) after Env::lookup_cell_ptr walk");
     return true;
@@ -285,6 +277,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_355_detail
+} // namespace aura_issue_355_detail
 
-int aura_issue_355_run() { return aura_issue_355_detail::run_tests(); }
+int aura_issue_355_run() {
+    return aura_issue_355_detail::run_tests();
+}

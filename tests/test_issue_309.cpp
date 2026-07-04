@@ -54,8 +54,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -63,31 +63,38 @@ import aura.compiler.value;
 import aura.compiler.service;
 
 namespace aura_issue_309_detail {
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
 static std::string run_string(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return "";
-    if (!aura::compiler::types::is_string(*r)) return "";
+    if (!r)
+        return "";
+    if (!aura::compiler::types::is_string(*r))
+        return "";
     auto sidx = aura::compiler::types::as_string_idx(*r);
     auto heap = cs.evaluator().string_heap();
-    if (sidx >= heap.size()) return "";
+    if (sidx >= heap.size())
+        return "";
     return std::string(heap[sidx]);
 }
 
@@ -127,27 +134,27 @@ static bool test_hw_coercion_lossy_primitive() {
     cs.eval("(compile:hw-bitvec-register \"uint32_t\" 32 0)");
     cs.eval("(compile:hw-bitvec-register \"int8_t\" 8 1)");
     // Narrowing: lossy.
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint16_t\" \"uint8_t\")"),
-             std::int64_t{1}, "uint16_t -> uint8_t is LOSSY (narrowing)");
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint32_t\" \"uint8_t\")"),
-             std::int64_t{1}, "uint32_t -> uint8_t is LOSSY (24 bits dropped)");
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint32_t\" \"uint16_t\")"),
-             std::int64_t{1}, "uint32_t -> uint16_t is LOSSY (16 bits dropped)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint16_t\" \"uint8_t\")"), std::int64_t{1},
+             "uint16_t -> uint8_t is LOSSY (narrowing)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint32_t\" \"uint8_t\")"), std::int64_t{1},
+             "uint32_t -> uint8_t is LOSSY (24 bits dropped)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint32_t\" \"uint16_t\")"), std::int64_t{1},
+             "uint32_t -> uint16_t is LOSSY (16 bits dropped)");
     // Widening: lossless.
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"uint16_t\")"),
-             std::int64_t{0}, "uint8_t -> uint16_t is LOSSLESS (widening)");
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"uint32_t\")"),
-             std::int64_t{0}, "uint8_t -> uint32_t is LOSSLESS (widening)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"uint16_t\")"), std::int64_t{0},
+             "uint8_t -> uint16_t is LOSSLESS (widening)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"uint32_t\")"), std::int64_t{0},
+             "uint8_t -> uint32_t is LOSSLESS (widening)");
     // Same width: lossless (signedness is reinterpretation, no bits lost).
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"int8_t\")"),
-             std::int64_t{0}, "uint8_t -> int8_t is LOSSLESS (signedness reinterpret)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"int8_t\")"), std::int64_t{0},
+             "uint8_t -> int8_t is LOSSLESS (signedness reinterpret)");
     // Non-hw or missing types: 0 (not applicable).
     CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"uint8_t\" \"nonexistent\")"),
              std::int64_t{0}, "missing target type is not a hw coercion (returns 0)");
     CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"nonexistent\" \"uint8_t\")"),
              std::int64_t{0}, "missing source type is not a hw coercion (returns 0)");
-    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"Int\" \"uint8_t\")"),
-             std::int64_t{0}, "non-hw source type is not a hw coercion (returns 0)");
+    CHECK_EQ(run_int(cs, "(compile:hw-coercion-lossy? \"Int\" \"uint8_t\")"), std::int64_t{0},
+             "non-hw source type is not a hw coercion (returns 0)");
     return true;
 }
 
@@ -191,11 +198,10 @@ static bool test_gradual_guarantee_hw() {
     compiler::CompilerService cs;
     // hw scenario: a typed value (uint8_t) + a Dynamic value
     // coexist; the typed computation is unchanged.
-    cs.set_code(
-        "(begin "
-        "  (define data_w (the BitVec 8 data)) "
-        "  (define mask Dynamic) "
-        "  (define masked_data data_w))");  // would use mask at runtime
+    cs.set_code("(begin "
+                "  (define data_w (the BitVec 8 data)) "
+                "  (define mask Dynamic) "
+                "  (define masked_data data_w))"); // would use mask at runtime
     auto r = cs.typecheck("(define data_w (the BitVec 8 42))");
     CHECK(!r.empty(), "typed + Dynamic hw scenario typechecks");
     return true;
@@ -217,15 +223,13 @@ static bool test_hw_diagnostic_format() {
     using namespace aura;
     compiler::CompilerService cs;
     cs.eval("(compile:hw-bitvec-register \"src32\" 32 0)");
-    cs.eval("(compile:hw-bitvec-register \"dst8\" 8 1)");  // signed target
+    cs.eval("(compile:hw-bitvec-register \"dst8\" 8 1)"); // signed target
     auto w = run_string(cs, "(compile:hw-coercion-warning \"src32\" \"dst8\")");
     CHECK(!w.empty(), "warning is non-empty for lossy coercion");
     CHECK(w.find("W32") != std::string::npos, "warning includes source width W32");
     CHECK(w.find("W8") != std::string::npos, "warning includes target width W8");
-    CHECK(w.find("unsigned") != std::string::npos,
-          "warning includes source signedness (unsigned)");
-    CHECK(w.find("signed") != std::string::npos,
-          "warning includes target signedness (signed)");
+    CHECK(w.find("unsigned") != std::string::npos, "warning includes source signedness (unsigned)");
+    CHECK(w.find("signed") != std::string::npos, "warning includes target signedness (signed)");
     CHECK(w.find("24") != std::string::npos, "warning includes bits dropped (24)");
     return true;
 }
@@ -242,10 +246,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_309_detail
+} // namespace aura_issue_309_detail
 
-int aura_issue_309_run() { return aura_issue_309_detail::run_tests(); }
+int aura_issue_309_run() {
+    return aura_issue_309_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_309_run(); }
+int main() {
+    return aura_issue_309_run();
+}
 #endif

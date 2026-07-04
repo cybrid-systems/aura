@@ -50,8 +50,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // Re-import the module-exported v2 helpers via the value.ixx
 // module. The test target gets value.ixx via aura_add_issue_test
@@ -59,32 +59,37 @@ using aura::test::g_failed;
 import aura.compiler.value;
 
 namespace aura_issue_181_detail {
-using aura::compiler::types::EvalValue;
-using aura::compiler::types::is_string_v2;
-using aura::compiler::types::make_string_v2;
 using aura::compiler::types::as_string_idx_v2;
-using aura::compiler::types::is_string_raw_v2;
-using aura::compiler::types::make_string_raw_v2;
-using aura::compiler::types::string_idx_raw_v2;
-using aura::compiler::types::STRING_BIAS_VAL_2;
-using aura::compiler::types::is_ref;
+using aura::compiler::types::EvalValue;
+using aura::compiler::types::FLOAT_BIAS_VAL;
 using aura::compiler::types::is_fixnum;
-using aura::compiler::types::is_special;
 using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_ref;
+using aura::compiler::types::is_special;
+using aura::compiler::types::is_string_raw_v2;
+using aura::compiler::types::is_string_v2;
+using aura::compiler::types::make_ref;
+using aura::compiler::types::make_string_raw_v2;
+using aura::compiler::types::make_string_v2;
+using aura::compiler::types::ref_index;
+using aura::compiler::types::ref_type;
 using aura::compiler::types::RefError;
 using aura::compiler::types::RefKeyword;
-using aura::compiler::types::ref_type;
-using aura::compiler::types::ref_index;
-using aura::compiler::types::make_ref;
-using aura::compiler::types::FLOAT_BIAS_VAL;
 using aura::compiler::types::STRING_BIAS_VAL;
+using aura::compiler::types::STRING_BIAS_VAL_2;
+using aura::compiler::types::string_idx_raw_v2;
 
 
+#define PASS(msg)                                                                                  \
+    do {                                                                                           \
+        std::print("  PASS: %s\n", (msg));                                                         \
+    } while (0)
 
-#define PASS(msg) do { std::print( "  PASS: %s\n", (msg)); } while(0)
-
-#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("%s\n", (msg));                                                                 \
+    } while (0)
 
 // ── Test 1: exhaustive collision test for the v2 encoding ──
 //
@@ -139,23 +144,20 @@ bool test_v2_no_collisions() {
 // These were the motivating examples for #181.
 bool test_v2_historical_collisions_fixed() {
     PRINTLN("\n--- Test 2: historical collision indices (19, 31) are FIXED ---");
-    for (std::uint64_t idx : {19ULL, 31ULL, 19ULL + 64, 31ULL + 64,
-                               19ULL + 128, 31ULL + 128,
-                               19ULL + 4096, 31ULL + 4096}) {
+    for (std::uint64_t idx : {19ULL, 31ULL, 19ULL + 64, 31ULL + 64, 19ULL + 128, 31ULL + 128,
+                              19ULL + 4096, 31ULL + 4096}) {
         std::int64_t v_old = STRING_BIAS_VAL - static_cast<std::int64_t>(idx);
         std::int64_t v_new = make_string_raw_v2(idx);
 
         // OLD encoding: at idx 31, (v & 3) == 1 (is_ref) and
         // ref_type matches RefError (8). Misclassification.
         if (idx == 31) {
-            CHECK(is_ref(v_old),
-                  "OLD encoding at idx=31: is_ref is true (known bug)");
+            CHECK(is_ref(v_old), "OLD encoding at idx=31: is_ref is true (known bug)");
             CHECK(ref_type(v_old) == RefError,
                   "OLD encoding at idx=31: ref_type == RefError (known bug)");
         }
         if (idx == 19) {
-            CHECK(is_ref(v_old),
-                  "OLD encoding at idx=19: is_ref is true (known bug)");
+            CHECK(is_ref(v_old), "OLD encoding at idx=19: is_ref is true (known bug)");
             CHECK(ref_type(v_old) == RefKeyword,
                   "OLD encoding at idx=19: ref_type == RefKeyword (known bug)");
         }
@@ -173,9 +175,9 @@ bool test_v2_historical_collisions_fixed() {
 bool test_v2_roundtrip() {
     PRINTLN("\n--- Test 3: v2 roundtrip (make → decode) ---");
     std::uint64_t test_indices[] = {
-        0, 1, 2, 3, 4, 5, 19, 31, 42, 100, 1000, 10000, 100000,
-        0xFFFF, 0xFFFFF, 0xFFFFFF, 0xFFFFFFF, 0x3FFFFFFFFULL, 0xFFFFFFFULL
-    };
+        0,           1,    2,     3,      4,      5,       19,       31,        42,
+        100,         1000, 10000, 100000, 0xFFFF, 0xFFFFF, 0xFFFFFF, 0xFFFFFFF, 0x3FFFFFFFFULL,
+        0xFFFFFFFULL};
     for (std::uint64_t idx : test_indices) {
         std::int64_t v = make_string_raw_v2(idx);
         CHECK(string_idx_raw_v2(v) == idx, "v2 roundtrip");
@@ -186,15 +188,15 @@ bool test_v2_roundtrip() {
 
 // ── Test 4: v2 module-exported helpers agree with raw helpers ──
 bool test_v2_module_helpers() {
-    PRINTLN("\n--- Test 4: v2 module helpers (make_string_v2 / is_string_v2 / as_string_idx_v2) ---");
+    PRINTLN(
+        "\n--- Test 4: v2 module helpers (make_string_v2 / is_string_v2 / as_string_idx_v2) ---");
     for (std::uint64_t idx : {0ULL, 1ULL, 19ULL, 31ULL, 100ULL, 0xFFFFULL}) {
         EvalValue ev = make_string_v2(idx);
         CHECK(is_string_v2(ev), "is_string_v2");
         CHECK(as_string_idx_v2(ev) == idx, "as_string_idx_v2");
         // Cross-check with raw helpers
         CHECK(ev.val == make_string_raw_v2(idx), "module + raw agree on encoding");
-        CHECK(is_string_raw_v2(ev.val) == is_string_v2(ev),
-              "module + raw agree on is_string");
+        CHECK(is_string_raw_v2(ev.val) == is_string_v2(ev), "module + raw agree on is_string");
     }
     PASS("module-exported helpers agree with raw helpers");
     return true;
@@ -222,16 +224,14 @@ bool test_v2_tag_disjoint() {
     // is_string_v2 (the module helper, with range check) REJECTS
     // all fixnums even when their bit pattern matches the string
     // tag. The range check is the safety belt.
-    for (std::int64_t v : {0LL, 2LL, 4LL, 6LL, 8LL, 10LL, 12LL, 14LL,
-                            100LL, 1000LL, 1000000LL}) {
+    for (std::int64_t v : {0LL, 2LL, 4LL, 6LL, 8LL, 10LL, 12LL, 14LL, 100LL, 1000LL, 1000000LL}) {
         if ((v & 3) == 2) {
             // This value has the string tag bit, but it's
             // actually a fixnum. is_string_v2 (with range
             // check) must reject it because v > STRING_BIAS_VAL_2.
             EvalValue ev(v);
-            CHECK(!is_string_v2(ev),
-                  "is_string_v2 rejects fixnum with string tag bit "
-                  "(range check is the safety belt)");
+            CHECK(!is_string_v2(ev), "is_string_v2 rejects fixnum with string tag bit "
+                                     "(range check is the safety belt)");
         }
     }
     PASS("tag is disjoint from ref/special (v & 3 != 2); "
@@ -274,7 +274,8 @@ bool test_v2_micro_benchmark() {
     auto t0 = std::chrono::steady_clock::now();
     std::uint64_t v2_hits = 0;
     for (int i = 0; i < N; ++i) {
-        if (is_string_raw_v2(v2_values[i])) ++v2_hits;
+        if (is_string_raw_v2(v2_values[i]))
+            ++v2_hits;
     }
     auto t1 = std::chrono::steady_clock::now();
     auto v2_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
@@ -283,22 +284,22 @@ bool test_v2_micro_benchmark() {
     auto t2 = std::chrono::steady_clock::now();
     std::uint64_t old_hits = 0;
     for (int i = 0; i < N; ++i) {
-        if (old_values[i] <= STRING_BIAS_VAL) ++old_hits;
+        if (old_values[i] <= STRING_BIAS_VAL)
+            ++old_hits;
     }
     auto t3 = std::chrono::steady_clock::now();
     auto old_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
 
-    std::print( "  v2 is_string:    %ld ns (%.2f ns/op, %lu hits)\n",
-                 v2_ns, static_cast<double>(v2_ns) / N, v2_hits);
-    std::print( "  old is_string:   %ld ns (%.2f ns/op, %lu hits)\n",
-                 old_ns, static_cast<double>(old_ns) / N, old_hits);
+    std::print("  v2 is_string:    %ld ns (%.2f ns/op, %lu hits)\n", v2_ns,
+               static_cast<double>(v2_ns) / N, v2_hits);
+    std::print("  old is_string:   %ld ns (%.2f ns/op, %lu hits)\n", old_ns,
+               static_cast<double>(old_ns) / N, old_hits);
     CHECK(v2_hits == static_cast<std::uint64_t>(N), "v2 hits == N");
     CHECK(old_hits == static_cast<std::uint64_t>(N), "old hits == N");
     // v2 should be no slower than old. (In practice it's
     // similar — modern CPUs make the comparison latency
     // nearly identical. The win is correctness, not speed.)
-    CHECK(v2_ns <= old_ns * 2,
-          "v2 is_string not significantly slower than old");
+    CHECK(v2_ns <= old_ns * 2, "v2 is_string not significantly slower than old");
     PASS("v2 and old both classify all N values; v2 not slower than 2x old");
     return true;
 }
@@ -313,7 +314,7 @@ bool test_v2_pool_capacity() {
     // idx << 2 must be < 2^62 (otherwise STRING_BIAS_VAL_2 -
     // (idx << 2) would be too negative or would overflow).
     // So max idx ≈ 2^60.
-    constexpr std::uint64_t MAX_V2_IDX = (1ULL << 60) - 1;  // safe upper bound
+    constexpr std::uint64_t MAX_V2_IDX = (1ULL << 60) - 1; // safe upper bound
     std::int64_t v = make_string_raw_v2(MAX_V2_IDX);
     CHECK(is_string_raw_v2(v), "max v2 idx is still a string");
     CHECK(string_idx_raw_v2(v) == MAX_V2_IDX, "max v2 idx roundtrips");
@@ -346,13 +347,11 @@ bool test_v2_exhaustive_64() {
             CHECK(false, "v2 idx classified as ref (impossible)");
             // Also report which ref type it would have been
             // (for diagnostic purposes).
-            std::print(std::cerr, "    idx=%lu → ref_type=%lu\n",
-                         idx, ref_type(v));
+            std::print(std::cerr, "    idx=%lu → ref_type=%lu\n", idx, ref_type(v));
         }
         // Predicate order: is_string(v) && is_ref(v) is ALWAYS
         // false (the encodings are disjoint at the source).
-        CHECK(!(is_string_v2(ev) && is_ref(v)),
-              "predicate order: !is_string_v2(v) || !is_ref(v)");
+        CHECK(!(is_string_v2(ev) && is_ref(v)), "predicate order: !is_string_v2(v) || !is_ref(v)");
     }
     PASS("all 64 indices are strings, none are refs");
     return true;
@@ -367,18 +366,16 @@ bool test_v2_exhaustive_64() {
 bool test_v2_predicate_disjoint() {
     PRINTLN("\n--- Test 10: is_string_v2 and is_ref are disjoint ───");
     // Check all string values
-    for (std::uint64_t idx : {0ULL, 1ULL, 19ULL, 31ULL, 100ULL,
-                               0xFFFFULL, 0xFFFFFULL, (1ULL << 30)}) {
+    for (std::uint64_t idx :
+         {0ULL, 1ULL, 19ULL, 31ULL, 100ULL, 0xFFFFULL, 0xFFFFFULL, (1ULL << 30)}) {
         EvalValue ev(make_string_raw_v2(idx));
-        CHECK(!is_ref(ev.val),
-              "is_string_v2 ∧ is_ref = false (v2 string value)");
+        CHECK(!is_ref(ev.val), "is_string_v2 ∧ is_ref = false (v2 string value)");
     }
     // Check all ref values
     for (std::uint64_t type = 0; type < 12; ++type) {
         for (std::uint64_t idx = 0; idx < 50; ++idx) {
             std::int64_t ref_v = make_ref(type, idx);
-            CHECK(!is_string_raw_v2(ref_v),
-                  "is_string_v2 ∧ is_ref = false (ref value)");
+            CHECK(!is_string_raw_v2(ref_v), "is_string_v2 ∧ is_ref = false (ref value)");
         }
     }
     PASS("is_string_v2 and is_ref are disjoint (v2 encoding eliminates collision)");
@@ -413,12 +410,10 @@ bool test_v2_inline_agrees_with_raw() {
         if (is_string_raw_v2(v)) {
             if (v <= STRING_BIAS_VAL_2) {
                 ++n_string_range;
-                CHECK(is_string_v2(ev),
-                      "inline agrees with raw in string range");
+                CHECK(is_string_v2(ev), "inline agrees with raw in string range");
             } else {
                 ++n_outside_range;
-                CHECK(!is_string_v2(ev),
-                      "inline rejects outside string range (safety belt)");
+                CHECK(!is_string_v2(ev), "inline rejects outside string range (safety belt)");
             }
         }
     }
@@ -428,8 +423,7 @@ bool test_v2_inline_agrees_with_raw() {
         if (is_string_raw_v2(v)) {
             ++n_outside_range;
             EvalValue ev(v);
-            CHECK(!is_string_v2(ev),
-                  "inline rejects outside string range (safety belt)");
+            CHECK(!is_string_v2(ev), "inline rejects outside string range (safety belt)");
         }
     }
     std::println("  checked: in-range=%d, out-of-range=%d", n_string_range, n_outside_range);
@@ -464,7 +458,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_181_detail
+} // namespace aura_issue_181_detail
 
-int aura_issue_181_run() { return aura_issue_181_detail::run_tests(); }
-
+int aura_issue_181_run() {
+    return aura_issue_181_detail::run_tests();
+}

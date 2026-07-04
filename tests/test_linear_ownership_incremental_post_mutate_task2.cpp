@@ -92,12 +92,10 @@ static void test_post_mutate_leak_counters() {
     rec.target_node = root;
     rec.mutation_id = 575;
     std::vector<aura::compiler::OwnershipNote> notes;
-    (void)aura::compiler::post_mutation_invariant_check(
-        *flat, *pool, reg, rec, notes, &metrics);
+    (void)aura::compiler::post_mutation_invariant_check(*flat, *pool, reg, rec, notes, &metrics);
     const auto reval =
         metrics.linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
-    const auto leaks =
-        metrics.linear_leak_prevented_total.load(std::memory_order_relaxed);
+    const auto leaks = metrics.linear_leak_prevented_total.load(std::memory_order_relaxed);
     std::println("  revalidations={} leak_prevented={}", reval, leaks);
     CHECK(reval > 0, "ownership_revalidate_count bumped");
     CHECK(leaks >= 1, "violation_caught_post_mutate includes leak");
@@ -123,12 +121,11 @@ static void test_moved_linear_passes() {
     rec.target_node = root;
     rec.mutation_id = 5753;
     std::vector<aura::compiler::OwnershipNote> notes;
-    const auto status = aura::compiler::post_mutation_invariant_check(
-        *flat, *str_pool, reg, rec, notes, &metrics);
+    const auto status =
+        aura::compiler::post_mutation_invariant_check(*flat, *str_pool, reg, rec, notes, &metrics);
     CHECK(status == aura::ast::InvariantStatus::Ok,
           "moved linear binding passes post-mutate revalidate");
-    CHECK(count_kind(notes, "leaked-linear") == 0,
-          "no leaked-linear for properly moved binding");
+    CHECK(count_kind(notes, "leaked-linear") == 0, "no leaked-linear for properly moved binding");
 }
 
 static void run_integration_matrix(CompilerService& cs) {
@@ -140,45 +137,38 @@ static void run_integration_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: linear mutate → stats monotonic ---");
     const auto stats4a = linear_incremental_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
-        "\"issue-575-leak\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
+                  "\"issue-575-leak\")");
     auto* ws = cs.evaluator().workspace_flat();
     auto* ws_pool = cs.evaluator().workspace_pool();
-    CHECK(ws != nullptr && ws_pool != nullptr && !ws->all_mutations().empty(),
-          "mutation logged");
+    CHECK(ws != nullptr && ws_pool != nullptr && !ws->all_mutations().empty(), "mutation logged");
     if (ws && ws_pool && !ws->all_mutations().empty()) {
         TypeRegistry reg;
         std::vector<aura::compiler::OwnershipNote> notes;
-        (void)aura::compiler::post_mutation_invariant_check(
-            *ws, *ws_pool, reg, ws->all_mutations().back(), notes,
-            cs.evaluator().compiler_metrics());
+        (void)aura::compiler::post_mutation_invariant_check(*ws, *ws_pool, reg,
+                                                            ws->all_mutations().back(), notes,
+                                                            cs.evaluator().compiler_metrics());
     }
     const auto stats4b = linear_incremental_stats(cs);
     std::println("  linear-incremental-stats: {} -> {}", stats4a, stats4b);
     CHECK(stats4b > stats4a, "incremental stats grew after linear revalidate");
 
     std::println("\n--- AC5: per_defuse_index counters after mutate ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 55))) (move x)))\" "
-        "\"issue-575-pdu\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 55))) (move x)))\" "
+                  "\"issue-575-pdu\")");
     if (ws && !ws->all_mutations().empty())
         (void)cs.incremental_infer(ws->all_mutations().back());
     const auto snap5 = cs.snapshot();
-    std::println("  per_defuse_used={} per_defuse_visited={}",
-                 snap5.per_defuse_index_used_total,
+    std::println("  per_defuse_used={} per_defuse_visited={}", snap5.per_defuse_index_used_total,
                  snap5.per_defuse_index_visited_total);
-    CHECK(snap5.per_defuse_index_used_total >= 0,
-          "per_defuse_index_used_total observable");
-    CHECK(snap5.per_defuse_index_visited_total >= 0,
-          "per_defuse_index_visited_total observable");
+    CHECK(snap5.per_defuse_index_used_total >= 0, "per_defuse_index_used_total observable");
+    CHECK(snap5.per_defuse_index_visited_total >= 0, "per_defuse_index_visited_total observable");
 
     std::println("\n--- AC6: O(uses) proxy — visited bounded ---");
     const auto visited = snap5.per_defuse_index_visited_total;
     const auto reinferred = snap5.incremental_typecheck_re_inferred_total;
     std::println("  per_defuse_visited={} reinferred_total={}", visited, reinferred);
-    CHECK(visited <= reinferred + ws->size(),
-          "per_defuse visited bounded vs full AST size proxy");
+    CHECK(visited <= reinferred + ws->size(), "per_defuse visited bounded vs full AST size proxy");
 
     std::println("\n--- AC7: query regression ---");
     auto lms = cs.eval("(query:linear-ownership-mutation-stats)");
@@ -190,10 +180,8 @@ static void run_integration_matrix(CompilerService& cs) {
     const auto stats8a = linear_incremental_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string body =
-            "(lambda () (let ((x (Linear " + std::to_string(round + 15) +
-            "))) (move x)))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" +
-                      std::to_string(round) + "\")");
+            "(lambda () (let ((x (Linear " + std::to_string(round + 15) + "))) (move x)))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) + "\")");
         auto r = cs.eval("(f)");
         CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
     }
@@ -201,11 +189,9 @@ static void run_integration_matrix(CompilerService& cs) {
     std::println("  linear-incremental-stats: {} -> {}", stats8a, stats8b);
     CHECK(stats8b >= stats8a, "linear-incremental-stats monotonic over matrix");
 
-    const auto* metrics = static_cast<const CompilerMetrics*>(
-        cs.evaluator().compiler_metrics());
+    const auto* metrics = static_cast<const CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto reval =
-        metrics ? metrics->linear_post_mutate_revalidations_total.load(
-                      std::memory_order_relaxed)
+        metrics ? metrics->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed)
                 : 0u;
     std::println("  final ownership_revalidate_count={}", reval);
     CHECK(reval > 0, "ownership_revalidate_count > 0 after mutate cycle");

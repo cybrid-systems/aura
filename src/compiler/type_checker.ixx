@@ -112,8 +112,7 @@ export class ConstraintSystem {
     // append-only (constraints are never removed in
     // the current API); stale entries are filtered
     // out by the dirty bit check at solve_delta time.
-    std::unordered_map<std::uint32_t, std::vector<std::size_t>>
-        var_to_constraints_;
+    std::unordered_map<std::uint32_t, std::vector<std::size_t>> var_to_constraints_;
     // Issue #466: Union-Find roots whose bindings changed during
     // the current delta solve. Used for lightweight re-verify of
     // clean constraints that may be invalidated by cross-delta
@@ -135,6 +134,7 @@ export class ConstraintSystem {
     // Issue #466: when true, consistent_unify records constraints
     // via add_delta for incremental solve_delta replay.
     bool delta_record_mode_ = false;
+
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
@@ -186,29 +186,22 @@ public:
     void set_metrics(void* m) { metrics_ = m; }
     // Issue #536: wire solve_delta touched_roots snapshot +
     // cross-delta conflict hooks to Evaluator counters.
-    void set_solve_delta_observability_hooks(
-        std::function<void(std::size_t)> on_snapshot,
-        std::function<void()> on_conflict) {
+    void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
+                                             std::function<void()> on_conflict) {
         on_touched_roots_snapshot_ = std::move(on_snapshot);
         on_cross_delta_conflict_ = std::move(on_conflict);
     }
     // Issue #466: enable constraint recording in consistent_unify
     // for incremental solve_delta paths (infer_flat_partial).
     void set_delta_record_mode(bool on) noexcept { delta_record_mode_ = on; }
-    [[nodiscard]] bool delta_record_mode() const noexcept {
-        return delta_record_mode_;
-    }
+    [[nodiscard]] bool delta_record_mode() const noexcept { return delta_record_mode_; }
     // Issue #690: link cross-delta conflicts to the active mutation
     // for blame-chain completeness metrics.
-    void set_active_mutation_id(std::uint64_t id) noexcept {
-        active_mutation_id_ = id;
-    }
+    void set_active_mutation_id(std::uint64_t id) noexcept { active_mutation_id_ = id; }
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
     void mark_touched_on_delta(aura::core::TypeId var);
-    [[nodiscard]] std::size_t touched_roots_size() const noexcept {
-        return touched_roots_.size();
-    }
+    [[nodiscard]] std::size_t touched_roots_size() const noexcept { return touched_roots_.size(); }
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.
     bool is_dirty() const { return dirty_count_ > 0; }
@@ -446,6 +439,7 @@ export class InferenceEngine {
                                std::uint32_t child_index, aura::ast::NodeId original_child,
                                std::uint32_t type_tag, std::uint32_t type_id,
                                std::uint32_t src_line, std::uint32_t src_col);
+
 public:
     // Issue #79: set strict mode. Called by TypeChecker::infer_flat
     // before delegating to the engine.
@@ -470,17 +464,13 @@ public:
     // into CompilerMetrics::delta_solve_time_us.
     void set_metrics(void* m) { cs_.set_metrics(m); }
     // Issue #536: forward solve_delta observability hooks.
-    void set_solve_delta_observability_hooks(
-        std::function<void(std::size_t)> on_snapshot,
-        std::function<void()> on_conflict) {
-        cs_.set_solve_delta_observability_hooks(std::move(on_snapshot),
-                                                std::move(on_conflict));
+    void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
+                                             std::function<void()> on_conflict) {
+        cs_.set_solve_delta_observability_hooks(std::move(on_snapshot), std::move(on_conflict));
     }
     // Issue #690: mutation-scoped touched_roots seeding for
     // infer_flat_partial structural typed mutation.
-    void set_active_mutation_id(std::uint64_t id) noexcept {
-        cs_.set_active_mutation_id(id);
-    }
+    void set_active_mutation_id(std::uint64_t id) noexcept { cs_.set_active_mutation_id(id); }
     [[nodiscard]] std::size_t constraint_touched_roots_size() const noexcept {
         return cs_.touched_roots_size();
     }
@@ -519,12 +509,8 @@ public:
     // Lowering queries this in flatten_expr_if's Branch emit
     // so the resulting Branch instruction can carry a hint
     // to DeadCoercionEliminationPass / JIT.
-    void set_last_narrowing_evidence(std::uint32_t mask) noexcept {
-        last_if_narrowing_ = mask;
-    }
-    std::uint32_t last_narrowing_evidence() const noexcept {
-        return last_if_narrowing_;
-    }
+    void set_last_narrowing_evidence(std::uint32_t mask) noexcept { last_if_narrowing_ = mask; }
+    std::uint32_t last_narrowing_evidence() const noexcept { return last_if_narrowing_; }
 
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
@@ -761,16 +747,14 @@ public:
     // if-contexts in `affected_ids`, clears kOccurrenceDirty
     // + occurrence-stale bits, and bumps narrowing observability
     // counters. Returns the number of if-contexts refreshed.
-    std::size_t reanalyze_occurrence_contexts(aura::ast::FlatAST& flat,
-                                              aura::ast::StringPool& pool,
+    std::size_t reanalyze_occurrence_contexts(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                               const std::vector<aura::ast::NodeId>& affected_ids);
 
     // Issue #518 P0 Phase 1: expand `affected` with Variable
     // use-sites of narrowed bindings inside dirty if-contexts
     // so the subsequent infer loop re-checks them under the
     // refreshed OccurrenceInfoFlat.
-    void propagate_narrowing_to_uses(aura::ast::FlatAST& flat,
-                                     aura::ast::StringPool& pool,
+    void propagate_narrowing_to_uses(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                      std::vector<aura::ast::NodeId>& affected);
 
     // Issue #518: optional hooks for Evaluator observability
@@ -820,10 +804,9 @@ private:
         bool stale_narrowing = false;
     };
     IfPredicateResolve resolve_if_predicate_occurrence(aura::ast::FlatAST& flat,
-                                                     aura::ast::StringPool& pool,
-                                                     aura::ast::NodeId if_id,
-                                                     aura::ast::NodeId cond_id,
-                                                     bool check_mode);
+                                                       aura::ast::StringPool& pool,
+                                                       aura::ast::NodeId if_id,
+                                                       aura::ast::NodeId cond_id, bool check_mode);
     std::uint32_t compute_if_narrowing_evidence_mask(const aura::ast::FlatAST& flat,
                                                      const aura::ast::StringPool& pool,
                                                      aura::ast::NodeId cond_id,
@@ -945,7 +928,7 @@ type_check_flat_pure(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura
                      const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
                      const std::unordered_map<std::string, std::string>& module_src = {},
                      bool strict = false, std::uint64_t cache_epoch = 0,
-                     void* metrics = nullptr, // Issue #258: optional metrics pointer
+                     void* metrics = nullptr,        // Issue #258: optional metrics pointer
                      bool bidirectional_mode = true) // Issue #283 follow-up #5
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
@@ -1244,8 +1227,7 @@ private:
     // references are filtered at query time via the AST's
     // current type_id_ check). Reset on clear() or when the
     // TypeChecker is destroyed.
-    std::unordered_map<std::uint32_t, std::vector<aura::ast::NodeId>>
-        type_dep_graph_;
+    std::unordered_map<std::uint32_t, std::vector<aura::ast::NodeId>> type_dep_graph_;
 
     // Issue #387: type dep graph observability (3 counters).
     // type_dep_graph_size = number of distinct TypeIds tracked
@@ -1267,7 +1249,8 @@ public:
     // fine — the graph is "all nodes ever seen with this
     // type", not "current nodes").
     void record_type_dependency(std::uint32_t tid, aura::ast::NodeId node) {
-        if (tid == 0) return;  // 0 = uninitialized, skip
+        if (tid == 0)
+            return; // 0 = uninitialized, skip
         type_dep_graph_[tid].push_back(node);
     }
 
@@ -1281,8 +1264,7 @@ public:
     // iff the returned vector is non-empty.
     //
     // Note: not const — bumps the observability counters.
-    std::vector<aura::ast::NodeId>
-    affected_nodes_for_type(std::uint32_t tid) {
+    std::vector<aura::ast::NodeId> affected_nodes_for_type(std::uint32_t tid) {
         ++type_dep_graph_lookups_;
         std::vector<aura::ast::NodeId> out;
         auto it = type_dep_graph_.find(tid);
@@ -1294,9 +1276,7 @@ public:
     }
 
     // Issue #387: number of distinct TypeIds tracked.
-    std::size_t type_dep_graph_size() const {
-        return type_dep_graph_.size();
-    }
+    std::size_t type_dep_graph_size() const { return type_dep_graph_.size(); }
 
     // Issue #387: clear the graph (e.g., on set-code when the
     // entire AST is rebuilt from scratch).
@@ -1336,8 +1316,7 @@ post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringP
 // Issue #610: bump linear ownership post-mutate observability
 // counters (revalidation, violations, leaks) into CompilerMetrics.
 export void record_linear_ownership_mutation_metrics(
-    void* metrics, bool revalidated, const std::vector<OwnershipNote>& ownership_notes,
-    bool pass);
+    void* metrics, bool revalidated, const std::vector<OwnershipNote>& ownership_notes, bool pass);
 
 // Issue #612: re-sync TypeRegistry ADT constructor lists from
 // DefineType nodes in the dirty scope and invalidate cached
@@ -1348,16 +1327,19 @@ export void refresh_adt_constructors_for_dirty_define_types(
 
 // Issue #692: incremental ADT exhaustiveness + pattern provenance refresh
 // for infer_flat_partial structural typed mutation.
-export void revalidate_adt_typed_mutation_scope(
-    aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
-    const std::vector<aura::ast::NodeId>& subtree_roots, const aura::ast::MutationRecord& rec,
-    std::uint64_t cache_epoch, void* metrics = nullptr);
+export void revalidate_adt_typed_mutation_scope(aura::ast::FlatAST& flat,
+                                                const aura::ast::StringPool& pool,
+                                                aura::core::TypeRegistry& reg,
+                                                const std::vector<aura::ast::NodeId>& subtree_roots,
+                                                const aura::ast::MutationRecord& rec,
+                                                std::uint64_t cache_epoch, void* metrics = nullptr);
 
 // Issue #260: ADT match exhaustiveness for a single __match_tmp let node.
 // Returns missing constructor names (empty if complete, wildcard, or N/A).
-export std::vector<std::string>
-analyze_match_exhaustiveness(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
-                             aura::core::TypeRegistry& reg, aura::ast::NodeId let_node);
+export std::vector<std::string> analyze_match_exhaustiveness(const aura::ast::FlatAST& flat,
+                                                             const aura::ast::StringPool& pool,
+                                                             aura::core::TypeRegistry& reg,
+                                                             aura::ast::NodeId let_node);
 
 // Issue #148 Phase 3: identify the affected node set for a mutation.
 // Returns NodeIds in the dirty subtree (descendants of the mutated
@@ -1407,9 +1389,8 @@ affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
 // has no Variable nodes referencing it. O(n) walk — the
 // production path (when DefUseIndex is built) can use
 // DefUseIndex::query_def_use(sym).uses instead, which is O(uses).
-export std::vector<aura::ast::NodeId>
-affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
-                            aura::ast::SymId sym_id);
+export std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
+                                                                  aura::ast::SymId sym_id);
 
 // Issue #274: post-mutation invariant visitor for run_mutation_pipeline.
 // Skips records already checked; accumulates notes and worst status.
@@ -1419,7 +1400,9 @@ export class PostMutationInvariantVisitor {
 public:
     PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
                                  void* metrics = nullptr)
-        : pool_(pool), reg_(reg), metrics_(metrics) {}
+        : pool_(pool)
+        , reg_(reg)
+        , metrics_(metrics) {}
 
     void visit_mutation(aura::ast::FlatAST& flat, const aura::ast::MutationRecord& rec) {
         if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)

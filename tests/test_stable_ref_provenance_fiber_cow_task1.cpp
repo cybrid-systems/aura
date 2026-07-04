@@ -43,9 +43,9 @@ import aura.compiler.service;
 
 namespace aura_issue_552_detail {
 
+using aura::ast::NodeId;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
-using aura::ast::NodeId;
 
 static int k_long_iters() {
     return k_int_env("AURA_STRESS_ITERS", 500);
@@ -64,8 +64,8 @@ bool test_edsl_stability_counters_reachable() {
     const auto pm0 = cs.evaluator().get_provenance_mismatch();
     auto* ws = cs.evaluator().workspace_flat();
     const auto w0 = ws ? ws->generation_wrap_count() : 0;
-    std::println("  baseline: cross_cow={} fiber_stale={} wrap={} rollback={} provenance={}",
-                 cc0, fs0, w0, r0, pm0);
+    std::println("  baseline: cross_cow={} fiber_stale={} wrap={} rollback={} provenance={}", cc0,
+                 fs0, w0, r0, pm0);
     CHECK(cc0 == 0, "cross_cow starts at 0");
     CHECK(fs0 == 0, "fiber_stale starts at 0");
     CHECK(w0 == 0, "generation_wrap starts at 0 (FlatAST, #457)");
@@ -82,13 +82,11 @@ bool test_query_edsl_stability_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:edsl-stability-stats)");
     CHECK(r.has_value(), "(query:edsl-stability-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:edsl-stability-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:edsl-stability-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:edsl-stability-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:edsl-stability-stats) >= 0 (5 counters sum)");
+        CHECK(v >= 0, "(query:edsl-stability-stats) >= 0 (5 counters sum)");
     }
     return true;
 }
@@ -101,22 +99,23 @@ bool test_cross_cow_under_mutate_validate() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto cc0 = cs.evaluator().get_cross_cow_invalidations();
     // mutate:replace-value (goes through Guard) + validate.
     // Each iteration bumps generation_ + cross_cow.
     for (int i = 0; i < 50; ++i) {
-        std::string code = std::string("(mutate:replace-value (define a ") +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))";
+        std::string code = std::string("(mutate:replace-value (define a ") + std::to_string(i) +
+                           ") (define a " + std::to_string(i) + "))";
         (void)cs.eval(code);
         const auto g = ws->generation();
         (void)cs.evaluator().validate_stable_ref(0, g - 1);
     }
     const auto cc1 = cs.evaluator().get_cross_cow_invalidations();
     std::println("  cross_cow: {} -> {} (delta {})", cc0, cc1, cc1 - cc0);
-    CHECK(cc1 >= cc0 + 50,
-          "cross_cow_invalidations grew by >= 50 under mutate + validate loop");
+    CHECK(cc1 >= cc0 + 50, "cross_cow_invalidations grew by >= 50 under mutate + validate loop");
     return true;
 }
 
@@ -127,7 +126,10 @@ bool test_long_running_edsl_cycle() {
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto cc0 = cs.evaluator().get_cross_cow_invalidations();
     std::mt19937 rng(552u);
     std::uniform_int_distribution<int> val_dist(0, 999);
@@ -137,15 +139,12 @@ bool test_long_running_edsl_cycle() {
         // Guard-based mutate). Cycle through them.
         std::string code;
         if (i & 1) {
-            code = std::string("(mutate:replace-value (define ") +
-                (i & 1 ? "a" : "b") + " " +
-                std::to_string(val_dist(rng)) +
-                ") (define " + (i & 1 ? "a" : "b") + " " +
-                std::to_string(val_dist(rng)) + "))";
+            code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") + " " +
+                   std::to_string(val_dist(rng)) + ") (define " + (i & 1 ? "a" : "b") + " " +
+                   std::to_string(val_dist(rng)) + "))";
         } else {
-            code = std::string("(define ") +
-                (i & 1 ? "a" : "b") + " " +
-                std::to_string(val_dist(rng)) + ")";
+            code = std::string("(define ") + (i & 1 ? "a" : "b") + " " +
+                   std::to_string(val_dist(rng)) + ")";
         }
         (void)cs.eval(code);
         // Validate each iteration (cross_cow bump).
@@ -187,7 +186,10 @@ bool test_validate_stable_ref_hot_path() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto current_gen = ws->generation();
     const auto cc0 = cs.evaluator().get_cross_cow_invalidations();
     // Validate with small gen delta (= cross_cow, same fiber).
@@ -195,8 +197,7 @@ bool test_validate_stable_ref_hot_path() {
     CHECK(!r1.first, "validate_stable_ref(gen-1) returns invalid");
     CHECK(r1.second, "validate_stable_ref(gen-1) returns is_stale=true");
     const auto cc1 = cs.evaluator().get_cross_cow_invalidations();
-    CHECK(cc1 > cc0,
-          "cross_cow bumped by small-delta gen mismatch (Task1 hot path)");
+    CHECK(cc1 > cc0, "cross_cow bumped by small-delta gen mismatch (Task1 hot path)");
     return true;
 }
 
@@ -215,10 +216,9 @@ bool test_eight_thread_concurrent_edsl_mutate() {
             std::lock_guard<std::mutex> lk(mtx);
             // Task1 EDSL primitives: mutate:replace-value +
             // validate_stable_ref (Task1 hot path combo).
-            std::string code = "(mutate:replace-value (define v" +
-                std::to_string(tid) + " " + std::to_string(i) +
-                ") (define v" + std::to_string(tid) + " " +
-                std::to_string(i) + "))";
+            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + "))";
             (void)cs.eval(code);
             auto* ws = cs.evaluator().workspace_flat();
             if (ws) {
@@ -228,12 +228,13 @@ bool test_eight_thread_concurrent_edsl_mutate() {
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto cc = cs.evaluator().get_cross_cow_invalidations();
-    std::println("  completed: {}/{} cross_cow: {}",
-                 completed.load(), n_threads * n_iters, cc);
+    std::println("  completed: {}/{} cross_cow: {}", completed.load(), n_threads * n_iters, cc);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent EDSL mutate)");
     CHECK(cc >= static_cast<std::uint64_t>(n_threads * n_iters),
@@ -306,8 +307,12 @@ int run_tests() {
 
 } // namespace aura_issue_552_detail
 
-int aura_issue_552_run() { return aura_issue_552_detail::run_tests(); }
+int aura_issue_552_run() {
+    return aura_issue_552_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_552_run(); }
+int main() {
+    return aura_issue_552_run();
+}
 #endif

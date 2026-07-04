@@ -31,13 +31,12 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 namespace aura_issue_205_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Test 1: register_env_walk_fn accepts a callback ──
 // The registration method exists and stores the callback
@@ -47,8 +46,7 @@ bool test_env_walk_register() {
     PRINTLN("\n--- Test 1: register_env_walk_fn accepts a callback ---");
     aura::serve::GCCollector gc(nullptr);
     bool called = false;
-    gc.register_env_walk_fn(
-        [&called](aura::serve::EnvFrameRoots&) { called = true; });
+    gc.register_env_walk_fn([&called](aura::serve::EnvFrameRoots&) { called = true; });
     CHECK(true, "register_env_walk_fn compiled and ran without error");
     // The callback hasn't been called yet (registration only
     // stores it; collect() is what invokes it).
@@ -64,16 +62,14 @@ bool test_env_walk_invoked_during_collect() {
     PRINTLN("\n--- Test 2: collect() invokes env_walk callback ---");
     aura::serve::GCCollector gc(nullptr);
     int call_count = 0;
-    gc.register_env_walk_fn(
-        [&call_count](aura::serve::EnvFrameRoots&) { ++call_count; });
+    gc.register_env_walk_fn([&call_count](aura::serve::EnvFrameRoots&) { ++call_count; });
     // We can't actually run gc.request() + gc.collect()
     // without a Scheduler (it needs a safepoint), so we
     // only test the registration behavior here. The full
     // integration (collect() → walk → mark) is verified
     // by the run-tests.sh end-to-end (which uses serve_async
     // and triggers (gc-heap)).
-    CHECK(call_count == 0,
-          "callback not called without gc.collect()");
+    CHECK(call_count == 0, "callback not called without gc.collect()");
     return true;
 }
 
@@ -82,10 +78,8 @@ bool test_env_walk_invoked_during_collect() {
 bool test_env_frame_roots_default_construct() {
     PRINTLN("\n--- Test 3: EnvFrameRoots default-constructs ---");
     aura::serve::EnvFrameRoots r;
-    CHECK(r.pair_roots.empty(),
-          "EnvFrameRoots::pair_roots is empty by default");
-    CHECK(r.closure_roots.empty(),
-          "EnvFrameRoots::closure_roots is empty by default");
+    CHECK(r.pair_roots.empty(), "EnvFrameRoots::pair_roots is empty by default");
+    CHECK(r.closure_roots.empty(), "EnvFrameRoots::closure_roots is empty by default");
     return true;
 }
 
@@ -101,15 +95,14 @@ bool test_env_walk_marks_pairs_and_closures() {
     // mark_from_roots is called properly)
     aura::serve::GCRootSet roots;
     gc.mark_from_roots(roots, /*string_heap_size=*/10,
-                        /*pairs_size=*/20, /*closures_size=*/30);
+                       /*pairs_size=*/20, /*closures_size=*/30);
     // Simulate the env-walk producing pair + closure indices
     aura::serve::EnvFrameRoots env_roots;
     env_roots.pair_roots = {3, 7, 15};
     env_roots.closure_roots = {5, 10, 25};
     // This is what GCCollector::collect() does internally
     // after invoking the env_walk callback
-    gc.mark_env_frame_roots(env_roots.pair_roots,
-                            env_roots.closure_roots);
+    gc.mark_env_frame_roots(env_roots.pair_roots, env_roots.closure_roots);
     // Verify
     CHECK(gc.pair_mark(3) == true, "pair 3 marked via env walk");
     CHECK(gc.pair_mark(7) == true, "pair 7 marked via env walk");
@@ -188,7 +181,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_205_detail
+} // namespace aura_issue_205_detail
 
-int aura_issue_205_run() { return aura_issue_205_detail::run_tests(); }
-
+int aura_issue_205_run() {
+    return aura_issue_205_detail::run_tests();
+}

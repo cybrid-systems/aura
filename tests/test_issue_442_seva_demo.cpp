@@ -49,16 +49,22 @@ namespace aura_issue_442_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cout, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cout, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::string read_file(const std::filesystem::path& p) {
     std::ifstream f(p);
-    if (!f) return std::string();
-    std::string s((std::istreambuf_iterator<char>(f)),
-                   std::istreambuf_iterator<char>());
+    if (!f)
+        return std::string();
+    std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return s;
 }
 
@@ -75,10 +81,8 @@ bool test_fifo_dut_exists() {
         CHECK(!content.empty(), "fifo_dut.aura is non-empty");
         CHECK(content.find("fifo-dut-spec") != std::string::npos,
               "fifo_dut.aura defines fifo-dut-spec");
-        CHECK(content.find("(width . 8)") != std::string::npos,
-              "spec contains width=8");
-        CHECK(content.find("(depth . 4)") != std::string::npos,
-              "spec contains depth=4");
+        CHECK(content.find("(width . 8)") != std::string::npos, "spec contains width=8");
+        CHECK(content.find("(depth . 4)") != std::string::npos, "spec contains depth=4");
         CHECK(content.find("missing-reset-bug") != std::string::npos,
               "spec contains the known bug");
     }
@@ -96,10 +100,8 @@ bool test_seva_demo_exists() {
     if (exists) {
         auto content = read_file(p);
         CHECK(!content.empty(), "seva_demo.aura is non-empty");
-        CHECK(content.find("set-code") != std::string::npos,
-              "demo uses set-code");
-        CHECK(content.find("eval-current") != std::string::npos,
-              "demo uses eval-current");
+        CHECK(content.find("set-code") != std::string::npos, "demo uses set-code");
+        CHECK(content.find("eval-current") != std::string::npos, "demo uses eval-current");
     }
     return true;
 }
@@ -136,7 +138,7 @@ bool test_fifo_spec_details() {
     return true;
 }
 
-}  // namespace aura_issue_442_detail
+} // namespace aura_issue_442_detail
 
 int main() {
     using namespace aura_issue_442_detail;

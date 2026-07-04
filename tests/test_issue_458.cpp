@@ -14,8 +14,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -29,12 +29,10 @@ bool test_hygiene_metrics_zero_on_fresh() {
     std::println("\n--- AC1: hygiene metrics start at 0 ---");
     aura::compiler::CompilerService cs;
     auto& ev = cs.evaluator();
-    CHECK(ev.get_hygiene_violation_count() == 0,
-          "hygiene_violation_count == 0 on fresh service");
+    CHECK(ev.get_hygiene_violation_count() == 0, "hygiene_violation_count == 0 on fresh service");
     CHECK(ev.get_macro_introduced_skipped_in_query() == 0,
           "macro_introduced_skipped_in_query == 0 on fresh service");
-    CHECK(ev.get_total_query_calls() == 0,
-          "total_query_calls == 0 on fresh service");
+    CHECK(ev.get_total_query_calls() == 0, "total_query_calls == 0 on fresh service");
     return true;
 }
 
@@ -46,23 +44,20 @@ bool test_hygiene_metrics_bump() {
     auto v_before = ev.get_hygiene_violation_count();
     ev.bump_hygiene_violation_count();
     auto v_after = ev.get_hygiene_violation_count();
-    CHECK(v_after == v_before + 1,
-          "bump_hygiene_violation_count: " + std::to_string(v_before) +
-              " -> " + std::to_string(v_after));
+    CHECK(v_after == v_before + 1, "bump_hygiene_violation_count: " + std::to_string(v_before) +
+                                       " -> " + std::to_string(v_after));
 
     auto s_before = ev.get_macro_introduced_skipped_in_query();
     ev.bump_macro_introduced_skipped_in_query();
     auto s_after = ev.get_macro_introduced_skipped_in_query();
-    CHECK(s_after == s_before + 1,
-          "bump_macro_introduced_skipped_in_query: " + std::to_string(s_before) +
-              " -> " + std::to_string(s_after));
+    CHECK(s_after == s_before + 1, "bump_macro_introduced_skipped_in_query: " +
+                                       std::to_string(s_before) + " -> " + std::to_string(s_after));
 
     auto t_before = ev.get_total_query_calls();
     ev.bump_total_query_calls();
     auto t_after = ev.get_total_query_calls();
     CHECK(t_after == t_before + 1,
-          "bump_total_query_calls: " + std::to_string(t_before) +
-              " -> " + std::to_string(t_after));
+          "bump_total_query_calls: " + std::to_string(t_before) + " -> " + std::to_string(t_after));
     return true;
 }
 
@@ -75,8 +70,7 @@ bool test_query_hygiene_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:hygiene-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:hygiene-stats returns an integer");
     return true;
 }
 
@@ -164,8 +158,8 @@ bool test_hygiene_stats_after_query() {
     // Note: total_query_calls and skipped may be 0 here if
     // the test's evaluator instance differs from the one the
     // primitive captured. We check >= 0 (no crash, no negative).
-    CHECK(true, "total_query_calls observable (may be 0 across instances): " +
-              std::to_string(total));
+    CHECK(true,
+          "total_query_calls observable (may be 0 across instances): " + std::to_string(total));
     return true;
 }
 
@@ -193,8 +187,12 @@ int run_tests() {
 
 } // namespace aura_issue_458_detail
 
-int aura_issue_458_run() { return aura_issue_458_detail::run_tests(); }
+int aura_issue_458_run() {
+    return aura_issue_458_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_458_run(); }
+int main() {
+    return aura_issue_458_run();
+}
 #endif

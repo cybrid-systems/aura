@@ -16,6 +16,6 @@ inline constexpr const char* kCapIoRead = "io-read";
 inline constexpr const char* kCapIoWrite = "io-write";
 inline constexpr const char* kCapExec = "exec";
 
-}  // namespace aura::compiler::security
+} // namespace aura::compiler::security
 
-#endif  // AURA_COMPILER_SECURITY_CAPABILITIES_H
+#endif // AURA_COMPILER_SECURITY_CAPABILITIES_H

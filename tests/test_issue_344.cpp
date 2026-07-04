@@ -37,8 +37,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -48,13 +48,11 @@ import aura.compiler.service;
 namespace aura_issue_344_detail {
 
 // Build a workspace with a few defines.
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define a 1) "
-        "  (define b 2) "
-        "  (define c 3))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define a 1) "
+                       "  (define b 2) "
+                       "  (define c 3))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -72,17 +70,13 @@ bool test_dirty_reason_counts_primitive() {
     compiler::CompilerService cs;
     // No workspace: returns 0/0/0/0/0/0/0/0.
     auto r0 = cs.eval("(compile:dirty-reason-counts)");
-    CHECK(r0.has_value(),
-          "no-workspace: primitive returns a value");
-    CHECK(aura::compiler::types::is_pair(*r0),
-          "no-workspace: 8-tuple is a pair (right-folded)");
+    CHECK(r0.has_value(), "no-workspace: primitive returns a value");
+    CHECK(aura::compiler::types::is_pair(*r0), "no-workspace: 8-tuple is a pair (right-folded)");
     // With workspace.
     build_workspace(cs);
     auto r1 = cs.eval("(compile:dirty-reason-counts)");
-    CHECK(r1.has_value(),
-          "with-workspace: primitive returns a value");
-    CHECK(aura::compiler::types::is_pair(*r1),
-          "with-workspace: 8-tuple is a pair");
+    CHECK(r1.has_value(), "with-workspace: primitive returns a value");
+    CHECK(aura::compiler::types::is_pair(*r1), "with-workspace: 8-tuple is a pair");
     return true;
 }
 
@@ -94,7 +88,10 @@ bool test_dirty_nodes_primitive() {
     std::println("\n--- AC2: (query:dirty-nodes :reason \"X\") ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // No dirty reasons set yet — the list should
     // be empty (void).
     auto r1 = cs.eval("(query:dirty-nodes \"general\")");
@@ -125,12 +122,9 @@ bool test_mark_constraint_dirty_shows_up() {
     flat.mark_dirty(a, static_cast<std::uint8_t>(aura::ast::FlatAST::kConstraintDirty));
     // The dirty_view should have a's byte = 0x02.
     const auto view = flat.dirty_view();
-    CHECK(view.size() >= 2,
-          "dirty_view size >= 2");
-    CHECK(view[a] == 0x02,
-          "a has kConstraintDirty (0x02)");
-    CHECK(view[b] == 0,
-          "b is not dirty");
+    CHECK(view.size() >= 2, "dirty_view size >= 2");
+    CHECK(view[a] == 0x02, "a has kConstraintDirty (0x02)");
+    CHECK(view[b] == 0, "b is not dirty");
     return true;
 }
 
@@ -145,11 +139,9 @@ bool test_clear_removes_from_result() {
     const auto a = flat.add_variable(0);
     // Mark + verify + clear + verify.
     flat.mark_dirty(a, static_cast<std::uint8_t>(aura::ast::FlatAST::kConstraintDirty));
-    CHECK(flat.dirty_view()[a] == 0x02,
-          "post-mark: a has 0x02");
+    CHECK(flat.dirty_view()[a] == 0x02, "post-mark: a has 0x02");
     flat.clear_dirty_for(a, static_cast<std::uint8_t>(aura::ast::FlatAST::kConstraintDirty));
-    CHECK(flat.dirty_view()[a] == 0,
-          "post-clear: a has 0");
+    CHECK(flat.dirty_view()[a] == 0, "post-clear: a has 0");
     return true;
 }
 
@@ -161,21 +153,25 @@ bool test_end_to_end_mark_and_query() {
     std::println("\n--- AC5: end-to-end mark + query ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto* ws = cs.workspace_flat();
-    if (!ws) { ++g_failed; return false; }
+    if (!ws) {
+        ++g_failed;
+        return false;
+    }
     if (ws->size() > 0) {
         // Mark node 0 dirty for kConstraintDirty.
         ws->mark_dirty(static_cast<aura::ast::NodeId>(0),
-                        static_cast<std::uint8_t>(
-                            aura::ast::FlatAST::kConstraintDirty));
+                       static_cast<std::uint8_t>(aura::ast::FlatAST::kConstraintDirty));
     }
     // (query:dirty-nodes "constraint") should now
     // return a non-empty list (or at least return
     // a value).
     auto r = cs.eval("(query:dirty-nodes \"constraint\")");
-    CHECK(r.has_value(),
-          "post-mark: (query:dirty-nodes \"constraint\") returns a value");
+    CHECK(r.has_value(), "post-mark: (query:dirty-nodes \"constraint\") returns a value");
     return true;
 }
 
@@ -191,10 +187,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_344_detail
+} // namespace aura_issue_344_detail
 
-int aura_issue_344_run() { return aura_issue_344_detail::run_tests(); }
+int aura_issue_344_run() {
+    return aura_issue_344_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_344_run(); }
+int main() {
+    return aura_issue_344_run();
+}
 #endif

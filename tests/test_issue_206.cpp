@@ -33,16 +33,15 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_206_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // Helper: allocate N pairs into the evaluator's pairs_ arena.
 // We use the CompilerService.eval interface (the Aura-level
@@ -51,8 +50,7 @@ namespace aura_issue_206_detail {
 static void alloc_pairs(aura::compiler::CompilerService& cs, int n) {
     for (int i = 0; i < n; ++i) {
         // Each pair: (i, i+1) — distinct values for verification
-        std::string src = "(cons " + std::to_string(i) + " " +
-                          std::to_string(i + 1) + ")";
+        std::string src = "(cons " + std::to_string(i) + " " + std::to_string(i + 1) + ")";
         auto r = cs.eval(src);
         (void)r;
     }
@@ -67,8 +65,7 @@ bool test_resolve_pair_identity_before_compact() {
     alloc_pairs(cs, 5);
     auto& ev = cs.evaluator();
     // No compact has happened; remap is empty
-    CHECK(ev.pair_remap_size() == 0,
-          "remap is empty (no compact yet)");
+    CHECK(ev.pair_remap_size() == 0, "remap is empty (no compact yet)");
     // All 5 pairs resolve to themselves
     for (std::uint64_t i = 0; i < 5; ++i) {
         CHECK(ev.resolve_pair(i) == static_cast<std::int64_t>(i),
@@ -93,8 +90,7 @@ bool test_compact_pairs_empty_mask_all_live() {
     // Remap: 0→0, 1→1, 2→2, 3→3, 4→4
     for (std::uint64_t i = 0; i < 5; ++i) {
         CHECK(ev.resolve_pair(i) == static_cast<std::int64_t>(i),
-              "resolve_pair(" + std::to_string(i) +
-                  ") is identity after all-live compact");
+              "resolve_pair(" + std::to_string(i) + ") is identity after all-live compact");
     }
     return true;
 }
@@ -199,8 +195,7 @@ bool test_resolve_pair_out_of_range() {
     std::vector<bool> empty_mask;
     ev.compact_pairs(empty_mask);
     // remap is size 3; resolve_pair(999) is out of range
-    CHECK(ev.resolve_pair(999) == -1,
-          "resolve_pair(999) returns -1 (out of remap range)");
+    CHECK(ev.resolve_pair(999) == -1, "resolve_pair(999) returns -1 (out of remap range)");
     // resolve_pair(2) is in range, identity
     CHECK(ev.resolve_pair(2) == 2, "resolve_pair(2) is in range, identity");
     return true;
@@ -218,9 +213,7 @@ bool test_compact_pairs_all_dead() {
     std::int64_t n_after = ev.compact_pairs(mask);
     CHECK(n_after == 0, "0 pairs remain after all-dead compact");
     for (std::uint64_t i = 0; i < 4; ++i) {
-        CHECK(ev.resolve_pair(i) == -1,
-              "resolve_pair(" + std::to_string(i) +
-                  ") is -1 (all dead)");
+        CHECK(ev.resolve_pair(i) == -1, "resolve_pair(" + std::to_string(i) + ") is -1 (all dead)");
     }
     return true;
 }
@@ -241,7 +234,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_206_detail
+} // namespace aura_issue_206_detail
 
-int aura_issue_206_run() { return aura_issue_206_detail::run_tests(); }
-
+int aura_issue_206_run() {
+    return aura_issue_206_detail::run_tests();
+}

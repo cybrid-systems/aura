@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -30,17 +30,16 @@ import aura.core;
 import aura.compiler.value;
 
 
-
 namespace aura_issue_174_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // Helper: build an Env, bind a few name→value pairs, and
 // return it. The pool_ is set to the canonical pool so
 // bind(name, value) works as expected. Uses bind_symid
 // (which mirrors to bindings_) so both views are populated.
-static aura::compiler::Env make_env_with_bindings(
-    aura::ast::StringPool& pool,
-    const std::vector<std::pair<std::string, int>>& pairs) {
+static aura::compiler::Env
+make_env_with_bindings(aura::ast::StringPool& pool,
+                       const std::vector<std::pair<std::string, int>>& pairs) {
     aura::compiler::Env env;
     env.set_pool(&pool);
     for (const auto& [n, v] : pairs) {
@@ -68,13 +67,10 @@ static aura::compiler::Env make_env_bindings_empty() {
 bool test_bindings_symid_iter_matches_bindings() {
     PRINTLN("\n--- Test 1: bindings_symid_iter matches bindings() ---");
     aura::ast::StringPool pool;
-    auto env = make_env_with_bindings(pool, {
-        {"x", 42}, {"y", 99}, {"z", 7}
-    });
+    auto env = make_env_with_bindings(pool, {{"x", 42}, {"y", 99}, {"z", 7}});
     auto legacy = env.bindings();
     auto symid_view = env.bindings_symid_iter();
-    CHECK(legacy.size() == symid_view.size(),
-          "legacy and symid views have same length");
+    CHECK(legacy.size() == symid_view.size(), "legacy and symid views have same length");
     CHECK(legacy.size() == 3, "3 bindings");
     // Same values, same order
     for (std::size_t i = 0; i < legacy.size(); ++i) {
@@ -85,8 +81,7 @@ bool test_bindings_symid_iter_matches_bindings() {
     // resolve the SymIds via the pool to compare)
     for (std::size_t i = 0; i < legacy.size(); ++i) {
         std::string_view resolved = pool.resolve(symid_view[i].first);
-        CHECK(resolved == legacy[i].first,
-              "name at index " + std::to_string(i) + " matches");
+        CHECK(resolved == legacy[i].first, "name at index " + std::to_string(i) + " matches");
     }
     return true;
 }
@@ -97,21 +92,19 @@ bool test_bindings_legacy_uses_counter() {
     PRINTLN("\n--- Test 2: bindings_legacy_uses counter ---");
     aura::ast::StringPool pool;
     auto env = make_env_bindings_empty();
-    CHECK(env.bindings_legacy_uses() == 0,
-          "counter starts at 0");
+    CHECK(env.bindings_legacy_uses() == 0, "counter starts at 0");
     // First legacy access: counter = 1
     auto legacy = env.bindings();
-    CHECK(env.bindings_legacy_uses() == 1,
-          "counter bumps to 1 after one legacy access");
+    CHECK(env.bindings_legacy_uses() == 1, "counter bumps to 1 after one legacy access");
     // Second legacy access: counter = 2
     auto legacy2 = env.bindings();
-    CHECK(env.bindings_legacy_uses() == 2,
-          "counter bumps to 2 after two legacy accesses");
+    CHECK(env.bindings_legacy_uses() == 2, "counter bumps to 2 after two legacy accesses");
     // New accessor does NOT bump the counter
     auto symid_view = env.bindings_symid_iter();
-    CHECK(env.bindings_legacy_uses() == 2,
-          "counter unchanged after bindings_symid_iter access");
-    (void)legacy; (void)legacy2; (void)symid_view;
+    CHECK(env.bindings_legacy_uses() == 2, "counter unchanged after bindings_symid_iter access");
+    (void)legacy;
+    (void)legacy2;
+    (void)symid_view;
     return true;
 }
 
@@ -125,15 +118,12 @@ bool test_bind_symid_works_without_pool() {
     PRINTLN("\n--- Test 3: bind_symid works without pool_ ---");
     aura::compiler::Env env;
     // No set_pool() — pool_ is nullptr
-    CHECK(env.bindings_symid_iter().size() == 0,
-          "no bindings before bind");
+    CHECK(env.bindings_symid_iter().size() == 0, "no bindings before bind");
     // bind_symid with a synthetic SymId (don't need a pool)
     env.bind_symid(42, aura::compiler::types::make_int(123));
     auto symid_view = env.bindings_symid_iter();
-    CHECK(symid_view.size() == 1,
-          "1 binding after bind_symid");
-    CHECK(symid_view[0].first == 42,
-          "SymId is 42");
+    CHECK(symid_view.size() == 1, "1 binding after bind_symid");
+    CHECK(symid_view[0].first == 42, "SymId is 42");
     return true;
 }
 
@@ -159,8 +149,7 @@ bool test_bind_symid_mirrors_to_legacy() {
     // SymId view should have the same binding
     auto symid_view = env.bindings_symid_iter();
     CHECK(symid_view.size() == 1, "1 binding in symid view");
-    CHECK(symid_view[0].first == symid_x,
-          "SymId matches pool.intern('x')");
+    CHECK(symid_view[0].first == symid_x, "SymId matches pool.intern('x')");
     return true;
 }
 
@@ -171,9 +160,7 @@ bool test_bind_symid_mirrors_to_legacy() {
 bool test_bindings_with_names() {
     PRINTLN("\n--- Test 5: bindings_with_names() ---");
     aura::ast::StringPool pool;
-    auto env = make_env_with_bindings(pool, {
-        {"alpha", 1}, {"beta", 2}, {"gamma", 3}
-    });
+    auto env = make_env_with_bindings(pool, {{"alpha", 1}, {"beta", 2}, {"gamma", 3}});
     auto named = env.bindings_with_names();
     CHECK(named.size() == 3, "3 named bindings");
     CHECK(named[0].first == "alpha", "[0] is 'alpha'");
@@ -184,8 +171,7 @@ bool test_bindings_with_names() {
     env_no_pool.bind_symid(7, aura::compiler::types::make_int(99));
     auto named_no_pool = env_no_pool.bindings_with_names();
     CHECK(named_no_pool.size() == 1, "1 named binding (no pool)");
-    CHECK(named_no_pool[0].first == "@symid:7",
-          "fallback name is '@symid:7'");
+    CHECK(named_no_pool[0].first == "@symid:7", "fallback name is '@symid:7'");
     return true;
 }
 
@@ -204,7 +190,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_174_detail
+} // namespace aura_issue_174_detail
 
-int aura_issue_174_run() { return aura_issue_174_detail::run_tests(); }
-
+int aura_issue_174_run() {
+    return aura_issue_174_detail::run_tests();
+}

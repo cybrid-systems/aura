@@ -39,8 +39,8 @@
 #include "serve/scheduler.h"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -56,12 +56,11 @@ namespace aura_issue_359_detail {
 
 // Poll an atomic counter until it reaches `expected` or
 // `timeout` elapses. Returns true on success.
-template <typename A>
-bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 5000) {
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(timeout_ms);
+template <typename A> bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 5000) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (counter.load() < expected) {
-        if (std::chrono::steady_clock::now() >= deadline) return false;
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;
@@ -121,8 +120,7 @@ bool test_nested_mutate_stress() {
     CHECK(waited, "all 64 fibers completed (no deadlock on nested guards)");
     int ok_count = ok.load();
     std::string ok_msg = "all fibers completed (no deadlock, no crash under nested guards): " +
-                         std::to_string(ok_count) + "/" +
-                         std::to_string(NUM_FIBERS);
+                         std::to_string(ok_count) + "/" + std::to_string(NUM_FIBERS);
     CHECK(ok_count == NUM_FIBERS, ok_msg.c_str());
     return true;
 }
@@ -141,18 +139,15 @@ bool test_any_active_mutation_boundary_reflects_guard() {
     std::println("\n--- AC2: any_active_mutation_boundary() reflects live Guard ---");
     aura::compiler::Evaluator ev;
     // No Guard alive yet.
-    CHECK(!ev.any_active_mutation_boundary(),
-          "no active mutation boundary before Guard ctor");
+    CHECK(!ev.any_active_mutation_boundary(), "no active mutation boundary before Guard ctor");
 
     bool success = true;
     {
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &success);
-        CHECK(ev.any_active_mutation_boundary(),
-              "active mutation boundary during Guard lifetime");
+        CHECK(ev.any_active_mutation_boundary(), "active mutation boundary during Guard lifetime");
     }
     // Guard dtor ran — flag should be cleared.
-    CHECK(!ev.any_active_mutation_boundary(),
-          "no active mutation boundary after Guard dtor");
+    CHECK(!ev.any_active_mutation_boundary(), "no active mutation boundary after Guard dtor");
     return true;
 }
 
@@ -227,8 +222,7 @@ bool test_concurrent_mutate_and_query_stress() {
     CHECK(waited, "all mutator + reader fibers completed (no deadlock)");
     int ok_count = ok.load();
     std::string ok_msg = "all mutator fibers got a consistent final state (" +
-                         std::to_string(ok_count) + "/" +
-                         std::to_string(MUTATORS) +
+                         std::to_string(ok_count) + "/" + std::to_string(MUTATORS) +
                          "; accept x==0 if set! unsupported, x==10 otherwise)";
     CHECK(ok_count == MUTATORS, ok_msg.c_str());
     return true;
@@ -253,6 +247,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_359_detail
+} // namespace aura_issue_359_detail
 
-int aura_issue_359_run() { return aura_issue_359_detail::run_tests(); }
+int aura_issue_359_run() {
+    return aura_issue_359_detail::run_tests();
+}

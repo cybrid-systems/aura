@@ -51,8 +51,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -61,23 +61,27 @@ import aura.compiler.value;
 import aura.compiler.service;
 
 namespace aura_issue_308_detail {
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // Helper: run an Aura expression through CompilerService and
 // return the result as int64_t. Returns -1 on non-int / error.
 static std::int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -97,14 +101,14 @@ static bool test_hw_enum_case_exhaustiveness() {
     // Define a hardware-style enum + an incomplete case.
     // The typecheck path should produce a warning-level
     // diagnostic for the missing arm.
-    cs.set_code(
-        "(begin "
-        "  (define-type (FsmState) (Idle) (Running) (Done)) "
-        "  (let ((__match_tmp Idle)) "
-        "    (match __match_tmp "
-        "      ((Idle) 0) "
-        "      ((Running) 1))))");
-    auto r = cs.typecheck("(let ((__match_tmp Idle)) (match __match_tmp ((Idle) 0) ((Running) 1)))");
+    cs.set_code("(begin "
+                "  (define-type (FsmState) (Idle) (Running) (Done)) "
+                "  (let ((__match_tmp Idle)) "
+                "    (match __match_tmp "
+                "      ((Idle) 0) "
+                "      ((Running) 1))))");
+    auto r =
+        cs.typecheck("(let ((__match_tmp Idle)) (match __match_tmp ((Idle) 0) ((Running) 1)))");
     // The typecheck runs and the exhaustiveness check fires
     // on the __match_tmp let. We don't fail if the user code
     // doesn't crash — the issue is that the missing arm is
@@ -168,40 +172,37 @@ static bool test_hw_bitvec_aura_primitives() {
     auto r3 = run_int(cs, "(compile:hw-bitvec-register \"auto_created_type\" 12 0)");
     CHECK_EQ(r3, std::int64_t{1}, "register on non-existent type auto-creates + returns 1");
     // The newly-created type should be queryable.
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"auto_created_type\")"),
-             std::int64_t{12}, "auto-created type width is 12");
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"auto_created_type\")"), std::int64_t{12},
+             "auto-created type width is 12");
     // Query widths.
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"uint8_t\")"),
-             std::int64_t{8}, "uint8_t width is 8");
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"uint16_t\")"),
-             std::int64_t{16}, "uint16_t width is 16");
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"uint8_t\")"), std::int64_t{8},
+             "uint8_t width is 8");
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"uint16_t\")"), std::int64_t{16},
+             "uint16_t width is 16");
     // Query signedness.
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-signed? \"uint8_t\")"),
-             std::int64_t{0}, "uint8_t is unsigned");
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-signed? \"uint8_t\")"), std::int64_t{0},
+             "uint8_t is unsigned");
     // Register a signed type and check.
     cs.eval("(compile:hw-bitvec-register \"int8_t\" 8 1)");
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-signed? \"int8_t\")"),
-             std::int64_t{1}, "int8_t is signed");
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-signed? \"int8_t\")"), std::int64_t{1},
+             "int8_t is signed");
     // Non-hw types return 0 — the contract is "0 = not a hw bitvec".
     // Note: the primitive auto-registers unknown types on first
     // call, so to test the "non-hw" path we need a type that
     // was registered as a non-hw type. We use a fresh name
     // (different from the others) and rely on the fact that
     // some types in the prebuilt registry may not be hw bitvecs.
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"Int\")"),
-             std::int64_t{0}, "predefined Int type is not a hw bitvec");
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-width \"Int\")"), std::int64_t{0},
+             "predefined Int type is not a hw bitvec");
     // AC2 THE KEY CHECK: width mismatch detected.
     CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"uint8_t\" \"uint16_t\")"),
-             std::int64_t{0},
-             "uint8_t vs uint16_t is INCOMPATIBLE (different widths)");
+             std::int64_t{0}, "uint8_t vs uint16_t is INCOMPATIBLE (different widths)");
     // Same width + signedness: compatible.
     cs.eval("(compile:hw-bitvec-register \"uint8_b\" 8 0)");
     CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"uint8_t\" \"uint8_b\")"),
-             std::int64_t{1},
-             "uint8_t vs uint8_b (same width + signedness) is COMPATIBLE");
+             std::int64_t{1}, "uint8_t vs uint8_b (same width + signedness) is COMPATIBLE");
     // Same width, different signedness: INCOMPATIBLE.
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"uint8_t\" \"int8_t\")"),
-             std::int64_t{0},
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"uint8_t\" \"int8_t\")"), std::int64_t{0},
              "uint8_t vs int8_t (same width, different signedness) is INCOMPATIBLE");
     return true;
 }
@@ -222,24 +223,23 @@ static bool test_hw_nested_match_exhaustiveness() {
     // Define a hardware-style nested ADT: BusWidth = W8 | W16 | W32.
     // (For Aura, define-type takes a fixed ctor list; nested
     // ADTs (adt-in-adt) require a define-type per layer.)
-    cs.set_code(
-        "(begin "
-        "  (define-type (BusWidth) (W8) (W16) (W32)) "
-        "  (let ((__match_tmp W8)) "
-        "    (match __match_tmp "
-        "      ((W8) 8) "
-        "      ((W16) 16) "
-        "      ((W32) 32))))");
-    auto r = cs.typecheck("(let ((__match_tmp W8)) (match __match_tmp ((W8) 8) ((W16) 16) ((W32) 32)))");
+    cs.set_code("(begin "
+                "  (define-type (BusWidth) (W8) (W16) (W32)) "
+                "  (let ((__match_tmp W8)) "
+                "    (match __match_tmp "
+                "      ((W8) 8) "
+                "      ((W16) 16) "
+                "      ((W32) 32))))");
+    auto r =
+        cs.typecheck("(let ((__match_tmp W8)) (match __match_tmp ((W8) 8) ((W16) 16) ((W32) 32)))");
     CHECK(!r.empty(), "nested hw match typechecks without crashing");
     // Also verify the incomplete variant is detectable.
-    cs.set_code(
-        "(begin "
-        "  (define-type (BusWidth) (W8) (W16) (W32)) "
-        "  (let ((__match_tmp W8)) "
-        "    (match __match_tmp "
-        "      ((W8) 8) "
-        "      ((W16) 16))))");
+    cs.set_code("(begin "
+                "  (define-type (BusWidth) (W8) (W16) (W32)) "
+                "  (let ((__match_tmp W8)) "
+                "    (match __match_tmp "
+                "      ((W8) 8) "
+                "      ((W16) 16))))");
     auto r2 = cs.typecheck("(let ((__match_tmp W8)) (match __match_tmp ((W8) 8) ((W16) 16)))");
     CHECK(!r2.empty(), "incomplete nested hw match typechecks (warning, not crash)");
     return true;
@@ -257,23 +257,20 @@ static bool test_hw_module_pattern() {
     std::println("\n--- AC4: hardware module pattern (enum + BitVector signal) ---");
     using namespace aura;
     compiler::CompilerService cs;
-    cs.set_code(
-        "(begin "
-        "  (define-type (Width) (W8) (W16) (W32)) "
-        "  (define data_w W8) "
-        "  (define addr_w W16) "
-        "  (define data_size 8) "
-        "  (define addr_size 16))");
+    cs.set_code("(begin "
+                "  (define-type (Width) (W8) (W16) (W32)) "
+                "  (define data_w W8) "
+                "  (define addr_w W16) "
+                "  (define data_size 8) "
+                "  (define addr_size 16))");
     cs.eval("(compile:hw-bitvec-register \"data_w\" 8 0)");
     cs.eval("(compile:hw-bitvec-register \"addr_w\" 16 0)");
     // data_w and addr_w have different widths — incompatible.
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"data_w\" \"addr_w\")"),
-             std::int64_t{0},
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"data_w\" \"addr_w\")"), std::int64_t{0},
              "data_w (8-bit) vs addr_w (16-bit) is INCOMPATIBLE");
     // Same width — compatible.
     cs.eval("(compile:hw-bitvec-register \"data_w2\" 8 0)");
-    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"data_w\" \"data_w2\")"),
-             std::int64_t{1},
+    CHECK_EQ(run_int(cs, "(compile:hw-bitvec-compatible? \"data_w\" \"data_w2\")"), std::int64_t{1},
              "data_w vs data_w2 (both 8-bit) is COMPATIBLE");
     return true;
 }
@@ -290,10 +287,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_308_detail
+} // namespace aura_issue_308_detail
 
-int aura_issue_308_run() { return aura_issue_308_detail::run_tests(); }
+int aura_issue_308_run() {
+    return aura_issue_308_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_308_run(); }
+int main() {
+    return aura_issue_308_run();
+}
 #endif

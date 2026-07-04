@@ -48,8 +48,10 @@ using aura::compiler::CompilerService;
 
 // Helpers.
 static std::int64_t to_int(const aura::compiler::EvalResult& r) {
-    if (!r) return -999999;
-    if (!aura::compiler::types::is_int(*r)) return -888888;
+    if (!r)
+        return -999999;
+    if (!aura::compiler::types::is_int(*r))
+        return -888888;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -76,16 +78,19 @@ bool test_arithmetic_consistency() {
         std::string code;
         int expected = 0;
         switch (o) {
-            case 0: code = "(+ " + std::to_string(a) + " " + std::to_string(b) + ")";
-                    expected = a + b; break;
-            case 1: code = "(- " + std::to_string(a) + " " + std::to_string(b) + ")";
-                    expected = a - b; break;
+            case 0:
+                code = "(+ " + std::to_string(a) + " " + std::to_string(b) + ")";
+                expected = a + b;
+                break;
+            case 1:
+                code = "(- " + std::to_string(a) + " " + std::to_string(b) + ")";
+                expected = a - b;
+                break;
         }
         auto r = cs.eval(code);
         std::int64_t got = to_int(r);
         if (got != expected) {
-            std::println(std::cerr,
-                "  DIV: {} → expected {}, got {}", code, expected, got);
+            std::println(std::cerr, "  DIV: {} → expected {}, got {}", code, expected, got);
             ++divergences;
         }
     }
@@ -105,9 +110,12 @@ bool test_comparison_consistency() {
         int a = nd(rng);
         int b = nd(rng);
         // Chained comparison: (< a b) AND (< b (* a 2))
-        std::string code = "(if (and (< " + std::to_string(a) + " " + std::to_string(b) + ") "
-                        "(< " + std::to_string(b) + " (* " + std::to_string(a) + " 2))) "
-                        "1 0)";
+        std::string code = "(if (and (< " + std::to_string(a) + " " + std::to_string(b) +
+                           ") "
+                           "(< " +
+                           std::to_string(b) + " (* " + std::to_string(a) +
+                           " 2))) "
+                           "1 0)";
         auto r = cs.eval(code);
         // If r is int 1 or 0, it's a valid bool-coerced result.
         // Otherwise it might be a bool.
@@ -116,12 +124,11 @@ bool test_comparison_consistency() {
             std::int64_t got = to_int(r);
             std::int64_t exp_i = expected ? 1 : 0;
             if (got != exp_i && got != -888888) {
-                std::println(std::cerr,
-                    "  DIV: {} → expected {}, got {}", code, exp_i, got);
+                std::println(std::cerr, "  DIV: {} → expected {}, got {}", code, exp_i, got);
                 ++divergences;
             }
         } else {
-            ++divergences;  // unexpected error
+            ++divergences; // unexpected error
         }
     }
     std::println("  50 chained comparisons, divergences: {}", divergences);
@@ -150,9 +157,7 @@ bool test_define_rebind_consistency() {
         auto r1 = cs.eval("(eval-current)");
         std::int64_t first = to_int(r1);
         if (first != i * 10) {
-            std::println(std::cerr,
-                "  DIV: iter {} initial eval={} expected={}",
-                i, first, i * 10);
+            std::println(std::cerr, "  DIV: iter {} initial eval={} expected={}", i, first, i * 10);
             ++divergences;
             continue;
         }
@@ -162,9 +167,7 @@ bool test_define_rebind_consistency() {
         auto r2 = cs.eval("(eval-current)");
         std::int64_t second = to_int(r2);
         if (second != i * 10 + 1) {
-            std::println(std::cerr,
-                "  DIV: iter {} re-eval={} expected={}",
-                i, second, i * 10 + 1);
+            std::println(std::cerr, "  DIV: iter {} re-eval={} expected={}", i, second, i * 10 + 1);
             ++divergences;
         }
     }
@@ -188,13 +191,11 @@ bool test_eval_stability() {
     int divergences = 0;
     for (std::size_t i = 1; i < results.size(); ++i) {
         if (results[i] != results[0]) {
-            std::println(std::cerr, "  DIV: call {} → {}, expected {}",
-                         i, results[i], results[0]);
+            std::println(std::cerr, "  DIV: call {} → {}, expected {}", i, results[i], results[0]);
             ++divergences;
         }
     }
-    std::println("  10 evals, first={}, all-match: {}",
-                 results[0], divergences == 0);
+    std::println("  10 evals, first={}, all-match: {}", results[0], divergences == 0);
     CHECK(results[0] == 142, "first eval returns 142 (y+z)");
     CHECK(divergences == 0, "all 10 evals produce same result");
     return true;
@@ -211,7 +212,8 @@ bool test_quoted_data_dispatch() {
         // quote evaluates to itself (returns the datum).
         // We don't try to_int — quote returns a Cons or Int depending on arg.
         // Just verify r.has_value() and the dispatch succeeded.
-        if (!r) ++divergences;
+        if (!r)
+            ++divergences;
     }
     std::println("  20 quoted dispatches, errors: {}", divergences);
     CHECK(divergences == 0, "all quoted-data dispatches succeeded");

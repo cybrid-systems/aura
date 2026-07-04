@@ -5,8 +5,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -63,16 +63,17 @@ bool test_hyg_ctr_resets_per_call() {
     auto tgt2 = make_env();
     std::unordered_map<std::string, std::string> map1;
     std::unordered_map<std::string, std::string> map2;
-    (void)aura::compiler::macro_exp::clone_macro_body(
-        *tgt1.flat, *tgt1.pool, *src.flat, *src.pool, body, nullptr, &map1,
-        aura::ast::SyntaxMarker::MacroIntroduced);
-    (void)aura::compiler::macro_exp::clone_macro_body(
-        *tgt2.flat, *tgt2.pool, *src.flat, *src.pool, body, nullptr, &map2,
-        aura::ast::SyntaxMarker::MacroIntroduced);
+    (void)aura::compiler::macro_exp::clone_macro_body(*tgt1.flat, *tgt1.pool, *src.flat, *src.pool,
+                                                      body, nullptr, &map1,
+                                                      aura::ast::SyntaxMarker::MacroIntroduced);
+    (void)aura::compiler::macro_exp::clone_macro_body(*tgt2.flat, *tgt2.pool, *src.flat, *src.pool,
+                                                      body, nullptr, &map2,
+                                                      aura::ast::SyntaxMarker::MacroIntroduced);
     CHECK(map1.count("tmp") == 1, "first expansion gensyms tmp");
     CHECK(map2.count("tmp") == 1, "second expansion gensyms tmp");
     CHECK(map1.at("tmp") == "__tmp_0", "first expansion uses __tmp_0");
-    CHECK(map2.at("tmp") == "__tmp_0", "second expansion also starts at __tmp_0 (not global static)");
+    CHECK(map2.at("tmp") == "__tmp_0",
+          "second expansion also starts at __tmp_0 (not global static)");
     return true;
 }
 
@@ -116,8 +117,7 @@ bool test_builtins_whitelist_not_gensymd() {
     CHECK(rename_map.find("if") == rename_map.end(), "builtin param `if` not gensym'd");
     auto lam = tgt.flat->get(cloned);
     CHECK(lam.tag == aura::ast::NodeTag::Lambda && !lam.params.empty(), "lambda cloned");
-    CHECK(std::string(tgt.pool->resolve(lam.params[0])) == "if",
-          "lambda param remains plain `if`");
+    CHECK(std::string(tgt.pool->resolve(lam.params[0])) == "if", "lambda param remains plain `if`");
     return true;
 }
 
@@ -127,9 +127,9 @@ bool test_separate_expansions_get_distinct_gensyms_in_one_map() {
     auto body = parse(src, "(let ((a 1)) (let ((b 2)) (+ a b)))");
     auto tgt = make_env();
     std::unordered_map<std::string, std::string> rename_map;
-    (void)aura::compiler::macro_exp::clone_macro_body(
-        *tgt.flat, *tgt.pool, *src.flat, *src.pool, body, nullptr, &rename_map,
-        aura::ast::SyntaxMarker::MacroIntroduced);
+    (void)aura::compiler::macro_exp::clone_macro_body(*tgt.flat, *tgt.pool, *src.flat, *src.pool,
+                                                      body, nullptr, &rename_map,
+                                                      aura::ast::SyntaxMarker::MacroIntroduced);
     CHECK(rename_map.at("a") == "__a_0", "first binding is __a_0");
     CHECK(rename_map.at("b") == "__b_1", "second binding is __b_1");
     return true;
@@ -145,10 +145,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
+} // namespace aura_issue_265_detail
+
+int aura_issue_265_run() {
+    return aura_issue_265_detail::run_tests();
 }
 
-int aura_issue_265_run() { return aura_issue_265_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_265_run(); }
+int main() {
+    return aura_issue_265_run();
+}
 #endif

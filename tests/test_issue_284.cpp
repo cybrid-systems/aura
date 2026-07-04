@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -70,14 +70,13 @@ bool test_interface_constructor_and_accessors() {
         return false;
     }
     // Build a 3-port interface with 2 modports.
-    const std::string src =
-        "(define bus-if "
-        "  (make-eda:interface 'bus_if "
-        "    (list (make-eda:port 'clk    'input  1) "
-        "          (make-eda:port 'data   'input  8) "
-        "          (make-eda:port 'ready  'output 1)) "
-        "    (list (make-eda:modport 'master '(clk data ready)) "
-        "          (make-eda:modport 'slave  '(clk data ready)))))";
+    const std::string src = "(define bus-if "
+                            "  (make-eda:interface 'bus_if "
+                            "    (list (make-eda:port 'clk    'input  1) "
+                            "          (make-eda:port 'data   'input  8) "
+                            "          (make-eda:port 'ready  'output 1)) "
+                            "    (list (make-eda:modport 'master '(clk data ready)) "
+                            "          (make-eda:modport 'slave  '(clk data ready)))))";
     if (!cs.eval("(set-code " + src + ")") && !cs.eval(src)) {
         ++g_failed;
         return false;
@@ -96,28 +95,24 @@ bool test_interface_constructor_and_accessors() {
     CHECK(n_ports == 3, "(eda:interface-ports bus-if) has length 3");
 
     // First port name: clk
-    auto first_port_name = run_symbol_str(cs,
-        "(eda:port-name (car (eda:interface-ports bus-if)))");
+    auto first_port_name = run_symbol_str(cs, "(eda:port-name (car (eda:interface-ports bus-if)))");
     CHECK(first_port_name == "clk", "first port name == clk");
 
     // First port direction: input
-    auto first_port_dir = run_symbol_str(cs,
-        "(eda:port-direction (car (eda:interface-ports bus-if)))");
+    auto first_port_dir =
+        run_symbol_str(cs, "(eda:port-direction (car (eda:interface-ports bus-if)))");
     CHECK(first_port_dir == "input", "first port direction == input");
 
     // First port width: 1
-    auto first_port_w = run_int(cs,
-        "(eda:port-width (car (eda:interface-ports bus-if)))");
+    auto first_port_w = run_int(cs, "(eda:port-width (car (eda:interface-ports bus-if)))");
     CHECK(first_port_w == 1, "first port width == 1");
 
     // Second port (data) width: 8
-    auto second_port_w = run_int(cs,
-        "(eda:port-width (cadr (eda:interface-ports bus-if)))");
+    auto second_port_w = run_int(cs, "(eda:port-width (cadr (eda:interface-ports bus-if)))");
     CHECK(second_port_w == 8, "second port (data) width == 8");
 
     // Third port (ready) width: 1
-    auto third_port_w = run_int(cs,
-        "(eda:port-width (caddr (eda:interface-ports bus-if)))");
+    auto third_port_w = run_int(cs, "(eda:port-width (caddr (eda:interface-ports bus-if)))");
     CHECK(third_port_w == 1, "third port (ready) width == 1");
 
     // Modports accessor: 2 modports
@@ -135,8 +130,7 @@ bool test_modport_constructor_and_accessors() {
         ++g_failed;
         return false;
     }
-    const std::string src =
-        "(define mp (make-eda:modport 'master '(clk data ready)))";
+    const std::string src = "(define mp (make-eda:modport 'master '(clk data ready)))";
     if (!cs.eval(src)) {
         ++g_failed;
         return false;
@@ -219,7 +213,8 @@ bool test_emit_modport_single_arg() {
           std::string("empty modport emit starts with 'modport void (' (got: \"") + s2 + "\")");
     // It must contain the closing paren somewhere.
     bool has_close = (s2.find(")") != std::string::npos);
-    CHECK(has_close, std::string("empty modport emit contains closing paren (got: \"") + s2 + "\")");
+    CHECK(has_close,
+          std::string("empty modport emit contains closing paren (got: \"") + s2 + "\")");
 
     // Single port-name
     if (!cs.eval("(define single-mp (make-eda:modport 'clk-only '(clk)))")) {
@@ -241,12 +236,11 @@ bool test_emit_modport_with_direction() {
         ++g_failed;
         return false;
     }
-    const std::string src =
-        "(define ports "
-        "  (list (make-eda:port 'clk    'input  1) "
-        "        (make-eda:port 'data   'input  8) "
-        "        (make-eda:port 'ready  'output 1))) "
-        "(define mp (make-eda:modport 'master '(clk data ready)))";
+    const std::string src = "(define ports "
+                            "  (list (make-eda:port 'clk    'input  1) "
+                            "        (make-eda:port 'data   'input  8) "
+                            "        (make-eda:port 'ready  'output 1))) "
+                            "(define mp (make-eda:modport 'master '(clk data ready)))";
     if (!cs.eval(src)) {
         ++g_failed;
         return false;
@@ -275,14 +269,13 @@ bool test_emit_interface() {
         ++g_failed;
         return false;
     }
-    const std::string src =
-        "(define bus-if "
-        "  (make-eda:interface 'bus_if "
-        "    (list (make-eda:port 'clk   'input  1) "
-        "          (make-eda:port 'data  'input  8) "
-        "          (make-eda:port 'ready 'output 1)) "
-        "    (list (make-eda:modport 'master '(clk data ready)) "
-        "          (make-eda:modport 'slave  '(clk data ready)))))";
+    const std::string src = "(define bus-if "
+                            "  (make-eda:interface 'bus_if "
+                            "    (list (make-eda:port 'clk   'input  1) "
+                            "          (make-eda:port 'data  'input  8) "
+                            "          (make-eda:port 'ready 'output 1)) "
+                            "    (list (make-eda:modport 'master '(clk data ready)) "
+                            "          (make-eda:modport 'slave  '(clk data ready)))))";
     if (!cs.eval(src)) {
         ++g_failed;
         return false;
@@ -318,12 +311,11 @@ bool test_emit_verilog_dispatch() {
         ++g_failed;
         return false;
     }
-    const std::string src =
-        "(define bus-if "
-        "  (make-eda:interface 'bus_if "
-        "    (list (make-eda:port 'clk   'input  1) "
-        "          (make-eda:port 'data  'input  8)) "
-        "    (list (make-eda:modport 'master '(clk data)))))";
+    const std::string src = "(define bus-if "
+                            "  (make-eda:interface 'bus_if "
+                            "    (list (make-eda:port 'clk   'input  1) "
+                            "          (make-eda:port 'data  'input  8)) "
+                            "    (list (make-eda:modport 'master '(clk data)))))";
     if (!cs.eval(src)) {
         ++g_failed;
         return false;
@@ -356,11 +348,10 @@ bool test_display_interface_modport() {
         ++g_failed;
         return false;
     }
-    const std::string src =
-        "(define bus-if "
-        "  (make-eda:interface 'bus_if "
-        "    (list (make-eda:port 'clk 'input 1)) "
-        "    (list (make-eda:modport 'master '(clk)))))";
+    const std::string src = "(define bus-if "
+                            "  (make-eda:interface 'bus_if "
+                            "    (list (make-eda:port 'clk 'input 1)) "
+                            "    (list (make-eda:modport 'master '(clk)))))";
     if (!cs.eval(src)) {
         ++g_failed;
         return false;
@@ -422,23 +413,20 @@ bool test_round_trip_complex_interface() {
     auto n_mps = run_int(cs, "(length (eda:interface-modports cpu-bus))");
     CHECK(n_mps == 3, "complex interface has 3 modports");
 
-    auto master_pn_count = run_int(cs,
-        "(length (eda:modport-port-names "
-        "          (car (eda:interface-modports cpu-bus))))");
+    auto master_pn_count = run_int(cs, "(length (eda:modport-port-names "
+                                       "          (car (eda:interface-modports cpu-bus))))");
     CHECK(master_pn_count == 4, "master modport has 4 port-names");
 
-    auto monitor_pn_count = run_int(cs,
-        "(length (eda:modport-port-names "
-        "          (caddr (eda:interface-modports cpu-bus))))");
+    auto monitor_pn_count = run_int(cs, "(length (eda:modport-port-names "
+                                        "          (caddr (eda:interface-modports cpu-bus))))");
     CHECK(monitor_pn_count == 6, "monitor modport has 6 port-names (all ports)");
 
     // Emitted Verilog must contain all 3 modport names.
     auto s = run_string(cs, "(eda:emit-interface cpu-bus)");
     bool has_master = (s.find("modport master") != std::string::npos);
-    bool has_slave  = (s.find("modport slave") != std::string::npos);
-    bool has_monitor= (s.find("modport monitor") != std::string::npos);
-    CHECK(has_master && has_slave && has_monitor,
-          "all 3 modport names appear in emitted Verilog");
+    bool has_slave = (s.find("modport slave") != std::string::npos);
+    bool has_monitor = (s.find("modport monitor") != std::string::npos);
+    CHECK(has_master && has_slave && has_monitor, "all 3 modport names appear in emitted Verilog");
 
     // Direction flip: master has wdata as input.
     bool has_master_wdata = (s.find("input wdata") != std::string::npos);
@@ -471,8 +459,12 @@ int run_tests() {
 
 } // namespace aura_issue_284_detail
 
-int aura_issue_284_run() { return aura_issue_284_detail::run_tests(); }
+int aura_issue_284_run() {
+    return aura_issue_284_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_284_run(); }
+int main() {
+    return aura_issue_284_run();
+}
 #endif

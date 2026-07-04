@@ -33,8 +33,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -45,7 +45,6 @@ import aura.diag;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_142_detail {
@@ -64,22 +63,27 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 
 static bool run_ok(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return false;
+    if (!r)
+        return false;
     auto& v = *r;
-    if (aura::compiler::types::is_bool(v)) return aura::compiler::types::as_bool(v);
-    if (aura::compiler::types::is_void(v)) return false;
+    if (aura::compiler::types::is_bool(v))
+        return aura::compiler::types::as_bool(v);
+    if (aura::compiler::types::is_void(v))
+        return false;
     return true;
 }
 
-static std::string string_value(aura::compiler::CompilerService& cs,
-                                 std::string_view src) {
+static std::string string_value(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return "";
+    if (!r)
+        return "";
     auto& v = *r;
-    if (!aura::compiler::types::is_string(v)) return "";
+    if (!aura::compiler::types::is_string(v))
+        return "";
     auto idx = aura::compiler::types::as_string_idx(v);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
@@ -93,15 +97,14 @@ bool test_query_where_basic() {
     // query:where returns a predicate pair (not a node list). We
     // verify that it's a pair (truthy, non-void) and that feeding it
     // to query:filter returns a list.
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5))\") "
-        "  (length (query:filter (query:where :tag \"LiteralInt\"))))");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5))\") "
+                                 "  (length (query:filter (query:where :tag \"LiteralInt\"))))");
     // LiteralInt nodes: 1 (the literal in (+ x 1)) and 5 (the call arg).
     // The other ints (0, 1, etc. that might appear) — for a fresh AST
     // it's just these 2.
     CHECK(result == 2, "query:filter (where :tag LiteralInt) found 2 literal int nodes (got " +
-          std::to_string(result) + ")");
+                           std::to_string(result) + ")");
     return true;
 }
 
@@ -109,13 +112,12 @@ bool test_query_filter_basic() {
     std::println("\n--- Test 1.2: query:filter narrows by node type ---");
     aura::compiler::CompilerService cs;
     // Filter to only Call nodes.
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5))\") "
-        "  (length (query:filter (query:where :tag \"Call\"))))");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5))\") "
+                                 "  (length (query:filter (query:where :tag \"Call\"))))");
     // Calls: (f 5), (+ x 1). 2 total.
-    CHECK(result == 2, "query:filter (where :tag Call) found 2 call nodes (got " +
-          std::to_string(result) + ")");
+    CHECK(result == 2,
+          "query:filter (where :tag Call) found 2 call nodes (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -123,16 +125,15 @@ bool test_query_compose_where_filter() {
     std::println("\n--- Test 1.3: query:where + query:filter compose (multi-predicate) ---");
     aura::compiler::CompilerService cs;
     // Multiple predicates AND together. :tag Call AND :depth 1.
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5))\") "
-        "  (length (query:filter "
-        "             (query:where :tag \"Call\") "
-        "             (query:where :depth \"1\"))))");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5))\") "
+                                 "  (length (query:filter "
+                                 "             (query:where :tag \"Call\") "
+                                 "             (query:where :depth \"1\"))))");
     // The top-level Call (f 5) is at depth 1, the inner (+ x 1) Call
     // is at depth 3. So :depth 1 keeps only 1.
-    CHECK(result == 1, "composed :tag Call + :depth 1 → 1 node (got " +
-          std::to_string(result) + ")");
+    CHECK(result == 1,
+          "composed :tag Call + :depth 1 → 1 node (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -182,8 +183,8 @@ bool test_replace_subtree_no_capture() {
                      "         (lit-id (car ids))) "
                      "    (mutate:replace-subtree lit-id \"42\")))");
     CHECK(r.has_value(), "mutate:replace-subtree call succeeded");
-    bool is_true = r.has_value() && aura::compiler::types::is_bool(*r) &&
-                   aura::compiler::types::as_bool(*r);
+    bool is_true =
+        r.has_value() && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
     CHECK(is_true, "no-capture case returns #t");
     return true;
 }
@@ -205,8 +206,8 @@ bool test_hygiene_blocks_macro_nodes() {
                      "  (mutate:replace-subtree -1 \"42\"))");
     CHECK(r.has_value(), "bad target returned a value (not eval error)");
     if (r.has_value()) {
-        bool is_bool_true = aura::compiler::types::is_bool(*r) &&
-                            aura::compiler::types::as_bool(*r);
+        bool is_bool_true =
+            aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
         CHECK(!is_bool_true, "bad target was NOT silently mutated (got non-#t)");
     }
     return true;
@@ -286,13 +287,13 @@ bool test_query_pipeline_for_llm() {
     std::println("\n--- Test 5.2: query:filter (where :tag Call) for LLM tool-use ---");
     aura::compiler::CompilerService cs;
     // A typical LLM query: "find all Call nodes in the user code".
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5) (* 2 3))\") "
-        "  (length (query:filter (query:where :tag \"Call\"))))");
+    int64_t result =
+        run_int(cs, "(begin "
+                    "  (set-code \"(begin (define f (lambda (x) (+ x 1))) (f 5) (* 2 3))\") "
+                    "  (length (query:filter (query:where :tag \"Call\"))))");
     // Calls: (f 5), (+ x 1), (* 2 3). 3 total.
-    CHECK(result == 3, "query:filter (where :tag Call) finds 3 calls (got " +
-          std::to_string(result) + ")");
+    CHECK(result == 3,
+          "query:filter (where :tag Call) finds 3 calls (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -324,12 +325,12 @@ int run_tests() {
     test_llm_refactor_pipeline();
     test_query_pipeline_for_llm();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_142_detail
+} // namespace aura_issue_142_detail
 
-int aura_issue_142_run() { return aura_issue_142_detail::run_tests(); }
-
+int aura_issue_142_run() {
+    return aura_issue_142_detail::run_tests();
+}

@@ -36,8 +36,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -48,7 +48,6 @@ import aura.compiler.evaluator_pure;
 import aura.compiler.value;
 
 
-
 // ── AC #1: coerce_to_int_pure happy paths ─────────────────────
 
 namespace aura_issue_146_detail {
@@ -57,7 +56,8 @@ bool test_pure_int_passthrough() {
     auto v = aura::compiler::types::make_int(42);
     auto r = aura::compiler::pure::coerce_to_int_pure(v, {});
     CHECK(r.has_value(), "int input → has_value");
-    if (r) CHECK(*r == 42, "int value preserved");
+    if (r)
+        CHECK(*r == 42, "int value preserved");
     return true;
 }
 
@@ -66,17 +66,19 @@ bool test_pure_float_truncates() {
     auto v = aura::compiler::types::make_float(3.7);
     auto r = aura::compiler::pure::coerce_to_int_pure(v, {});
     CHECK(r.has_value(), "float input → has_value");
-    if (r) CHECK(*r == 3, "float 3.7 truncates to 3");
+    if (r)
+        CHECK(*r == 3, "float 3.7 truncates to 3");
     return true;
 }
 
 bool test_pure_string_int_parses() {
     std::println("\n--- Test 1.3: coerce_to_int_pure on String-as-Int ---");
     std::vector<std::string> heap{"hello", "123", "world"};
-    auto v = aura::compiler::types::make_string(1);  // index 1 → "123"
+    auto v = aura::compiler::types::make_string(1); // index 1 → "123"
     auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
     CHECK(r.has_value(), "string '123' → has_value");
-    if (r) CHECK(*r == 123, "string '123' parses to 123");
+    if (r)
+        CHECK(*r == 123, "string '123' parses to 123");
     return true;
 }
 
@@ -95,8 +97,7 @@ bool test_pure_void_silent_zero() {
     std::println("\n--- Test 1.5: coerce_to_int_pure on Void/Pair/Closure ---");
     auto v = aura::compiler::types::make_void();
     auto r = aura::compiler::pure::coerce_to_int_pure(v, {});
-    CHECK(r.has_value() && *r == 0,
-          "void → 0 (no error — matches legacy behavior)");
+    CHECK(r.has_value() && *r == 0, "void → 0 (no error — matches legacy behavior)");
     return true;
 }
 
@@ -111,8 +112,7 @@ bool test_pure_string_unparseable_errors() {
     if (!r) {
         // The error Diagnostic should be TypeError
         auto& d = r.error();
-        CHECK(d.kind == aura::diag::ErrorKind::TypeError,
-              "error kind is TypeError");
+        CHECK(d.kind == aura::diag::ErrorKind::TypeError, "error kind is TypeError");
         // Message should mention the unparseable string
         bool msg_ok = d.message.find("not-a-number") != std::string::npos;
         CHECK(msg_ok, "error message mentions the unparseable string");
@@ -123,20 +123,18 @@ bool test_pure_string_unparseable_errors() {
 bool test_pure_string_out_of_bounds_silent_zero() {
     std::println("\n--- Test 2.2: coerce_to_int_pure out-of-bounds string idx ---");
     std::vector<std::string> heap{"only-one"};
-    auto v = aura::compiler::types::make_string(99);  // beyond heap.size()
+    auto v = aura::compiler::types::make_string(99); // beyond heap.size()
     auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-    CHECK(r.has_value() && *r == 0,
-          "out-of-bounds string idx → 0 (no error — legacy compat)");
+    CHECK(r.has_value() && *r == 0, "out-of-bounds string idx → 0 (no error — legacy compat)");
     return true;
 }
 
 bool test_pure_string_empty_heap_silent_zero() {
     std::println("\n--- Test 2.3: coerce_to_int_pure empty heap ---");
-    std::vector<std::string> heap;  // empty
+    std::vector<std::string> heap; // empty
     auto v = aura::compiler::types::make_string(0);
     auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-    CHECK(r.has_value() && *r == 0,
-          "empty heap + string idx → 0 (no error — legacy compat)");
+    CHECK(r.has_value() && *r == 0, "empty heap + string idx → 0 (no error — legacy compat)");
     return true;
 }
 
@@ -159,14 +157,11 @@ bool test_pure_string_empty_heap_silent_zero() {
 // Compile-time check: coerce_to_int_pure is a free function
 // (not a member). SFINAE-fails if it accidentally becomes a
 // member of Evaluator. If this compiles, AC #4 holds.
-template <typename T>
-struct is_member_function_detector {
+template <typename T> struct is_member_function_detector {
     template <typename U>
     static auto test(int) -> decltype(&U::coerce_to_int_pure, std::true_type{});
-    template <typename U>
-    static std::false_type test(...);
-    static constexpr bool value =
-        decltype(test<T>(0))::value;
+    template <typename U> static std::false_type test(...);
+    static constexpr bool value = decltype(test<T>(0))::value;
 };
 
 bool test_pure_is_free_function() {
@@ -185,8 +180,8 @@ bool test_coerce_value_pure_identity() {
     std::println("\n--- Test 5.1: coerce_value_pure same-type identity ---");
     auto v = aura::compiler::types::make_int(42);
     std::pmr::vector<std::string> heap;
-    auto r = aura::compiler::pure::coerce_value_pure(
-        v, aura::core::TypeTag::INT, aura::core::TypeTag::INT, heap);
+    auto r = aura::compiler::pure::coerce_value_pure(v, aura::core::TypeTag::INT,
+                                                     aura::core::TypeTag::INT, heap);
     CHECK(r.has_value(), "INT→INT coercion returns success");
     CHECK(heap.empty(), "identity coercion doesn't push to heap");
     return true;
@@ -196,8 +191,8 @@ bool test_coerce_value_pure_int_to_float() {
     std::println("\n--- Test 5.2: coerce_value_pure INT→FLOAT ---");
     auto v = aura::compiler::types::make_int(7);
     std::pmr::vector<std::string> heap;
-    auto r = aura::compiler::pure::coerce_value_pure(
-        v, aura::core::TypeTag::INT, aura::core::TypeTag::FLOAT, heap);
+    auto r = aura::compiler::pure::coerce_value_pure(v, aura::core::TypeTag::INT,
+                                                     aura::core::TypeTag::FLOAT, heap);
     CHECK(r.has_value(), "INT→FLOAT returns success");
     CHECK(aura::compiler::types::is_float(v), "v mutated to Float");
     CHECK(aura::compiler::types::as_float(v) == 7.0, "value 7 → 7.0");
@@ -208,8 +203,8 @@ bool test_coerce_value_pure_float_to_int() {
     std::println("\n--- Test 5.3: coerce_value_pure FLOAT→INT ---");
     auto v = aura::compiler::types::make_float(3.7);
     std::pmr::vector<std::string> heap;
-    auto r = aura::compiler::pure::coerce_value_pure(
-        v, aura::core::TypeTag::FLOAT, aura::core::TypeTag::INT, heap);
+    auto r = aura::compiler::pure::coerce_value_pure(v, aura::core::TypeTag::FLOAT,
+                                                     aura::core::TypeTag::INT, heap);
     CHECK(r.has_value(), "FLOAT→INT returns success");
     CHECK(aura::compiler::types::is_int(v), "v mutated to Int");
     CHECK(aura::compiler::types::as_int(v) == 3, "value 3.7 truncates to 3");
@@ -220,8 +215,8 @@ bool test_coerce_value_pure_int_to_string_pushes_heap() {
     std::println("\n--- Test 5.4: coerce_value_pure INT→STRING pushes to heap ---");
     auto v = aura::compiler::types::make_int(99);
     std::pmr::vector<std::string> heap;
-    auto r = aura::compiler::pure::coerce_value_pure(
-        v, aura::core::TypeTag::INT, aura::core::TypeTag::STRING, heap);
+    auto r = aura::compiler::pure::coerce_value_pure(v, aura::core::TypeTag::INT,
+                                                     aura::core::TypeTag::STRING, heap);
     CHECK(r.has_value(), "INT→STRING returns success");
     CHECK(heap.size() == 1, "heap has 1 entry after push");
     CHECK(heap[0] == "99", "heap[0] == \"99\"");
@@ -235,8 +230,8 @@ bool test_coerce_value_pure_string_to_int_parses() {
     std::println("\n--- Test 5.5: coerce_value_pure STRING→INT parses ---");
     std::pmr::vector<std::string> heap{"42", "junk"};
     auto v = aura::compiler::types::make_string(0);
-    auto r = aura::compiler::pure::coerce_value_pure(
-        v, aura::core::TypeTag::STRING, aura::core::TypeTag::INT, heap);
+    auto r = aura::compiler::pure::coerce_value_pure(v, aura::core::TypeTag::STRING,
+                                                     aura::core::TypeTag::INT, heap);
     CHECK(r.has_value(), "STRING→INT with '42' returns success");
     CHECK(aura::compiler::types::is_int(v), "v mutated to Int");
     CHECK(aura::compiler::types::as_int(v) == 42, "value '42' → 42");
@@ -247,8 +242,8 @@ bool test_coerce_value_pure_unsupported_errors() {
     std::println("\n--- Test 5.6: coerce_value_pure unsupported coercion errors ---");
     auto v = aura::compiler::types::make_int(1);
     std::pmr::vector<std::string> heap;
-    auto r = aura::compiler::pure::coerce_value_pure(
-        v, aura::core::TypeTag::INT, aura::core::TypeTag::DYNAMIC, heap);
+    auto r = aura::compiler::pure::coerce_value_pure(v, aura::core::TypeTag::INT,
+                                                     aura::core::TypeTag::DYNAMIC, heap);
     CHECK(!r.has_value(), "INT→DYNAMIC returns no value (unsupported)");
     return true;
 }
@@ -343,10 +338,8 @@ bool test_pure_is_truthy_alias_works() {
 
 bool test_pure_edit_distance_basic() {
     std::println("\n--- Test 7.1: pure::edit_distance on known pairs ---");
-    CHECK(aura::compiler::pure::edit_distance_pure("", "") == 0,
-          "'' == '' → 0");
-    CHECK(aura::compiler::pure::edit_distance_pure("abc", "abc") == 0,
-          "abc == abc → 0");
+    CHECK(aura::compiler::pure::edit_distance_pure("", "") == 0, "'' == '' → 0");
+    CHECK(aura::compiler::pure::edit_distance_pure("abc", "abc") == 0, "abc == abc → 0");
     CHECK(aura::compiler::pure::edit_distance_pure("kitten", "sitting") == 3,
           "kitten→sitting = 3 (k→s, e→i, insert g)");
     CHECK(aura::compiler::pure::edit_distance_pure("flaw", "lawn") == 2,
@@ -356,10 +349,8 @@ bool test_pure_edit_distance_basic() {
 
 bool test_pure_edit_distance_empty() {
     std::println("\n--- Test 7.2: pure::edit_distance on empty inputs ---");
-    CHECK(aura::compiler::pure::edit_distance_pure("", "abc") == 3,
-          "'' vs abc = 3 insertions");
-    CHECK(aura::compiler::pure::edit_distance_pure("abc", "") == 3,
-          "abc vs '' = 3 deletions");
+    CHECK(aura::compiler::pure::edit_distance_pure("", "abc") == 3, "'' vs abc = 3 insertions");
+    CHECK(aura::compiler::pure::edit_distance_pure("abc", "") == 3, "abc vs '' = 3 deletions");
     return true;
 }
 
@@ -372,7 +363,8 @@ bool test_pure_closest_match_finds_close() {
 }
 
 bool test_pure_closest_match_returns_empty_when_too_far() {
-    std::println("\n--- Test 7.4: pure::closest_match returns empty when no candidate is close ---");
+    std::println(
+        "\n--- Test 7.4: pure::closest_match returns empty when no candidate is close ---");
     std::vector<std::string> cands{"apple", "banana", "cherry"};
     auto best = aura::compiler::pure::closest_match_pure("xyz", cands);
     CHECK(best.empty(), "'xyz' too far from all candidates → empty");
@@ -398,12 +390,11 @@ bool test_ffi_marshal_int_args() {
         aura::compiler::types::make_int(10),
         aura::compiler::types::make_int(20),
     };
-    std::vector<int> arg_types{1, 1};  // 1 = Int
+    std::vector<int> arg_types{1, 1}; // 1 = Int
     std::vector<std::string> string_heap;
     std::vector<void*> opaque_heap;
     auto m = aura::compiler::pure::ffi_marshal_args_pure(
-        args, arg_types,
-        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        args, arg_types, std::span<const std::string>(string_heap.data(), string_heap.size()),
         std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
     CHECK(!m.any_float, "int args → any_float = false");
     CHECK(m.i_vals[0] == 10, "i_vals[0] = 10");
@@ -418,12 +409,11 @@ bool test_ffi_marshal_float_args() {
         aura::compiler::types::make_float(1.5),
         aura::compiler::types::make_float(2.5),
     };
-    std::vector<int> arg_types{2, 2};  // 2 = Float
+    std::vector<int> arg_types{2, 2}; // 2 = Float
     std::vector<std::string> string_heap;
     std::vector<void*> opaque_heap;
     auto m = aura::compiler::pure::ffi_marshal_args_pure(
-        args, arg_types,
-        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        args, arg_types, std::span<const std::string>(string_heap.data(), string_heap.size()),
         std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
     CHECK(m.any_float, "float args → any_float = true");
     CHECK(m.d_vals[0] == 1.5, "d_vals[0] = 1.5");
@@ -438,12 +428,11 @@ bool test_ffi_marshal_string_args() {
         aura::compiler::types::make_string(0),
         aura::compiler::types::make_string(1),
     };
-    std::vector<int> arg_types{3, 3};  // 3 = String
+    std::vector<int> arg_types{3, 3}; // 3 = String
     std::vector<std::string> string_heap{"hello", "world"};
     std::vector<void*> opaque_heap;
     auto m = aura::compiler::pure::ffi_marshal_args_pure(
-        args, arg_types,
-        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        args, arg_types, std::span<const std::string>(string_heap.data(), string_heap.size()),
         std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
     CHECK(!m.any_float, "string args → any_float = false");
     CHECK(m.str_bufs.size() == 2, "str_bufs.size() = 2");
@@ -461,12 +450,11 @@ bool test_ffi_marshal_opaque_args() {
         aura::compiler::types::make_opaque(0),
         aura::compiler::types::make_opaque(1),
     };
-    std::vector<int> arg_types{4, 4};  // 4 = Opaque
+    std::vector<int> arg_types{4, 4}; // 4 = Opaque
     std::vector<std::string> string_heap;
     std::vector<void*> opaque_heap{&dummy_a, &dummy_b};
     auto m = aura::compiler::pure::ffi_marshal_args_pure(
-        args, arg_types,
-        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        args, arg_types, std::span<const std::string>(string_heap.data(), string_heap.size()),
         std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
     CHECK(!m.any_float, "opaque args → any_float = false");
     CHECK(m.i_vals[0] == reinterpret_cast<std::int64_t>(&dummy_a),
@@ -483,12 +471,11 @@ bool test_ffi_marshal_mixed_args() {
         aura::compiler::types::make_float(3.14),
         aura::compiler::types::make_string(0),
     };
-    std::vector<int> arg_types{1, 2, 3};  // Int, Float, String
+    std::vector<int> arg_types{1, 2, 3}; // Int, Float, String
     std::vector<std::string> string_heap{"hi"};
     std::vector<void*> opaque_heap;
     auto m = aura::compiler::pure::ffi_marshal_args_pure(
-        args, arg_types,
-        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        args, arg_types, std::span<const std::string>(string_heap.data(), string_heap.size()),
         std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
     CHECK(m.any_float, "mixed args → any_float = true (because of Float)");
     CHECK(m.i_vals[0] == 42, "i_vals[0] = 42 (int)");
@@ -503,11 +490,11 @@ bool test_macro_subst_basic() {
     std::println("\n--- Test 9.1: pure::compute_macro_subst basic mapping ---");
     std::vector<std::string> params{"x", "y", "z"};
     std::vector<aura::ast::NodeId> call_args{
-        aura::ast::NULL_NODE,  // children[0] = callee (not used here)
-        10, 20, 30              // children[1..] = arg NodeIds
+        aura::ast::NULL_NODE, // children[0] = callee (not used here)
+        10, 20, 30            // children[1..] = arg NodeIds
     };
-    auto subst = aura::compiler::pure::compute_macro_subst_pure(
-        params, call_args, /*dotted=*/false);
+    auto subst =
+        aura::compiler::pure::compute_macro_subst_pure(params, call_args, /*dotted=*/false);
     CHECK(subst.size() == 3, "3 params → 3 subst entries");
     CHECK(subst["x"] == 10, "x → 10");
     CHECK(subst["y"] == 20, "y → 20");
@@ -517,13 +504,12 @@ bool test_macro_subst_basic() {
 
 bool test_macro_subst_dotted_omits_rest() {
     std::println("\n--- Test 9.2: pure::compute_macro_subst dotted — rest omitted ---");
-    std::vector<std::string> params{"x", "rest"};  // dotted: last is rest
+    std::vector<std::string> params{"x", "rest"}; // dotted: last is rest
     std::vector<aura::ast::NodeId> call_args{
-        aura::ast::NULL_NODE,  // callee
-        100, 200, 300, 400      // 4 args: 1 regular + 3 rest
+        aura::ast::NULL_NODE, // callee
+        100, 200, 300, 400    // 4 args: 1 regular + 3 rest
     };
-    auto subst = aura::compiler::pure::compute_macro_subst_pure(
-        params, call_args, /*dotted=*/true);
+    auto subst = aura::compiler::pure::compute_macro_subst_pure(params, call_args, /*dotted=*/true);
     CHECK(subst.size() == 1, "dotted: 1 regular subst (rest param excluded)");
     CHECK(subst.count("x") == 1 && subst["x"] == 100, "x → 100 (first arg)");
     CHECK(subst.count("rest") == 0, "rest param NOT in subst (caller adds later)");
@@ -533,11 +519,9 @@ bool test_macro_subst_dotted_omits_rest() {
 bool test_macro_subst_empty_params() {
     std::println("\n--- Test 9.3: pure::compute_macro_subst empty params ---");
     std::vector<std::string> params;
-    std::vector<aura::ast::NodeId> call_args{
-        aura::ast::NULL_NODE, 1, 2, 3
-    };
-    auto subst = aura::compiler::pure::compute_macro_subst_pure(
-        params, call_args, /*dotted=*/false);
+    std::vector<aura::ast::NodeId> call_args{aura::ast::NULL_NODE, 1, 2, 3};
+    auto subst =
+        aura::compiler::pure::compute_macro_subst_pure(params, call_args, /*dotted=*/false);
     CHECK(subst.empty(), "no params → empty subst");
     return true;
 }
@@ -548,11 +532,11 @@ bool test_macro_subst_missing_args() {
     // param simply has no entry in the subst map.
     std::vector<std::string> params{"a", "b", "c"};
     std::vector<aura::ast::NodeId> call_args{
-        aura::ast::NULL_NODE,  // callee
-        100, 200                // only 2 args (children[1..2])
+        aura::ast::NULL_NODE, // callee
+        100, 200              // only 2 args (children[1..2])
     };
-    auto subst = aura::compiler::pure::compute_macro_subst_pure(
-        params, call_args, /*dotted=*/false);
+    auto subst =
+        aura::compiler::pure::compute_macro_subst_pure(params, call_args, /*dotted=*/false);
     CHECK(subst.size() == 2, "only 2 args → 2 subst entries");
     CHECK(subst["a"] == 100, "a → 100");
     CHECK(subst["b"] == 200, "b → 200");
@@ -577,8 +561,7 @@ bool test_arithmetic_sum_no_args() {
 bool test_arithmetic_sum_int_args() {
     std::println("\n--- Test 10.2: pure::arithmetic_sum_pure int args → int sum ---");
     using namespace aura::compiler;
-    std::vector<types::EvalValue> args{
-        types::make_int(1), types::make_int(2), types::make_int(3)};
+    std::vector<types::EvalValue> args{types::make_int(1), types::make_int(2), types::make_int(3)};
     std::vector<std::string> heap{};
     auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
     CHECK(types::is_int(r), "all int → int result");
@@ -589,8 +572,8 @@ bool test_arithmetic_sum_int_args() {
 bool test_arithmetic_sum_float_promotion() {
     std::println("\n--- Test 10.3: pure::arithmetic_sum_pure float promotion ---");
     using namespace aura::compiler;
-    std::vector<types::EvalValue> args{
-        types::make_int(1), types::make_float(2.5), types::make_int(3)};
+    std::vector<types::EvalValue> args{types::make_int(1), types::make_float(2.5),
+                                       types::make_int(3)};
     std::vector<std::string> heap{};
     auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
     CHECK(types::is_float(r), "any float arg → float result");
@@ -605,19 +588,17 @@ bool test_arithmetic_sum_diag_sink_emits_on_bad_coercion() {
     // function silently returns 0 for that arg, but if a
     // diag sink is provided it should receive the legacy
     // "type mismatch" line.
-    std::vector<std::string> heap{"hello"};  // heap[0] = "hello"
-    std::vector<types::EvalValue> args{
-        types::make_int(1),
-        types::make_string(0),  // "hello" — unparseable as int
-        types::make_int(2)};
+    std::vector<std::string> heap{"hello"}; // heap[0] = "hello"
+    std::vector<types::EvalValue> args{types::make_int(1),
+                                       types::make_string(0), // "hello" — unparseable as int
+                                       types::make_int(2)};
     std::ostringstream sink;
     auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap, &sink);
     CHECK(types::is_int(r), "result is int");
     CHECK(types::as_int(r) == 3, "1+0+2=3 (silent coercion of \"hello\")");
     auto out = sink.str();
     CHECK(!out.empty(), "diag sink received output");
-    CHECK(out.find("type mismatch") != std::string::npos,
-          "diag output contains 'type mismatch'");
+    CHECK(out.find("type mismatch") != std::string::npos, "diag output contains 'type mismatch'");
     CHECK(out.find("hello") != std::string::npos,
           "diag output contains the unparseable string 'hello'");
     return true;
@@ -630,10 +611,8 @@ bool test_arithmetic_sum_no_diag_by_default() {
     // must not allocate any global stream, must produce the
     // same result.
     std::vector<std::string> heap{"hello"};
-    std::vector<types::EvalValue> args{
-        types::make_int(1),
-        types::make_string(0),
-        types::make_int(2)};
+    std::vector<types::EvalValue> args{types::make_int(1), types::make_string(0),
+                                       types::make_int(2)};
     auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
     CHECK(types::is_int(r), "no-diag result is int");
     CHECK(types::as_int(r) == 3, "no-diag: 1+0+2=3 (same as with-diag)");
@@ -710,12 +689,12 @@ int run_tests() {
     test_coerce_value_pure_unsupported_errors();
     test_coerce_value_pure_is_free_function();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-}  // namespace aura_issue_146_detail
+} // namespace aura_issue_146_detail
 
-int aura_issue_146_run() { return aura_issue_146_detail::run_tests(); }
-
+int aura_issue_146_run() {
+    return aura_issue_146_detail::run_tests();
+}

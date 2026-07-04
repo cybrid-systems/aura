@@ -40,16 +40,16 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 namespace aura_issue_347_detail {
 
 // Read first N lines of a file (or empty if missing).
-static std::string read_file_head(
-    const std::string& path, std::size_t n_lines = 500) {
+static std::string read_file_head(const std::string& path, std::size_t n_lines = 500) {
     FILE* f = fopen(path.c_str(), "r");
-    if (!f) return std::string{};
+    if (!f)
+        return std::string{};
     std::string out;
     char buf[4096];
     while (fgets(buf, sizeof(buf), f) && n_lines > 0) {
@@ -79,27 +79,21 @@ static std::string find_path(const std::string& rel) {
 
 bool test_doc_exists_with_sections() {
     std::println("\n--- AC1: doc exists with required sections ---");
-    const std::string path = find_path(
-        "docs/design/core/stable_ref_best_practices.md");
+    const std::string path = find_path("docs/design/core/stable_ref_best_practices.md");
     const std::string contents = read_file_head(path);
-    CHECK(!contents.empty(),
-          "docs/design/core/stable_ref_best_practices.md exists");
-    if (contents.empty()) return false;
+    CHECK(!contents.empty(), "docs/design/core/stable_ref_best_practices.md exists");
+    if (contents.empty())
+        return false;
     // 5 required topics per the issue body.
-    CHECK(contents.find("## When to use StableNodeRef vs raw NodeId")
-              != std::string::npos,
+    CHECK(contents.find("## When to use StableNodeRef vs raw NodeId") != std::string::npos,
           "section: When to use StableNodeRef vs raw NodeId");
-    CHECK(contents.find("## Safe patterns for multi-round")
-              != std::string::npos,
+    CHECK(contents.find("## Safe patterns for multi-round") != std::string::npos,
           "section: Safe patterns for multi-round query-mutate-eval loops");
-    CHECK(contents.find("## Handling stale refs and retry logic")
-              != std::string::npos,
+    CHECK(contents.find("## Handling stale refs and retry logic") != std::string::npos,
           "section: Handling stale refs and retry logic");
-    CHECK(contents.find("## Interaction with Workspace layering")
-              != std::string::npos,
+    CHECK(contents.find("## Interaction with Workspace layering") != std::string::npos,
           "section: Interaction with Workspace layering and COW");
-    CHECK(contents.find("## Concurrency considerations with fibers")
-              != std::string::npos,
+    CHECK(contents.find("## Concurrency considerations with fibers") != std::string::npos,
           "section: Concurrency considerations with fibers");
     return true;
 }
@@ -110,31 +104,24 @@ bool test_doc_exists_with_sections() {
 
 bool test_examples_and_antipatterns() {
     std::println("\n--- AC2: examples + anti-patterns ---");
-    const std::string path = find_path(
-        "docs/design/core/stable_ref_best_practices.md");
+    const std::string path = find_path("docs/design/core/stable_ref_best_practices.md");
     const std::string contents = read_file_head(path);
-    if (contents.empty()) return false;
+    if (contents.empty())
+        return false;
     // Code examples: at least 3 Example sections.
-    const auto ex_count = (contents.find("### Example 1") != std::string::npos ? 1 : 0)
-                         + (contents.find("### Example 2") != std::string::npos ? 1 : 0)
-                         + (contents.find("### Example 3") != std::string::npos ? 1 : 0);
-    CHECK(ex_count >= 3,
-          "3 code examples present (Example 1, 2, 3)");
+    const auto ex_count = (contents.find("### Example 1") != std::string::npos ? 1 : 0) +
+                          (contents.find("### Example 2") != std::string::npos ? 1 : 0) +
+                          (contents.find("### Example 3") != std::string::npos ? 1 : 0);
+    CHECK(ex_count >= 3, "3 code examples present (Example 1, 2, 3)");
     // Anti-patterns: at least 4.
-    const auto ap_count = (contents.find("Don't cache raw `NodeId`")
-                              != std::string::npos ? 1 : 0)
-                         + (contents.find("Don't use a `StableNodeRef`")
-                              != std::string::npos ? 1 : 0)
-                         + (contents.find("Don't assume `is_valid`")
-                              != std::string::npos ? 1 : 0)
-                         + (contents.find("Don't skip the validity check")
-                              != std::string::npos ? 1 : 0)
-                         + (contents.find("Don't `static_cast` a `NodeId`")
-                              != std::string::npos ? 1 : 0)
-                         + (contents.find("Don't store `StableNodeRef`")
-                              != std::string::npos ? 1 : 0);
-    CHECK(ap_count >= 4,
-          "at least 4 anti-patterns documented");
+    const auto ap_count =
+        (contents.find("Don't cache raw `NodeId`") != std::string::npos ? 1 : 0) +
+        (contents.find("Don't use a `StableNodeRef`") != std::string::npos ? 1 : 0) +
+        (contents.find("Don't assume `is_valid`") != std::string::npos ? 1 : 0) +
+        (contents.find("Don't skip the validity check") != std::string::npos ? 1 : 0) +
+        (contents.find("Don't `static_cast` a `NodeId`") != std::string::npos ? 1 : 0) +
+        (contents.find("Don't store `StableNodeRef`") != std::string::npos ? 1 : 0);
+    CHECK(ap_count >= 4, "at least 4 anti-patterns documented");
     return true;
 }
 
@@ -157,34 +144,26 @@ bool test_linked_from_main_docs() {
 
 bool test_doc_cross_references_resolve() {
     std::println("\n--- AC4: cross-references resolve ---");
-    const std::string path = find_path(
-        "docs/design/core/stable_ref_best_practices.md");
+    const std::string path = find_path("docs/design/core/stable_ref_best_practices.md");
     const std::string contents = read_file_head(path);
-    if (contents.empty()) return false;
+    if (contents.empty())
+        return false;
     // The doc references several real files /
     // test names. Check they all appear in the
     // "See also" section.
-    CHECK(contents.find("docs/design/ast-workspace-decision.md")
-              != std::string::npos,
+    CHECK(contents.find("docs/design/ast-workspace-decision.md") != std::string::npos,
           "doc references ast-workspace-decision.md");
-    CHECK(contents.find("docs/incremental_dirty_propagation.md")
-              != std::string::npos,
+    CHECK(contents.find("docs/incremental_dirty_propagation.md") != std::string::npos,
           "doc references incremental_dirty_propagation.md");
-    CHECK(contents.find("docs/sanitizers.md")
-              != std::string::npos,
-          "doc references sanitizers.md");
-    CHECK(contents.find("tests/test_issue_329.cpp")
-              != std::string::npos,
+    CHECK(contents.find("docs/sanitizers.md") != std::string::npos, "doc references sanitizers.md");
+    CHECK(contents.find("tests/test_issue_329.cpp") != std::string::npos,
           "doc references test_issue_329.cpp");
-    CHECK(contents.find("src/core/ast.ixx")
-              != std::string::npos,
+    CHECK(contents.find("src/core/ast.ixx") != std::string::npos,
           "doc references src/core/ast.ixx");
-    CHECK(contents.find("src/compiler/service.ixx")
-              != std::string::npos,
+    CHECK(contents.find("src/compiler/service.ixx") != std::string::npos,
           "doc references src/compiler/service.ixx");
     // Verify the referenced source files exist.
-    CHECK(!read_file_head(find_path("src/core/ast.ixx"), 1).empty(),
-          "src/core/ast.ixx exists");
+    CHECK(!read_file_head(find_path("src/core/ast.ixx"), 1).empty(), "src/core/ast.ixx exists");
     CHECK(!read_file_head(find_path("src/compiler/service.ixx"), 1).empty(),
           "src/compiler/service.ixx exists");
     return true;
@@ -201,10 +180,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_347_detail
+} // namespace aura_issue_347_detail
 
-int aura_issue_347_run() { return aura_issue_347_detail::run_tests(); }
+int aura_issue_347_run() {
+    return aura_issue_347_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_347_run(); }
+int main() {
+    return aura_issue_347_run();
+}
 #endif

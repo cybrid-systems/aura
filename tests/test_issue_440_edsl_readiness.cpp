@@ -52,7 +52,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -63,15 +63,23 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:edsl-readiness) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cout, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cout, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: fresh Evaluator — all 6 fields non-negative
@@ -80,9 +88,8 @@ bool test_fresh_evaluator() {
     std::println("\n--- AC1: fresh Evaluator ---");
     aura::compiler::CompilerService cs;
     static const char* kFields[] = {
-        "closure-stale-refresh", "linear-check-pass",
-        "atomic-batch-commits", "stable-ref-invalidations",
-        "occurrence-stale-refreshes", "dirty-block-rate",
+        "closure-stale-refresh",    "linear-check-pass",          "atomic-batch-commits",
+        "stable-ref-invalidations", "occurrence-stale-refreshes", "dirty-block-rate",
     };
     bool all_ok = true;
     for (auto* k : kFields) {
@@ -121,9 +128,8 @@ bool test_six_fields_present() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     static const char* kFields[] = {
-        "closure-stale-refresh", "linear-check-pass",
-        "atomic-batch-commits", "stable-ref-invalidations",
-        "occurrence-stale-refreshes", "dirty-block-rate",
+        "closure-stale-refresh",    "linear-check-pass",          "atomic-batch-commits",
+        "stable-ref-invalidations", "occurrence-stale-refreshes", "dirty-block-rate",
     };
     bool all_ok = true;
     for (auto* k : kFields) {
@@ -166,14 +172,13 @@ bool test_idempotent_observable() {
 bool test_stats_list_includes() {
     std::println("\n--- AC6: stats:list includes the new primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"query:edsl-readiness\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"query:edsl-readiness\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes query:edsl-readiness");
     return true;
 }
@@ -185,8 +190,7 @@ bool test_stats_count() {
     std::println("\n--- AC7: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 43;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 43;
     CHECK(ok, "stats:count >= 43 (was 42 in #431, now 43 in #440)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -194,7 +198,7 @@ bool test_stats_count() {
     return true;
 }
 
-}  // namespace aura_issue_440_detail
+} // namespace aura_issue_440_detail
 
 int main() {
     using namespace aura_issue_440_detail;

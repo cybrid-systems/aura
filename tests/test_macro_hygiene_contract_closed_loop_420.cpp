@@ -79,14 +79,12 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: macro-introduced vs by-marker ---");
     auto macro_from_query = cs.eval("(length (query:macro-introduced))");
-    auto macro_from_marker = cs.eval(
-        "(length (query:by-marker \"MacroIntroduced\"))");
-    CHECK(macro_from_query && is_int(*macro_from_query),
-          "macro-introduced length is int");
+    auto macro_from_marker = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    CHECK(macro_from_query && is_int(*macro_from_query), "macro-introduced length is int");
     CHECK(macro_from_marker && is_int(*macro_from_marker),
           "by-marker MacroIntroduced length is int");
-    std::println("  macro-introduced = {}, by-marker = {}",
-                 as_int(*macro_from_query), as_int(*macro_from_marker));
+    std::println("  macro-introduced = {}, by-marker = {}", as_int(*macro_from_query),
+                 as_int(*macro_from_marker));
     CHECK(as_int(*macro_from_query) == as_int(*macro_from_marker),
           "macro-introduced matches by-marker MacroIntroduced");
 

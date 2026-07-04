@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -19,8 +19,7 @@ import aura.compiler.sv_ir;
 
 namespace aura_issue_435_phase4_detail {
 
-static std::string run_string(aura::compiler::CompilerService& cs,
-                              const std::string& src) {
+static std::string run_string(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = cs.eval(src);
     if (!r)
         return "";
@@ -40,8 +39,7 @@ bool test_cpp_coverpoint_ir_direct() {
     using aura::compiler::sv_ir::CoverpointIR;
     using aura::compiler::sv_ir::make_coverpoint;
 
-    CoverpointIR cp = make_coverpoint("opcode",
-        std::vector<std::string>{"add", "sub", "mul"});
+    CoverpointIR cp = make_coverpoint("opcode", std::vector<std::string>{"add", "sub", "mul"});
     CHECK(cp.var == "opcode", "CoverpointIR.var == 'opcode'");
     CHECK(cp.bins.size() == 3, "3 bins");
     CHECK(cp.bins[1] == "sub", "second bin == 'sub'");
@@ -60,18 +58,15 @@ bool test_cpp_emit_coverpoint() {
 
     std::string s;
 
-    s = emit_coverpoint(make_coverpoint("opcode",
-        std::vector<std::string>{"add", "sub", "mul"}));
-    CHECK(s.find("opcode : coverpoint") != std::string::npos,
-          "starts with 'opcode : coverpoint'");
+    s = emit_coverpoint(make_coverpoint("opcode", std::vector<std::string>{"add", "sub", "mul"}));
+    CHECK(s.find("opcode : coverpoint") != std::string::npos, "starts with 'opcode : coverpoint'");
     CHECK(s.find("add") != std::string::npos, "contains 'add'");
     CHECK(s.find("sub") != std::string::npos, "contains 'sub'");
     CHECK(s.find("mul") != std::string::npos, "contains 'mul'");
     CHECK(s.find("}") != std::string::npos, "ends with '}'");
 
     s = emit_coverpoint(make_coverpoint("flag", {}));
-    CHECK(s.find("/* no bins */") != std::string::npos,
-          "empty bins → '/* no bins */'");
+    CHECK(s.find("/* no bins */") != std::string::npos, "empty bins → '/* no bins */'");
 
     return true;
 }
@@ -83,9 +78,9 @@ bool test_cpp_covergroup_ir_direct() {
     using aura::compiler::sv_ir::make_covergroup;
 
     CovergroupIR cg = make_covergroup("alu_cg",
-        std::vector<std::string>{"opcode : coverpoint { add, sub }",
-                                  "flags : coverpoint { zero, neg }"},
-        "@(posedge clk)");
+                                      std::vector<std::string>{"opcode : coverpoint { add, sub }",
+                                                               "flags : coverpoint { zero, neg }"},
+                                      "@(posedge clk)");
     CHECK(cg.name == "alu_cg", "CovergroupIR.name == 'alu_cg'");
     CHECK(cg.coverpoint_strs.size() == 2, "2 coverpoints");
     CHECK(cg.event == "@(posedge clk)", "explicit event");
@@ -104,21 +99,16 @@ bool test_cpp_emit_covergroup() {
 
     std::string s;
 
-    s = emit_covergroup(make_covergroup("alu_cg",
-        std::vector<std::string>{"opcode : coverpoint { add }"},
-        "@(posedge clk)"));
-    CHECK(s.find("covergroup alu_cg") != std::string::npos,
-          "starts with 'covergroup alu_cg'");
-    CHECK(s.find("@(posedge clk)") != std::string::npos,
-          "contains event '@(posedge clk)'");
-    CHECK(s.find("opcode : coverpoint { add }") != std::string::npos,
-          "contains coverpoint");
+    s = emit_covergroup(make_covergroup(
+        "alu_cg", std::vector<std::string>{"opcode : coverpoint { add }"}, "@(posedge clk)"));
+    CHECK(s.find("covergroup alu_cg") != std::string::npos, "starts with 'covergroup alu_cg'");
+    CHECK(s.find("@(posedge clk)") != std::string::npos, "contains event '@(posedge clk)'");
+    CHECK(s.find("opcode : coverpoint { add }") != std::string::npos, "contains coverpoint");
     CHECK(s.find("}") != std::string::npos, "ends with '}'");
 
     // Default event is @(*)
     s = emit_covergroup(make_covergroup("simple", {}));
-    CHECK(s.find("@(*)") != std::string::npos,
-          "empty event → '@(*)'");
+    CHECK(s.find("@(*)") != std::string::npos, "empty event → '@(*)'");
 
     return true;
 }
@@ -132,23 +122,22 @@ bool test_list_ir_works() {
         return false;
     }
 
-    auto s = run_string(cs,
-        "(eda:emit-covergroup "
-        "  (make-eda:covergroup 'alu_cg "
-        "    (list (make-eda:coverpoint 'opcode '(add sub mul)))))");
+    auto s = run_string(cs, "(eda:emit-covergroup "
+                            "  (make-eda:covergroup 'alu_cg "
+                            "    (list (make-eda:coverpoint 'opcode '(add sub mul)))))");
     CHECK(!s.empty(), "list-based emit returns non-empty");
     CHECK(s.find("covergroup alu_cg") != std::string::npos,
           "list-based contains 'covergroup alu_cg'");
     CHECK(s.find("opcode : coverpoint") != std::string::npos,
           "list-based contains coverpoint header");
-    CHECK(s.find("add") != std::string::npos,
-          "list-based contains bin 'add'");
+    CHECK(s.find("add") != std::string::npos, "list-based contains bin 'add'");
 
     return true;
 }
 
 int run_tests() {
-    std::println("Issue #435 Phase 4 (structured C++ IR — CoverpointIR + CovergroupIR + list IR)\n");
+    std::println(
+        "Issue #435 Phase 4 (structured C++ IR — CoverpointIR + CovergroupIR + list IR)\n");
     test_cpp_coverpoint_ir_direct();
     test_cpp_emit_coverpoint();
     test_cpp_covergroup_ir_direct();
@@ -160,8 +149,12 @@ int run_tests() {
 
 } // namespace aura_issue_435_phase4_detail
 
-int aura_issue_435_phase4_run() { return aura_issue_435_phase4_detail::run_tests(); }
+int aura_issue_435_phase4_run() {
+    return aura_issue_435_phase4_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_435_phase4_run(); }
+int main() {
+    return aura_issue_435_phase4_run();
+}
 #endif

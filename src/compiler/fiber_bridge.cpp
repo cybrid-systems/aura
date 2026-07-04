@@ -21,8 +21,7 @@ import std;
 extern "C" {
 
 // Issue #438: per-thread mutation boundary depth.
-__attribute__((weak)) std::size_t
-aura_evaluator_mutation_boundary_depth() {
+__attribute__((weak)) std::size_t aura_evaluator_mutation_boundary_depth() {
     return 0;
 }
 
@@ -38,12 +37,9 @@ __attribute__((weak)) int aura_evaluator_request_gc_safepoint() {
 }
 
 // Issue #439: GC safepoint wait.
-__attribute__((weak)) void
-aura_evaluator_wait_for_safepoint(std::uint64_t /*timeout_ms*/) {
-}
+__attribute__((weak)) void aura_evaluator_wait_for_safepoint(std::uint64_t /*timeout_ms*/) {}
 
 // Issue #683: linear ownership probe on fiber steal.
-__attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {
-}
+__attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 
 } // extern "C"

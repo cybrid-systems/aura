@@ -23,13 +23,12 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.ast_walkers;
-
 
 
 // ── Test 1: find_top_level_defines basic ───────────────
@@ -52,8 +51,7 @@ bool test_find_top_level_defines_basic() {
     auto begin = flat.add_begin({def_a, def_b, lit_42});
 
     auto defs = aura::compiler::find_top_level_defines(flat, pool, begin);
-    CHECK(defs.size() == 2,
-          "find_top_level_defines returns 2 defines");
+    CHECK(defs.size() == 2, "find_top_level_defines returns 2 defines");
     if (defs.size() == 2) {
         CHECK(defs[0].first == "a", "first define is 'a'");
         CHECK(defs[1].first == "b", "second define is 'b'");
@@ -84,8 +82,7 @@ bool test_find_top_level_defines_nested() {
 
     auto defs = aura::compiler::find_top_level_defines(flat, pool, begin);
     // Outer is found; inner (inside lambda) is NOT
-    CHECK(defs.size() == 1,
-          "find_top_level_defines skips nested defines");
+    CHECK(defs.size() == 1, "find_top_level_defines skips nested defines");
     if (defs.size() == 1) {
         CHECK(defs[0].first == "outer", "only outer is found");
     }
@@ -103,8 +100,7 @@ bool test_find_top_level_defines_edge() {
     aura::ast::StringPool pool(alloc);
 
     // NULL_NODE → empty result
-    auto defs1 = aura::compiler::find_top_level_defines(
-        flat, pool, aura::ast::NULL_NODE);
+    auto defs1 = aura::compiler::find_top_level_defines(flat, pool, aura::ast::NULL_NODE);
     CHECK(defs1.empty(), "NULL_NODE returns empty result");
 
     // Literal (not a Begin, not a Define) → empty
@@ -153,12 +149,12 @@ int run_tests() {
     test_find_top_level_defines_nested();
     test_find_top_level_defines_edge();
     test_collect_user_bindings();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_132_detail
+} // namespace aura_issue_132_detail
 
-int aura_issue_132_run() { return aura_issue_132_detail::run_tests(); }
-
+int aura_issue_132_run() {
+    return aura_issue_132_detail::run_tests();
+}

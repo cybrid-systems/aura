@@ -19,8 +19,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -38,8 +38,7 @@ bool test_query_query_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:query-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:query-stats returns an integer");
     return true;
 }
 
@@ -56,8 +55,7 @@ bool test_query_tag_arity_count() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:tag-arity-count returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:tag-arity-count returns an integer");
     return true;
 }
 
@@ -105,17 +103,15 @@ bool test_hits_counter() {
     // (1, 0) LiteralInt shape).
     for (int tag = 1; tag <= 16; ++tag) {
         for (int ar = 0; ar <= 4; ++ar) {
-            auto r = cs.eval("(query:tag-arity-count " +
-                              std::to_string(tag) + " " +
-                              std::to_string(ar) + ")");
+            auto r = cs.eval("(query:tag-arity-count " + std::to_string(tag) + " " +
+                             std::to_string(ar) + ")");
             (void)r;
         }
     }
     const auto hits_after = ws->tag_arity_index_hits();
     const auto misses_after = ws->tag_arity_index_misses();
     std::println("    [debug] hits={} misses={}", hits_after, misses_after);
-    CHECK(hits_after + misses_after > 0,
-          "tag-arity lookups produced at least one hit or miss");
+    CHECK(hits_after + misses_after > 0, "tag-arity lookups produced at least one hit or miss");
     return true;
 }
 
@@ -143,8 +139,7 @@ bool test_misses_counter() {
         return false;
     }
     const auto misses_after = ws->tag_arity_index_misses();
-    CHECK(misses_after > misses_before,
-          "misses counter bumped after missing-key lookup");
+    CHECK(misses_after > misses_before, "misses counter bumped after missing-key lookup");
     return true;
 }
 
@@ -165,8 +160,7 @@ bool test_cow_invalidates_index() {
     // Force a query to build the index.
     auto r0 = cs.eval("(query:tag-arity-count 8 2)");
     (void)r0;
-    CHECK(ws->tag_arity_index_size() > 0,
-          "after lazy build, tag_arity_index is non-empty");
+    CHECK(ws->tag_arity_index_size() > 0, "after lazy build, tag_arity_index is non-empty");
     // set-code again — should clear the index.
     if (!cs.eval("(set-code \"(define z 9)\")")) {
         ++g_failed;
@@ -216,8 +210,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 21 21) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 21 21) == 42 (regression)");
     return true;
 }
 
@@ -237,8 +230,12 @@ int run_tests() {
 
 } // namespace aura_issue_447_detail
 
-int aura_issue_447_run() { return aura_issue_447_detail::run_tests(); }
+int aura_issue_447_run() {
+    return aura_issue_447_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_447_run(); }
+int main() {
+    return aura_issue_447_run();
+}
 #endif

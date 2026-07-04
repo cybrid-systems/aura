@@ -11,8 +11,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.value;
 import aura.compiler.evaluator;
@@ -77,7 +77,8 @@ bool test_replace_pattern_multi_match() {
     }
     auto src = string_value(cs, "(current-source :workspace)");
     CHECK(src.find("(* 2") == std::string::npos, "no (* 2 ...) left after multi replace");
-    CHECK(src.find("(define a (+ 1))") != std::string::npos, "first define doubled via (+ ... ...)");
+    CHECK(src.find("(define a (+ 1))") != std::string::npos,
+          "first define doubled via (+ ... ...)");
     CHECK(src.find("(define b (+ 2))") != std::string::npos, "second define doubled");
     CHECK(src.find("(define c (+ 3))") != std::string::npos, "third define doubled");
     return true;
@@ -128,10 +129,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_270_detail
+} // namespace aura_issue_270_detail
 
-int aura_issue_270_run() { return aura_issue_270_detail::run_tests(); }
+int aura_issue_270_run() {
+    return aura_issue_270_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_270_run(); }
+int main() {
+    return aura_issue_270_run();
+}
 #endif

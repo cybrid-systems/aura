@@ -29,8 +29,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -39,22 +39,28 @@ import aura.compiler.value;
 import aura.compiler.service;
 
 namespace aura_issue_312_detail {
-#define CHECK_EQ_LOCAL(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ_LOCAL(a, b, msg)                                                                  \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // Helper: build a workspace that contains a known mix of
 // Interface / Modport / Variable / LiteralInt nodes, so we
 // can count how many of each the query family reports.
-struct Counts { int interface_nodes = 0; int modport_nodes = 0;
-                int literal_int_nodes = 0; int variable_nodes = 0; };
+struct Counts {
+    int interface_nodes = 0;
+    int modport_nodes = 0;
+    int literal_int_nodes = 0;
+    int variable_nodes = 0;
+};
 
 static Counts populate_workspace(aura::compiler::CompilerService& cs) {
     Counts c;
@@ -65,12 +71,11 @@ static Counts populate_workspace(aura::compiler::CompilerService& cs) {
     // (those are scoped to AST builder primitives today), so
     // we go via (set_code) just to establish the workspace
     // AST, then exercise the query primitives via eval.
-    cs.set_code(
-        "(begin "
-        "  (define a 1) (define b 2) (define c 3) (define d 4))");
-    c.variable_nodes = 4;     // 4 Define nodes
-    c.literal_int_nodes = 4;  // 4 LiteralInt in the Define values
-    c.interface_nodes = 0;    // none yet
+    cs.set_code("(begin "
+                "  (define a 1) (define b 2) (define c 3) (define d 4))");
+    c.variable_nodes = 4;    // 4 Define nodes
+    c.literal_int_nodes = 4; // 4 LiteralInt in the Define values
+    c.interface_nodes = 0;   // none yet
     c.modport_nodes = 0;
     return c;
 }
@@ -112,8 +117,7 @@ bool test_query_where_node_type() {
     // matching all predicates. With an empty predicate (just
     // :node-type \"Define\") it should find 4 nodes.
     auto r = cs.eval("(query:filter (query:where :node-type \"Define\"))");
-    CHECK(!r.has_value() || true,
-          "(query:filter + where :node-type \"Define\") doesn't error");
+    CHECK(!r.has_value() || true, "(query:filter + where :node-type \"Define\") doesn't error");
     // The Interface-tagged query should also be accepted at
     // the where level (the predicate compiles fine; the result
     // is empty since there are no Interface nodes in the
@@ -174,18 +178,14 @@ bool test_cxx_side_filter_for_interface_modport() {
     auto d1_sig = flat.add_variable(if_data);
     auto d1_v2 = flat.add_variable(if_valid);
     std::vector<ast::SymId> mp1_ports{pool.intern("data"), pool.intern("valid")};
-    auto mp1 = flat.add_modport(pool.intern("master"),
-                                std::span<const ast::SymId>(mp1_ports));
+    auto mp1 = flat.add_modport(pool.intern("master"), std::span<const ast::SymId>(mp1_ports));
     std::vector<ast::NodeId> body1{d1_sig, d1_v2, mp1};
-    auto iface1 = flat.add_interface(pool.intern("Bus1"),
-                                    std::span<const ast::NodeId>(body1));
+    auto iface1 = flat.add_interface(pool.intern("Bus1"), std::span<const ast::NodeId>(body1));
     // Interface #2 body (just a Modport, no signals)
     std::vector<ast::SymId> mp2_ports{pool.intern("rdy")};
-    auto mp2 = flat.add_modport(pool.intern("slave"),
-                                std::span<const ast::SymId>(mp2_ports));
+    auto mp2 = flat.add_modport(pool.intern("slave"), std::span<const ast::SymId>(mp2_ports));
     std::vector<ast::NodeId> body2{mp2};
-    auto iface2 = flat.add_interface(pool.intern("Bus2"),
-                                    std::span<const ast::NodeId>(body2));
+    auto iface2 = flat.add_interface(pool.intern("Bus2"), std::span<const ast::NodeId>(body2));
     // Count nodes whose tag is NodeTag::Interface (simulating
     // what query:node-type does internally).
     std::size_t iface_count = 0;
@@ -197,19 +197,13 @@ bool test_cxx_side_filter_for_interface_modport() {
         else if (t == ast::NodeTag::Modport)
             ++modport_count;
     }
-    CHECK_EQ_LOCAL(iface_count, std::size_t{2},
-                   "C++ filter finds 2 Interface nodes in the flat");
-    CHECK_EQ_LOCAL(modport_count, std::size_t{2},
-                   "C++ filter finds 2 Modport nodes in the flat");
+    CHECK_EQ_LOCAL(iface_count, std::size_t{2}, "C++ filter finds 2 Interface nodes in the flat");
+    CHECK_EQ_LOCAL(modport_count, std::size_t{2}, "C++ filter finds 2 Modport nodes in the flat");
     // The Interface NodeIds should equal iface1 and iface2.
-    CHECK(flat.get(iface1).tag == ast::NodeTag::Interface,
-                   "iface1 has NodeTag::Interface");
-    CHECK(flat.get(iface2).tag == ast::NodeTag::Interface,
-                   "iface2 has NodeTag::Interface");
-    CHECK(flat.get(mp1).tag == ast::NodeTag::Modport,
-                   "mp1 has NodeTag::Modport");
-    CHECK(flat.get(mp2).tag == ast::NodeTag::Modport,
-                   "mp2 has NodeTag::Modport");
+    CHECK(flat.get(iface1).tag == ast::NodeTag::Interface, "iface1 has NodeTag::Interface");
+    CHECK(flat.get(iface2).tag == ast::NodeTag::Interface, "iface2 has NodeTag::Interface");
+    CHECK(flat.get(mp1).tag == ast::NodeTag::Modport, "mp1 has NodeTag::Modport");
+    CHECK(flat.get(mp2).tag == ast::NodeTag::Modport, "mp2 has NodeTag::Modport");
     return true;
 }
 
@@ -224,10 +218,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_312_detail
+} // namespace aura_issue_312_detail
 
-int aura_issue_312_run() { return aura_issue_312_detail::run_tests(); }
+int aura_issue_312_run() {
+    return aura_issue_312_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_312_run(); }
+int main() {
+    return aura_issue_312_run();
+}
 #endif

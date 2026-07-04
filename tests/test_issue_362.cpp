@@ -39,8 +39,8 @@
 #include "serve/scheduler.h"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -56,12 +56,11 @@ namespace aura_issue_362_detail {
 
 // Poll an atomic counter until it reaches `expected` or
 // `timeout` elapses. Returns true on success.
-template <typename A>
-bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(timeout_ms);
+template <typename A> bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (counter.load() < expected) {
-        if (std::chrono::steady_clock::now() >= deadline) return false;
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;
@@ -75,14 +74,12 @@ bool test_yield_skipped_during_mutation_boundary() {
     std::println("\n--- AC1: yield_mutation_boundary is a no-op while Guard is alive ---");
     aura::compiler::Evaluator ev;
     // No active boundary → any_active_mutation_boundary() is false.
-    CHECK(!ev.any_active_mutation_boundary(),
-          "no active boundary before Guard ctor");
+    CHECK(!ev.any_active_mutation_boundary(), "no active boundary before Guard ctor");
 
     bool success = true;
     {
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &success);
-        CHECK(ev.any_active_mutation_boundary(),
-              "active boundary during Guard lifetime");
+        CHECK(ev.any_active_mutation_boundary(), "active boundary during Guard lifetime");
         // Per #362: g_fiber_yield_mutation_boundary is
         // skipped when this flag is true. We verify the
         // wiring indirectly: the bridge function exists and
@@ -93,8 +90,7 @@ bool test_yield_skipped_during_mutation_boundary() {
         // g_fiber_yield_mutation_boundary lambda in
         // serve_async.cpp does internally.
     }
-    CHECK(!ev.any_active_mutation_boundary(),
-          "active boundary cleared after Guard dtor");
+    CHECK(!ev.any_active_mutation_boundary(), "active boundary cleared after Guard dtor");
     return true;
 }
 
@@ -137,10 +133,10 @@ bool test_long_mutation_yield_stress() {
     sched.stop();
     t.join();
 
-    CHECK(waited, "all 32 fibers completed 20 cycles each (no deadlock from yield-inside-mutation)");
+    CHECK(waited,
+          "all 32 fibers completed 20 cycles each (no deadlock from yield-inside-mutation)");
     int ok_count = ok.load();
-    std::string ok_msg = "all fibers completed cycles: " +
-                         std::to_string(ok_count) + "/" +
+    std::string ok_msg = "all fibers completed cycles: " + std::to_string(ok_count) + "/" +
                          std::to_string(NUM_FIBERS);
     CHECK(ok_count == NUM_FIBERS, ok_msg.c_str());
     return true;
@@ -208,6 +204,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_362_detail
+} // namespace aura_issue_362_detail
 
-int aura_issue_362_run() { return aura_issue_362_detail::run_tests(); }
+int aura_issue_362_run() {
+    return aura_issue_362_detail::run_tests();
+}

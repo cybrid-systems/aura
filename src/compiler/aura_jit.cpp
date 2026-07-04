@@ -113,7 +113,7 @@ static_assert(PrimNullP == 43, "PrimId drift: aura_jit.cpp vs ir.ixx");
 // telemetry counter and bypass markers; Phase 1 wraps P1 sites with
 // lock acquire/release and adds version checks at L2 entry points.
 enum Op : uint32_t {
-    OpNop = 0,  // Issue #427: explicit Nop case (matches IROpcode::Nop = 0)
+    OpNop = 0, // Issue #427: explicit Nop case (matches IROpcode::Nop = 0)
     OpConstI64 = 1,
     OpConstF64 = 2,
     OpLocal = 3,
@@ -354,9 +354,9 @@ struct LLVMBuilder {
         fn_cell_set = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_cell_set", mod);
 
-        fn_top_cell_get = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
-                                                 llvm::Function::ExternalLinkage, "aura_top_cell_get",
-                                                 mod);
+        fn_top_cell_get =
+            llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_top_cell_get", mod);
 
         fn_alloc_pair =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
@@ -2605,17 +2605,18 @@ struct AuraJIT::Impl {
     }
 
     void register_fn_func(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
-                          uint32_t arg_count, uint32_t env_count,
-                          const char* name = nullptr) {
+                          uint32_t arg_count, uint32_t env_count, const char* name = nullptr) {
         // Issue #660 Option 1: also register by name if provided.
         if (name && *name) {
             aura_register_fn_named(name, func_id, fn_ptr, static_cast<int32_t>(local_count),
-                                    static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
+                                   static_cast<int32_t>(arg_count),
+                                   static_cast<int32_t>(env_count));
         } else {
             aura_register_fn(func_id, fn_ptr, static_cast<int32_t>(local_count),
                              static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
         }
-        compiled_fns_.push_back({name ? std::string(name) : std::string(), fn_ptr, local_count, arg_count, env_count});
+        compiled_fns_.push_back(
+            {name ? std::string(name) : std::string(), fn_ptr, local_count, arg_count, env_count});
     }
 };
 
@@ -2801,7 +2802,7 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
     if (p.empty())
         return;
     std::string p_hash = p + "#";
-    for (auto it = impl_->fn_trackers_.begin(); it != impl_->fn_trackers_.end(); ) {
+    for (auto it = impl_->fn_trackers_.begin(); it != impl_->fn_trackers_.end();) {
         if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
             if (auto err = it->second->remove())
                 llvm::consumeError(std::move(err));
@@ -2811,7 +2812,7 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
         }
     }
     std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
-    for (auto it = impl_->compile_fns_.begin(); it != impl_->compile_fns_.end(); ) {
+    for (auto it = impl_->compile_fns_.begin(); it != impl_->compile_fns_.end();) {
         if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
             it = impl_->compile_fns_.erase(it);
         } else {
@@ -2909,8 +2910,7 @@ bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
     return false;
 }
 
-void run_escape_analysis(const std::vector<std::vector<FlatInstruction>>&,
-                         uint32_t local_count,
+void run_escape_analysis(const std::vector<std::vector<FlatInstruction>>&, uint32_t local_count,
                          std::vector<uint8_t>& escape_map) {
     escape_map.assign(local_count, 0);
 }

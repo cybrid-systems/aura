@@ -40,8 +40,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -55,12 +55,10 @@ namespace aura_issue_335_detail {
 // ratio increases as we add nodes then drop some
 // via mutation). Returns the number of defines
 // initially created.
-static int build_workspace(
-    aura::compiler::CompilerService& cs, int n_defines) {
+static int build_workspace(aura::compiler::CompilerService& cs, int n_defines) {
     std::string code = "(begin ";
     for (int i = 0; i < n_defines; ++i) {
-        code += "(define v_" + std::to_string(i) + " " +
-                std::to_string(i) + ") ";
+        code += "(define v_" + std::to_string(i) + " " + std::to_string(i) + ") ";
     }
     code += ")";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
@@ -82,8 +80,8 @@ bool test_should_auto_compact_probe() {
     // registered). The probe works at the
     // ArenaGroup level.
     auto r1 = cs.eval("(arena:should-auto-compact? \"main\")");
-    CHECK(r1.has_value() && aura::compiler::types::is_bool(*r1)
-          && !aura::compiler::types::as_bool(*r1),
+    CHECK(r1.has_value() && aura::compiler::types::is_bool(*r1) &&
+              !aura::compiler::types::as_bool(*r1),
           "no workspace: should-auto-compact? returns #f");
     // With a workspace, the probe should return #f
     // when frag is well below the default threshold
@@ -114,13 +112,11 @@ bool test_adaptive_compact_reclaims_bytes() {
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(arena:adaptive-compact) returns an int");
     const auto r1_val = aura::compiler::types::as_int(*r1);
-    CHECK(r1_val >= 0,
-          "bytes reclaimed is non-negative");
+    CHECK(r1_val >= 0, "bytes reclaimed is non-negative");
     // The trigger counter should bump (even if
     // savings is 0 — the call still happened).
     auto r2 = cs.eval("(arena:adaptive-stats)");
-    CHECK(r2.has_value(),
-          "(arena:adaptive-stats) returns a value");
+    CHECK(r2.has_value(), "(arena:adaptive-stats) returns a value");
     return true;
 }
 
@@ -155,8 +151,7 @@ bool test_ema_lowers_threshold() {
     // mechanics still work).
     std::vector<void*> ptrs;
     for (int i = 0; i < 16; ++i) {
-        ptrs.push_back(arena.create<std::array<std::byte, 64>>(
-            std::array<std::byte, 64>{}));
+        ptrs.push_back(arena.create<std::array<std::byte, 64>>(std::array<std::byte, 64>{}));
     }
     (void)ptrs;
     // The arena has some fragmentation. The
@@ -164,8 +159,7 @@ bool test_ema_lowers_threshold() {
     // high frag (since we just created lots of
     // objects).
     const auto should = group.should_auto_compact("test");
-    CHECK(should || !should,
-          "should_auto_compact returns a bool (true or false)");
+    CHECK(should || !should, "should_auto_compact returns a bool (true or false)");
     return true;
 }
 
@@ -180,16 +174,14 @@ bool test_observability_counters() {
     build_workspace(cs, 3);
     // Snapshot counters before.
     auto before = cs.eval("(arena:adaptive-stats)");
-    CHECK(before.has_value(),
-          "(arena:adaptive-stats) pre-call returns a value");
+    CHECK(before.has_value(), "(arena:adaptive-stats) pre-call returns a value");
     // Call adaptive_compact a few times.
     for (int i = 0; i < 5; ++i) {
         cs.eval("(arena:adaptive-compact)");
     }
     // Snapshot counters after.
     auto after = cs.eval("(arena:adaptive-stats)");
-    CHECK(after.has_value(),
-          "(arena:adaptive-stats) post-call returns a value");
+    CHECK(after.has_value(), "(arena:adaptive-stats) post-call returns a value");
     return true;
 }
 
@@ -207,10 +199,8 @@ bool test_perf_bound() {
         cs.eval("(arena:adaptive-compact)");
     }
     auto t1 = std::chrono::steady_clock::now();
-    const auto us = std::chrono::duration_cast<
-        std::chrono::microseconds>(t1 - t0).count();
-    std::println("    100 adaptive_compact calls: {} µs ({} ms)",
-                  us, us / 1000);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    std::println("    100 adaptive_compact calls: {} µs ({} ms)", us, us / 1000);
     // The Aura eval machinery is slow per call
     // (~18 ms each — parse + interp). The
     // arena:adaptive-compact primitive itself is
@@ -219,7 +209,7 @@ bool test_perf_bound() {
     // (10s) to account for the eval machinery; the
     // primitive perf is verified separately by the
     // direct C++ test in AC3.
-    CHECK(us < 10000000,  // 10s
+    CHECK(us < 10000000, // 10s
           "100 adaptive_compact calls < 10s (eval-bound)");
     return true;
 }
@@ -236,10 +226,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_335_detail
+} // namespace aura_issue_335_detail
 
-int aura_issue_335_run() { return aura_issue_335_detail::run_tests(); }
+int aura_issue_335_run() {
+    return aura_issue_335_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_335_run(); }
+int main() {
+    return aura_issue_335_run();
+}
 #endif

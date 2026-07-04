@@ -13,24 +13,24 @@
 // "not supported").
 
 #if defined(__linux__)
-  #define AURA_HAVE_EVENTFD 1
-  #define AURA_HAVE_EPOLL 1
+#define AURA_HAVE_EVENTFD 1
+#define AURA_HAVE_EPOLL 1
 #elif defined(__APPLE__) || defined(__MACH__)
-  #define AURA_HAVE_EVENTFD 0
-  #define AURA_HAVE_EPOLL 0
+#define AURA_HAVE_EVENTFD 0
+#define AURA_HAVE_EPOLL 0
 #else
-  #define AURA_HAVE_EVENTFD 0
-  #define AURA_HAVE_EPOLL 0
+#define AURA_HAVE_EVENTFD 0
+#define AURA_HAVE_EPOLL 0
 #endif
 
 // macOS <sys/mman.h> defines MAP_ANON but not MAP_ANONYMOUS (the
 // Linux/GNU name). Provide a fallback so fiber.cpp's mmap call works.
 #ifndef MAP_ANONYMOUS
-  #ifdef MAP_ANON
-    #define MAP_ANONYMOUS MAP_ANON
-  #else
-    #define MAP_ANONYMOUS 0x1000
-  #endif
+#ifdef MAP_ANON
+#define MAP_ANONYMOUS MAP_ANON
+#else
+#define MAP_ANONYMOUS 0x1000
+#endif
 #endif
 
 #endif // AURA_SERVE_AURA_PLATFORM_H

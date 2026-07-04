@@ -18,8 +18,7 @@ namespace aura::compiler::primitives_detail {
 using WorkspaceTree = aura::compiler::WorkspaceTree;
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
-using DefUseSummaryStats =
-    std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>;
+using DefUseSummaryStats = std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>;
 
 using namespace types;
 
@@ -275,9 +274,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         auto all_list = list_of(all_names);
         // Pack: (defuse-version . (dirty ...) . (all ...))
         auto v_pid = ev.pairs_.size();
-        ev.pairs_.push_back(
-            {make_int(static_cast<std::int64_t>(ev.defuse_version_.load(std::memory_order_relaxed))),
-             dirty_list});
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(
+                                 ev.defuse_version_.load(std::memory_order_relaxed))),
+                             dirty_list});
         auto v_pair = make_pair(v_pid);
         auto final_pid = ev.pairs_.size();
         ev.pairs_.push_back({v_pair, all_list});
@@ -348,7 +347,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         for (int i = (int)ev.snapshot_sources_.size() - 1; i >= 0; --i) {
             auto name_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
-                                                              : ev.snapshot_names_[i]);
+                                                                    : ev.snapshot_names_[i]);
             // Pair: (id . name)
             auto entry_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_int(i), make_string(name_idx)});
@@ -850,7 +849,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // Pack as (id . gen) pair
         std::size_t pid = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
-                          make_int(static_cast<std::int64_t>(ref.gen))});
+                             make_int(static_cast<std::int64_t>(ref.gen))});
         return make_pair(pid);
     });
     // (ast:ref-valid? id gen) — Issue #191: returns #t if the
@@ -954,8 +953,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // 4-tuple (id gen mutation_id workspace_id); callers
     // unpack and pass the mutation_id directly.
     add("ast:ref-mutation-id", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) ||
-            !is_int(a[2]) || !is_int(a[3]))
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         return make_int(as_int(a[2]));
     });
@@ -964,8 +962,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // — extract the workspace_id (WorkspaceTree layer index)
     // from a serialized StableNodeRef. Returns the integer.
     add("ast:ref-workspace-id", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) ||
-            !is_int(a[2]) || !is_int(a[3]))
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         return make_int(as_int(a[3]));
     });
@@ -978,8 +975,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // and includes a 4-byte magic header so
     // (ast:ref-deserialize) can reject pre-#291 buffers.
     add("ast:ref-serialize", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) ||
-            !is_int(a[2]) || !is_int(a[3]))
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         if (!ev.workspace_flat_)
             return make_bool(false);
@@ -1015,16 +1011,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         aura::ast::FlatAST::StableNodeRef ref{};
         if (!ev.workspace_flat_->deserialize_stable_ref(
-                reinterpret_cast<const std::uint8_t*>(blob.data()),
-                blob.size(), ref))
+                reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size(), ref))
             return make_bool(false);
         // Return as a nested pair: ((id . gen) . (mut_id . ws_id))
         auto pair_id_gen = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
-                          make_int(static_cast<std::int64_t>(ref.gen))});
+                             make_int(static_cast<std::int64_t>(ref.gen))});
         auto pair_mut_ws = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.mutation_id_at_capture)),
-                          make_int(static_cast<std::int64_t>(ref.workspace_id))});
+                             make_int(static_cast<std::int64_t>(ref.workspace_id))});
         auto outer = ev.pairs_.size();
         ev.pairs_.push_back({make_pair(pair_id_gen), make_pair(pair_mut_ws)});
         return make_pair(outer);
@@ -1154,16 +1149,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             {"live-nodes", make_int(static_cast<std::int64_t>(stats.live_nodes))},
             {"free-slots", make_int(static_cast<std::int64_t>(stats.free_slots))},
             {"fragmentation-ratio-bp", make_int(frag_bp)},
-            {"recycle-total", make_int(static_cast<std::int64_t>(
-                                  ev.workspace_flat_->node_recycle_total()))},
-            {"slot-reuse-count", make_int(static_cast<std::int64_t>(
-                                     ev.workspace_flat_->node_slot_reuse_count()))},
-            {"compact-total", make_int(static_cast<std::int64_t>(
-                                   ev.workspace_flat_->node_compact_total()))},
+            {"recycle-total",
+             make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_recycle_total()))},
+            {"slot-reuse-count",
+             make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_slot_reuse_count()))},
+            {"compact-total",
+             make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_compact_total()))},
         };
         return ev.build_ast_lifecycle_hash(kv);
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

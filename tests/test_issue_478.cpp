@@ -10,8 +10,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -23,10 +23,8 @@ bool test_primitive_error_stats_zero_on_fresh() {
     std::println("\n--- AC1: primitive error stats start at 0 ---");
     aura::compiler::CompilerService cs;
     auto& ev = cs.evaluator();
-    CHECK(ev.get_primitive_error_count() == 0,
-          "primitive_error_count == 0 on fresh service");
-    CHECK(ev.get_primitive_error_values_size() == 0,
-          "error_values_.size() == 0 on fresh service");
+    CHECK(ev.get_primitive_error_count() == 0, "primitive_error_count == 0 on fresh service");
+    CHECK(ev.get_primitive_error_values_size() == 0, "error_values_.size() == 0 on fresh service");
     return true;
 }
 
@@ -38,8 +36,7 @@ bool test_query_primitive_error_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_pair(*r),
-          "query:primitive-error-stats returns a pair");
+    CHECK(aura::compiler::types::is_pair(*r), "query:primitive-error-stats returns a pair");
     return true;
 }
 
@@ -53,12 +50,10 @@ bool test_modulo_division_by_zero_increments_counter() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_error(*r),
-          "modulo 1 0 returns an error value");
+    CHECK(aura::compiler::types::is_error(*r), "modulo 1 0 returns an error value");
     auto after = ev.get_primitive_error_count();
-    CHECK(after == before + 1,
-          "primitive_error_count bumped: " + std::to_string(before) + " -> " +
-              std::to_string(after));
+    CHECK(after == before + 1, "primitive_error_count bumped: " + std::to_string(before) + " -> " +
+                                   std::to_string(after));
     return true;
 }
 
@@ -72,12 +67,10 @@ bool test_list_ref_error_increments_counter() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_error(*r),
-          "list-ref out of bounds returns an error value");
+    CHECK(aura::compiler::types::is_error(*r), "list-ref out of bounds returns an error value");
     auto after = ev.get_primitive_error_count();
-    CHECK(after == before + 1,
-          "list-ref error bumped counter: " + std::to_string(before) + " -> " +
-              std::to_string(after));
+    CHECK(after == before + 1, "list-ref error bumped counter: " + std::to_string(before) + " -> " +
+                                   std::to_string(after));
     return true;
 }
 
@@ -94,8 +87,7 @@ bool test_car_error_increments_counter() {
     CHECK(aura::compiler::types::is_error(*r), "car 42 returns an error value");
     auto after = ev.get_primitive_error_count();
     CHECK(after == before + 1,
-          "car error bumped counter: " + std::to_string(before) + " -> " +
-              std::to_string(after));
+          "car error bumped counter: " + std::to_string(before) + " -> " + std::to_string(after));
     return true;
 }
 

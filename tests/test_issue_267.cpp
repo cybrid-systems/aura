@@ -30,7 +30,7 @@ static std::int64_t run_int(aura::compiler::CompilerService& cs, std::string_vie
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
-            ++g_passed;                                                                          \
+            ++g_passed;                                                                            \
             std::println("  PASS: {}", msg);                                                       \
         } else {                                                                                   \
             ++g_failed;                                                                            \
@@ -51,10 +51,10 @@ static std::int64_t pattern_count(aura::compiler::CompilerService& cs, const std
     return run_int(cs, script);
 }
 
-static std::int64_t query_after_setup(aura::compiler::CompilerService& cs,
-                                      const std::string& code, std::string_view query_expr) {
+static std::int64_t query_after_setup(aura::compiler::CompilerService& cs, const std::string& code,
+                                      std::string_view query_expr) {
     return run_int(cs, std::string("(begin (set-code \"") + code + "\") (eval-current) " +
-                                  std::string(query_expr) + ")");
+                           std::string(query_expr) + ")");
 }
 
 bool test_pattern_default_skips_macro() {
@@ -84,9 +84,8 @@ bool test_syntax_marker_where_alias() {
     auto marker_count = query_after_setup(
         cs, "(define-hygienic-macro (twice x) (+ x x)) (twice 3)",
         "(length (query:filter (query:where :syntax-marker \"MacroIntroduced\")))");
-    auto macro_count = query_after_setup(
-        cs, "(define-hygienic-macro (twice x) (+ x x)) (twice 3)",
-        "(length (query:macro-introduced))");
+    auto macro_count = query_after_setup(cs, "(define-hygienic-macro (twice x) (+ x x)) (twice 3)",
+                                         "(length (query:macro-introduced))");
     CHECK(marker_count >= 0, ":syntax-marker filter returns non-negative count");
     CHECK(marker_count == macro_count, ":syntax-marker matches query:macro-introduced count");
     return true;
@@ -95,11 +94,10 @@ bool test_syntax_marker_where_alias() {
 bool test_filter_marker_and_node_type() {
     std::println("\n--- AC4: query:filter composes :syntax-marker + :node-type ---");
     aura::compiler::CompilerService cs;
-    auto calls = query_after_setup(
-        cs, "(define-hygienic-macro (twice x) (+ x x)) (twice 3)",
-        "(length (query:filter "
-        "(query:where :syntax-marker \"MacroIntroduced\") "
-        "(query:where :node-type \"Call\")))");
+    auto calls = query_after_setup(cs, "(define-hygienic-macro (twice x) (+ x x)) (twice 3)",
+                                   "(length (query:filter "
+                                   "(query:where :syntax-marker \"MacroIntroduced\") "
+                                   "(query:where :node-type \"Call\")))");
     CHECK(calls >= 1, "finds macro-introduced Call nodes");
     return true;
 }
@@ -110,8 +108,8 @@ bool test_include_macro_false_explicit() {
     std::string code = "(define-hygienic-macro (twice x) (+ x x)) (twice 7) (+ 7 7)";
     auto def = pattern_count(cs, code, "(+ 7 7)", false);
     auto explicit_f = run_int(cs, std::string("(begin (set-code \"") + code +
-                                              "\") (eval-current) (length (query:pattern "
-                                              "\"(+ 7 7)\" :include-macro-introduced #f)))");
+                                      "\") (eval-current) (length (query:pattern "
+                                      "\"(+ 7 7)\" :include-macro-introduced #f)))");
     CHECK(def == explicit_f, "explicit #f equals default skip behavior");
     CHECK(def >= 1, "user-written (+ 7 7) still matches when macro expansion is skipped");
     return true;
@@ -137,10 +135,14 @@ int run_tests() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_267_detail
+} // namespace aura_issue_267_detail
 
-int aura_issue_267_run() { return aura_issue_267_detail::run_tests(); }
+int aura_issue_267_run() {
+    return aura_issue_267_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_267_run(); }
+int main() {
+    return aura_issue_267_run();
+}
 #endif

@@ -15,8 +15,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -39,8 +39,7 @@ bool test_validate_valid_code() {
         return false;
     }
     // type-name "int" is not registered → expect #f
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              !aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "unknown type \"int\" returns #f (no schema registered)");
     return true;
 }
@@ -66,8 +65,7 @@ bool test_validate_empty_body() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              !aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "empty body with unknown type → #f (no schema, no violation path)");
     return true;
 }
@@ -114,8 +112,7 @@ bool test_validate_int_overflow() {
         return false;
     }
     // 99999999999999999999999 is way beyond int64_t range
-    auto r = cs.eval(
-        R"aur((mutate:validate-against-schema "99999999999999999999999" "int"))aur");
+    auto r = cs.eval(R"aur((mutate:validate-against-schema "99999999999999999999999" "int"))aur");
     if (!r) {
         ++g_failed;
         return false;
@@ -137,8 +134,7 @@ bool test_validate_malformed_args() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              !aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "non-string args return #f");
     return true;
 }
@@ -156,8 +152,7 @@ bool test_validate_missing_args() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              !aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "no args returns #f");
     return true;
 }
@@ -169,21 +164,20 @@ bool test_rebind_with_validate_success() {
     // Use the (set-code + workspace:create + workspace:switch) pattern
     // from test_issue_141 — this is what gives mutate:rebind a working
     // workspace AST to mutate.
-    auto ok = cs.eval(
-        "(begin "
-        "  (set-code \"(define (rebind-victim x) (+ x 1))\") "
-        "  (workspace:create \"vtest\") "
-        "  (workspace:switch 1) "
-        "  (mutate:rebind \"rebind-victim\" \"(lambda (x) (* x 2))\" \"test\" \"int\") "
-        "  (workspace:switch 0))");
+    auto ok =
+        cs.eval("(begin "
+                "  (set-code \"(define (rebind-victim x) (+ x 1))\") "
+                "  (workspace:create \"vtest\") "
+                "  (workspace:switch 1) "
+                "  (mutate:rebind \"rebind-victim\" \"(lambda (x) (* x 2))\" \"test\" \"int\") "
+                "  (workspace:switch 0))");
     if (!ok) {
         ++g_failed;
         return false;
     }
     // mutate:rebind returns #t on success (validate-against-schema
     // returned #t for valid code; the rebind completed).
-    CHECK(aura::compiler::types::is_bool(*ok) &&
-              aura::compiler::types::as_bool(*ok),
+    CHECK(aura::compiler::types::is_bool(*ok) && aura::compiler::types::as_bool(*ok),
           "mutate:rebind with validate: returns #t for valid code");
     return true;
 }
@@ -195,13 +189,12 @@ bool test_rebind_with_validate_failure() {
     // Use empty body as the schema violation trigger. Verify by
     // checking that the workspace source is *unchanged* after the
     // rejected rebind (matches test_issue_141 AC pattern).
-    cs.eval(
-        "(begin "
-        "  (set-code \"(define (rebind-guard x) (+ x 1))\") "
-        "  (workspace:create \"vtest2\") "
-        "  (workspace:switch 1) "
-        "  (mutate:rebind \"rebind-guard\" \"\" \"test\" \"int\") "
-        "  (workspace:switch 0))");
+    cs.eval("(begin "
+            "  (set-code \"(define (rebind-guard x) (+ x 1))\") "
+            "  (workspace:create \"vtest2\") "
+            "  (workspace:switch 1) "
+            "  (mutate:rebind \"rebind-guard\" \"\" \"test\" \"int\") "
+            "  (workspace:switch 0))");
     auto src = cs.eval("(current-source :workspace)");
     if (!src) {
         ++g_failed;
@@ -216,15 +209,13 @@ bool test_rebind_with_validate_failure() {
         // exists, didn't get nulled out by a partial apply).
         (void)sidx;
         // Use aura's (string=? ...) to compare
-        auto r = cs.eval(
-            "(string=? (current-source :workspace) "
-            "         \"(define rebind-guard (lambda (x) (+ x 1)))\")");
+        auto r = cs.eval("(string=? (current-source :workspace) "
+                         "         \"(define rebind-guard (lambda (x) (+ x 1)))\")");
         if (r && aura::compiler::types::is_bool(*r)) {
             unchanged = aura::compiler::types::as_bool(*r);
         }
     }
-    CHECK(unchanged,
-          "mutate:rebind with empty body + validate: rejected, source unchanged");
+    CHECK(unchanged, "mutate:rebind with empty body + validate: rejected, source unchanged");
     return true;
 }
 
@@ -232,19 +223,17 @@ bool test_rebind_with_validate_failure() {
 bool test_rebind_without_validate_unchanged() {
     std::println("\n--- AC9: mutate:rebind without validate: arg works (back-compat) ---");
     aura::compiler::CompilerService cs;
-    auto ok = cs.eval(
-        "(begin "
-        "  (set-code \"(define (rebind-noop x) (+ x 1))\") "
-        "  (workspace:create \"vtest3\") "
-        "  (workspace:switch 1) "
-        "  (mutate:rebind \"rebind-noop\" \"(lambda (x) 999)\" \"test\") "
-        "  (workspace:switch 0))");
+    auto ok = cs.eval("(begin "
+                      "  (set-code \"(define (rebind-noop x) (+ x 1))\") "
+                      "  (workspace:create \"vtest3\") "
+                      "  (workspace:switch 1) "
+                      "  (mutate:rebind \"rebind-noop\" \"(lambda (x) 999)\" \"test\") "
+                      "  (workspace:switch 0))");
     if (!ok) {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*ok) &&
-              aura::compiler::types::as_bool(*ok),
+    CHECK(aura::compiler::types::is_bool(*ok) && aura::compiler::types::as_bool(*ok),
           "mutate:rebind without validate: returns #t (back-compat preserved)");
     return true;
 }
@@ -266,8 +255,12 @@ int run_tests() {
 
 } // namespace aura_issue_288_detail
 
-int aura_issue_178_cycle3_run() { return aura_issue_288_detail::run_tests(); }
+int aura_issue_178_cycle3_run() {
+    return aura_issue_288_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_178_cycle3_run(); }
+int main() {
+    return aura_issue_178_cycle3_run();
+}
 #endif

@@ -53,16 +53,29 @@ namespace aura_issue_258_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: multi_mutation counters start at 0 on a fresh CompilerService ---");
@@ -80,35 +93,42 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:multi-mutation-stats) primitive returns a hash ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:multi-mutation-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t (val={})", rh ? rh->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:multi-mutation-stats) returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
-    if (!rp || !aura::compiler::types::is_bool(*rp) ||
-        aura::compiler::types::as_bool(*rp)) {
+    if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:multi-mutation-stats) is not a pair (pair? is #f)");
     // Verify the 5 keys exist with int values. Note: stale-cache-total
     // can be > 0 after (eval-current) because the evaluator's internal
     // typecheck may hit TypeVars during the eval-current path. So
     // we just verify the keys are present + return ints (not 0).
-    for (const char* key : {"cache-hits-total", "cache-misses-total",
-                            "stale-cache-total", "delta-solve-time-us",
-                            "multi-mutation-recompute-ratio-bp"}) {
+    for (const char* key : {"cache-hits-total", "cache-misses-total", "stale-cache-total",
+                            "delta-solve-time-us", "multi-mutation-recompute-ratio-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
-            std::println("  FAIL: hash-ref h {} did not return int (val={})",
-                         key, rv ? rv->val : -1);
+            std::println("  FAIL: hash-ref h {} did not return int (val={})", key,
+                         rv ? rv->val : -1);
             ++g_failed;
         } else {
             CHECK(true, std::string("hash-ref h \"") + key + "\" returns int");
@@ -121,27 +141,38 @@ bool test_typecheck_bumps_cache() {
     std::println("\n--- AC3: typecheck() bumps cache_hits / cache_misses ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     // Capture baseline.
     auto rg = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-hits-total\")");
     auto rm = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-misses-total\")");
-    if (!rg || !aura::compiler::types::is_int(*rg) ||
-        !rm || !aura::compiler::types::is_int(*rm)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+    if (!rg || !aura::compiler::types::is_int(*rg) || !rm || !aura::compiler::types::is_int(*rm)) {
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto hits_before = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg));
     auto misses_before = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rm));
     // Run typecheck() on the same workspace.
     auto rt = cs.typecheck("(+ x 1)");
-    (void)rt;  // result may be "type: Int" or similar; we only care about side-effects
+    (void)rt; // result may be "type: Int" or similar; we only care about side-effects
     // Read counters again.
     auto rg2 = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-hits-total\")");
     auto rm2 = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-misses-total\")");
-    if (!rg2 || !aura::compiler::types::is_int(*rg2) ||
-        !rm2 || !aura::compiler::types::is_int(*rm2)) {
-        std::println("  FAIL: hash-ref after typecheck failed"); ++g_failed; return false;
+    if (!rg2 || !aura::compiler::types::is_int(*rg2) || !rm2 ||
+        !aura::compiler::types::is_int(*rm2)) {
+        std::println("  FAIL: hash-ref after typecheck failed");
+        ++g_failed;
+        return false;
     }
     auto hits_after = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg2));
     auto misses_after = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rm2));
@@ -156,9 +187,17 @@ bool test_multi_mutation_recompute_ratio() {
     std::println("\n--- AC4: multi_mutation_recompute_ratio_bp computed correctly ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     // Apply several typechecks. Each will contribute to the
     // counters. After enough, the ratio should be a valid
     // basis-points value (0-10000).
@@ -169,12 +208,13 @@ bool test_multi_mutation_recompute_ratio() {
     auto rh = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-hits-total\")");
     auto rm = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-misses-total\")");
     auto rs = cs.eval("(hash-ref (compile:multi-mutation-stats) \"stale-cache-total\")");
-    auto rr = cs.eval("(hash-ref (compile:multi-mutation-stats) \"multi-mutation-recompute-ratio-bp\")");
-    if (!rh || !aura::compiler::types::is_int(*rh) ||
-        !rm || !aura::compiler::types::is_int(*rm) ||
-        !rs || !aura::compiler::types::is_int(*rs) ||
-        !rr || !aura::compiler::types::is_int(*rr)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+    auto rr =
+        cs.eval("(hash-ref (compile:multi-mutation-stats) \"multi-mutation-recompute-ratio-bp\")");
+    if (!rh || !aura::compiler::types::is_int(*rh) || !rm || !aura::compiler::types::is_int(*rm) ||
+        !rs || !aura::compiler::types::is_int(*rs) || !rr || !aura::compiler::types::is_int(*rr)) {
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto hits = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rh));
     auto misses = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rm));
@@ -186,8 +226,7 @@ bool test_multi_mutation_recompute_ratio() {
         return false;
     }
     auto expected_ratio = (misses * 10000u) / total;
-    CHECK_EQ(ratio, expected_ratio,
-             "multi-mutation-recompute-ratio-bp matches misses*10000/total");
+    CHECK_EQ(ratio, expected_ratio, "multi-mutation-recompute-ratio-bp matches misses*10000/total");
     CHECK(ratio <= 10000u, "ratio is a valid basis-points value (0-10000)");
     return true;
 }
@@ -196,10 +235,13 @@ bool test_no_regression() {
     std::println("\n--- AC7: zero regression — existing eval still works ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(set-code \"(define x 42) x\")");
-    if (!r) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     r = cs.eval("(eval-current)");
-    if (!r || !aura::compiler::types::is_int(*r) ||
-        aura::compiler::types::as_int(*r) != 42) {
+    if (!r || !aura::compiler::types::is_int(*r) || aura::compiler::types::as_int(*r) != 42) {
         std::println("  FAIL: eval result != 42 (val={})", r ? r->val : -1);
         ++g_failed;
     } else {
@@ -218,11 +260,12 @@ int run_tests() {
     test_typecheck_bumps_cache();
     test_multi_mutation_recompute_ratio();
     test_no_regression();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_258_detail
+} // namespace aura_issue_258_detail
 
-int aura_issue_258_run() { return aura_issue_258_detail::run_tests(); }
+int aura_issue_258_run() {
+    return aura_issue_258_detail::run_tests();
+}

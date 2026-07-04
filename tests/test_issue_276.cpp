@@ -5,8 +5,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -100,9 +100,10 @@ bool test_cross_layer_resolve_validity_rate() {
             ++resolved;
     }
 
-    const auto pct = captured.empty() ? 0.0
-                                      : (100.0 * static_cast<double>(resolved) /
-                                         static_cast<double>(captured.size()));
+    const auto pct =
+        captured.empty()
+            ? 0.0
+            : (100.0 * static_cast<double>(resolved) / static_cast<double>(captured.size()));
     std::println("  resolved {}/{} ({:.1f}%)", resolved, captured.size(), pct);
     CHECK(pct >= 99.0, "cross-layer StableNodeRef validity >= 99%");
     return pct >= 99.0;
@@ -123,12 +124,11 @@ bool test_workspace_resolve_primitive() {
                        "(workspace:switch 0))"),
           "setup parent/child with mutation");
 
-    auto r = cs.eval(
-        "(begin "
-        "  (define rx (ast:stable-ref 1)) "
-        "  (workspace:switch 1) "
-        "  (define resolved (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
-        "  (if resolved 1 0))");
+    auto r = cs.eval("(begin "
+                     "  (define rx (ast:stable-ref 1)) "
+                     "  (workspace:switch 1) "
+                     "  (define resolved (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
+                     "  (if resolved 1 0))");
     CHECK(r.has_value(), "resolve primitive eval succeeded");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
@@ -152,8 +152,12 @@ int run_tests() {
 
 } // namespace aura_issue_276_detail
 
-int aura_issue_276_run() { return aura_issue_276_detail::run_tests(); }
+int aura_issue_276_run() {
+    return aura_issue_276_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_276_run(); }
+int main() {
+    return aura_issue_276_run();
+}
 #endif

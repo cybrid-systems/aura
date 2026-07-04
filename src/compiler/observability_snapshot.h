@@ -70,7 +70,7 @@ struct CompilerSnapshot {
     // yet (would require scanning the IR post-pass
     // to count remaining CastOps); the follow-up
     // will add it.
-std::uint64_t dead_coercion_eliminated_total = 0;
+    std::uint64_t dead_coercion_eliminated_total = 0;
     // Issue #508: cumulative microseconds spent in the
     // DeadCoercionEliminationPass across all pipeline runs.
     std::uint64_t dead_coercion_elapsed_us_total = 0;

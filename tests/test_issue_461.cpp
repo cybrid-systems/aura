@@ -14,8 +14,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -48,8 +48,7 @@ bool test_stub_returns_sentinel() {
     std::println("\n--- AC1: aura_jit_fallback_to_interpreter returns sentinel ---");
     int64_t args[1] = {0};
     auto rc = aura_jit_fallback_to_interpreter(args, 1);
-    CHECK(rc == 0xDEAD'BEEF'BEEF'DEADull,
-          "fallback stub returns 0xDEAD_BEEF_BEEF_DEAD sentinel");
+    CHECK(rc == 0xDEAD'BEEF'BEEF'DEADull, "fallback stub returns 0xDEAD_BEEF_BEEF_DEAD sentinel");
     return true;
 }
 
@@ -61,8 +60,7 @@ bool test_stub_bumps_counter() {
     aura_jit_fallback_to_interpreter(args, 0);
     auto after = aura_jit_fallback_count_v_read();
     CHECK(after == before + 1,
-          "fallback counter: " + std::to_string(before) +
-              " -> " + std::to_string(after));
+          "fallback counter: " + std::to_string(before) + " -> " + std::to_string(after));
     return true;
 }
 
@@ -70,8 +68,7 @@ bool test_stub_bumps_counter() {
 bool test_stub_null_args_safe() {
     std::println("\n--- AC3: fallback stub handles null args ---");
     auto rc = aura_jit_fallback_to_interpreter(nullptr, 0);
-    CHECK(rc == 0xDEAD'BEEF'BEEF'DEADull,
-          "null args still returns sentinel (no crash)");
+    CHECK(rc == 0xDEAD'BEEF'BEEF'DEADull, "null args still returns sentinel (no crash)");
     return true;
 }
 
@@ -86,14 +83,12 @@ bool test_stub_null_args_safe() {
 bool test_metrics_fallback_field() {
     std::println("\n--- AC4: Metrics has fallback_count + consistency_violations ---");
     aura::jit::MetricsForwardDecl m;
-    CHECK(m.fallback_count.load() == 0,
-          "Metrics::fallback_count starts at 0 (local mirror)");
+    CHECK(m.fallback_count.load() == 0, "Metrics::fallback_count starts at 0 (local mirror)");
     CHECK(m.consistency_violations.load() == 0,
           "Metrics::consistency_violations starts at 0 (local mirror)");
     m.fallback_count.fetch_add(7, std::memory_order_relaxed);
     m.consistency_violations.fetch_add(2, std::memory_order_relaxed);
-    CHECK(m.fallback_count.load() == 7,
-          "Metrics::fallback_count is atomic + mutable");
+    CHECK(m.fallback_count.load() == 7, "Metrics::fallback_count is atomic + mutable");
     CHECK(m.consistency_violations.load() == 2,
           "Metrics::consistency_violations is atomic + mutable");
     return true;
@@ -109,13 +104,12 @@ bool test_query_jit_fallback_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:jit-fallback-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:jit-fallback-stats returns an integer");
     if (aura::compiler::types::is_int(*r)) {
         auto v = aura::compiler::types::as_int(*r);
         CHECK(static_cast<std::uint64_t>(v) == before,
-              "query:jit-fallback-stats matches the atomic counter: " +
-                  std::to_string(v) + " == " + std::to_string(before));
+              "query:jit-fallback-stats matches the atomic counter: " + std::to_string(v) +
+                  " == " + std::to_string(before));
     }
     return true;
 }
@@ -138,8 +132,7 @@ bool test_query_after_fallback() {
         auto v = aura::compiler::types::as_int(*r);
         ok = (static_cast<std::uint64_t>(v) == after);
     }
-    CHECK(ok,
-          "query:jit-fallback-stats reflects the post-stub-call counter");
+    CHECK(ok, "query:jit-fallback-stats reflects the post-stub-call counter");
     return true;
 }
 
@@ -167,8 +160,12 @@ int run_tests() {
 
 } // namespace aura_issue_461_detail
 
-int aura_issue_461_run() { return aura_issue_461_detail::run_tests(); }
+int aura_issue_461_run() {
+    return aura_issue_461_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_461_run(); }
+int main() {
+    return aura_issue_461_run();
+}
 #endif

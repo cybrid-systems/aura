@@ -36,57 +36,37 @@ Evaluator::Evaluator() {
     arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
 
-    ffi_runtime_.register_primitives(
-        prim_registrar(),
-        &string_heap_, &opaque_heap_, &coverage_counters_);
+    ffi_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,
+                                     &coverage_counters_);
 
-    adt_runtime_.register_primitives(
-        prim_registrar(),
-        &string_heap_, &opaque_heap_, &coverage_counters_);
+    adt_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,
+                                     &coverage_counters_);
 
     build_primitive_slots();
 
-    primitives_detail::register_network_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_network_primitives(prim_registrar(), *this);
 
-    primitives_detail::register_type_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_type_primitives(prim_registrar(), *this);
 
     install_defuse_subsystem();
 
-    primitives_detail::register_hot_swap_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_hot_swap_primitives(prim_registrar(), *this);
 
-    primitives_detail::register_compile_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_compile_primitives(prim_registrar(), *this);
 
-    primitives_detail::register_messaging_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_messaging_primitives(prim_registrar(), *this);
 
     primitives_detail::register_synthesize_primitives(
-        prim_registrar(),
-        *this, [this]() { defuse_index_destroy(&defuse_index_); });
+        prim_registrar(), *this, [this]() { defuse_index_destroy(&defuse_index_); });
 
-    primitives_detail::register_strategy_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_strategy_primitives(prim_registrar(), *this);
 
     primitives_detail::register_memory_primitives(
-        prim_registrar(),
-        *this, [this]() { defuse_index_destroy(&defuse_index_); });
+        prim_registrar(), *this, [this]() { defuse_index_destroy(&defuse_index_); });
 
-    primitives_detail::register_jit_arena_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_jit_arena_primitives(prim_registrar(), *this);
 
-    primitives_detail::register_policy_primitives(
-        prim_registrar(),
-        *this);
+    primitives_detail::register_policy_primitives(prim_registrar(), *this);
 
     // Issue #697: backfill SV/EDA PrimMeta after compile partition registers
     // eda:run-verification-feedback and eda:demo-sv-self-evolution.
@@ -135,8 +115,7 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
                  .category = "eda",
                  .schema = "(string int) -> bool"});
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-        m->primitive_eda_meta_backfill_total.fetch_add(
-            5, std::memory_order_relaxed);
+        m->primitive_eda_meta_backfill_total.fetch_add(5, std::memory_order_relaxed);
 }
 
 Evaluator::~Evaluator() {

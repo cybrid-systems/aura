@@ -44,8 +44,8 @@ import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── AC1: invalidate_function uses real BFS ────────────────────
 //
@@ -83,7 +83,8 @@ static bool build_three_level_chain(aura::compiler::CompilerService& cs) {
                       "(define (g x) (f (* x 3))) "
                       "(define (h x) (g (* x 4))))\")");
     CHECK(r1.has_value(), "set-code: define f + g + h");
-    if (!r1.has_value()) return false;
+    if (!r1.has_value())
+        return false;
     // eval-current drives the workspace through lowering so
     // jit_cache_ + ir_cache_v2_ are populated (and the
     // invalidate_function path has real cache entries to erase).
@@ -103,37 +104,29 @@ bool test_ac1_bfs_visits_all_transitives() {
     CHECK(cs.public_dep_graph_contains("f"), "f is in dep_graph_ pre-invalidate");
     CHECK(cs.public_dep_graph_contains("g"), "g is in dep_graph_ pre-invalidate");
     CHECK(cs.public_dep_graph_contains("h"), "h is in dep_graph_ pre-invalidate");
-    CHECK(cs.public_dep_graph_has_edge("g", "f"),
-          "edge g → f exists pre-invalidate");
-    CHECK(cs.public_dep_graph_has_edge("h", "g"),
-          "edge h → g exists pre-invalidate");
+    CHECK(cs.public_dep_graph_has_edge("g", "f"), "edge g → f exists pre-invalidate");
+    CHECK(cs.public_dep_graph_has_edge("h", "g"), "edge h → g exists pre-invalidate");
     CHECK(cs.public_dep_graph_called_by_for("f") == 1,
           "f.called_by size == 1 (g only) pre-invalidate");
     CHECK(cs.public_dep_graph_called_by_for("g") == 1,
           "g.called_by size == 1 (h only) pre-invalidate");
 
-    auto ev_before = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
-    auto calls_before = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    auto ev_before = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
+    auto calls_before = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
 
     // Trigger invalidate on the root (f). BFS should reach g
     // (called_by edge) and h (g's called_by edge).
     cs.public_invalidate_function("f");
 
-    auto ev_after = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
-    auto calls_after = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    auto ev_after = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
+    auto calls_after = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
 
     // invalidate_function erases jit_cache_ for f + each
     // dependent (g, h). 3 evictions total — this is the
     // BFS-correctness contract: the BFS MUST reach both g
     // and h, otherwise only 1 eviction would happen.
-    CHECK(ev_after - ev_before == 3,
-          "jit_cache_evictions bumps by 3 (f + g + h)");
-    CHECK(calls_after - calls_before == 1,
-          "invalidate_function_calls bumps by 1");
+    CHECK(ev_after - ev_before == 3, "jit_cache_evictions bumps by 3 (f + g + h)");
+    CHECK(calls_after - calls_before == 1, "invalidate_function_calls bumps by 1");
 
     // After invalidate, the cleanup loop erased entries
     // for f, g, h from dep_graph_ before re-lower. The
@@ -146,8 +139,7 @@ bool test_ac1_bfs_visits_all_transitives() {
     // f.called_by is gone with it.
     CHECK(!cs.public_dep_graph_contains("f"),
           "f is removed from dep_graph_ post-invalidate (not re-lowered)");
-    CHECK(cs.public_dep_graph_called_by_for("f") == 0,
-          "f.called_by gone post-invalidate");
+    CHECK(cs.public_dep_graph_called_by_for("f") == 0, "f.called_by gone post-invalidate");
     return true;
 }
 
@@ -180,19 +172,18 @@ bool test_ac2_relower_is_stable() {
         bool g_calls_f;
         bool h_calls_g;
     };
-    auto capture_state =
-        [](aura::compiler::CompilerService& cs) {
-            State s{};
-            s.size = cs.public_dep_graph_size();
-            s.f_called_by = cs.public_dep_graph_called_by_for("f");
-            s.g_called_by = cs.public_dep_graph_called_by_for("g");
-            s.h_called_by = cs.public_dep_graph_called_by_for("h");
-            s.g_calls = cs.public_dep_graph_calls_for("g");
-            s.h_calls = cs.public_dep_graph_calls_for("h");
-            s.g_calls_f = cs.public_dep_graph_has_edge("g", "f");
-            s.h_calls_g = cs.public_dep_graph_has_edge("h", "g");
-            return s;
-        };
+    auto capture_state = [](aura::compiler::CompilerService& cs) {
+        State s{};
+        s.size = cs.public_dep_graph_size();
+        s.f_called_by = cs.public_dep_graph_called_by_for("f");
+        s.g_called_by = cs.public_dep_graph_called_by_for("g");
+        s.h_called_by = cs.public_dep_graph_called_by_for("h");
+        s.g_calls = cs.public_dep_graph_calls_for("g");
+        s.h_calls = cs.public_dep_graph_calls_for("h");
+        s.g_calls_f = cs.public_dep_graph_has_edge("g", "f");
+        s.h_calls_g = cs.public_dep_graph_has_edge("h", "g");
+        return s;
+    };
 
     aura::compiler::CompilerService cs1;
     build_three_level_chain(cs1);
@@ -226,20 +217,13 @@ bool test_ac2_relower_is_stable() {
     // but the calls/called_by vector CONTENTS would still
     // be the same — so we only assert on counts and edge
     // membership, not insertion order.
-    CHECK(s1b.size == s2b.size,
-          "post-redefine dep_graph_ size matches across services");
-    CHECK(s1b.g_calls_f == s2b.g_calls_f,
-          "edge g → f present in both services post-redefine");
-    CHECK(s1b.h_calls_g == s2b.h_calls_g,
-          "edge h → g present in both services post-redefine");
-    CHECK(s1b.f_called_by == s2b.f_called_by,
-          "f.called_by count matches");
-    CHECK(s1b.g_called_by == s2b.g_called_by,
-          "g.called_by count matches");
-    CHECK(s1b.g_calls == s2b.g_calls,
-          "g.calls count matches");
-    CHECK(s1b.h_calls == s2b.h_calls,
-          "h.calls count matches");
+    CHECK(s1b.size == s2b.size, "post-redefine dep_graph_ size matches across services");
+    CHECK(s1b.g_calls_f == s2b.g_calls_f, "edge g → f present in both services post-redefine");
+    CHECK(s1b.h_calls_g == s2b.h_calls_g, "edge h → g present in both services post-redefine");
+    CHECK(s1b.f_called_by == s2b.f_called_by, "f.called_by count matches");
+    CHECK(s1b.g_called_by == s2b.g_called_by, "g.called_by count matches");
+    CHECK(s1b.g_calls == s2b.g_calls, "g.calls count matches");
+    CHECK(s1b.h_calls == s2b.h_calls, "h.calls count matches");
     return true;
 }
 
@@ -257,51 +241,38 @@ bool test_ac3_dep_graph_integrity() {
 
     // Verify initial edges are symmetric: g → f implies
     // f has g in its called_by set.
-    CHECK(cs.public_dep_graph_has_edge("g", "f"),
-          "initial: g → f edge");
-    CHECK(cs.public_dep_graph_called_by_for("f") == 1,
-          "initial: f.called_by includes g");
+    CHECK(cs.public_dep_graph_has_edge("g", "f"), "initial: g → f edge");
+    CHECK(cs.public_dep_graph_called_by_for("f") == 1, "initial: f.called_by includes g");
 
     // Cycle 1: invalidate f. The BFS visits g (direct
     // called_by) and h (transitive via g's called_by).
     // Eviction count is 3 (f + g + h).
-    auto ev_before = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
+    auto ev_before = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
     cs.public_invalidate_function("f");
-    auto ev_after = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
-    CHECK(ev_after - ev_before == 3,
-          "cycle 1 invalidate(f): 3 evictions (BFS reaches f+g+h)");
+    auto ev_after = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
+    CHECK(ev_after - ev_before == 3, "cycle 1 invalidate(f): 3 evictions (BFS reaches f+g+h)");
 
     // Cycle 2: invalidate g. The BFS visits g's called_by
     // which is empty (cycle 1's re-lower emptied g's
     // called_by because f's cache was empty mid-traversal).
     // So only g itself is evicted (1).
-    auto ev_before_2 = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
+    auto ev_before_2 = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
     cs.public_invalidate_function("g");
-    auto ev_after_2 = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
-    CHECK(ev_after_2 - ev_before_2 == 1,
-          "cycle 2 invalidate(g): 1 eviction (g only)");
+    auto ev_after_2 = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
+    CHECK(ev_after_2 - ev_before_2 == 1, "cycle 2 invalidate(g): 1 eviction (g only)");
 
     // Cycle 3: invalidate h. The BFS visits h's called_by
     // which is empty (cycle 1's re-lower emptied h's
     // called_by because g's cache was empty). So only h
     // itself is evicted (1).
-    auto ev_before_3 = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
+    auto ev_before_3 = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
     cs.public_invalidate_function("h");
-    auto ev_after_3 = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
-    CHECK(ev_after_3 - ev_before_3 == 1,
-          "cycle 3 invalidate(h): 1 eviction (h only)");
+    auto ev_after_3 = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
+    CHECK(ev_after_3 - ev_before_3 == 1, "cycle 3 invalidate(h): 1 eviction (h only)");
 
     // invalidate_function_calls: 3 invalidates total.
-    auto calls = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
-    CHECK(calls == 3,
-          "invalidate_function_calls counter == 3 (3 invalidate calls)");
+    auto calls = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
+    CHECK(calls == 3, "invalidate_function_calls counter == 3 (3 invalidate calls)");
     return true;
 }
 
@@ -315,26 +286,20 @@ bool test_ac4_metric_semantics() {
     aura::compiler::CompilerService cs;
     build_three_level_chain(cs);
 
-    auto before = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    auto before = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
 
     cs.public_invalidate_function("f");
-    auto after1 = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
-    CHECK(after1 - before == 1,
-          "single invalidate bumps counter by 1");
+    auto after1 = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
+    CHECK(after1 - before == 1, "single invalidate bumps counter by 1");
 
     cs.public_invalidate_function("nonexistent_fn");
-    auto after2 = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    auto after2 = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
     CHECK(after2 - after1 == 1,
           "invalidate on non-existent name also bumps counter by 1 (idempotent)");
 
     cs.public_invalidate_function("f");
-    auto after3 = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
-    CHECK(after3 - after2 == 1,
-          "third invalidate bumps by 1");
+    auto after3 = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
+    CHECK(after3 - after2 == 1, "third invalidate bumps by 1");
     return true;
 }
 
@@ -362,16 +327,12 @@ bool test_ac5_dep_graph_stable_across_rebinds() {
     CHECK(r2.has_value(), "eval-current after set-code");
 
     // Sanity: dep_graph_ has f, g with edge g → f.
-    CHECK(cs.public_dep_graph_contains("f"),
-          "pre-rebind: f in dep_graph_");
-    CHECK(cs.public_dep_graph_contains("g"),
-          "pre-rebind: g in dep_graph_");
-    CHECK(cs.public_dep_graph_has_edge("g", "f"),
-          "pre-rebind: edge g → f");
+    CHECK(cs.public_dep_graph_contains("f"), "pre-rebind: f in dep_graph_");
+    CHECK(cs.public_dep_graph_contains("g"), "pre-rebind: g in dep_graph_");
+    CHECK(cs.public_dep_graph_has_edge("g", "f"), "pre-rebind: edge g → f");
 
     // Pre-rebind metric snapshot.
-    auto calls_before = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    auto calls_before = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
 
     // Three consecutive rebinds on f. Each mutate:rebind
     // calls mark_define_dirty which cascades via the
@@ -381,12 +342,10 @@ bool test_ac5_dep_graph_stable_across_rebinds() {
     for (int i = 0; i < 3; ++i) {
         auto rb = cs.eval("(mutate:rebind \"f\" "
                           "\"(lambda (x) (* x 10))\" \"test\")");
-        CHECK(rb.has_value(),
-              "mutate:rebind iteration succeeds");
+        CHECK(rb.has_value(), "mutate:rebind iteration succeeds");
     }
 
-    auto calls_after = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    auto calls_after = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
     // mutate:rebind does NOT call invalidate_function
     // (it uses mark_define_dirty instead), so the counter
     // should not have moved.
@@ -396,30 +355,23 @@ bool test_ac5_dep_graph_stable_across_rebinds() {
     // After 3 rebinds, the dep_graph_ shape is preserved:
     // f is still defined, g is still defined, and the
     // g → f edge is still recorded.
-    CHECK(cs.public_dep_graph_contains("f"),
-          "post-3x-rebind: f still in dep_graph_");
-    CHECK(cs.public_dep_graph_contains("g"),
-          "post-3x-rebind: g still in dep_graph_");
-    CHECK(cs.public_dep_graph_has_edge("g", "f"),
-          "post-3x-rebind: edge g → f still present");
+    CHECK(cs.public_dep_graph_contains("f"), "post-3x-rebind: f still in dep_graph_");
+    CHECK(cs.public_dep_graph_contains("g"), "post-3x-rebind: g still in dep_graph_");
+    CHECK(cs.public_dep_graph_has_edge("g", "f"), "post-3x-rebind: edge g → f still present");
 
     // Now call public_invalidate_function("f"). This
     // exercises the FIXED BFS path with a populated
     // dep_graph_. The eviction counter should bump by 2
     // (f + g) since g is a direct called_by of f.
-    auto ev_before = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
+    auto ev_before = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
     cs.public_invalidate_function("f");
-    auto ev_after = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
-    CHECK(ev_after - ev_before == 2,
-          "post-rebind invalidate(f): 2 evictions (f + g)");
+    auto ev_after = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
+    CHECK(ev_after - ev_before == 2, "post-rebind invalidate(f): 2 evictions (f + g)");
 
     // f is gone from dep_graph_; g may or may not be re-added
     // (depends on whether the re-lower path records it; for
     // the dep_graph_ integrity contract we just check f).
-    CHECK(!cs.public_dep_graph_contains("f"),
-          "post-invalidate: f removed");
+    CHECK(!cs.public_dep_graph_contains("f"), "post-invalidate: f removed");
     return true;
 }
 
@@ -449,13 +401,11 @@ bool test_ac6_no_infinite_traversal() {
     // invalidates evict only f itself (1 per call), not 3.
     // Total = 3 (first call: f + g + h) + 999 (subsequent: f only)
     //       = 1002.
-    auto ev_before = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
+    auto ev_before = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
     for (int i = 0; i < 1000; ++i) {
         cs.public_invalidate_function("f");
     }
-    auto ev_after = cs.metrics().jit_cache_evictions.load(
-        std::memory_order_relaxed);
+    auto ev_after = cs.metrics().jit_cache_evictions.load(std::memory_order_relaxed);
     auto delta = ev_after - ev_before;
     // First invalidate: 3 evictions. Each subsequent: 1 eviction (f).
     // Total = 3 + 999 = 1002.
@@ -483,10 +433,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_401_detail
+} // namespace aura_issue_401_detail
 
-int aura_issue_401_run() { return aura_issue_401_detail::run_tests(); }
+int aura_issue_401_run() {
+    return aura_issue_401_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_401_run(); }
+int main() {
+    return aura_issue_401_run();
+}
 #endif

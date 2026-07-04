@@ -1,5 +1,6 @@
-// evaluator_primitives_file.cpp — P0 step 25: read / read-file / write-file / file-* / shell / directory-list
-// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+// evaluator_primitives_file.cpp — P0 step 25: read / read-file / write-file / file-* / shell /
+// directory-list aura.compiler.evaluator module partition; registered via
+// evaluator_primitives_registry.cpp.
 
 module;
 
@@ -23,17 +24,17 @@ using namespace types;
 void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
 
     const auto deny_io = [&ev](std::string_view cap, std::string_view msg) -> EvalValue {
-        if (!ev.sandbox_mode() || ev.has_capability(cap)
-            || ev.has_capability(aura::compiler::security::kCapIo)
-            || ev.has_capability(aura::compiler::security::kCapWildcard))
+        if (!ev.sandbox_mode() || ev.has_capability(cap) ||
+            ev.has_capability(aura::compiler::security::kCapIo) ||
+            ev.has_capability(aura::compiler::security::kCapWildcard))
             return make_void();
         ev.bump_capability_denial();
         return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
                                     ev.primitive_error_counter_ptr());
     };
     const auto deny_exec = [&ev](std::string_view msg) -> EvalValue {
-        if (!ev.sandbox_mode() || ev.has_capability(aura::compiler::security::kCapExec)
-            || ev.has_capability(aura::compiler::security::kCapWildcard))
+        if (!ev.sandbox_mode() || ev.has_capability(aura::compiler::security::kCapExec) ||
+            ev.has_capability(aura::compiler::security::kCapWildcard))
             return make_void();
         ev.bump_capability_denial();
         return make_primitive_error(ev.string_heap_, ev.error_values_, msg,

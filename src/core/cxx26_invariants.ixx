@@ -54,18 +54,14 @@ export namespace aura::core {
 // count bumps to alert the AI Agent.
 constexpr std::size_t kExpectedTierCount = 3;
 constexpr std::array<std::size_t, 3> kExpectedTierSizes = {16, 32, 64};
-static_assert(kExpectedTierCount == 3,
-              "Issue #431: SmallObjectPool tier count must be 3 "
-              "(update kExpectedTierCount if a tier is added)");
-static_assert(kExpectedTierSizes[0] == 16,
-              "Issue #431: SmallObjectPool tier 0 must be 16 bytes "
-              "(matches LiteralInt/Variable class size)");
-static_assert(kExpectedTierSizes[1] == 32,
-              "Issue #431: SmallObjectPool tier 1 must be 32 bytes "
-              "(matches small Closure env size)");
-static_assert(kExpectedTierSizes[2] == 64,
-              "Issue #431: SmallObjectPool tier 2 must be 64 bytes "
-              "(matches small BoxedCons cell)");
+static_assert(kExpectedTierCount == 3, "Issue #431: SmallObjectPool tier count must be 3 "
+                                       "(update kExpectedTierCount if a tier is added)");
+static_assert(kExpectedTierSizes[0] == 16, "Issue #431: SmallObjectPool tier 0 must be 16 bytes "
+                                           "(matches LiteralInt/Variable class size)");
+static_assert(kExpectedTierSizes[1] == 32, "Issue #431: SmallObjectPool tier 1 must be 32 bytes "
+                                           "(matches small Closure env size)");
+static_assert(kExpectedTierSizes[2] == 64, "Issue #431: SmallObjectPool tier 2 must be 64 bytes "
+                                           "(matches small BoxedCons cell)");
 static_assert(kExpectedTierSizes[0] < kExpectedTierSizes[1],
               "Issue #431: SmallObjectPool tier sizes must be ascending");
 static_assert(kExpectedTierSizes[1] < kExpectedTierSizes[2],
@@ -94,16 +90,13 @@ constexpr int kFixnumTagLow2 = 0;
 constexpr int kRefTagLow2 = 1;
 constexpr int kStringV2TagLow2 = 2;
 constexpr int kSpecialTagLow2 = 3;
-static_assert(kFixnumTagLow2 != kRefTagLow2,
-              "Issue #431: Value tag low2 bits must be distinct");
+static_assert(kFixnumTagLow2 != kRefTagLow2, "Issue #431: Value tag low2 bits must be distinct");
 static_assert(kFixnumTagLow2 != kStringV2TagLow2,
               "Issue #431: Value tag low2 bits must be distinct");
-static_assert(kRefTagLow2 != kStringV2TagLow2,
-              "Issue #431: Value tag low2 bits must be distinct");
+static_assert(kRefTagLow2 != kStringV2TagLow2, "Issue #431: Value tag low2 bits must be distinct");
 static_assert(kFixnumTagLow2 != kSpecialTagLow2,
               "Issue #431: Value tag low2 bits must be distinct");
-static_assert(kRefTagLow2 != kSpecialTagLow2,
-              "Issue #431: Value tag low2 bits must be distinct");
+static_assert(kRefTagLow2 != kSpecialTagLow2, "Issue #431: Value tag low2 bits must be distinct");
 static_assert(kStringV2TagLow2 != kSpecialTagLow2,
               "Issue #431: Value tag low2 bits must be distinct");
 
@@ -118,9 +111,10 @@ namespace concept_self_check {
     // SoAColumnar: a type with size()/empty()/data() should
     // satisfy the concept. std::vector<int> is the test
     // type — it has all three methods.
-    template <typename C>
-    constexpr bool check_soa_columnar() {
-        return std::ranges::range<C> && requires(C& c) {
+    template <typename C> constexpr bool check_soa_columnar() {
+        return std::ranges::range<C>&&
+            requires(C & c)
+        {
             c.data();
             c.size();
             c.empty();
@@ -131,6 +125,6 @@ namespace concept_self_check {
     // satisfies the requirements.
     static_assert(check_soa_columnar<std::vector<int>>(),
                   "Issue #431: std::vector<int> must satisfy SoAColumnar");
-}
+} // namespace concept_self_check
 
 } // namespace aura::core

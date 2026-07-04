@@ -42,8 +42,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -53,11 +53,10 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 // Helper: run a snippet and return the raw EvalValue
 namespace aura_issue_187_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -81,7 +80,7 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 
 bool test_arena_compact_estimate_empty() {
     std::println("\n--- Test 1.1: compact_estimate on fresh arena ---");
-    aura::ast::ASTArena arena(8 * 1024 * 1024);  // 8MB initial
+    aura::ast::ASTArena arena(8 * 1024 * 1024); // 8MB initial
     // Fresh arena should have ~all of initial as reclaimable.
     auto est = arena.compact_estimate();
     CHECK(est > 0, "compact_estimate returns positive for fresh arena");
@@ -112,7 +111,7 @@ bool test_arena_compact_idempotent() {
     arena.create<int>(1);
     arena.create<int>(2);
     auto saved1 = arena.compact();
-    auto saved2 = arena.compact();  // second call should be no-op
+    auto saved2 = arena.compact(); // second call should be no-op
     CHECK(saved1 > 0, "first compact reclaims bytes");
     CHECK(saved2 == 0, "second compact is no-op (idempotent)");
     CHECK(arena.stats().compaction_count == 1, "compaction_count unchanged on no-op");
@@ -192,8 +191,7 @@ bool test_arena_stats_format() {
     arena.create<int>(42);
     arena.compact();
     auto formatted = arena.stats().format();
-    CHECK(formatted.find("compaction") != std::string::npos,
-          "format() output mentions compaction");
+    CHECK(formatted.find("compaction") != std::string::npos, "format() output mentions compaction");
     return true;
 }
 
@@ -208,15 +206,14 @@ bool test_arena_group_compact_module() {
     m.create<int>(1);
     auto reclaimed = group.compact_module("test_mod");
     CHECK(reclaimed > 0 || reclaimed == 0, "compact_module returns (possibly 0)");
-    CHECK(group.compact_module("nonexistent") == 0,
-          "compact_module on missing module returns 0");
+    CHECK(group.compact_module("nonexistent") == 0, "compact_module on missing module returns 0");
     return true;
 }
 
 bool test_arena_group_auto_compact() {
     std::println("\n--- Test 1.8: ArenaGroup::auto_compact() with threshold ---");
     aura::ast::ArenaGroup group;
-    group.set_compact_threshold(0.0);  // compact on any fragmentation
+    group.set_compact_threshold(0.0); // compact on any fragmentation
     auto& m1 = group.module_arena("a", 1024 * 1024);
     m1.create<int>(1);
     auto& m2 = group.module_arena("b", 1024 * 1024);
@@ -244,9 +241,9 @@ bool test_arena_group_stats_json() {
 bool test_arena_group_compact_threshold_clamp() {
     std::println("\n--- Test 1.10: compact_threshold clamping ---");
     aura::ast::ArenaGroup group;
-    group.set_compact_threshold(2.0);  // over 1.0 — should clamp to 0.95
+    group.set_compact_threshold(2.0); // over 1.0 — should clamp to 0.95
     CHECK(group.compact_threshold() <= 0.95, "threshold clamped to <= 0.95");
-    group.set_compact_threshold(-1.0);  // under 0.0 — should clamp to 0.0
+    group.set_compact_threshold(-1.0); // under 0.0 — should clamp to 0.0
     CHECK(group.compact_threshold() >= 0.0, "threshold clamped to >= 0.0");
     return true;
 }
@@ -348,8 +345,7 @@ bool test_fragmentation_scenario() {
     auto after_compact_cap = arena.stats().capacity;
     CHECK(after_compact_used == used_after_alloc, "compact preserves used bytes");
     CHECK(after_compact_cap <= 8 * 1024 * 1024, "compact reduces capacity");
-    CHECK(arena.stats().total_compaction_saved > 0 || saved > 0,
-          "compaction saved bytes tracked");
+    CHECK(arena.stats().total_compaction_saved > 0 || saved > 0, "compaction saved bytes tracked");
 
     // Phase 3: verify all live objects still accessible
     bool all_ok = true;
@@ -382,8 +378,10 @@ bool test_double_arena_policy() {
     CHECK(stats.size() == 2, "2 module arenas tracked");
     bool found_persistent = false, found_temp = false;
     for (auto& [name, s] : stats) {
-        if (name == "persistent_mod") found_persistent = true;
-        if (name == "temp_mod") found_temp = true;
+        if (name == "persistent_mod")
+            found_persistent = true;
+        if (name == "temp_mod")
+            found_temp = true;
     }
     CHECK(found_persistent, "persistent_mod in module_stats");
     CHECK(found_temp, "temp_mod in module_stats");
@@ -448,8 +446,9 @@ bool test_stringpool_stats_primitive() {
     // fewer fields. We just verify the primitive doesn't crash
     // and returns a value (even if it's void due to slot overflow).
     auto v = run_on(cs, "(string-pool:stats)");
-    if (v.val == 11) {  // void sentinel
-        std::println("  PASS: (string-pool:stats) returns void (known hash-build overflow with 6 keys)");
+    if (v.val == 11) { // void sentinel
+        std::println(
+            "  PASS: (string-pool:stats) returns void (known hash-build overflow with 6 keys)");
         ++g_passed;
     } else {
         std::println("  PASS: (string-pool:stats) returns a value");
@@ -477,13 +476,12 @@ bool test_compact_compound_workflow() {
     std::println("\n--- Test 6.7: compact workflow in Aura code ---");
     aura::compiler::CompilerService cs;
     // Allocate many symbols to grow the string pool, then compact.
-    std::string src =
-        "(begin "
-        "  (define x1 1) (define x2 2) (define x3 3) (define x4 4) (define x5 5) "
-        "  (string-pool:compact) "
-        "  (define y1 1) (define y2 2) "
-        "  (string-pool:compact) "
-        "(+ x1 x2 x3 x4 x5 y1 y2))";
+    std::string src = "(begin "
+                      "  (define x1 1) (define x2 2) (define x3 3) (define x4 4) (define x5 5) "
+                      "  (string-pool:compact) "
+                      "  (define y1 1) (define y2 2) "
+                      "  (string-pool:compact) "
+                      "(+ x1 x2 x3 x4 x5 y1 y2))";
     int64_t r = run_int(cs, src);
     CHECK(r == 18, "compound workflow returns 1+2+3+4+5+1+2 = 18");
     return true;
@@ -553,7 +551,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_187_detail
+} // namespace aura_issue_187_detail
 
-int aura_issue_187_run() { return aura_issue_187_detail::run_tests(); }
-
+int aura_issue_187_run() {
+    return aura_issue_187_detail::run_tests();
+}

@@ -29,8 +29,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -41,7 +41,6 @@ import aura.diag;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_140_detail {
@@ -70,7 +69,8 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
     }
     auto idx = aura::compiler::types::as_string_idx(*r);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
@@ -81,8 +81,10 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
 // `:strict-arity #t` keyword to keep validating the strict
 // behavior. All callers in this file now use this helper, so
 // the strict semantics are preserved everywhere.
-static int64_t count_matches(aura::compiler::CompilerService& cs, const std::string& code, const std::string& pattern) {
-    return run_int(cs, std::string("(set-code \"") + code + "\") (length (query:pattern \"" + pattern + "\" :strict-arity #t))");
+static int64_t count_matches(aura::compiler::CompilerService& cs, const std::string& code,
+                             const std::string& pattern) {
+    return run_int(cs, std::string("(set-code \"") + code + "\") (length (query:pattern \"" +
+                           pattern + "\" :strict-arity #t))");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -96,8 +98,7 @@ bool test_exact_call_match() {
     aura::compiler::CompilerService cs;
     // (define (f x y) (+ x y)) — has Call node for (+ x y)
     int64_t count = count_matches(cs, "(define (f x y) (+ x y))", "(+ x y)");
-    CHECK(count == 1, "exact match '(+ x y)' finds 1 node (got " +
-          std::to_string(count) + ")");
+    CHECK(count == 1, "exact match '(+ x y)' finds 1 node (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -111,10 +112,9 @@ bool test_ellipsis_wildcard() {
     // (+ 1 2) and (+ 1 x). The current implementation treats ...
     // as a single subtree placeholder, so the 2-child call (+ 1)
     // would not match this pattern.
-    int64_t count = count_matches(cs,
-        "(begin (+ 1 2) (+ 1 x) (+ 1))", "(+ 1 ...)");
-    CHECK(count == 2, "pattern '(+ 1 ...)' matches (+ 1 2) and (+ 1 x) (got " +
-          std::to_string(count) + ")");
+    int64_t count = count_matches(cs, "(begin (+ 1 2) (+ 1 x) (+ 1))", "(+ 1 ...)");
+    CHECK(count == 2,
+          "pattern '(+ 1 ...)' matches (+ 1 2) and (+ 1 x) (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -127,10 +127,9 @@ bool test_variable_pattern() {
     // Define(sym=fib) has sym_id="fib" so it matches. The
     // Define(sym=fib2) has sym_id="fib2" so it doesn't match.
     // The (fib) call has a Variable(fib) as callee which matches.
-    int64_t count = count_matches(cs,
-        "(define fib 0)(define fib2 1)(fib)", "fib");
-    CHECK(count >= 1, "pattern 'fib' matches at least the Define (got " +
-          std::to_string(count) + ")");
+    int64_t count = count_matches(cs, "(define fib 0)(define fib2 1)(fib)", "fib");
+    CHECK(count >= 1,
+          "pattern 'fib' matches at least the Define (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -140,8 +139,7 @@ bool test_literal_pattern() {
     std::println("\n--- Test 1.4: literal pattern matches by value ---");
     aura::compiler::CompilerService cs;
     int64_t count = count_matches(cs, "(+ 1 2)(+ 3 4)(+ 5 6)", "(+ 1 2)");
-    CHECK(count == 1, "pattern '(+ 1 2)' matches exactly 1 (got " +
-          std::to_string(count) + ")");
+    CHECK(count == 1, "pattern '(+ 1 2)' matches exactly 1 (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -153,11 +151,9 @@ bool test_lambda_pattern() {
     // Pattern "(lambda (x) ...)" has 2 children (params + body).
     // Workspace lambdas f and g both have 2 children, and both
     // have x as their first param. Both match.
-    int64_t count = count_matches(cs,
-        "(define (f x) x)(define (g x y) (+ x y))",
-        "(lambda (x) ...)");
-    CHECK(count == 2, "pattern matches both lambdas (got " +
-          std::to_string(count) + ")");
+    int64_t count =
+        count_matches(cs, "(define (f x) x)(define (g x y) (+ x y))", "(lambda (x) ...)");
+    CHECK(count == 2, "pattern matches both lambdas (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -168,11 +164,9 @@ bool test_nested_pattern() {
     aura::compiler::CompilerService cs;
     // Pattern "(if ... ... ...)" with 3 children should match
     // 3-child if-expressions.
-    int64_t count = count_matches(cs,
-        "(if x 1 2) (if y 3 4) (+ a b)",
-        "(if ... ... ...)");
-    CHECK(count == 2, "pattern '(if ... ... ...)' matches 2 ifs (got " +
-          std::to_string(count) + ")");
+    int64_t count = count_matches(cs, "(if x 1 2) (if y 3 4) (+ a b)", "(if ... ... ...)");
+    CHECK(count == 2,
+          "pattern '(if ... ... ...)' matches 2 ifs (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -188,12 +182,11 @@ bool test_hygiene_skips_macro() {
     // Define a hygienic macro that expands to a (+ 1 2) call.
     // The user code has no (+ 1 2) call. The macro expansion
     // introduces one, but it should be skipped.
-    std::string code =
-        "(define-hygienic-macro (my-add) (let ((a 1) (b 2)) (+ a b))) "
-        "(my-add)";  // expands to (+ 1 2), but it's macro-introduced
+    std::string code = "(define-hygienic-macro (my-add) (let ((a 1) (b 2)) (+ a b))) "
+                       "(my-add)"; // expands to (+ 1 2), but it's macro-introduced
     int64_t count = count_matches(cs, code, "(+ 1 2)");
-    CHECK(count == 0, "no (+ 1 2) matched (macro expansion skipped) (got " +
-          std::to_string(count) + ")");
+    CHECK(count == 0,
+          "no (+ 1 2) matched (macro expansion skipped) (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -209,14 +202,13 @@ bool test_hygiene_user_matches() {
     // (because clone_macro_body doesn't propagate MacroIntroduced
     // into the body), so it ALSO matches. Hence 2 matches, not 1.
     // Documented as a known limitation.
-    std::string code =
-        "(define-hygienic-macro (my-add) (+ 1 2)) "
-        "(my-add) "    // macro-introduced, should be skipped
-        "(+ 1 2)";    // user-written, should match
+    std::string code = "(define-hygienic-macro (my-add) (+ 1 2)) "
+                       "(my-add) " // macro-introduced, should be skipped
+                       "(+ 1 2)";  // user-written, should match
     int64_t count = count_matches(cs, code, "(+ 1 2)");
     CHECK(count == 2, "(my-add) skipped at outer level, (+ 1 2) matches twice "
-                       "(outer macro body + user code) (got " +
-          std::to_string(count) + ")");
+                      "(outer macro body + user code) (got " +
+                          std::to_string(count) + ")");
     return true;
 }
 
@@ -229,14 +221,12 @@ bool test_hygiene_with_wildcard() {
     // the body is expanded and the call node is marked
     // MacroIntroduced. The wildcard `...` should still work in
     // such patterns.
-    std::string code =
-        "(define-hygienic-macro (twice x) (+ x x)) "
-        "(twice 5)";  // user call (not invoked as macro here)
+    std::string code = "(define-hygienic-macro (twice x) (+ x x)) "
+                       "(twice 5)"; // user call (not invoked as macro here)
     int64_t count = count_matches(cs, code, "(+ ... ...)");
     // The pattern "(+ ... ...)" has 3 children. (+ 5 5) also has
     // 3 children (callee + 2 args). The pattern matches.
-    CHECK(count == 1, "pattern '(+ ... ...)' matches (+ 5 5) (got " +
-          std::to_string(count) + ")");
+    CHECK(count == 1, "pattern '(+ ... ...)' matches (+ 5 5) (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -249,11 +239,9 @@ bool test_hygiene_with_wildcard() {
 bool test_no_match_returns_empty() {
     std::println("\n--- Test 3.1: pattern with no matches returns empty ---");
     aura::compiler::CompilerService cs;
-    int64_t count = count_matches(cs,
-        "(define x 1)(define y 2)(define z 3)",
-        "this-symbol-does-not-exist-anywhere");
-    CHECK(count == 0, "non-existent pattern matches nothing (got " +
-          std::to_string(count) + ")");
+    int64_t count = count_matches(cs, "(define x 1)(define y 2)(define z 3)",
+                                  "this-symbol-does-not-exist-anywhere");
+    CHECK(count == 0, "non-existent pattern matches nothing (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -268,12 +256,12 @@ bool test_many_matches() {
     // 3-child calls: (+ 0 <i> <i+1>).
     std::string code = "(begin ";
     for (int i = 0; i < 20; ++i) {
-        code += "(+ 0 " + std::to_string(i) + " " + std::to_string(i+1) + ") ";
+        code += "(+ 0 " + std::to_string(i) + " " + std::to_string(i + 1) + ") ";
     }
     code += ")";
     int64_t count = count_matches(cs, code, "(+ 0 1 2)");
-    CHECK(count == 1, "pattern '(+ 0 1 2)' matches the i=1 call (got " +
-          std::to_string(count) + ")");
+    CHECK(count == 1,
+          "pattern '(+ 0 1 2)' matches the i=1 call (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -286,19 +274,20 @@ bool test_fuzz_no_crash() {
     // The matcher should handle all gracefully (no crash, no
     // hang, returns void for malformed).
     const char* patterns[] = {
-        "(+ 1 2)",      // basic
-        "...",          // bare wildcard
-        "()",           // empty list (parses to a Literal?)
-        "x",            // bare symbol
-        "(if ... ...)", // 2-arg if (wrong arity)
-        "(...)",        // single-arg with wildcard
+        "(+ 1 2)",         // basic
+        "...",             // bare wildcard
+        "()",              // empty list (parses to a Literal?)
+        "x",               // bare symbol
+        "(if ... ...)",    // 2-arg if (wrong arity)
+        "(...)",           // single-arg with wildcard
         "(let ((x 1)) x)", // let expression
-        "999999",       // number
+        "999999",          // number
     };
     for (const char* p : patterns) {
         // Each call should not crash. Result is ignored.
-        run_int(cs, std::string("(set-code \"(begin (+ 1 2) (- 3 4))\") (length (query:pattern \"")
-                 + p + "\"))");
+        run_int(cs,
+                std::string("(set-code \"(begin (+ 1 2) (- 3 4))\") (length (query:pattern \"") +
+                    p + "\"))");
     }
     // If we got here without crashing, all 8 patterns were handled.
     CHECK(true, "8 varied patterns (including malformed) handled gracefully");
@@ -319,13 +308,13 @@ bool test_perf_5000_nodes() {
     // should find all 1000 calls in reasonable time.
     std::string code = "(begin ";
     for (int i = 0; i < 1000; ++i) {
-        code += "(+ " + std::to_string(i) + " " + std::to_string(i+1) + ") ";
+        code += "(+ " + std::to_string(i) + " " + std::to_string(i + 1) + ") ";
     }
     code += ")";
     auto t0 = std::chrono::steady_clock::now();
-    int64_t count = run_int(cs,
-        std::string("(set-code \"") + code + "\") "
-        "(length (query:pattern \"(+ 0 ...)\"))");
+    int64_t count = run_int(cs, std::string("(set-code \"") + code +
+                                    "\") "
+                                    "(length (query:pattern \"(+ 0 ...)\"))");
     auto t1 = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     std::println("    [5000-node query:pattern: {} μs, {} matches]", us, count);
@@ -333,8 +322,8 @@ bool test_perf_5000_nodes() {
     // (timings vary by host). We just verify the result is sensible
     // and the test completes.
     CHECK(us < 1000000, "query:pattern runs in < 1s (got " + std::to_string(us) + "μs)");
-    CHECK(count == 1, "pattern matches exactly 1 call (the (+ 0 1) one, got " +
-          std::to_string(count) + ")");
+    CHECK(count == 1,
+          "pattern matches exactly 1 call (the (+ 0 1) one, got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -366,12 +355,12 @@ int run_tests() {
     std::println("\n── AC #4: Performance (best-effort) ──");
     test_perf_5000_nodes();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_140_detail
+} // namespace aura_issue_140_detail
 
-int aura_issue_140_run() { return aura_issue_140_detail::run_tests(); }
-
+int aura_issue_140_run() {
+    return aura_issue_140_detail::run_tests();
+}

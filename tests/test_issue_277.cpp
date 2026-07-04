@@ -5,8 +5,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.value;
@@ -110,8 +110,7 @@ bool test_dirty_counts_ppa_fields() {
         ++g_failed;
         return false;
     }
-    CHECK(cs.eval("(hash-ref (dirty:counts) \"timing\")").has_value(),
-          "timing field readable");
+    CHECK(cs.eval("(hash-ref (dirty:counts) \"timing\")").has_value(), "timing field readable");
     CHECK(cs.eval("(hash-ref (dirty:counts) \"power\")").has_value(), "power field readable");
     CHECK(cs.eval("(hash-ref (dirty:counts) \"area\")").has_value(), "area field readable");
     CHECK(cs.eval("(hash-ref (dirty:counts) \"backend-hint\")").has_value(),
@@ -133,8 +132,12 @@ int run_tests() {
 
 } // namespace aura_issue_277_detail
 
-int aura_issue_277_run() { return aura_issue_277_detail::run_tests(); }
+int aura_issue_277_run() {
+    return aura_issue_277_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_277_run(); }
+int main() {
+    return aura_issue_277_run();
+}
 #endif

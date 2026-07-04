@@ -50,13 +50,12 @@ void register_workspace_query_primitives(
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
     // Issue #371: shared_mutex around tag_arity_index. See
     // WorkspaceQueryState::tag_arity_index_mtx above.
-    std::shared_mutex& tag_arity_index_mtx,
-    std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
-    MakeErrorVal mev, Evaluator& ev) {
-    WorkspaceQueryState ws{workspace_mtx,     workspace_flat,   workspace_pool, type_registry,
-                         keyword_table,       pairs,            string_heap,    temp_arena,
-                         tag_arity_index,     tag_arity_index_mtx,
-                         canonical_pool,      build_tag_arity_index};
+    std::shared_mutex& tag_arity_index_mtx, std::function<aura::ast::StringPool*()> canonical_pool,
+    std::function<void()> build_tag_arity_index, MakeErrorVal mev, Evaluator& ev) {
+    WorkspaceQueryState ws{workspace_mtx,       workspace_flat, workspace_pool,
+                           type_registry,       keyword_table,  pairs,
+                           string_heap,         temp_arena,     tag_arity_index,
+                           tag_arity_index_mtx, canonical_pool, build_tag_arity_index};
 
     // (query:find name) — Find all node IDs with matching symbol name
     add("query:find", [ws, mev](const auto& a) -> EvalValue {
@@ -148,8 +147,7 @@ void register_workspace_query_primitives(
             const auto pair_idx = static_cast<int>(base + 3 * i + 1);
             const auto list_idx = static_cast<int>(base + 3 * i + 2);
             ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
-            ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)),
-                                  make_pair(gen_idx)};
+            ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_idx)};
             // The list-node cdr is filled below (we don't know
             // the next list-node index until the loop ends).
             ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
@@ -589,8 +587,7 @@ void register_workspace_query_primitives(
                     // already produced a "malformed predicate"
                     // for a stray keyword at this point, but we
                     // surface it earlier with a clearer message.
-                    return mev("bad-arg",
-                               std::string("unknown top-level keyword: ") + kw);
+                    return mev("bad-arg", std::string("unknown top-level keyword: ") + kw);
                 }
             }
         }
@@ -855,9 +852,15 @@ void register_workspace_query_primitives(
         auto marker = flat.marker(id);
         const char* name = "User";
         switch (marker) {
-            case aura::ast::SyntaxMarker::User: name = "User"; break;
-            case aura::ast::SyntaxMarker::MacroIntroduced: name = "MacroIntroduced"; break;
-            case aura::ast::SyntaxMarker::BoolLiteral: name = "BoolLiteral"; break;
+            case aura::ast::SyntaxMarker::User:
+                name = "User";
+                break;
+            case aura::ast::SyntaxMarker::MacroIntroduced:
+                name = "MacroIntroduced";
+                break;
+            case aura::ast::SyntaxMarker::BoolLiteral:
+                name = "BoolLiteral";
+                break;
         }
         auto idx = ws.string_heap.size();
         ws.string_heap.push_back(name);
@@ -885,7 +888,9 @@ void register_workspace_query_primitives(
 
         auto marker_name = "User";
         switch (flat.marker(node)) {
-            case aura::ast::SyntaxMarker::User: marker_name = "User"; break;
+            case aura::ast::SyntaxMarker::User:
+                marker_name = "User";
+                break;
             case aura::ast::SyntaxMarker::MacroIntroduced:
                 marker_name = "MacroIntroduced";
                 break;
@@ -918,8 +923,7 @@ void register_workspace_query_primitives(
         }());
         append_field("type-id", make_int(static_cast<std::int64_t>(flat.type_id(node))));
         append_field("dirty", make_int(static_cast<std::int64_t>(flat.dirty(node))));
-        append_field("children-count",
-                      make_int(static_cast<std::int64_t>(v.children.size())));
+        append_field("children-count", make_int(static_cast<std::int64_t>(v.children.size())));
 
         if (v.has_name()) {
             auto sym = std::string(ws.workspace_pool->resolve(v.sym_id));
@@ -965,7 +969,7 @@ void register_workspace_query_primitives(
             for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
                 if (v.child(ci) == target) {
                     ++count;
-                    break;  // each id counts at most once
+                    break; // each id counts at most once
                 }
             }
         }
@@ -1478,11 +1482,9 @@ void register_workspace_query_primitives(
         // Same matcher used by mutate:replace-pattern, so the two
         // primitives agree on which nodes match a pattern regardless
         // of :nested-arity mode.
-        aura::compiler::QueryMatcher matcher(
-            ws.workspace_flat, ws.workspace_pool,
-            pat_flat, pat_pool,
-            wildcard_sym, nested_arity,
-            !include_macro_introduced);
+        aura::compiler::QueryMatcher matcher(ws.workspace_flat, ws.workspace_pool, pat_flat,
+                                             pat_pool, wildcard_sym, nested_arity,
+                                             !include_macro_introduced);
 
         // ─── Per-match state (Issue #289, refactored in #482) ───────
         // Captures are stored as an insertion-ordered vector (linear
@@ -1507,7 +1509,8 @@ void register_workspace_query_primitives(
         // we resolve them via pat_pool to get the binding
         // name.
         auto check_guard = [&]() -> bool {
-            if (!matcher.has_pending_guard()) return true;
+            if (!matcher.has_pending_guard())
+                return true;
             const auto& pg = matcher.take_pending_guard();
             // Build let source. Each capture: (name value).
             // The captured value is the workspace node's value
@@ -1517,9 +1520,11 @@ void register_workspace_query_primitives(
             std::string let_src = "(let (";
             for (const auto& kv : pg.captures) {
                 // Skip sentinel sym_id 0 (wildcard captures).
-                if (kv.first == 0) continue;
+                if (kv.first == 0)
+                    continue;
                 auto name = pat_pool->resolve(kv.first);
-                if (name.empty() || name[0] != '?') continue;
+                if (name.empty() || name[0] != '?')
+                    continue;
                 int64_t bind_value = static_cast<int64_t>(kv.second);
                 if (kv.second < ws.workspace_flat->size()) {
                     auto wsn = ws.workspace_flat->get(kv.second);
@@ -1527,8 +1532,7 @@ void register_workspace_query_primitives(
                         bind_value = wsn.int_value;
                     }
                 }
-                let_src += "(" + std::string(name) + " " +
-                           std::to_string(bind_value) + ")";
+                let_src += "(" + std::string(name) + " " + std::to_string(bind_value) + ")";
             }
             let_src += ") " + pg.guard_expr + ")";
             // Parse the let source into a temp flat and eval
@@ -1545,11 +1549,14 @@ void register_workspace_query_primitives(
                 auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
                 if (gr) {
                     auto& gv = *gr;
-        
+
                     // Truthy = non-zero int, non-#f, non-void.
-                    if (types::is_int(gv)) ok = (types::as_int(gv) != 0);
-                    else if (types::is_bool(gv)) ok = types::as_bool(gv);
-                    else if (types::is_pair(gv)) ok = true;
+                    if (types::is_int(gv))
+                        ok = (types::as_int(gv) != 0);
+                    else if (types::is_bool(gv))
+                        ok = types::as_bool(gv);
+                    else if (types::is_pair(gv))
+                        ok = true;
                 }
             }
 
@@ -1583,8 +1590,7 @@ void register_workspace_query_primitives(
         // slow path for guard wrappers.
         const bool pat_is_guard = matcher.is_guard_root(pr.root);
         const bool use_index_fast_path =
-            !pat_root_is_wildcard && !pat_is_guard &&
-            (!nested_arity || !pat_has_ellipsis);
+            !pat_root_is_wildcard && !pat_is_guard && (!nested_arity || !pat_has_ellipsis);
 
 
         // Walk every node in workspace and try matching at each position.
@@ -1659,7 +1665,8 @@ void register_workspace_query_primitives(
                 matcher.state.depth = 0;
                 if (matcher.match_subtree(id, pr.root)) {
                     // Issue #292: guard predicate check.
-                    if (!check_guard()) continue;
+                    if (!check_guard())
+                        continue;
                     // Issue #289: result format. With
                     // :with-markers #t, store a (NodeId . marker-int)
                     // pair per match so agents can see which
@@ -1669,8 +1676,7 @@ void register_workspace_query_primitives(
                     EvalValue item;
                     if (with_markers) {
                         auto nid_int = make_int(static_cast<std::int64_t>(id));
-                        auto marker_int = make_int(
-                            static_cast<std::int64_t>(flat.marker(id)));
+                        auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
                         auto pair_pid = ws.pairs.size();
                         ws.pairs.push_back({nid_int, marker_int});
                         item = make_pair(pair_pid);
@@ -1718,20 +1724,19 @@ void register_workspace_query_primitives(
                 // — the caller (test fixture) is intentionally
                 // exercising index operations on orphan-like
                 // nodes.
-                if (flat.root != aura::ast::NULL_NODE &&
-                    id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
-                    !flat.is_macro_introduced(id))
+                if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
+                    flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
                     continue;
                 matcher.state.captures.clear();
                 matcher.state.depth = 0;
                 if (matcher.match_subtree(id, pr.root)) {
                     // Issue #292: guard predicate check.
-                    if (!check_guard()) continue;
+                    if (!check_guard())
+                        continue;
                     EvalValue item;
                     if (with_markers) {
                         auto nid_int = make_int(static_cast<std::int64_t>(id));
-                        auto marker_int = make_int(
-                            static_cast<std::int64_t>(flat.marker(id)));
+                        auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
                         auto pair_pid = ws.pairs.size();
                         ws.pairs.push_back({nid_int, marker_int});
                         item = make_pair(pair_pid);
@@ -1749,8 +1754,7 @@ void register_workspace_query_primitives(
         // default-hygiene results never surface MacroIntroduced
         // node ids (post query-split contract).
         if (matcher.recursive_macro_skipped() > 0) {
-            ev.bump_pattern_recursive_macro_skipped(
-                matcher.recursive_macro_skipped());
+            ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
         }
         if (!include_macro_introduced) {
             ev.verify_pattern_result_hygiene(flat, result, with_markers);
@@ -1789,11 +1793,13 @@ void register_workspace_query_primitives(
         // application order.
         std::vector<EvalValue> entries;
         for (const auto& rec : log) {
-            if (rec.var_name != var_name) continue;
+            if (rec.var_name != var_name)
+                continue;
             // Build the entry hash. 8-slot is enough for 7 fields
             // (one slot of slack).
             auto* ht = FlatHashTable::create(8);
-            if (!ht) continue;
+            if (!ht)
+                continue;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"predicate", make_string(ws.string_heap.size())},
                 {"refined-type", make_string(ws.string_heap.size() + 1)},
@@ -1819,7 +1825,8 @@ void register_workspace_query_primitives(
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ws.string_heap.size();
                 ws.string_heap.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -1835,7 +1842,10 @@ void register_workspace_query_primitives(
                         break;
                     }
                 }
-                if (!inserted) { ok = false; break; }
+                if (!inserted) {
+                    ok = false;
+                    break;
+                }
             }
             if (!ok) {
                 FlatHashTable::destroy(ht);
@@ -1847,7 +1857,7 @@ void register_workspace_query_primitives(
             ws.pairs.push_back({make_hash(hidx), result});
             result = make_pair(cons_pair);
         }
-                return result;
+        return result;
     });
 
     // Issue #282 follow-up #2: (query:provenance-of *) — list all
@@ -1917,7 +1927,8 @@ void register_workspace_query_primitives(
             // mutation with id >= E. The mutation_epoch_ in
             // CompilerService roughly tracks the mutation_id,
             // so we use capture_epoch as a proxy.
-            if (rec.capture_epoch > target_mid) continue;
+            if (rec.capture_epoch > target_mid)
+                continue;
             // Build a hash with :record-id + :predicate + :var.
             std::size_t sidx_v = ws.string_heap.size();
             ws.string_heap.push_back(rec.var_name);
@@ -1932,7 +1943,8 @@ void register_workspace_query_primitives(
             std::size_t k_e = ws.string_heap.size();
             ws.string_heap.push_back("capture-epoch");
             auto* ht = FlatHashTable::create(8);
-            if (!ht) continue;
+            if (!ht)
+                continue;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"record-id", make_int(static_cast<std::int64_t>(rec.record_id))},
                 {"var", make_string(sidx_v)},
@@ -1949,11 +1961,12 @@ void register_workspace_query_primitives(
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
-                EvalValue key_ev = make_string(k == "record-id" ? k_id
-                                              : k == "var"        ? k_v
-                                              : k == "predicate"  ? k_p
-                                              :                     k_e);
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                EvalValue key_ev = make_string(k == "record-id"   ? k_id
+                                               : k == "var"       ? k_v
+                                               : k == "predicate" ? k_p
+                                                                  : k_e);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
                     auto idx = ((h >> 1) + at) & (cap - 1);
@@ -1966,9 +1979,15 @@ void register_workspace_query_primitives(
                         break;
                     }
                 }
-                if (!inserted) { ok = false; break; }
+                if (!inserted) {
+                    ok = false;
+                    break;
+                }
             }
-            if (!ok) { FlatHashTable::destroy(ht); continue; }
+            if (!ok) {
+                FlatHashTable::destroy(ht);
+                continue;
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             entries.push_back(make_hash(hidx));
@@ -1991,20 +2010,21 @@ void register_workspace_query_primitives(
     // process-global registry (declared in mutation.ixx,
     // defined in mutation_impl.cpp). Both this module and the
     // type_checker module share the same definition.
-    add("register-predicate!", [&ws, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
-        (void)ws; (void)pairs;
-        if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1])) {
-            return make_void();
-        }
-        auto nidx = as_string_idx(a[0]);
-        auto tidx = as_string_idx(a[1]);
-        if (nidx >= string_heap.size() || tidx >= string_heap.size()) {
-            return make_void();
-        }
-        aura::ast::mutation::register_custom_predicate(
-            string_heap[nidx], string_heap[tidx]);
-        return make_bool(true);
-    });
+    add("register-predicate!",
+        [&ws, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            (void)ws;
+            (void)pairs;
+            if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1])) {
+                return make_void();
+            }
+            auto nidx = as_string_idx(a[0]);
+            auto tidx = as_string_idx(a[1]);
+            if (nidx >= string_heap.size() || tidx >= string_heap.size()) {
+                return make_void();
+            }
+            aura::ast::mutation::register_custom_predicate(string_heap[nidx], string_heap[tidx]);
+            return make_bool(true);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

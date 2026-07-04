@@ -56,8 +56,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -65,7 +65,6 @@ import aura.compiler.ir;
 import aura.compiler.evaluator;
 import aura.compiler.query;
 import aura.compiler.value;
-
 
 
 // ── C-API hook for the contract handler (defined in contract_handler.cpp) ──
@@ -246,7 +245,7 @@ bool test_apply_patches_contract() {
     std::vector<aura::ast::Patch> patches;
     aura::ast::Patch p;
     p.node = id;
-    p.field_offset = 1;  // int_val
+    p.field_offset = 1; // int_val
     p.new_value = 42;
     patches.push_back(p);
     bool ok = aura::ast::apply_patches(flat, patches);
@@ -304,12 +303,12 @@ int run_tests() {
     std::println("\n── AC #8: ShapeProfiler contracts ──");
     test_shape_profiler_contracts();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_144_detail
+} // namespace aura_issue_144_detail
 
-int aura_issue_144_run() { return aura_issue_144_detail::run_tests(); }
-
+int aura_issue_144_run() {
+    return aura_issue_144_detail::run_tests();
+}

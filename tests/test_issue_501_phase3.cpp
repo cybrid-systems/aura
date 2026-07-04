@@ -21,22 +21,33 @@ import aura.compiler.query;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} == {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} == {})", msg, _a, _b);                                   \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // Helper: build a 2-child let node.
-static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat,
-                                    aura::ast::StringPool& pool,
-                                    const char* name,
-                                    std::int64_t val) {
+static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                    const char* name, std::int64_t val) {
     auto name_sym = pool.intern(name);
     auto val_node = flat.add_literal(val);
     auto id = flat.add_let(name_sym, val_node, aura::ast::NULL_NODE);
@@ -69,7 +80,7 @@ struct RangeAcceptingAST {
 };
 struct NonRangeAST {
     auto get(std::uint32_t) const { return 0; }
-    int children(std::uint32_t) { return 0; }  // NOT a range
+    int children(std::uint32_t) { return 0; } // NOT a range
     auto tag(std::uint32_t) const { return 0; }
 };
 
@@ -101,8 +112,7 @@ bool test_walk_children_visits_all() {
     std::size_t count = 0;
     auto visitor = [&count](NodeId) { ++count; };
 
-    auto visited = walk_children<std::uint32_t, FlatAST>(
-        flat, let_id, visitor);
+    auto visited = walk_children<std::uint32_t, FlatAST>(flat, let_id, visitor);
     CHECK_EQ(visited, 2u, "walk_children returns child count");
     CHECK_EQ(count, 2u, "visitor was called for each child");
 
@@ -111,10 +121,8 @@ bool test_walk_children_visits_all() {
     auto collector = [&seen](NodeId id) { seen.push_back(id); };
     walk_children<std::uint32_t, FlatAST>(flat, let_id, collector);
     CHECK_EQ(seen.size(), 2u, "collector saw 2 children");
-    CHECK_EQ(seen[0], flat.children(let_id)[0],
-             "seen[0] matches FlatAST::children[0]");
-    CHECK_EQ(seen[1], flat.children(let_id)[1],
-             "seen[1] matches FlatAST::children[1]");
+    CHECK_EQ(seen[0], flat.children(let_id)[0], "seen[0] matches FlatAST::children[0]");
+    CHECK_EQ(seen[1], flat.children(let_id)[1], "seen[1] matches FlatAST::children[1]");
     return true;
 }
 
@@ -152,17 +160,13 @@ bool test_walk_children_generic() {
 
     static_assert(
         requires(FlatAST& f, NodeId id) {
-            walk_children<std::uint32_t, FlatAST>(f, id,
-                [](NodeId) {});
-        },
-        "walk_children must accept FlatAST");
+            walk_children<std::uint32_t, FlatAST>(f, id, [](NodeId) {});
+        }, "walk_children must accept FlatAST");
 
     static_assert(
         requires(RangeAcceptingAST& a, std::uint32_t id) {
-            walk_children<std::uint32_t, RangeAcceptingAST>(a, id,
-                [](std::uint32_t) {});
-        },
-        "walk_children must accept any ASTContainer (not just FlatAST)");
+            walk_children<std::uint32_t, RangeAcceptingAST>(a, id, [](std::uint32_t) {});
+        }, "walk_children must accept any ASTContainer (not just FlatAST)");
 
     CHECK(true, "static_asserts: walk_children accepts FlatAST and custom AST");
     return true;
@@ -185,22 +189,19 @@ bool test_walk_children_rejects_non_astcontainer() {
     // For the negative case, we use std::is_invocable_v which
     // uses SFINAE to detect callability without hard errors.
     auto flatast_callable = [](aura::ast::FlatAST& f, NodeId id) {
-        return aura::compiler::walk_children<std::uint32_t, aura::ast::FlatAST>(
-            f, id, [](NodeId) {});
+        return aura::compiler::walk_children<std::uint32_t, aura::ast::FlatAST>(f, id,
+                                                                                [](NodeId) {});
     };
-    static_assert(
-        std::is_invocable_v<decltype(flatast_callable),
-                            aura::ast::FlatAST&, NodeId>,
-        "walk_children must accept FlatAST");
+    static_assert(std::is_invocable_v<decltype(flatast_callable), aura::ast::FlatAST&, NodeId>,
+                  "walk_children must accept FlatAST");
     (void)flatast_callable;
 
     // The negative case: NotAnAST doesn't have children()/get()/tag()
     // so it doesn't satisfy ASTContainer. Verify directly via the
     // concept (not via walk_children instantiation, which would
     // hard-error inside concept machinery).
-    static_assert(
-        !aura::core::ASTContainer<NotAnAST, std::uint32_t>,
-        "NotAnAST does NOT satisfy ASTContainer (no get/children/tag)");
+    static_assert(!aura::core::ASTContainer<NotAnAST, std::uint32_t>,
+                  "NotAnAST does NOT satisfy ASTContainer (no get/children/tag)");
 
     CHECK(true, "static_asserts: walk_children accepts FlatAST, NotAnAST fails ASTContainer");
     return true;

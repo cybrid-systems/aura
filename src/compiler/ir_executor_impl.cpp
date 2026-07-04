@@ -40,16 +40,12 @@ using namespace types;
 static void record_linear_runtime_safety(CompilerMetrics* metrics, bool mismatch) {
     if (!metrics)
         return;
-    metrics->linear_post_mutate_enforcements_total.fetch_add(
-        1, std::memory_order_relaxed);
+    metrics->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
     if (mismatch) {
-        metrics->linear_deopt_on_mismatch_total.fetch_add(
-            1, std::memory_order_relaxed);
-        metrics->linear_violations_caught_total.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        metrics->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
     } else {
-        metrics->linear_check_pass_count_.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -176,27 +172,24 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
     // Issue #681: bridge_epoch probe before IR dispatch.
     if (closure.bridge_epoch != 0 && context_.evaluator) {
         const auto cur = context_.evaluator->current_bridge_epoch();
-        if (cur != 0 &&
-            context_.evaluator->is_bridge_stale(closure.bridge_epoch, cur)) {
+        if (cur != 0 && context_.evaluator->is_bridge_stale(closure.bridge_epoch, cur)) {
             if (context_.metrics) {
                 context_.metrics->compiler_closure_epoch_mismatch_hits.fetch_add(
                     1, std::memory_order_relaxed);
                 context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
                     1, std::memory_order_relaxed);
-                context_.metrics->closure_stale_returns.fetch_add(
-                    1, std::memory_order_relaxed);
+                context_.metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
             }
-            if (auto tw = context_.evaluator->apply_closure(
-                    static_cast<ClosureId>(closure_id), args))
+            if (auto tw =
+                    context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
                 return *tw;
-            return std::unexpected(Diagnostic{
-                ErrorKind::InvalidClosure,
-                "stale IR closure after mutation (bridge_epoch mismatch)"}
-                                       .with_suggestion("re-run (eval-current) after mutate"));
+            return std::unexpected(
+                Diagnostic{ErrorKind::InvalidClosure,
+                           "stale IR closure after mutation (bridge_epoch mismatch)"}
+                    .with_suggestion("re-run (eval-current) after mutate"));
         }
         if (context_.metrics)
-            context_.metrics->bridge_epoch_hit_count_.fetch_add(
-                1, std::memory_order_relaxed);
+            context_.metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
     }
     if (closure.func_id >= module_.functions.size()) {
         return std::unexpected(
@@ -725,8 +718,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Issue #638: enforce linear_ownership_state on
                     // GuardShape when post-mutate shape may be stale.
                     if (instr.linear_ownership_state != 0) {
-                        record_linear_runtime_safety(metrics_,
-                                                     actual != expected);
+                        record_linear_runtime_safety(metrics_, actual != expected);
                     }
                     if (actual != expected) {
                         // Issue #62 Iter 1: increment the global
@@ -968,12 +960,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             // Tree-walker closure passed into IR (e.g. lambda arg
                             // to a cached define). Delegate to evaluator bridge.
                             if (context_.evaluator) {
-                                if (auto tw = context_.evaluator->apply_closure(closure_id,
-                                                                                call_args))
+                                if (auto tw =
+                                        context_.evaluator->apply_closure(closure_id, call_args))
                                     locals[ops[3]] = *tw;
                                 else
-                                    return std::unexpected(Diagnostic{
-                                        ErrorKind::InvalidClosure, "invalid closure reference"});
+                                    return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
+                                                                      "invalid closure reference"});
                                 break;
                             }
                             return std::unexpected(
@@ -984,25 +976,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto& closure = it->second;
                         // Issue #681: bridge_epoch version probe on apply.
                         if (closure.bridge_epoch != 0 && context_.evaluator) {
-                            const auto cur =
-                                context_.evaluator->current_bridge_epoch();
-                            if (cur != 0 && context_.evaluator->is_bridge_stale(
-                                                 closure.bridge_epoch, cur)) {
+                            const auto cur = context_.evaluator->current_bridge_epoch();
+                            if (cur != 0 &&
+                                context_.evaluator->is_bridge_stale(closure.bridge_epoch, cur)) {
                                 if (context_.metrics) {
-                                    context_.metrics
-                                        ->compiler_closure_epoch_mismatch_hits
+                                    context_.metrics->compiler_closure_epoch_mismatch_hits
                                         .fetch_add(1, std::memory_order_relaxed);
-                                    context_.metrics
-                                        ->compiler_closure_safe_fallbacks
-                                        .fetch_add(1, std::memory_order_relaxed);
+                                    context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
+                                        1, std::memory_order_relaxed);
                                 }
-                                if (auto tw = context_.evaluator->apply_closure(
-                                        closure_id, call_args))
+                                if (auto tw =
+                                        context_.evaluator->apply_closure(closure_id, call_args))
                                     locals[ops[3]] = *tw;
                                 else
-                                    return std::unexpected(Diagnostic{
-                                        ErrorKind::InvalidClosure,
-                                        "stale IR closure after mutation"});
+                                    return std::unexpected(
+                                        Diagnostic{ErrorKind::InvalidClosure,
+                                                   "stale IR closure after mutation"});
                                 break;
                             }
                         }
@@ -1110,12 +1099,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto it = runtime_closures_.find(closure_id);
                         if (it == runtime_closures_.end()) {
                             if (context_.evaluator) {
-                                if (auto tw = context_.evaluator->apply_closure(closure_id,
-                                                                                apply_args))
+                                if (auto tw =
+                                        context_.evaluator->apply_closure(closure_id, apply_args))
                                     locals[ops[2]] = *tw;
                                 else
-                                    return std::unexpected(Diagnostic{
-                                        ErrorKind::InvalidClosure, "invalid closure in apply"});
+                                    return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
+                                                                      "invalid closure in apply"});
                                 break;
                             }
                             return std::unexpected(

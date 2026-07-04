@@ -66,19 +66,16 @@ static std::string closest_match(std::string_view name, std::span<const std::str
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
-    if (cl.bridge_epoch != 0 &&
-        ev.is_bridge_stale(cl.bridge_epoch, ev.current_bridge_epoch())) {
+    if (cl.bridge_epoch != 0 && ev.is_bridge_stale(cl.bridge_epoch, ev.current_bridge_epoch())) {
         stale = true;
         if (m)
-            m->compiler_closure_epoch_mismatch_hits.fetch_add(
-                1, std::memory_order_relaxed);
+            m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
     }
     if (cl.env_id != NULL_ENV_ID) {
         if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
             stale = true;
             if (m)
-                m->compiler_closure_epoch_mismatch_hits.fetch_add(
-                    1, std::memory_order_relaxed);
+                m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
         }
     }
     return stale;
@@ -186,17 +183,15 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         }
     }
     if (cl_found) {
-        CompilerMetrics* metrics = compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(compiler_metrics_)
-                                     : nullptr;
+        CompilerMetrics* metrics =
+            compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
         if (metrics)
             metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
         // Issue #681: epoch + EnvFrame version pre-check before
         // materialize_call_env (live closure across post-mutate inval).
         if (closure_needs_safe_fallback(*this, cl_copy, metrics)) {
             if (metrics)
-                metrics->compiler_closure_safe_fallbacks.fetch_add(
-                    1, std::memory_order_relaxed);
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
             if (closure_bridge_) {
                 if (auto bridged = closure_bridge_(cid, args))
                     return bridged;
@@ -245,8 +240,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // future slice (requires parser integration).
             if (is_bridge_stale(cl_copy.bridge_epoch, current_bridge_epoch())) {
                 if (metrics)
-                    metrics->compiler_closure_safe_fallbacks.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                 if (closure_bridge_) {
                     if (auto bridged = closure_bridge_(cid, args))
                         return bridged;
@@ -256,8 +251,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 return std::nullopt;
             }
             if (metrics)
-                metrics->bridge_epoch_hit_count_.fetch_add(
-                    1, std::memory_order_relaxed);
+                metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
             auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
             if (r)
                 return *r;
@@ -1507,19 +1501,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
 // (mutate:atomic-batch) for the "mutate:remove-node" sub-op.
 EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a) {
     if (a.empty() || !is_int(a[0]))
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
-                                   "batch :remove-node requires a node-id (int)"});
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch, "batch :remove-node requires a node-id (int)"});
     if (!workspace_flat_)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :remove-node: no workspace loaded"});
     auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
     auto& flat = *workspace_flat_;
     if (target >= flat.size())
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :remove-node: node ID " + std::to_string(target) +
-                " >= flat size " + std::to_string(flat.size())});
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :remove-node: node ID " + std::to_string(target) +
+                                       " >= flat size " + std::to_string(flat.size())});
     // Walk all parents to find the (parent, child_index) of
     // `target`. Same logic as the wrapper primitive; can be
     // batched into the log later.
@@ -1533,25 +1526,23 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
             if (children[ci] != target)
                 continue;
             auto result = aura::ast::mutators::apply_mutation(
-                flat, id, aura::ast::mutators::RemoveChildMutator{
-                            static_cast<std::uint32_t>(ci)});
+                flat, id, aura::ast::mutators::RemoveChildMutator{static_cast<std::uint32_t>(ci)});
             if (!result)
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     std::string("batch :remove-node: ") + std::string(result.error().message)});
-            flat.add_structural_mutation_log_entry(
-                id, static_cast<std::uint32_t>(ci), target,
-                aura::ast::NULL_NODE, "remove-node");
+            flat.add_structural_mutation_log_entry(id, static_cast<std::uint32_t>(ci), target,
+                                                   aura::ast::NULL_NODE, "remove-node");
             removed = true;
             break;
         }
-        if (removed) break;
+        if (removed)
+            break;
     }
     if (!removed)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
-            "batch :remove-node: node " + std::to_string(target) +
-                " has no parent in the AST"});
+            "batch :remove-node: node " + std::to_string(target) + " has no parent in the AST"});
     return make_bool(true);
 }
 
@@ -1566,15 +1557,15 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
             aura::diag::ErrorKind::ArityMismatch,
             "batch :insert-child requires parent-id, position, code-string"});
     if (!workspace_flat_ || !workspace_pool_)
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :insert-child: no workspace loaded"});
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :insert-child: no workspace loaded"});
     auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
     auto pos = static_cast<std::uint32_t>(as_int(a[1]));
     auto code_idx = as_string_idx(a[2]);
     if (code_idx >= string_heap_.size())
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError, "batch :insert-child: string index out of range"});
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :insert-child: string index out of range"});
     auto& flat = *workspace_flat_;
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -1588,20 +1579,20 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
         } else if (!pr.error.empty()) {
             parse_err += ": " + pr.error;
         }
-        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
-                                                      parse_err});
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, parse_err});
     }
     auto result = aura::ast::mutators::apply_mutation(
         flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
     if (!result)
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            std::string("batch :insert-child: ") + std::string(result.error().message)});
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      std::string("batch :insert-child: ") +
+                                                          std::string(result.error().message)});
     std::string summary = (a.size() > 3 && is_string(a[3]))
                               ? string_heap_[as_string_idx(a[3])]
                               : "insert child at " + std::to_string(pos);
-    flat.add_structural_mutation_log_entry(
-        parent, pos, aura::ast::NULL_NODE, pr.root, "insert-child");
+    flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE, pr.root,
+                                           "insert-child");
     return make_int(static_cast<std::int64_t>(pr.root));
 }
 
@@ -2015,9 +2006,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // `macros_`, recursively expand it. Bounded by
                                 // a depth limit (10) to prevent infinite loops
                                 // (e.g., macro X calls macro X).
-                                expanded = expand_inner_macros(
-                                    f, p, expanded, /*depth=*/0, /*max_depth=*/10,
-                                    as_expansion_registry(macros_));
+                                expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
+                                                               /*max_depth=*/10,
+                                                               as_expansion_registry(macros_));
                                 f->restamp_all_node_generations();
                                 // Evaluate the cloned + inner-expanded
                                 // body. eval_flat returns a runtime
@@ -3822,8 +3813,8 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         // Recursively expand any nested macro calls in the
         // cloned body. Bounded by depth=10 to prevent infinite
         // loops (a macro that expands to itself).
-        expanded = expand_inner_macros(&flat, &pool, expanded, 0, 10,
-                                       as_expansion_registry(macros_));
+        expanded =
+            expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
 
         ++re_expanded;
     }
@@ -3853,8 +3844,7 @@ void Evaluator::ensure_macro_hygiene_contract() const noexcept {
         // may inherit kMacroExpansion from the subtree walk;
         // only verify the clone_macro_body stamp direction.
         if ((ws->macro_dirty(id) & kExpansion) == 0) {
-            macro_hygiene_contract_violations_.fetch_add(
-                1, std::memory_order_relaxed);
+            macro_hygiene_contract_violations_.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }

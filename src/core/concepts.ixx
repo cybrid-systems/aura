@@ -142,8 +142,7 @@ concept ArenaAllocator = requires(A& a, std::size_t bytes, void* p) {
 // the node handle type.
 export template <typename Q, typename C, typename Id = std::uint32_t>
 concept Queryable = NodeHandle<Id> && requires(Q q, C& ast) {
-    { q.find_calls(ast, /*Symbol*/{}) }
-        -> std::same_as<AuraResult<std::vector<Id>>>;
+    { q.find_calls(ast, /*Symbol*/ {}) } -> std::same_as<AuraResult<std::vector<Id>>>;
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -177,10 +176,8 @@ concept Queryable = NodeHandle<Id> && requires(Q q, C& ast) {
 //   - evaluator.ixx::walk_env_frames<F>
 //   - (future) any visitor template in query.ixx / pass_manager.ixx
 export template <typename F, typename... Args>
-concept AuraInvocable = std::invocable<F, Args...> && requires(
-    F&& f, Args&&... args) {
-    { std::invoke(std::forward<F>(f), std::forward<Args>(args)...) }
-        -> std::convertible_to<bool>;
+concept AuraInvocable = std::invocable<F, Args...> && requires(F&& f, Args&&... args) {
+    { std::invoke(std::forward<F>(f), std::forward<Args>(args)...) } -> std::convertible_to<bool>;
 };
 
 // ── RangeOf<T, R> ────────────────────────────────────────────
@@ -193,8 +190,7 @@ concept AuraInvocable = std::invocable<F, Args...> && requires(
 // form RangeOf<R> uses std::ranges::range_value_t<R> as T
 // (i.e. "any range", no element-type constraint).
 export template <typename T, typename R>
-concept RangeOf = std::ranges::range<R> &&
-                   std::same_as<std::ranges::range_value_t<R>, T>;
+concept RangeOf = std::ranges::range<R> && std::same_as<std::ranges::range_value_t<R>, T>;
 
 export template <typename R>
 concept AnyRange = std::ranges::range<R>;
@@ -239,8 +235,7 @@ concept StableNodeRefLike = requires(const R& r, const C& ast) {
 // Used by walk_ancestors<Id, C, V> in aura.compiler.query to
 // terminate the parent-chain walk without visiting the
 // null sentinel node itself.
-export template <typename Id>
-struct NullIdCheck {
+export template <typename Id> struct NullIdCheck {
     static constexpr bool is_null(Id id) noexcept { return id == Id{}; }
 };
 

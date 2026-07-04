@@ -259,7 +259,8 @@ struct DefUseIndex {
                             // sym as a def in the modport scope.
                             for (std::uint32_t pi = 0; pi < 64; ++pi) {
                                 auto port_sym = flat.param_at(f.node_id, pi);
-                                if (port_sym == INVALID_SYM) break;
+                                if (port_sym == INVALID_SYM)
+                                    break;
                                 def_syms_.push_back(port_sym);
                                 def_nodes_.push_back(f.node_id);
                             }
@@ -799,8 +800,8 @@ void Evaluator::install_defuse_subsystem() {
     };
 
     primitives_detail::register_defuse_query_primitives(
-        prim_registrar(),
-        workspace_mtx_, workspace_flat_, workspace_pool_, string_heap_, ensure_defuse,
+        prim_registrar(), workspace_mtx_, workspace_flat_, workspace_pool_, string_heap_,
+        ensure_defuse,
         [def_use_pair](void* idx, aura::ast::SymId sym) {
             return def_use_pair(static_cast<DefUseIndex*>(idx), sym);
         },
@@ -878,8 +879,7 @@ void Evaluator::install_defuse_subsystem() {
         [this](const std::string& k, const std::string& m) { return make_merr(k, m); });
 
     primitives_detail::register_ast_primitives(
-        prim_registrar(),
-        *this, [this]() { defuse_index_destroy(&defuse_index_); },
+        prim_registrar(), *this, [this]() { defuse_index_destroy(&defuse_index_); },
         [this]() -> std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>> {
             auto* idx = static_cast<DefUseIndex*>(defuse_index_);
             if (!idx || !idx->built_)
@@ -888,6 +888,5 @@ void Evaluator::install_defuse_subsystem() {
                                    static_cast<std::uint64_t>(idx->def_syms_.size()),
                                    static_cast<std::uint64_t>(idx->uses_.size()));
         });
-
-    }
+}
 } // namespace aura::compiler

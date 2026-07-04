@@ -64,16 +64,29 @@ namespace aura_issue_411_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: post-mutation auto-incremental typecheck counters start at 0 ---");
@@ -96,14 +109,22 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:incremental-typecheck-stats) returns hash with 3 keys ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:incremental-typecheck-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t (val={})", rh ? rh->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:incremental-typecheck-stats) returns a hash");
     // Verify the 3 keys exist with int values.
@@ -111,8 +132,8 @@ bool test_aura_primitive_returns_hash() {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
-            std::println("  FAIL: hash-ref h {} did not return int (val={})",
-                         key, rv ? rv->val : -1);
+            std::println("  FAIL: hash-ref h {} did not return int (val={})", key,
+                         rv ? rv->val : -1);
             ++g_failed;
         } else {
             CHECK(true, std::string("hash-ref h \"") + key + "\" returns int");
@@ -129,7 +150,8 @@ bool test_eager_mode_auto_invokes() {
     auto r_eval = cs.eval("(eval-current)");
     if (!r_eval) {
         std::println("  FAIL: initial eval-current failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Now run a typed_mutate. In Eager mode, the success path
     // should auto-invoke infer_flat_partial on the affected
@@ -137,16 +159,16 @@ bool test_eager_mode_auto_invokes() {
     // re_inferred_total.
     auto snap0 = cs.snapshot();
     auto r_mut = cs.eval("(mutate:rebind \"x\" \"42\" \"bump\")");
-    if (!r_mut || !(aura::compiler::types::is_int(*r_mut) || aura::compiler::types::is_bool(*r_mut))) {
+    if (!r_mut ||
+        !(aura::compiler::types::is_int(*r_mut) || aura::compiler::types::is_bool(*r_mut))) {
         std::println("  FAIL: mutate:rebind failed (val={})", r_mut ? r_mut->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto snap1 = cs.snapshot();
-    std::println("  auto_invocations: {} -> {}",
-                 snap0.incremental_typecheck_auto_invocations_total,
+    std::println("  auto_invocations: {} -> {}", snap0.incremental_typecheck_auto_invocations_total,
                  snap1.incremental_typecheck_auto_invocations_total);
-    std::println("  re_inferred:      {} -> {}",
-                 snap0.incremental_typecheck_re_inferred_total,
+    std::println("  re_inferred:      {} -> {}", snap0.incremental_typecheck_re_inferred_total,
                  snap1.incremental_typecheck_re_inferred_total);
     CHECK(snap1.incremental_typecheck_auto_invocations_total >
               snap0.incremental_typecheck_auto_invocations_total,
@@ -165,9 +187,11 @@ bool test_lazy_mode_does_not_invoke() {
     cs.eval("(eval-current)");
     auto snap0 = cs.snapshot();
     auto r_mut = cs.eval("(mutate:rebind \"x\" \"42\" \"bump\")");
-    if (!r_mut || !(aura::compiler::types::is_int(*r_mut) || aura::compiler::types::is_bool(*r_mut))) {
+    if (!r_mut ||
+        !(aura::compiler::types::is_int(*r_mut) || aura::compiler::types::is_bool(*r_mut))) {
         std::println("  FAIL: mutate:rebind failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto snap1 = cs.snapshot();
     CHECK_EQ(snap1.incremental_typecheck_auto_invocations_total,
@@ -187,9 +211,11 @@ bool test_disabled_mode_does_not_invoke() {
     cs.eval("(eval-current)");
     auto snap0 = cs.snapshot();
     auto r_mut = cs.eval("(mutate:rebind \"x\" \"42\" \"bump\")");
-    if (!r_mut || !(aura::compiler::types::is_int(*r_mut) || aura::compiler::types::is_bool(*r_mut))) {
+    if (!r_mut ||
+        !(aura::compiler::types::is_int(*r_mut) || aura::compiler::types::is_bool(*r_mut))) {
         std::println("  FAIL: mutate:rebind failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto snap1 = cs.snapshot();
     CHECK_EQ(snap1.incremental_typecheck_auto_invocations_total,
@@ -223,9 +249,8 @@ bool test_avg_re_inferred_bp_computes_correctly() {
     CHECK(snap.incremental_typecheck_auto_invocations_total >= 3,
           "auto_invocations >= 3 (3 mutations each bumped it)");
     if (snap.incremental_typecheck_auto_invocations_total > 0) {
-        const std::uint64_t expected_bp =
-            (snap.incremental_typecheck_re_inferred_total * 10000u) /
-            snap.incremental_typecheck_auto_invocations_total;
+        const std::uint64_t expected_bp = (snap.incremental_typecheck_re_inferred_total * 10000u) /
+                                          snap.incremental_typecheck_auto_invocations_total;
         CHECK_EQ(snap.incremental_typecheck_avg_re_inferred_bp, expected_bp,
                  "avg-re-inferred-bp matches manual calc");
     } else {
@@ -235,7 +260,8 @@ bool test_avg_re_inferred_bp_computes_correctly() {
 }
 
 bool test_query_type_of_uptodate_in_eager_mode() {
-    std::println("\n--- AC7: query-type-of returns up-to-date result after typed_mutate (Eager) ---");
+    std::println(
+        "\n--- AC7: query-type-of returns up-to-date result after typed_mutate (Eager) ---");
     aura::compiler::CompilerService cs;
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     // Set up: a top-level define f that's a number. After a
@@ -251,21 +277,24 @@ bool test_query_type_of_uptodate_in_eager_mode() {
     if (!r_before || !aura::compiler::types::is_string(*r_before)) {
         std::println("  FAIL: query-type-of pre-mutation failed (val={})",
                      r_before ? r_before->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "query-type-of returns a string before mutation");
     // Now mutate f to a different value.
     auto r_mut = cs.eval("(mutate:rebind \"f\" \"100\" \"bump\")");
     if (!r_mut) {
         std::println("  FAIL: mutate:rebind failed (val={})", r_mut ? r_mut->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Immediately query-type-of — no manual typecheck-incremental.
     auto r_after = cs.eval("(query-type-of \"f\")");
     if (!r_after || !aura::compiler::types::is_string(*r_after)) {
         std::println("  FAIL: query-type-of post-mutation failed (val={})",
                      r_after ? r_after->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "query-type-of returns a string after mutation (no manual typecheck-incremental)");
     // The authoritative AC check: the auto_invocations counter
@@ -288,8 +317,7 @@ bool test_no_regression() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define x 42)\")");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define x 42) + (eval-current) returns 42");
     return true;
 }
@@ -307,7 +335,7 @@ int main() {
     test_avg_re_inferred_bp_computes_correctly();
     test_query_type_of_uptodate_in_eager_mode();
     test_no_regression();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

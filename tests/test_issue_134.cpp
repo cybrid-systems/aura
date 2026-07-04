@@ -24,8 +24,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -33,7 +33,6 @@ import aura.compiler.value;
 import aura.compiler.ir;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 // ── Test 1: parse_datatype produces a valid AST ─────────
@@ -46,9 +45,8 @@ bool test_parse_datatype() {
     aura::ast::FlatAST flat(alloc);
     aura::ast::StringPool pool(alloc);
 
-    auto pr = aura::parser::parse_to_flat(
-        "(datatype (Tree) (Leaf Int) (Node Tree Tree))",
-        flat, pool);
+    auto pr =
+        aura::parser::parse_to_flat("(datatype (Tree) (Leaf Int) (Node Tree Tree))", flat, pool);
     CHECK(pr.success, "parse_datatype succeeds");
     CHECK(pr.root != aura::ast::NULL_NODE, "parse_datatype returns non-NULL root");
     return true;
@@ -63,8 +61,7 @@ bool test_parse_datatype_zero_arity() {
     aura::ast::FlatAST flat(alloc);
     aura::ast::StringPool pool(alloc);
 
-    auto pr = aura::parser::parse_to_flat(
-        "(datatype (None) (None))", flat, pool);
+    auto pr = aura::parser::parse_to_flat("(datatype (None) (None))", flat, pool);
     CHECK(pr.success, "zero-arity ctor parses");
     return true;
 }
@@ -78,8 +75,7 @@ bool test_parse_datatype_parametric() {
     aura::ast::FlatAST flat(alloc);
     aura::ast::StringPool pool(alloc);
 
-    auto pr = aura::parser::parse_to_flat(
-        "(datatype (Option : T) (Some T) (None))", flat, pool);
+    auto pr = aura::parser::parse_to_flat("(datatype (Option : T) (Some T) (None))", flat, pool);
     CHECK(pr.success, "parametric type spec parses");
     return true;
 }
@@ -93,8 +89,7 @@ bool test_parse_datatype_no_ctors() {
     aura::ast::FlatAST flat(alloc);
     aura::ast::StringPool pool(alloc);
 
-    auto pr = aura::parser::parse_to_flat(
-        "(datatype (Empty))", flat, pool);
+    auto pr = aura::parser::parse_to_flat("(datatype (Empty))", flat, pool);
     CHECK(pr.success, "empty datatype parses (just the type name)");
     return true;
 }
@@ -105,12 +100,12 @@ int run_tests() {
     test_parse_datatype_zero_arity();
     test_parse_datatype_parametric();
     test_parse_datatype_no_ctors();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_134_detail
+} // namespace aura_issue_134_detail
 
-int aura_issue_134_run() { return aura_issue_134_detail::run_tests(); }
-
+int aura_issue_134_run() {
+    return aura_issue_134_detail::run_tests();
+}

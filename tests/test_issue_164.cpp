@@ -20,8 +20,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -31,12 +31,15 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
     if (aura::compiler::types::is_int(v)) {
         return aura::compiler::types::as_int(v);
@@ -58,8 +61,8 @@ bool test_fiber_join_already_done() {
     PRINTLN("\n--- Test 2: fiber:join on already-done target (no spin) ---");
     aura::compiler::CompilerService cs;
     auto r = run_int(cs, "(begin "
-                          "  (define f (fiber:spawn (lambda () 42))) "
-                          "  (fiber:join f))");
+                         "  (define f (fiber:spawn (lambda () 42))) "
+                         "  (fiber:join f))");
     CHECK(r == 42, "spawn + immediate join (target done) returns 42");
     return true;
 }
@@ -69,11 +72,11 @@ bool test_fiber_join_many() {
     PRINTLN("\n--- Test 3: 5 sequential spawn+join ---");
     aura::compiler::CompilerService cs;
     auto r = run_int(cs, "(begin "
-                          "  (+ (fiber:join (fiber:spawn (lambda () 1))) "
-                          "     (fiber:join (fiber:spawn (lambda () 2))) "
-                          "     (fiber:join (fiber:spawn (lambda () 3))) "
-                          "     (fiber:join (fiber:spawn (lambda () 4))) "
-                          "     (fiber:join (fiber:spawn (lambda () 5)))))");
+                         "  (+ (fiber:join (fiber:spawn (lambda () 1))) "
+                         "     (fiber:join (fiber:spawn (lambda () 2))) "
+                         "     (fiber:join (fiber:spawn (lambda () 3))) "
+                         "     (fiber:join (fiber:spawn (lambda () 4))) "
+                         "     (fiber:join (fiber:spawn (lambda () 5)))))");
     CHECK(r == 15, "5 sequential spawn+join sum to 15");
     return true;
 }
@@ -102,17 +105,18 @@ bool test_fiber_join_with_mutations() {
     // the join completes without timeout regardless of the
     // specific value.
     auto r = run_int(cs, "(begin "
-                          "  (set-code \"(define x 10) (define y 20)\") "
-                          "  (define f1 (fiber:spawn (lambda () (* x 2)))) "
-                          "  (define f2 (fiber:spawn (lambda () (+ x y)))) "
-                          "  (define f3 (fiber:spawn (lambda () (- y x)))) "
-                          "  (mutate:rebind \"x\" \"100\" \"bump x\") "
-                          "  (+ (fiber:join f1) (fiber:join f2) (fiber:join f3)))");
+                         "  (set-code \"(define x 10) (define y 20)\") "
+                         "  (define f1 (fiber:spawn (lambda () (* x 2)))) "
+                         "  (define f2 (fiber:spawn (lambda () (+ x y)))) "
+                         "  (define f3 (fiber:spawn (lambda () (- y x)))) "
+                         "  (mutate:rebind \"x\" \"100\" \"bump x\") "
+                         "  (+ (fiber:join f1) (fiber:join f2) (fiber:join f3)))");
     // We don't assert a specific value (depends on capture
     // semantics) — just that it completed without hanging and
     // returned a number. The KEY assertion: didn't hang, no
     // timeout, no version mismatch crash.
-    CHECK(r != -1, "interleaved fiber:join + mutate:rebind completed (r=" + std::to_string(r) + ")");
+    CHECK(r != -1,
+          "interleaved fiber:join + mutate:rebind completed (r=" + std::to_string(r) + ")");
     return true;
 }
 
@@ -126,18 +130,18 @@ bool test_fiber_join_spawn_batch_join_batch() {
     aura::compiler::CompilerService cs;
     // Spawn 10 fibers first, capturing all IDs, then join them all
     auto r = run_int(cs, "(begin "
-                          "  (define ids '()) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 1)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 2)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 3)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 4)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 5)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 6)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 7)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 8)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 9)) ids)) "
-                          "  (set! ids (cons (fiber:spawn (lambda () 10)) ids)) "
-                          "  (apply + (map fiber:join (reverse ids))))");
+                         "  (define ids '()) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 1)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 2)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 3)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 4)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 5)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 6)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 7)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 8)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 9)) ids)) "
+                         "  (set! ids (cons (fiber:spawn (lambda () 10)) ids)) "
+                         "  (apply + (map fiber:join (reverse ids))))");
     // The actual sum may vary (depends on whether fibers complete
     // before join), but the test is about NOT hanging and NOT
     // spinning. We assert the eval didn't error.
@@ -154,8 +158,8 @@ bool test_fiber_join_50_stress() {
     // proves that no spin is happening.
     std::string src = "(begin";
     for (int i = 1; i <= 50; ++i) {
-        src += " (define f" + std::to_string(i) +
-               " (fiber:spawn (lambda () " + std::to_string(i) + ")))";
+        src += " (define f" + std::to_string(i) + " (fiber:spawn (lambda () " + std::to_string(i) +
+               ")))";
     }
     src += " (+";
     for (int i = 1; i <= 50; ++i) {

@@ -61,10 +61,8 @@ static void run_matrix(CompilerService& cs) {
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     auto irs = cs.eval("(query:ir-hygiene-stats)");
     auto pms = cs.eval("(query:pattern-marker-stats)");
-    std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker={}",
-                 skips0, skips1,
-                 irs && is_int(*irs) ? as_int(*irs) : 0,
-                 pms && is_int(*pms) ? as_int(*pms) : 0);
+    std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker={}", skips0, skips1,
+                 irs && is_int(*irs) ? as_int(*irs) : 0, pms && is_int(*pms) ? as_int(*pms) : 0);
     CHECK(skips1 > skips0, "MacroIntroduced filtered in query:pattern");
     CHECK(irs && is_int(*irs), "query:ir-hygiene-stats returns int");
     CHECK(pms && is_int(*pms), "query:pattern-marker-stats returns int");
@@ -75,8 +73,7 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(mutate:rebind \"user-val\" \"42\")");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     const auto snap = cs.evaluator().get_impact_snapshot_count();
-    std::println("  mutation_impact: {} -> {} impact_snapshot={}",
-                 impact0, impact1, snap);
+    std::println("  mutation_impact: {} -> {} impact_snapshot={}", impact0, impact1, snap);
     CHECK(impact1 > impact0, "Guard success bumps mutation_impact");
 
     std::println("\n--- AC4: Top3 dirty/type incremental ---");
@@ -84,25 +81,21 @@ static void run_matrix(CompilerService& cs) {
     auto typed = cs.eval("(query:typed-mutation-stats)");
     CHECK(dirty && is_int(*dirty), "query:dirty-impact returns int");
     CHECK(typed && is_int(*typed), "query:typed-mutation-stats returns int");
-    std::println("  dirty-impact={} typed-mutation-stats={}",
-                 as_int(*dirty), as_int(*typed));
+    std::println("  dirty-impact={} typed-mutation-stats={}", as_int(*dirty), as_int(*typed));
 
     std::println("\n--- AC5: query:ir-hygiene-stats ---");
     auto ir0 = cs.eval("(query:ir-hygiene-stats)");
-    CHECK(ir0 && is_int(*ir0) && as_int(*ir0) >= 0,
-          "ir-hygiene-stats non-negative");
+    CHECK(ir0 && is_int(*ir0) && as_int(*ir0) >= 0, "ir-hygiene-stats non-negative");
 
     std::println("\n--- AC6: query:pattern-marker-stats ---");
     auto pm0 = cs.eval("(query:pattern-marker-stats)");
-    CHECK(pm0 && is_int(*pm0) && as_int(*pm0) > 0,
-          "pattern-marker-stats > 0 after macro+query");
+    CHECK(pm0 && is_int(*pm0) && as_int(*pm0) > 0, "pattern-marker-stats > 0 after macro+query");
 
     std::println("\n--- AC7: multi-round self-evo cycle ---");
     const auto stats7a = prod_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"" +
-                      std::to_string(200 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats7b = prod_stats(cs);

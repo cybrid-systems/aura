@@ -72,8 +72,7 @@ bool test_query_linear_ownership_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:linear-ownership-stats)");
     CHECK(r.has_value(), "(query:linear-ownership-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:linear-ownership-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:linear-ownership-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:linear-ownership-stats = {}", v);
@@ -88,22 +87,17 @@ bool test_ownership_env_states_present() {
     std::ifstream f("/home/dev/code/aura/src/compiler/type_checker.ixx");
     CHECK(f.good(), "type_checker.ixx exists");
     if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)),
-                            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
-        const bool has_enum =
-            content.find("enum class OwnershipState") != std::string::npos;
+        const bool has_enum = content.find("enum class OwnershipState") != std::string::npos;
         const bool has_owned = content.find("Owned,") != std::string::npos;
         const bool has_moved = content.find("Moved,") != std::string::npos;
         const bool has_borrowed = content.find("Borrowed,") != std::string::npos;
-        const bool has_mut_borrowed =
-            content.find("MutBorrowed") != std::string::npos;
-        const bool has_own_env =
-            content.find("class OwnershipEnv") != std::string::npos;
+        const bool has_mut_borrowed = content.find("MutBorrowed") != std::string::npos;
+        const bool has_own_env = content.find("class OwnershipEnv") != std::string::npos;
         std::println("  OwnershipEnv: enum={} Owned={} Moved={} Borrowed={} "
                      "MutBorrowed={} class={}",
-                     has_enum, has_owned, has_moved, has_borrowed,
-                     has_mut_borrowed, has_own_env);
+                     has_enum, has_owned, has_moved, has_borrowed, has_mut_borrowed, has_own_env);
         CHECK(has_enum, "OwnershipState enum exists");
         CHECK(has_owned, "OwnershipState::Owned exists");
         CHECK(has_moved, "OwnershipState::Moved exists");
@@ -154,16 +148,14 @@ bool test_long_running_cycle() {
     const auto wire0 = cs.get_hw_resource_wire_borrows();
     const auto reg0 = cs.get_hw_resource_reg_writes();
     for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(i) + ") (define " +
-            (i & 1 ? "a" : "b") + " " + std::to_string(i) + "))";
+        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+                           " " + std::to_string(i) + ") (define " + (i & 1 ? "a" : "b") + " " +
+                           std::to_string(i) + "))";
         (void)cs.eval(code);
     }
     const auto wire1 = cs.get_hw_resource_wire_borrows();
     const auto reg1 = cs.get_hw_resource_reg_writes();
-    std::println("  wire_borrows: {} -> {} reg_writes: {} -> {}",
-                 wire0, wire1, reg0, reg1);
+    std::println("  wire_borrows: {} -> {} reg_writes: {} -> {}", wire0, wire1, reg0, reg1);
     CHECK(wire1 >= wire0, "wire_borrows non-decreasing under cycle");
     CHECK(reg1 >= reg0, "reg_writes non-decreasing under cycle");
     return true;
@@ -182,20 +174,21 @@ bool test_eight_thread_concurrent() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define a " +
-                std::to_string(tid * 1000 + i) +
-                ") (define a " + std::to_string(tid * 1000 + i) + "))";
+            std::string code = "(mutate:replace-value (define a " + std::to_string(tid * 1000 + i) +
+                               ") (define a " + std::to_string(tid * 1000 + i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
     const auto wire = cs.get_hw_resource_wire_borrows();
     const auto dd = cs.get_hw_resource_double_drive();
-    std::println("  completed: {}/{} wire_borrows: {} double_drive: {}",
-                 completed.load(), n_threads * n_iters, wire, dd);
+    std::println("  completed: {}/{} wire_borrows: {} double_drive: {}", completed.load(),
+                 n_threads * n_iters, wire, dd);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 mutates completed (no crash under concurrent load)");
     CHECK(wire >= 0, "wire_borrows non-negative");
@@ -264,8 +257,12 @@ int run_tests() {
 
 } // namespace aura_issue_306_detail
 
-int aura_issue_306_run() { return aura_issue_306_detail::run_tests(); }
+int aura_issue_306_run() {
+    return aura_issue_306_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_306_run(); }
+int main() {
+    return aura_issue_306_run();
+}
 #endif

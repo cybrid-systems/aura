@@ -62,23 +62,21 @@ static int k_fuzz_iters() {
 // ── AC1: panic-checkpoint + panic-restore + panic-safe-source
 //         reachable via Aura primitives ────────────────────
 bool test_panic_checkpoint_primitives_reachable() {
-    std::println("\n--- AC1: (panic-checkpoint) / (panic-restore) / (panic-safe-source) reachable ---");
+    std::println(
+        "\n--- AC1: (panic-checkpoint) / (panic-restore) / (panic-safe-source) reachable ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto r1 = cs.eval("(panic-checkpoint)");
     CHECK(r1.has_value(), "(panic-checkpoint) returns");
-    CHECK(aura::compiler::types::is_bool(*r1) &&
-              aura::compiler::types::as_bool(*r1) == true,
+    CHECK(aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1) == true,
           "(panic-checkpoint) returns #t (workspace loaded)");
     auto r2 = cs.eval("(panic-safe-source)");
     CHECK(r2.has_value(), "(panic-safe-source) returns");
-    CHECK(aura::compiler::types::is_string(*r2),
-          "(panic-safe-source) is string");
+    CHECK(aura::compiler::types::is_string(*r2), "(panic-safe-source) is string");
     auto r3 = cs.eval("(panic-restore)");
     CHECK(r3.has_value(), "(panic-restore) returns");
-    CHECK(aura::compiler::types::is_bool(*r3),
-          "(panic-restore) returns #t (restore succeeded)");
+    CHECK(aura::compiler::types::is_bool(*r3), "(panic-restore) returns #t (restore succeeded)");
     return true;
 }
 
@@ -102,8 +100,7 @@ bool test_nested_guard_basic() {
     }
     const auto v_after = ev.defuse_version_for_test();
     std::println("  defuse_version_: {} -> {}", v_before, v_after);
-    CHECK(v_after > v_before,
-          "defuse_version_ bumped after nested Guard (outermost exit)");
+    CHECK(v_after > v_before, "defuse_version_ bumped after nested Guard (outermost exit)");
     return true;
 }
 
@@ -176,27 +173,20 @@ bool test_commit_clears_size_snapshots() {
     ev.set_panic_safe_env_frames_size_for_test(7);
     CHECK(ev.panic_safe_cells_size() == 10, "panic_safe_cells_size_ == 10");
     CHECK(ev.panic_safe_pairs_size() == 5, "panic_safe_pairs_size_ == 5");
-    CHECK(ev.panic_safe_string_heap_size() == 100,
-          "panic_safe_string_heap_size_ == 100");
-    CHECK(ev.panic_safe_env_frames_size() == 7,
-          "panic_safe_env_frames_size_ == 7");
+    CHECK(ev.panic_safe_string_heap_size() == 100, "panic_safe_string_heap_size_ == 100");
+    CHECK(ev.panic_safe_env_frames_size() == 7, "panic_safe_env_frames_size_ == 7");
     // Commit clears them.
     ev.commit_panic_checkpoint();
-    CHECK(ev.panic_safe_cells_size() == 0,
-          "commit clears panic_safe_cells_size_");
-    CHECK(ev.panic_safe_pairs_size() == 0,
-          "commit clears panic_safe_pairs_size_");
-    CHECK(ev.panic_safe_string_heap_size() == 0,
-          "commit clears panic_safe_string_heap_size_");
-    CHECK(ev.panic_safe_env_frames_size() == 0,
-          "commit clears panic_safe_env_frames_size_");
+    CHECK(ev.panic_safe_cells_size() == 0, "commit clears panic_safe_cells_size_");
+    CHECK(ev.panic_safe_pairs_size() == 0, "commit clears panic_safe_pairs_size_");
+    CHECK(ev.panic_safe_string_heap_size() == 0, "commit clears panic_safe_string_heap_size_");
+    CHECK(ev.panic_safe_env_frames_size() == 0, "commit clears panic_safe_env_frames_size_");
     return true;
 }
 
 // ── AC6: 1000+ nested mutate + random panic fuzz ─────────
 bool test_nested_panic_fuzz() {
-    std::println("\n--- AC6: {} iters nested mutate + random panic fuzz ---",
-                 k_fuzz_iters());
+    std::println("\n--- AC6: {} iters nested mutate + random panic fuzz ---", k_fuzz_iters());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
@@ -231,8 +221,8 @@ bool test_nested_panic_fuzz() {
             next_panic = i + panic_every(rng);
         }
     }
-    std::println("  fuzz iters: {} panic-checkpoints: {} panic-restores: {}",
-                 k_fuzz_iters(), panics, restores);
+    std::println("  fuzz iters: {} panic-checkpoints: {} panic-restores: {}", k_fuzz_iters(),
+                 panics, restores);
     CHECK(panics > 0, "at least 1 panic-checkpoint executed");
     CHECK(restores > 0, "at least 1 panic-restore succeeded");
     return true;
@@ -245,18 +235,14 @@ bool test_panic_safe_size_invariants() {
     // Initial state: all zero.
     CHECK(ev.panic_safe_cells_size() == 0, "initial panic_safe_cells_size_ == 0");
     CHECK(ev.panic_safe_pairs_size() == 0, "initial panic_safe_pairs_size_ == 0");
-    CHECK(ev.panic_safe_string_heap_size() == 0,
-          "initial panic_safe_string_heap_size_ == 0");
-    CHECK(ev.panic_safe_env_frames_size() == 0,
-          "initial panic_safe_env_frames_size_ == 0");
+    CHECK(ev.panic_safe_string_heap_size() == 0, "initial panic_safe_string_heap_size_ == 0");
+    CHECK(ev.panic_safe_env_frames_size() == 0, "initial panic_safe_env_frames_size_ == 0");
     // Set + read round-trip.
     ev.set_panic_safe_cells_size_for_test(42);
-    CHECK(ev.panic_safe_cells_size() == 42,
-          "panic_safe_cells_size_ set/get round-trip (42)");
+    CHECK(ev.panic_safe_cells_size() == 42, "panic_safe_cells_size_ set/get round-trip (42)");
     // Commit resets to 0.
     ev.commit_panic_checkpoint();
-    CHECK(ev.panic_safe_cells_size() == 0,
-          "commit_panic_checkpoint resets to 0");
+    CHECK(ev.panic_safe_cells_size() == 0, "commit_panic_checkpoint resets to 0");
     return true;
 }
 
@@ -268,8 +254,7 @@ bool test_gc_heap_with_panic_checkpoint() {
     (void)cs.eval("(eval-current)");
     // Save a checkpoint + mutate + (gc-heap) + restore.
     auto r1 = cs.eval("(panic-checkpoint)");
-    CHECK(r1.has_value() && aura::compiler::types::as_bool(*r1),
-          "(panic-checkpoint) succeeded");
+    CHECK(r1.has_value() && aura::compiler::types::as_bool(*r1), "(panic-checkpoint) succeeded");
     (void)cs.eval("(mutate:replace-value (define x 99) (define x 99))");
     auto r2 = cs.eval("(gc-heap)");
     CHECK(r2.has_value(), "(gc-heap) callable under panic-checkpoint");
@@ -292,19 +277,19 @@ bool test_eight_thread_concurrent_nested_mutate() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(define v" + std::to_string(tid) +
-                " " + std::to_string(i) + ")";
+            std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
-    std::println("  completed: {}/{} panic_checkpoint_lost_on_steal: {}",
-                 completed.load(), n_threads * n_iters,
-                 cs.evaluator().get_panic_checkpoint_lost_on_steal());
+    std::println("  completed: {}/{} panic_checkpoint_lost_on_steal: {}", completed.load(),
+                 n_threads * n_iters, cs.evaluator().get_panic_checkpoint_lost_on_steal());
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent mutate)");
     return true;
@@ -357,8 +342,12 @@ int run_tests() {
 
 } // namespace aura_issue_546_detail
 
-int aura_issue_546_run() { return aura_issue_546_detail::run_tests(); }
+int aura_issue_546_run() {
+    return aura_issue_546_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_546_run(); }
+int main() {
+    return aura_issue_546_run();
+}
 #endif

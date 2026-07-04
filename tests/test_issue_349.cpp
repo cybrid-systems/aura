@@ -44,8 +44,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -55,11 +55,9 @@ import aura.compiler.service;
 namespace aura_issue_349_detail {
 
 // Build a workspace with one define.
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define g 42))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define g 42))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -75,10 +73,12 @@ bool test_primitive_returns_value() {
     std::println("\n--- AC1: primitive returns a value ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto r = cs.eval("(query:last-mutation-blame)");
-    CHECK(r.has_value(),
-          "(query:last-mutation-blame) returns a value");
+    CHECK(r.has_value(), "(query:last-mutation-blame) returns a value");
     return true;
 }
 
@@ -90,12 +90,17 @@ bool test_pair_car_is_operator_name() {
     std::println("\n--- AC2: pair car is operator_name ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // Run a rebind; the most-recent mutation should
     // be "rebind" with the user-supplied summary.
-    auto r = cs.eval(
-        "(mutate:rebind \"g\" \"99\" \"test-summary-for-349\")");
-    if (!r) { ++g_failed; return false; }
+    auto r = cs.eval("(mutate:rebind \"g\" \"99\" \"test-summary-for-349\")");
+    if (!r) {
+        ++g_failed;
+        return false;
+    }
     // (query:last-mutation-blame) should return a
     // pair with car = "rebind" + cdr = "test-summary...".
     auto blame = cs.eval("(query:last-mutation-blame)");
@@ -124,8 +129,7 @@ bool test_post_mutation_invariant_populates_blame() {
     // (line ~4817). The Aura surface for this is
     // (query:last-mutation-blame); the integration
     // is verified by AC1 + AC2 + AC4.
-    CHECK(true,
-          "post-mutation invariant populates blame (verified at the C++ level)");
+    CHECK(true, "post-mutation invariant populates blame (verified at the C++ level)");
     return true;
 }
 
@@ -138,7 +142,10 @@ bool test_end_to_end_blame_tracks_latest() {
     std::println("\n--- AC4: blame tracks the latest mutation ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     // Run 2 mutations; the most recent should be
     // reflected in the blame.
     cs.eval("(mutate:rebind \"g\" \"1\" \"first-summary\")");
@@ -163,10 +170,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_349_detail
+} // namespace aura_issue_349_detail
 
-int aura_issue_349_run() { return aura_issue_349_detail::run_tests(); }
+int aura_issue_349_run() {
+    return aura_issue_349_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_349_run(); }
+int main() {
+    return aura_issue_349_run();
+}
 #endif

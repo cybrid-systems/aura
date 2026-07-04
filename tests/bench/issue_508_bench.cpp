@@ -30,7 +30,8 @@ std::size_t count_cast_ops(const aura::ir::IRModule& mod) {
     for (const auto& f : mod.functions)
         for (const auto& b : f.blocks)
             for (const auto& i : b.instructions)
-                if (i.opcode == aura::ir::IROpcode::CastOp) ++n;
+                if (i.opcode == aura::ir::IROpcode::CastOp)
+                    ++n;
     return n;
 }
 
@@ -45,10 +46,10 @@ std::size_t count_cast_ops(const aura::ir::IRModule& mod) {
 // has 4 (elidable) + 4 (non-elidable) = 8 CastOps, of which 50%
 // should be elided. Higher K gives a tighter ratio.
 aura::ir::IRModule build_workload(std::size_t num_blocks, std::size_t values_per_block) {
-    using aura::ir::IROpcode;
-    using aura::ir::IRInstruction;
     using aura::ir::IRFunction;
+    using aura::ir::IRInstruction;
     using aura::ir::IRModule;
+    using aura::ir::IROpcode;
 
     IRModule mod;
     IRFunction func;
@@ -56,8 +57,7 @@ aura::ir::IRModule build_workload(std::size_t num_blocks, std::size_t values_per
     // Reserve enough locals: num_blocks * (values_per_block * 3 + 2)
     // + 4 = a rough upper bound. We over-allocate to avoid
     // local_count overflow in IRInstruction.operands[0].
-    func.local_count =
-        static_cast<std::uint32_t>(num_blocks * (values_per_block * 3 + 4) + 16);
+    func.local_count = static_cast<std::uint32_t>(num_blocks * (values_per_block * 3 + 4) + 16);
     mod.functions.push_back(std::move(func));
     auto& f = mod.functions.back();
 
@@ -70,13 +70,11 @@ aura::ir::IRModule build_workload(std::size_t num_blocks, std::size_t values_per
         for (std::size_t vi = 0; vi < values_per_block; ++vi) {
             // Ground ConstI64 (type_id = 1 = Int). Slot s0.
             auto s0 = next_slot++;
-            blk.instructions.push_back(
-                {IROpcode::ConstI64, {s0, 42, 0, 0}, 0, 1});
+            blk.instructions.push_back({IROpcode::ConstI64, {s0, 42, 0, 0}, 0, 1});
             // CastOp ground → Dynamic (target_tag = 3, type_id = 0).
             // ELIDABLE via Rule 3 (safe Dynamic passthrough).
             auto s1 = next_slot++;
-            blk.instructions.push_back(
-                {IROpcode::CastOp, {s1, s0, 3, 0}, 0, 0});
+            blk.instructions.push_back({IROpcode::CastOp, {s1, s0, 3, 0}, 0, 0});
             // CastOp Dynamic → Int (target_tag = 0, type_id = 0).
             // NOT elidable: source has no type_id (we put a Local
             // here in the elided case, but for the non-elided
@@ -87,15 +85,12 @@ aura::ir::IRModule build_workload(std::size_t num_blocks, std::size_t values_per
             // Rule 3 doesn't apply (target_tag = 0 < 3).
             // NOT elided. Good.
             auto s2 = next_slot++;
-            blk.instructions.push_back(
-                {IROpcode::CastOp, {s2, s1, 0, 0}, 0, 0});
+            blk.instructions.push_back({IROpcode::CastOp, {s2, s1, 0, 0}, 0, 0});
             // Use s2 so the optimizer doesn't DCE it
             // (defensive — DCE is a separate pass).
-            blk.instructions.push_back(
-                {IROpcode::Local, {ret_slot, s2, 0, 0}, 0, 0});
+            blk.instructions.push_back({IROpcode::Local, {ret_slot, s2, 0, 0}, 0, 0});
         }
-        blk.instructions.push_back(
-            {IROpcode::Return, {ret_slot, 0, 0, 0}, 0, 0});
+        blk.instructions.push_back({IROpcode::Return, {ret_slot, 0, 0, 0}, 0, 0});
         f.blocks.push_back(std::move(blk));
     }
     return mod;
@@ -115,8 +110,7 @@ int main() {
 
     auto mod = build_workload(N_BLOCKS, K_VALUES);
     auto before = count_cast_ops(mod);
-    std::println("Workload: {} blocks × {} values = {} CastOps before",
-                 N_BLOCKS, K_VALUES, before);
+    std::println("Workload: {} blocks × {} values = {} CastOps before", N_BLOCKS, K_VALUES, before);
 
     auto t0 = steady_clock::now();
     aura::compiler::DeadCoercionEliminationPass dce;
@@ -132,17 +126,16 @@ int main() {
     std::println("Elapsed: {} µs (per-call)", us);
     std::println("Reduction: {}%", reduction_pct);
 
-    bool meets_ac = (before == EXPECTED_BEFORE)
-                    && (after == EXPECTED_AFTER)
-                    && (reduction_pct >= MIN_REDUCTION_PCT);
+    bool meets_ac = (before == EXPECTED_BEFORE) && (after == EXPECTED_AFTER) &&
+                    (reduction_pct >= MIN_REDUCTION_PCT);
 
     std::println("");
-    std::println("AC check (>={}% reduction in gradual workload): {}",
-                 MIN_REDUCTION_PCT, meets_ac ? "PASS" : "FAIL");
+    std::println("AC check (>={}% reduction in gradual workload): {}", MIN_REDUCTION_PCT,
+                 meets_ac ? "PASS" : "FAIL");
     std::println("  before == {}: {}", EXPECTED_BEFORE, before == EXPECTED_BEFORE);
     std::println("  after  == {}: {}", EXPECTED_AFTER, after == EXPECTED_AFTER);
-    std::println("  reduction_pct >= {}: {} (got {})",
-                 MIN_REDUCTION_PCT, reduction_pct >= MIN_REDUCTION_PCT, reduction_pct);
+    std::println("  reduction_pct >= {}: {} (got {})", MIN_REDUCTION_PCT,
+                 reduction_pct >= MIN_REDUCTION_PCT, reduction_pct);
 
     return meets_ac ? 0 : 1;
 }

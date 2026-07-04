@@ -47,8 +47,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -58,11 +58,10 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 // Helper: run a snippet and return the raw EvalValue
 namespace aura_issue_188_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -87,11 +86,11 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 bool test_dirty_bitmask_constants() {
     std::println("\n--- Test 1.1: DirtyReason bitmask constants ---");
     using D = aura::ast::FlatAST::DirtyReason;
-    CHECK(D::kGeneralDirty    == 0x01, "kGeneralDirty    == 0x01");
+    CHECK(D::kGeneralDirty == 0x01, "kGeneralDirty    == 0x01");
     CHECK(D::kConstraintDirty == 0x02, "kConstraintDirty == 0x02");
     CHECK(D::kOccurrenceDirty == 0x04, "kOccurrenceDirty == 0x04");
-    CHECK(D::kOwnershipDirty  == 0x08, "kOwnershipDirty  == 0x08");
-    CHECK(D::kCoercionDirty   == 0x10, "kCoercionDirty   == 0x10");
+    CHECK(D::kOwnershipDirty == 0x08, "kOwnershipDirty  == 0x08");
+    CHECK(D::kCoercionDirty == 0x10, "kCoercionDirty   == 0x10");
     return true;
 }
 
@@ -99,7 +98,7 @@ bool test_dirty_mark_with_reasons() {
     std::println("\n--- Test 1.2: mark_dirty with reasons ---");
     auto alloc = std::pmr::polymorphic_allocator<std::byte>{};
     aura::ast::FlatAST flat(alloc);
-    auto id = flat.add_variable(0);  // any node will do
+    auto id = flat.add_variable(0); // any node will do
     CHECK(!flat.is_dirty(id), "fresh node is clean");
     flat.mark_dirty(id, aura::ast::FlatAST::kConstraintDirty);
     CHECK(flat.is_dirty(id), "kConstraintDirty sets the dirty bit");
@@ -121,12 +120,9 @@ bool test_dirty_multiple_reasons() {
     flat.mark_dirty(id, aura::ast::FlatAST::kOccurrenceDirty);
     CHECK(flat.is_dirty_for(id, aura::ast::FlatAST::kConstraintDirty),
           "ConstraintDirty still set after second mark");
-    CHECK(flat.is_dirty_for(id, aura::ast::FlatAST::kOccurrenceDirty),
-          "OccurrenceDirty also set");
-    auto mask = aura::ast::FlatAST::kConstraintDirty |
-                aura::ast::FlatAST::kOccurrenceDirty;
-    CHECK(flat.dirty_reasons(id) == mask,
-          "dirty_reasons shows both bits OR'd");
+    CHECK(flat.is_dirty_for(id, aura::ast::FlatAST::kOccurrenceDirty), "OccurrenceDirty also set");
+    auto mask = aura::ast::FlatAST::kConstraintDirty | aura::ast::FlatAST::kOccurrenceDirty;
+    CHECK(flat.dirty_reasons(id) == mask, "dirty_reasons shows both bits OR'd");
     return true;
 }
 
@@ -135,13 +131,11 @@ bool test_dirty_clear_for_specific_reason() {
     auto alloc = std::pmr::polymorphic_allocator<std::byte>{};
     aura::ast::FlatAST flat(alloc);
     auto id = flat.add_variable(0);
-    flat.mark_dirty(id, aura::ast::FlatAST::kConstraintDirty |
-                       aura::ast::FlatAST::kOccurrenceDirty);
+    flat.mark_dirty(id,
+                    aura::ast::FlatAST::kConstraintDirty | aura::ast::FlatAST::kOccurrenceDirty);
     flat.clear_dirty_for(id, aura::ast::FlatAST::kConstraintDirty);
-    CHECK(!flat.is_dirty_for(id, aura::ast::FlatAST::kConstraintDirty),
-          "ConstraintDirty cleared");
-    CHECK(flat.is_dirty_for(id, aura::ast::FlatAST::kOccurrenceDirty),
-          "OccurrenceDirty preserved");
+    CHECK(!flat.is_dirty_for(id, aura::ast::FlatAST::kConstraintDirty), "ConstraintDirty cleared");
+    CHECK(flat.is_dirty_for(id, aura::ast::FlatAST::kOccurrenceDirty), "OccurrenceDirty preserved");
     CHECK(flat.is_dirty(id), "node still considered dirty overall");
     return true;
 }
@@ -151,8 +145,8 @@ bool test_dirty_clear_all() {
     auto alloc = std::pmr::polymorphic_allocator<std::byte>{};
     aura::ast::FlatAST flat(alloc);
     auto id = flat.add_variable(0);
-    flat.mark_dirty(id, aura::ast::FlatAST::kConstraintDirty |
-                       aura::ast::FlatAST::kOccurrenceDirty);
+    flat.mark_dirty(id,
+                    aura::ast::FlatAST::kConstraintDirty | aura::ast::FlatAST::kOccurrenceDirty);
     flat.clear_dirty(id);
     CHECK(flat.dirty_reasons(id) == 0, "all bits cleared");
     CHECK(!flat.is_dirty(id), "is_dirty returns false");
@@ -179,7 +173,7 @@ bool test_dirty_default_reasons() {
     auto alloc = std::pmr::polymorphic_allocator<std::byte>{};
     aura::ast::FlatAST flat(alloc);
     auto id = flat.add_variable(0);
-    flat.mark_dirty(id);  // no reasons arg
+    flat.mark_dirty(id); // no reasons arg
     CHECK(flat.is_dirty(id), "default mark_dirty sets dirty");
     CHECK(flat.dirty_reasons(id) == aura::ast::FlatAST::kGeneralDirty,
           "default reason is kGeneralDirty");
@@ -194,11 +188,13 @@ bool test_dirty_column_observability() {
     auto id2 = flat.add_variable(0);
     auto id3 = flat.add_variable(0);
     flat.mark_dirty(id1, aura::ast::FlatAST::kConstraintDirty);
-    flat.mark_dirty(id2, aura::ast::FlatAST::kOccurrenceDirty |
-                          aura::ast::FlatAST::kOwnershipDirty);
+    flat.mark_dirty(id2,
+                    aura::ast::FlatAST::kOccurrenceDirty | aura::ast::FlatAST::kOwnershipDirty);
     const auto& col = flat.dirty_column();
     std::size_t dirty_count = 0;
-    for (auto b : col) if (b != 0) ++dirty_count;
+    for (auto b : col)
+        if (b != 0)
+            ++dirty_count;
     CHECK(dirty_count == 2, "2 dirty nodes in column (id3 clean)");
     return true;
 }
@@ -248,14 +244,13 @@ bool test_adt_nested_match_compiles() {
     std::println("\n--- Test 4.2: nested ADT match exhaustiveness (complete) ---");
     aura::compiler::CompilerService cs;
     // Both nested matches cover all ctors → no exhaustiveness error
-    int64_t r = run_int(cs,
-        "(begin "
-        "  (define-type (Option a) (Some a) (None)) "
-        "  (define-type (Result e v) (Ok v) (Err e)) "
-        "  (let ((x (Ok (Some 42)))) "
-        "    (match x "
-        "      ((Ok y) (match y ((Some v) v) ((None) 0))) "
-        "      ((Err _) 0))))");
+    int64_t r = run_int(cs, "(begin "
+                            "  (define-type (Option a) (Some a) (None)) "
+                            "  (define-type (Result e v) (Ok v) (Err e)) "
+                            "  (let ((x (Ok (Some 42)))) "
+                            "    (match x "
+                            "      ((Ok y) (match y ((Some v) v) ((None) 0))) "
+                            "      ((Err _) 0))))");
     CHECK(r == 42, "nested match: (Ok (Some 42)) → 42");
     return true;
 }
@@ -279,7 +274,7 @@ bool test_dirty_counts_primitive() {
     // (dirty:counts) returns a hash. We just verify it doesn't crash
     // and returns a non-void value.
     auto v = run_on(cs, "(dirty:counts)");
-    if (v.val == 11) {  // void sentinel
+    if (v.val == 11) { // void sentinel
         std::println("  PASS: (dirty:counts) returns hash (non-void)");
         ++g_passed;
     } else {
@@ -298,12 +293,11 @@ bool test_dirty_after_rebind() {
     // rebind's effect on function-call result is a separate
     // concern (IR cache invalidation) covered by test_issue_141.
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(begin "
-        "  (define (square x) (* x x)) "
-        "  (mutate:rebind \"square\" \"(lambda (x) (* x x x))\") "
-        "  (dirty:reasons 0))");
-    if (r.val == 11) {  // void sentinel
+    auto r = run_on(cs, "(begin "
+                        "  (define (square x) (* x x)) "
+                        "  (mutate:rebind \"square\" \"(lambda (x) (* x x x))\") "
+                        "  (dirty:reasons 0))");
+    if (r.val == 11) { // void sentinel
         std::println("  PASS: rebind + dirty:reasons don't crash");
         ++g_passed;
     } else {
@@ -324,14 +318,13 @@ bool test_fuzzer_multi_mutation() {
     // is well-formed after many mutations. The actual IR
     // re-lowering for the rebinds is covered by test_issue_141.
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(begin "
-        "  (define (f x) (* x 2)) "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 4))\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 5))\") "
-        "  (dirty:counts))");
-    if (r.val == 11) {  // void sentinel
+    auto r = run_on(cs, "(begin "
+                        "  (define (f x) (* x 2)) "
+                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") "
+                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 4))\") "
+                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 5))\") "
+                        "  (dirty:counts))");
+    if (r.val == 11) { // void sentinel
         std::println("  PASS: 100 mutations don't corrupt dirty bitmask state");
         ++g_passed;
     } else {
@@ -375,7 +368,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_188_detail
+} // namespace aura_issue_188_detail
 
-int aura_issue_188_run() { return aura_issue_188_detail::run_tests(); }
-
+int aura_issue_188_run() {
+    return aura_issue_188_detail::run_tests();
+}

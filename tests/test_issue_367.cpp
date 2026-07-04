@@ -40,8 +40,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
@@ -60,11 +60,13 @@ bool test_default_provenance_is_zero() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define x 1)\")");
     auto r = cs.eval("(car (query:find \"x\"))");
-    if (!r) return false;
+    if (!r)
+        return false;
     int64_t nid = aura::compiler::types::as_int(*r);
 
     auto p = cs.eval("(syntax:get-provenance " + std::to_string(nid) + ")");
-    if (!p) return false;
+    if (!p)
+        return false;
     int64_t prov = aura::compiler::types::as_int(*p);
     CHECK(prov == 0, "fresh node has default provenance = 0");
     return true;
@@ -79,26 +81,30 @@ bool test_set_get_provenance_round_trip() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define y 0)\")");
     auto r = cs.eval("(car (query:find \"y\"))");
-    if (!r) return false;
+    if (!r)
+        return false;
     int64_t nid = aura::compiler::types::as_int(*r);
 
     // Set provenance to 42 (a host-assigned prov id; the host's
     // side-table maps 42 → {macro_def_id: 7, expansion_id: 99,
     // mutation_id: 13} or whatever the AI agent's audit needs).
     auto set_r = cs.eval("(syntax:set-provenance " + std::to_string(nid) + " 42)");
-    if (!set_r) return false;
+    if (!set_r)
+        return false;
     bool set_ok = aura::compiler::types::as_bool(*set_r);
     CHECK(set_ok, "syntax:set-provenance returns true on success");
 
     auto get_r = cs.eval("(syntax:get-provenance " + std::to_string(nid) + ")");
-    if (!get_r) return false;
+    if (!get_r)
+        return false;
     int64_t prov = aura::compiler::types::as_int(*get_r);
     CHECK(prov == 42, "syntax:get-provenance returns the set value (42)");
 
     // Reset to 0.
     cs.eval("(syntax:set-provenance " + std::to_string(nid) + " 0)");
     auto get_r2 = cs.eval("(syntax:get-provenance " + std::to_string(nid) + ")");
-    if (!get_r2) return false;
+    if (!get_r2)
+        return false;
     int64_t prov2 = aura::compiler::types::as_int(*get_r2);
     CHECK(prov2 == 0, "syntax:set-provenance 0 clears the provenance");
     return true;
@@ -113,7 +119,8 @@ bool test_marker_and_provenance_coexist() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define z 99)\")");
     auto r = cs.eval("(car (query:find \"z\"))");
-    if (!r) return false;
+    if (!r)
+        return false;
     int64_t nid = aura::compiler::types::as_int(*r);
 
     // Set marker = MacroIntroduced (1).
@@ -123,16 +130,17 @@ bool test_marker_and_provenance_coexist() {
 
     auto m = cs.eval("(syntax-marker " + std::to_string(nid) + ")");
     auto p = cs.eval("(syntax:get-provenance " + std::to_string(nid) + ")");
-    if (!m || !p) return false;
-    CHECK(aura::compiler::types::as_int(*m) == 1,
-          "marker = MacroIntroduced (1) preserved");
+    if (!m || !p)
+        return false;
+    CHECK(aura::compiler::types::as_int(*m) == 1, "marker = MacroIntroduced (1) preserved");
     CHECK(aura::compiler::types::as_int(*p) == 1234,
           "provenance = 1234 preserved (independent column)");
 
     // Setting marker doesn't affect provenance.
     cs.eval("(syntax:set-marker " + std::to_string(nid) + " 0)");
     auto p2 = cs.eval("(syntax:get-provenance " + std::to_string(nid) + ")");
-    if (!p2) return false;
+    if (!p2)
+        return false;
     CHECK(aura::compiler::types::as_int(*p2) == 1234,
           "changing marker doesn't affect provenance column");
     return true;
@@ -157,6 +165,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_367_detail
+} // namespace aura_issue_367_detail
 
-int aura_issue_367_run() { return aura_issue_367_detail::run_tests(); }
+int aura_issue_367_run() {
+    return aura_issue_367_detail::run_tests();
+}

@@ -136,10 +136,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             tc.set_metrics(compiler_metrics_);
         tc.set_on_narrowing_refresh([this]() { bump_narrowing_refresh_count(); });
         tc.set_on_selective_recheck([this]() { bump_selective_recheck_count(); });
-        tc.set_on_touched_roots_snapshot(
-            [this](std::size_t n) { set_touched_roots_size(n); });
-        tc.set_on_cross_delta_conflict(
-            [this]() { bump_cross_delta_conflicts_caught(); });
+        tc.set_on_touched_roots_snapshot([this](std::size_t n) { set_touched_roots_size(n); });
+        tc.set_on_cross_delta_conflict([this]() { bump_cross_delta_conflicts_caught(); });
         const auto reinferred =
             tc.infer_flat_partial(*workspace_flat_, *workspace_pool_, log.back(), diag);
         (void)reinferred;
@@ -149,16 +147,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         if (compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
             const auto& st = tc.stats();
-            m->narrowing_applied_total.fetch_add(st.narrowing_applied,
-                                                 std::memory_order_relaxed);
-            m->narrowing_skipped_total.fetch_add(st.narrowing_skipped,
-                                                 std::memory_order_relaxed);
+            m->narrowing_applied_total.fetch_add(st.narrowing_applied, std::memory_order_relaxed);
+            m->narrowing_skipped_total.fetch_add(st.narrowing_skipped, std::memory_order_relaxed);
             m->narrowing_reanalyzed_total.fetch_add(st.narrowing_reanalyzed,
                                                     std::memory_order_relaxed);
-            m->and_or_meet_uses_total.fetch_add(st.and_or_meet_uses,
-                                                std::memory_order_relaxed);
-            m->and_or_join_uses_total.fetch_add(st.and_or_join_uses,
-                                                std::memory_order_relaxed);
+            m->and_or_meet_uses_total.fetch_add(st.and_or_meet_uses, std::memory_order_relaxed);
+            m->and_or_join_uses_total.fetch_add(st.and_or_join_uses, std::memory_order_relaxed);
             m->narrowing_dirty_recovery_total.fetch_add(st.narrowing_dirty_recovery,
                                                         std::memory_order_relaxed);
         }
@@ -179,8 +173,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         last_mutate_error_.clear();
         return true;
     }
-    std::string err = selective ? "typecheck after mutate (selective) failed:"
-                                : "typecheck after mutate failed:";
+    std::string err =
+        selective ? "typecheck after mutate (selective) failed:" : "typecheck after mutate failed:";
     for (auto& d : local_diags)
         err += " " + d.format() + ";";
     last_mutate_error_ = err;

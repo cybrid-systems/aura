@@ -7,8 +7,8 @@ module;
 
 module aura.compiler.sv_ir;
 import std;
-import aura.core.mutation;   // SymId (Issue #315)
-import aura.core.ast;        // FlatAST + StringPool + NodeId + NodeTag
+import aura.core.mutation; // SymId (Issue #315)
+import aura.core.ast;      // FlatAST + StringPool + NodeId + NodeTag
 
 namespace aura::compiler::sv_ir {
 
@@ -16,33 +16,40 @@ namespace aura::compiler::sv_ir {
 // the signature can use unqualified names (matches the pattern
 // in other aura::compiler::sv_ir functions that take SymId).
 using aura::ast::FlatAST;
-using aura::ast::StringPool;
+using aura::ast::INVALID_SYM;
 using aura::ast::NodeId;
 using aura::ast::NodeTag;
 using aura::ast::NULL_NODE;
-using aura::ast::INVALID_SYM;
+using aura::ast::StringPool;
 using SymId = aura::ast::SymId;
 
 const char* wire_kind_to_symbol(WireKind k) noexcept {
     switch (k) {
-        case WireKind::Wire:  return "wire";
-        case WireKind::Logic: return "logic";
-        case WireKind::Reg:   return "reg";
-        case WireKind::Bit:   return "bit";
+        case WireKind::Wire:
+            return "wire";
+        case WireKind::Logic:
+            return "logic";
+        case WireKind::Reg:
+            return "reg";
+        case WireKind::Bit:
+            return "bit";
     }
     return "wire"; // unreachable; defensive
 }
 
 WireKind wire_kind_from_symbol(std::string_view s) noexcept {
-    if (s == "wire")  return WireKind::Wire;
-    if (s == "logic") return WireKind::Logic;
-    if (s == "reg")   return WireKind::Reg;
-    if (s == "bit")   return WireKind::Bit;
+    if (s == "wire")
+        return WireKind::Wire;
+    if (s == "logic")
+        return WireKind::Logic;
+    if (s == "reg")
+        return WireKind::Reg;
+    if (s == "bit")
+        return WireKind::Bit;
     return WireKind::Wire; // unknown defaults to wire
 }
 
-WireIR make_wire(std::string_view name, int width,
-                 WireKind kind) noexcept {
+WireIR make_wire(std::string_view name, int width, WireKind kind) noexcept {
     WireIR w;
     w.name = std::string(name);
     w.width = (width < 1) ? 1 : width;
@@ -120,41 +127,39 @@ std::string debug_wire(const WireIR& w) {
 // always small and non-negative).
 namespace {
 
-void append_int(std::string& out, int n) {
-    char buf[12];
-    int len = 0;
-    if (n == 0) {
-        buf[len++] = '0';
-    } else {
-        char tmp[12];
-        int tlen = 0;
-        while (n > 0) {
-            tmp[tlen++] = static_cast<char>('0' + (n % 10));
-            n /= 10;
+    void append_int(std::string& out, int n) {
+        char buf[12];
+        int len = 0;
+        if (n == 0) {
+            buf[len++] = '0';
+        } else {
+            char tmp[12];
+            int tlen = 0;
+            while (n > 0) {
+                tmp[tlen++] = static_cast<char>('0' + (n % 10));
+                n /= 10;
+            }
+            while (tlen > 0) {
+                buf[len++] = tmp[--tlen];
+            }
         }
-        while (tlen > 0) {
-            buf[len++] = tmp[--tlen];
-        }
+        out.append(buf, len);
     }
-    out.append(buf, len);
-}
 
-void append_joined(std::string& out, const std::vector<std::string>& items,
-                   const char* sep) {
-    for (std::size_t i = 0; i < items.size(); ++i) {
-        if (i > 0) {
-            out.append(sep);
+    void append_joined(std::string& out, const std::vector<std::string>& items, const char* sep) {
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (i > 0) {
+                out.append(sep);
+            }
+            out.append(items[i]);
         }
-        out.append(items[i]);
     }
-}
 
 } // anonymous namespace
 
 // ── InterfaceIR ──
 
-InterfaceIR make_interface(std::string_view name,
-                           std::vector<std::string> ports,
+InterfaceIR make_interface(std::string_view name, std::vector<std::string> ports,
                            std::vector<std::string> modport_names) noexcept {
     InterfaceIR i;
     i.name = std::string(name);
@@ -196,8 +201,7 @@ std::string debug_interface(const InterfaceIR& i) {
 
 // ── ModportIR ──
 
-ModportIR make_modport(std::string_view name,
-                       std::vector<std::string> port_names) noexcept {
+ModportIR make_modport(std::string_view name, std::vector<std::string> port_names) noexcept {
     ModportIR m;
     m.name = std::string(name);
     m.port_names = std::move(port_names);
@@ -228,8 +232,7 @@ std::string debug_modport(const ModportIR& m) {
 
 // ── ClassIR ──
 
-ClassIR make_class(std::string_view name,
-                   std::string_view base,
+ClassIR make_class(std::string_view name, std::string_view base,
                    std::vector<std::string> items) noexcept {
     ClassIR c;
     c.name = std::string(name);
@@ -273,8 +276,7 @@ std::string debug_class(const ClassIR& c) {
 
 // ── ConstraintIR ──
 
-ConstraintIR make_constraint(std::string_view name,
-                             std::vector<std::string> expressions) noexcept {
+ConstraintIR make_constraint(std::string_view name, std::vector<std::string> expressions) noexcept {
     ConstraintIR c;
     c.name = std::string(name);
     c.expressions = std::move(expressions);
@@ -312,8 +314,7 @@ std::string debug_constraint(const ConstraintIR& c) {
 
 // ── CoverpointIR ──
 
-CoverpointIR make_coverpoint(std::string_view var,
-                             std::vector<std::string> bins) noexcept {
+CoverpointIR make_coverpoint(std::string_view var, std::vector<std::string> bins) noexcept {
     CoverpointIR cp;
     cp.var = std::string(var);
     cp.bins = std::move(bins);
@@ -347,8 +348,7 @@ std::string debug_coverpoint(const CoverpointIR& cp) {
 
 // ── CovergroupIR ──
 
-CovergroupIR make_covergroup(std::string_view name,
-                             std::vector<std::string> coverpoint_strs,
+CovergroupIR make_covergroup(std::string_view name, std::vector<std::string> coverpoint_strs,
                              std::string_view event) noexcept {
     CovergroupIR cg;
     cg.name = std::string(name);
@@ -396,8 +396,7 @@ std::string debug_covergroup(const CovergroupIR& cg) {
 
 // ── SequenceIR ──
 
-SequenceIR make_sequence(std::string_view name,
-                         std::string_view expr) noexcept {
+SequenceIR make_sequence(std::string_view name, std::string_view expr) noexcept {
     SequenceIR s;
     s.name = std::string(name);
     s.expr = std::string(expr);
@@ -428,8 +427,7 @@ std::string debug_sequence(const SequenceIR& s) {
 
 // ── PropertyIR ──
 
-PropertyIR make_property(std::string_view name,
-                         std::string_view expr) noexcept {
+PropertyIR make_property(std::string_view name, std::string_view expr) noexcept {
     PropertyIR p;
     p.name = std::string(name);
     p.expr = std::string(expr);
@@ -462,25 +460,21 @@ std::string debug_property(const PropertyIR& p) {
 // Issue #315 — SVInterfaceIR / SVModportIR (SymId-based)
 // ═══════════════════════════════════════════════════════════════
 
-SVModportIR make_sv_modport(SymId name,
-                             std::vector<SymId> port_names) noexcept {
+SVModportIR make_sv_modport(SymId name, std::vector<SymId> port_names) noexcept {
     SVModportIR m;
     m.name = name;
     m.port_names = std::move(port_names);
     return m;
 }
 
-SVInterfaceIR make_sv_interface(SymId name,
-                                 std::vector<SVModportIR> modports) noexcept {
+SVInterfaceIR make_sv_interface(SymId name, std::vector<SVModportIR> modports) noexcept {
     SVInterfaceIR i;
     i.name = name;
     i.modports = std::move(modports);
     return i;
 }
 
-SVInterfaceIR make_sv_interface(SymId name,
-                                 SVModportIR mp0,
-                                 SVModportIR mp1) noexcept {
+SVInterfaceIR make_sv_interface(SymId name, SVModportIR mp0, SVModportIR mp1) noexcept {
     SVInterfaceIR i;
     i.name = name;
     std::vector<SVModportIR> mps;
@@ -491,10 +485,8 @@ SVInterfaceIR make_sv_interface(SymId name,
     return i;
 }
 
-SVInterfaceIR make_sv_interface(SymId name,
-                                 SVModportIR mp0,
-                                 SVModportIR mp1,
-                                 SVModportIR mp2) noexcept {
+SVInterfaceIR make_sv_interface(SymId name, SVModportIR mp0, SVModportIR mp1,
+                                SVModportIR mp2) noexcept {
     SVInterfaceIR i;
     i.name = name;
     std::vector<SVModportIR> mps;
@@ -506,10 +498,8 @@ SVInterfaceIR make_sv_interface(SymId name,
     return i;
 }
 
-std::optional<SVInterfaceIR>
-map_interface_node_to_ir(const FlatAST& flat,
-                         const StringPool& pool,
-                         NodeId id) {
+std::optional<SVInterfaceIR> map_interface_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                      NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return std::nullopt;
     auto v = flat.get(id);
@@ -547,12 +537,11 @@ map_interface_node_to_ir(const FlatAST& flat,
         // This matches the issue's scope (minimal IR +
         // basic AST mapping; full lowering is follow-up).
     }
-    (void)pool;  // not currently needed (SymId-only walker)
+    (void)pool; // not currently needed (SymId-only walker)
     return ir;
 }
 
-static std::string resolve_expr_child(const FlatAST& flat, const StringPool& pool,
-                                      NodeId id) {
+static std::string resolve_expr_child(const FlatAST& flat, const StringPool& pool, NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return {};
     for (NodeId child : flat.children(id)) {
@@ -563,8 +552,8 @@ static std::string resolve_expr_child(const FlatAST& flat, const StringPool& poo
     return {};
 }
 
-std::optional<PropertyIR>
-map_property_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+std::optional<PropertyIR> map_property_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                  NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return std::nullopt;
     auto v = flat.get(id);
@@ -576,8 +565,8 @@ map_property_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) 
     return make_property(pool.resolve(v.sym_id), expr);
 }
 
-std::optional<SequenceIR>
-map_sequence_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+std::optional<SequenceIR> map_sequence_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                  NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return std::nullopt;
     auto v = flat.get(id);
@@ -589,8 +578,8 @@ map_sequence_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) 
     return make_sequence(pool.resolve(v.sym_id), expr);
 }
 
-std::optional<CoverpointIR>
-map_coverpoint_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+std::optional<CoverpointIR> map_coverpoint_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                      NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return std::nullopt;
     auto v = flat.get(id);
@@ -609,8 +598,8 @@ map_coverpoint_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id
     return cp;
 }
 
-std::optional<CovergroupIR>
-map_covergroup_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+std::optional<CovergroupIR> map_covergroup_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                      NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return std::nullopt;
     auto v = flat.get(id);
@@ -627,8 +616,8 @@ map_covergroup_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id
     return cg;
 }
 
-std::optional<PropertyIR>
-map_assert_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+std::optional<PropertyIR> map_assert_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return std::nullopt;
     auto v = flat.get(id);
@@ -641,15 +630,15 @@ map_assert_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
     return std::nullopt;
 }
 
-std::string debug_sv_modport(const SVModportIR& m,
-                              const StringPool& pool) {
+std::string debug_sv_modport(const SVModportIR& m, const StringPool& pool) {
     std::string out;
     out.append("modport ");
     if (m.name != INVALID_SYM)
         out.append(pool.resolve(m.name));
     out.append("(");
     for (std::size_t i = 0; i < m.port_names.size(); ++i) {
-        if (i > 0) out.append(", ");
+        if (i > 0)
+            out.append(", ");
         if (m.port_names[i] != INVALID_SYM)
             out.append(pool.resolve(m.port_names[i]));
     }
@@ -657,15 +646,15 @@ std::string debug_sv_modport(const SVModportIR& m,
     return out;
 }
 
-std::string debug_sv_interface(const SVInterfaceIR& i,
-                               const StringPool& pool) {
+std::string debug_sv_interface(const SVInterfaceIR& i, const StringPool& pool) {
     std::string out;
     out.append("interface ");
     if (i.name != INVALID_SYM)
         out.append(pool.resolve(i.name));
     out.append(" { ");
     for (std::size_t k = 0; k < i.modports.size(); ++k) {
-        if (k > 0) out.append("; ");
+        if (k > 0)
+            out.append("; ");
         out.append(debug_sv_modport(i.modports[k], pool));
     }
     out.append(" }");
@@ -684,8 +673,7 @@ std::string debug_sv_interface(const SVInterfaceIR& i,
 // per port, set by a follow-up that wires
 // port-direction metadata through the AST).
 // Returns a string ending with ';'. No trailing newline.
-std::string emit_sv_modport(const SVModportIR& m,
-                            const StringPool& pool) {
+std::string emit_sv_modport(const SVModportIR& m, const StringPool& pool) {
     std::string out;
     out.reserve(48 + 8 * m.port_names.size());
     out.append("modport ");
@@ -693,7 +681,8 @@ std::string emit_sv_modport(const SVModportIR& m,
         out.append(pool.resolve(m.name));
     out.append("(");
     for (std::size_t i = 0; i < m.port_names.size(); ++i) {
-        if (i > 0) out.append(", ");
+        if (i > 0)
+            out.append(", ");
         if (m.port_names[i] != INVALID_SYM)
             out.append(pool.resolve(m.port_names[i]));
     }
@@ -701,8 +690,7 @@ std::string emit_sv_modport(const SVModportIR& m,
     return out;
 }
 
-std::string emit_sv_interface(const SVInterfaceIR& i,
-                             const StringPool& pool) {
+std::string emit_sv_interface(const SVInterfaceIR& i, const StringPool& pool) {
     std::string out;
     out.reserve(96 + 64 * i.modports.size());
     out.append("interface ");
@@ -789,9 +777,9 @@ SvEmitValidation validate_sv_emit(const std::string_view sv_text) {
         result.error = "unbalanced {";
         return result;
     }
-    static constexpr std::string_view k_keywords[] = {
-        "interface", "property", "coverpoint", "covergroup",
-        "sequence", "assert", "modport", "endmodule", "endinterface"};
+    static constexpr std::string_view k_keywords[] = {"interface",  "property",  "coverpoint",
+                                                      "covergroup", "sequence",  "assert",
+                                                      "modport",    "endmodule", "endinterface"};
     bool found = sv_text.find("// sv re-emit stub") != std::string_view::npos;
     for (const auto kw : k_keywords) {
         if (sv_text.find(kw) != std::string_view::npos) {
@@ -837,8 +825,7 @@ SvReemitResult reemit_sv_node(const FlatAST& flat, const StringPool& pool, const
         result.sv_text.append(std::to_string(id));
         result.sv_text.push_back('\n');
     }
-    result.commercial_do_stub =
-        emit_commercial_simulator_do_file(simulator, "reemit.sv");
+    result.commercial_do_stub = emit_commercial_simulator_do_file(simulator, "reemit.sv");
     result.ppa_savings = estimate_ppa_savings(before, result.sv_text);
     return result;
 }

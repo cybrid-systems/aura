@@ -90,7 +90,8 @@ static int k_high_iters() {
 // ── AC1: bump_steal_deferred_mutation_boundary accessor
 //         reachable + monotonic ───────────────────────────
 bool test_steal_deferred_accessor_reachable() {
-    std::println("\n--- AC1: bump_steal_deferred_mutation_boundary accessor reachable + monotonic ---");
+    std::println(
+        "\n--- AC1: bump_steal_deferred_mutation_boundary accessor reachable + monotonic ---");
     // Allocate a Fiber via Scheduler so the accessors are
     // exercised in a real fiber context.
     Scheduler sched(2);
@@ -115,21 +116,22 @@ bool test_steal_deferred_accessor_reachable() {
     std::thread io_thread([&sched]() { sched.run(); });
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count() > 10000) break;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                  t0)
+                .count() > 10000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
 
-    std::println("  done: {}/{} deferred_count entries: {}",
-                 done.load(), k_fibers, deferred_counts.size());
+    std::println("  done: {}/{} deferred_count entries: {}", done.load(), k_fibers,
+                 deferred_counts.size());
     for (std::size_t i = 0; i < deferred_counts.size(); ++i) {
-        std::println("    fiber[{}]: steal_deferred_mutation_boundary_count = {}",
-                     i, deferred_counts[i]);
+        std::println("    fiber[{}]: steal_deferred_mutation_boundary_count = {}", i,
+                     deferred_counts[i]);
     }
-    CHECK(done.load() == k_fibers,
-          "all 4 fibers completed (steal defer accessor reachable)");
+    CHECK(done.load() == k_fibers, "all 4 fibers completed (steal defer accessor reachable)");
     CHECK(deferred_counts.size() == k_fibers,
           "every fiber reported steal_deferred_mutation_boundary_count");
     // Current behavior: count == 0 (defer not wired into
@@ -137,19 +139,21 @@ bool test_steal_deferred_accessor_reachable() {
     // documented in the file header.
     bool all_zero = true;
     for (auto c : deferred_counts) {
-        if (c != 0) { all_zero = false; break; }
+        if (c != 0) {
+            all_zero = false;
+            break;
+        }
     }
-    CHECK(all_zero,
-          "steal_deferred_mutation_boundary_count == 0 in current path "
-          "(strong check not yet wired — known limitation, tracked separately)");
+    CHECK(all_zero, "steal_deferred_mutation_boundary_count == 0 in current path "
+                    "(strong check not yet wired — known limitation, tracked separately)");
     return true;
 }
 
 // ── AC2: 16 workers + 50 fibers + continuous yields + GC
 //         safepoint requests (no eval, no deadlock) ──────
 bool test_high_concurrency_yield_safepoint() {
-    std::println("\n--- AC2: {} workers + {} fibers + GC safepoint requests ---",
-                 k_high_workers(), k_high_fibers());
+    std::println("\n--- AC2: {} workers + {} fibers + GC safepoint requests ---", k_high_workers(),
+                 k_high_fibers());
     Scheduler sched(k_high_workers());
     std::atomic<int> done{0};
     for (int i = 0; i < k_high_fibers(); ++i) {
@@ -184,23 +188,24 @@ bool test_high_concurrency_yield_safepoint() {
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_high_fibers()) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed > 60000) break;
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+        if (elapsed > 60000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
     gc_thread.join();
 
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
-    std::println("  done: {}/{} in {}ms",
-                 done.load(), k_high_fibers(), ms);
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  done: {}/{} in {}ms", done.load(), k_high_fibers(), ms);
     CHECK(done.load() == k_high_fibers(),
           "all " + std::to_string(k_high_fibers()) +
               " fibers completed under high-concurrency GC safepoint pressure");
-    CHECK(ms < 60000,
-          "completed within 60s wall-clock budget");
+    CHECK(ms < 60000, "completed within 60s wall-clock budget");
     return true;
 }
 
@@ -222,9 +227,8 @@ bool test_per_fiber_yield_and_gc_pause_metrics() {
             if (aura::serve::g_current_fiber) {
                 auto f = aura::serve::g_current_fiber;
                 std::lock_guard<std::mutex> lk(mtx);
-                mb_pause_counts.emplace_back(
-                    f->yield_mutation_boundary_count(),
-                    f->gc_pause_attributed_to_mutation_count());
+                mb_pause_counts.emplace_back(f->yield_mutation_boundary_count(),
+                                             f->gc_pause_attributed_to_mutation_count());
             }
             done.fetch_add(1);
         });
@@ -233,8 +237,10 @@ bool test_per_fiber_yield_and_gc_pause_metrics() {
     std::thread io_thread([&sched]() { sched.run(); });
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count() > 10000) break;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                  t0)
+                .count() > 10000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
@@ -242,11 +248,10 @@ bool test_per_fiber_yield_and_gc_pause_metrics() {
 
     std::println("  per-fiber (yield_mb, gc_pause_attributed):");
     for (std::size_t i = 0; i < mb_pause_counts.size(); ++i) {
-        std::println("    fiber[{}]: yield_mb={} gc_pause={}",
-                     i, mb_pause_counts[i].first, mb_pause_counts[i].second);
+        std::println("    fiber[{}]: yield_mb={} gc_pause={}", i, mb_pause_counts[i].first,
+                     mb_pause_counts[i].second);
     }
-    CHECK(mb_pause_counts.size() == k_fibers,
-          "all 8 fibers reported yield_mb + gc_pause counters");
+    CHECK(mb_pause_counts.size() == k_fibers, "all 8 fibers reported yield_mb + gc_pause counters");
     bool all_at_least_k = true;
     for (auto& p : mb_pause_counts) {
         if (p.first < static_cast<std::uint64_t>(k_local_iters)) {
@@ -254,9 +259,8 @@ bool test_per_fiber_yield_and_gc_pause_metrics() {
             break;
         }
     }
-    CHECK(all_at_least_k,
-          "every fiber observed >= k_local_iters MutationBoundary yields "
-          "(per-fiber counter accurate under load)");
+    CHECK(all_at_least_k, "every fiber observed >= k_local_iters MutationBoundary yields "
+                          "(per-fiber counter accurate under load)");
     return true;
 }
 
@@ -267,7 +271,7 @@ bool test_gc_safepoint_round_trip() {
     Scheduler sched(2);
     std::atomic<int> done{0};
     constexpr int k_fibers = 8;
-    constexpr int k_local_iters = 500;  // longer workload so safepoint rounds can fire
+    constexpr int k_local_iters = 500; // longer workload so safepoint rounds can fire
     for (int i = 0; i < k_fibers; ++i) {
         sched.spawn([&, i]() {
             for (int j = 0; j < k_local_iters; ++j) {
@@ -286,8 +290,7 @@ bool test_gc_safepoint_round_trip() {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             bool ok = sched.wait_for_safepoint(50);
             sched.resume_from_gc();
-            std::println("  safepoint round {}: arrived={} waited={}",
-                         i + 1, arrived, ok);
+            std::println("  safepoint round {}: arrived={} waited={}", i + 1, arrived, ok);
         }
     });
 
@@ -295,8 +298,10 @@ bool test_gc_safepoint_round_trip() {
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed > 30000) break;
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+        if (elapsed > 30000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     sched.stop();
@@ -304,8 +309,7 @@ bool test_gc_safepoint_round_trip() {
     safepoint_thread.join();
 
     std::println("  done: {}/{}", done.load(), k_fibers);
-    CHECK(done.load() == k_fibers,
-          "all 8 fibers completed despite 3 safepoint rounds");
+    CHECK(done.load() == k_fibers, "all 8 fibers completed despite 3 safepoint rounds");
     return true;
 }
 
@@ -328,10 +332,18 @@ bool test_fiber_resume_mixed_yields() {
             // reach k_fibers).
             for (int j = 0; j < k_iters; ++j) {
                 switch (j % 4) {
-                    case 0: Fiber::yield(YieldReason::Explicit); break;
-                    case 1: Fiber::yield(YieldReason::MutationBoundary); break;
-                    case 2: Fiber::yield(YieldReason::OperationBoundary); break;
-                    case 3: Fiber::yield(YieldReason::Explicit); break;
+                    case 0:
+                        Fiber::yield(YieldReason::Explicit);
+                        break;
+                    case 1:
+                        Fiber::yield(YieldReason::MutationBoundary);
+                        break;
+                    case 2:
+                        Fiber::yield(YieldReason::OperationBoundary);
+                        break;
+                    case 3:
+                        Fiber::yield(YieldReason::Explicit);
+                        break;
                 }
             }
             done.fetch_add(1);
@@ -340,18 +352,18 @@ bool test_fiber_resume_mixed_yields() {
     std::thread io_thread([&sched]() { sched.run(); });
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count() > 15000) break;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                  t0)
+                .count() > 15000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
 
-    std::println("  done: {}/{} (mixed-yield resume reliable)",
-                 done.load(), k_fibers);
-    CHECK(done.load() == k_fibers,
-          "all 4 fibers completed mixed-yield cycle "
-          "(yield-resume reliable for all 4 yield reasons)");
+    std::println("  done: {}/{} (mixed-yield resume reliable)", done.load(), k_fibers);
+    CHECK(done.load() == k_fibers, "all 4 fibers completed mixed-yield cycle "
+                                   "(yield-resume reliable for all 4 yield reasons)");
     return true;
 }
 
@@ -369,8 +381,10 @@ bool test_affinity_distribution() {
         int target_w = (i & 1) ? 0 : 3;
         sched.spawn_with_affinity(
             [&done, &fiber_on_w0, &fiber_on_w3, target_w, i]() {
-                if (target_w == 0) fiber_on_w0.fetch_add(1);
-                else if (target_w == 3) fiber_on_w3.fetch_add(1);
+                if (target_w == 0)
+                    fiber_on_w0.fetch_add(1);
+                else if (target_w == 3)
+                    fiber_on_w3.fetch_add(1);
                 Fiber::yield(YieldReason::MutationBoundary);
                 done.fetch_add(1);
             },
@@ -379,21 +393,19 @@ bool test_affinity_distribution() {
     std::thread io_thread([&sched]() { sched.run(); });
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count() > 10000) break;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                  t0)
+                .count() > 10000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
-    std::println("  done: {}/{} fibers_on_w0: {} fibers_on_w3: {}",
-                 done.load(), k_fibers,
+    std::println("  done: {}/{} fibers_on_w0: {} fibers_on_w3: {}", done.load(), k_fibers,
                  fiber_on_w0.load(), fiber_on_w3.load());
-    CHECK(done.load() == k_fibers,
-          "all affinity-pinned fibers completed");
-    CHECK(fiber_on_w0.load() == k_fibers / 2,
-          "4 fibers pinned to worker 0 (affinity respected)");
-    CHECK(fiber_on_w3.load() == k_fibers / 2,
-          "4 fibers pinned to worker 3 (affinity respected)");
+    CHECK(done.load() == k_fibers, "all affinity-pinned fibers completed");
+    CHECK(fiber_on_w0.load() == k_fibers / 2, "4 fibers pinned to worker 0 (affinity respected)");
+    CHECK(fiber_on_w3.load() == k_fibers / 2, "4 fibers pinned to worker 3 (affinity respected)");
     return true;
 }
 
@@ -404,7 +416,7 @@ bool test_10k_iter_stress() {
     Scheduler sched(8);
     std::atomic<int> done{0};
     constexpr int k_fibers = 100;
-    constexpr int k_local_iters = 100;  // 100 × 100 = 10000 yield ops
+    constexpr int k_local_iters = 100; // 100 × 100 = 10000 yield ops
     for (int i = 0; i < k_fibers; ++i) {
         sched.spawn([&done, i]() {
             for (int j = 0; j < k_local_iters; ++j) {
@@ -435,16 +447,19 @@ bool test_10k_iter_stress() {
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed > 60000) break;
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+        if (elapsed > 60000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
     gc_thread.join();
 
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     // Aggregate scheduler metrics.
     const auto& m = sched.metrics();
     std::uint64_t total_steal_attempts = 0;
@@ -453,9 +468,8 @@ bool test_10k_iter_stress() {
         total_steal_attempts += m.worker(w).steal_attempts.load();
         total_steal_successes += m.worker(w).steal_successes.load();
     }
-    std::println("  done: {}/{} in {}ms steal_attempts: {} steal_successes: {}",
-                 done.load(), k_fibers, ms,
-                 total_steal_attempts, total_steal_successes);
+    std::println("  done: {}/{} in {}ms steal_attempts: {} steal_successes: {}", done.load(),
+                 k_fibers, ms, total_steal_attempts, total_steal_successes);
     CHECK(done.load() == k_fibers,
           "all 100 fibers completed (10k yield ops + 10 safepoint rounds)");
     CHECK(ms < 60000, "completed within 60s wall-clock budget");
@@ -478,8 +492,7 @@ bool test_happy_path_regression() {
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),
           "(+ reg-545-a reg-545-b) returns int (post-stress)");
     if (r && aura::compiler::types::is_int(*r)) {
-        CHECK(aura::compiler::types::as_int(*r) == 42,
-              "(+ 10 32) == 42 (post-stress regression)");
+        CHECK(aura::compiler::types::as_int(*r) == 42, "(+ 10 32) == 42 (post-stress regression)");
     }
     // Scheduler + fiber smoke (no eval).
     {
@@ -495,7 +508,9 @@ bool test_happy_path_regression() {
         auto t0 = std::chrono::steady_clock::now();
         while (done.load() < 4) {
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - t0).count() > 10000) break;
+                    std::chrono::steady_clock::now() - t0)
+                    .count() > 10000)
+                break;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         sched.stop();
@@ -524,8 +539,12 @@ int run_tests() {
 
 } // namespace aura_issue_545_detail
 
-int aura_issue_545_run() { return aura_issue_545_detail::run_tests(); }
+int aura_issue_545_run() {
+    return aura_issue_545_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_545_run(); }
+int main() {
+    return aura_issue_545_run();
+}
 #endif

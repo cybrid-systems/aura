@@ -54,8 +54,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
@@ -70,8 +70,8 @@ namespace aura_issue_373_detail {
 // Eval helper that returns the EvalValue or make_void on
 // failure. Used for both successful queries and expected
 // error pair returns (the latter still produce a value).
-static aura::compiler::types::EvalValue
-try_eval(aura::compiler::CompilerService& cs, std::string_view src) {
+static aura::compiler::types::EvalValue try_eval(aura::compiler::CompilerService& cs,
+                                                 std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -83,12 +83,11 @@ try_eval(aura::compiler::CompilerService& cs, std::string_view src) {
 // Returns 1 if the result of `expr` is a pair (error pair
 // or any other pair), 0 otherwise. Used to detect the
 // ("hygiene-protected" "...") error pair shape.
-static std::int64_t
-is_pair_result(aura::compiler::CompilerService& cs, std::string_view expr) {
-    std::string script = std::string("(let ((r ") + std::string(expr) +
-                         ")) (if (pair? r) 1 0))";
+static std::int64_t is_pair_result(aura::compiler::CompilerService& cs, std::string_view expr) {
+    std::string script = std::string("(let ((r ") + std::string(expr) + ")) (if (pair? r) 1 0))";
     auto r = try_eval(cs, script);
-    if (!aura::compiler::types::is_int(r)) return -1;
+    if (!aura::compiler::types::is_int(r))
+        return -1;
     return aura::compiler::types::as_int(r);
 }
 
@@ -97,28 +96,26 @@ is_pair_result(aura::compiler::CompilerService& cs, std::string_view expr) {
 // "hygiene-protected" becomes 0 for the first slot of
 // ("hygiene-protected" "...")). For non-pair results,
 // returns -1.
-static std::int64_t
-car_as_string_idx(aura::compiler::CompilerService& cs, std::string_view expr) {
+static std::int64_t car_as_string_idx(aura::compiler::CompilerService& cs, std::string_view expr) {
     // (let ((r <expr>)) (if (pair? r) (car r) -1)) — but
     // car returns the car value; for an Aura pair where
     // the car is a string, it returns the string EvalValue.
     // To compare to a string, we convert both to ints via
     // the string index. Easier: compare to "hygiene-protected"
     // by string equality and return 1/0.
-    std::string script =
-        std::string("(let ((r ") + std::string(expr) +
-        ")) (if (and (pair? r) (string? (car r)) "
-        "         (string=? (car r) \"hygiene-protected\")) 1 0))";
+    std::string script = std::string("(let ((r ") + std::string(expr) +
+                         ")) (if (and (pair? r) (string? (car r)) "
+                         "         (string=? (car r) \"hygiene-protected\")) 1 0))";
     auto r = try_eval(cs, script);
-    if (!aura::compiler::types::is_int(r)) return -1;
+    if (!aura::compiler::types::is_int(r))
+        return -1;
     return aura::compiler::types::as_int(r);
 }
 
 // Set source via (set-code ...), then run (eval-current) to
 // expand macros and clone the body into workspace_flat_.
 // Returns true on success.
-static bool
-set_code_and_eval(aura::compiler::CompilerService& cs, const std::string& src) {
+static bool set_code_and_eval(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = try_eval(cs, std::string("(set-code \"") + src + "\")");
     if (!aura::compiler::types::is_bool(r)) {
         std::println("    FAIL: set-code did not return a bool");
@@ -153,8 +150,7 @@ bool test_query_macro_introduced_returns_cloned_body() {
     // The macro body is `(* y 2)` — Call(*, Variable(y), LiteralInt(2)).
     // The clone has 3 nodes (Call, Variable, LiteralInt) all marked
     // MacroIntroduced.
-    if (!set_code_and_eval(cs,
-        "(define-hygienic-macro (d y) (* y 2)) (d 1) (d 2) (d 3)")) {
+    if (!set_code_and_eval(cs, "(define-hygienic-macro (d y) (* y 2)) (d 1) (d 2) (d 3)")) {
         ++g_failed;
         return false;
     }
@@ -176,7 +172,7 @@ bool test_query_by_marker_returns_cloned_body() {
     std::println("\n--- AC2: query:by-marker MacroIntroduced returns cloned-body nodes ---");
     aura::compiler::CompilerService cs;
     if (!set_code_and_eval(cs,
-        "(define-hygienic-macro (doubler y) (* y 2)) (doubler 5) (doubler 7)")) {
+                           "(define-hygienic-macro (doubler y) (* y 2)) (doubler 5) (doubler 7)")) {
         ++g_failed;
         return false;
     }
@@ -189,10 +185,9 @@ bool test_query_by_marker_returns_cloned_body() {
     }
     auto n1 = aura::compiler::types::as_int(r1);
     auto n2 = aura::compiler::types::as_int(r2);
-    std::println("    [info] macro-introduced = {}, by-marker MacroIntroduced = {}",
-                 n1, n2);
+    std::println("    [info] macro-introduced = {}, by-marker MacroIntroduced = {}", n1, n2);
     CHECK((n1) == (n2),
-             "query:macro-introduced and query:by-marker MacroIntroduced return same count");
+          "query:macro-introduced and query:by-marker MacroIntroduced return same count");
     CHECK(n1 >= 2, "by-marker MacroIntroduced returns >= 2 nodes (2 macro expansions)");
     return true;
 }
@@ -204,7 +199,8 @@ bool test_query_by_marker_returns_cloned_body() {
 // AC3: mutate:rebind on a MacroIntroduced Define returns
 // ("hygiene-protected" "...") by default.
 bool test_mutate_rebind_rejects_macro_introduced() {
-    std::println("\n--- AC3: mutate:rebind on macro-introduced Define returns hygiene-protected error ---");
+    std::println(
+        "\n--- AC3: mutate:rebind on macro-introduced Define returns hygiene-protected error ---");
     aura::compiler::CompilerService cs;
     // Mark a user-written Define as MacroIntroduced via
     // (syntax:set-marker) (#366) to simulate the
@@ -236,8 +232,7 @@ bool test_mutate_rebind_rejects_macro_introduced() {
     std::int64_t is_protected = car_as_string_idx(cs, "(mutate:rebind \"myvar\" \"99\")");
     std::println("    [info] rebind is_pair={} is_protected={}", is_pair, is_protected);
     CHECK((is_pair) == (1), "mutate:rebind on macro-introduced returns a pair (error)");
-    CHECK((is_protected) == (1),
-          "error tag is \"hygiene-protected\" (the expected error kind)");
+    CHECK((is_protected) == (1), "error tag is \"hygiene-protected\" (the expected error kind)");
     return true;
 }
 
@@ -299,8 +294,7 @@ bool test_mutate_rebind_succeeds_with_per_call_kwarg() {
     // Global flag is OFF (default).
     auto flag_val = try_eval(cs, "(hygiene:allow-macro-mutate?)");
     if (aura::compiler::types::is_bool(flag_val)) {
-        CHECK(!aura::compiler::types::as_bool(flag_val),
-              "global flag is OFF by default");
+        CHECK(!aura::compiler::types::as_bool(flag_val), "global flag is OFF by default");
     }
     // Without kwarg → rejected.
     std::int64_t before = car_as_string_idx(cs, "(mutate:rebind \"other\" \"13\")");
@@ -308,10 +302,9 @@ bool test_mutate_rebind_succeeds_with_per_call_kwarg() {
     // With :allow-macro? #t → succeeds. (Keyword args are
     // placed after positional args; mutate:rebind takes
     // (name code [summary] [kwarg value]...).)
-    auto rebind = try_eval(cs,
-        "(mutate:rebind \"other\" \"13\" :allow-macro? #t)");
-    std::int64_t is_pair_after = is_pair_result(cs,
-        "(mutate:rebind \"other\" \"13\" :allow-macro? #t)");
+    auto rebind = try_eval(cs, "(mutate:rebind \"other\" \"13\" :allow-macro? #t)");
+    std::int64_t is_pair_after =
+        is_pair_result(cs, "(mutate:rebind \"other\" \"13\" :allow-macro? #t)");
     std::println("    [info] with kwarg: rebind is_pair={}", is_pair_after);
     CHECK((is_pair_after) == (0), "with :allow-macro? #t: rebind does NOT return an error pair");
     CHECK(aura::compiler::types::is_bool(rebind) || aura::compiler::types::is_int(rebind) ||
@@ -345,10 +338,14 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_373_detail
+} // namespace aura_issue_373_detail
 
-int aura_issue_373_run() { return aura_issue_373_detail::run_tests(); }
+int aura_issue_373_run() {
+    return aura_issue_373_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_373_run(); }
+int main() {
+    return aura_issue_373_run();
+}
 #endif

@@ -85,8 +85,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate matrix ---");
     const auto stats6a = compaction_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(arena:compact)");
     }

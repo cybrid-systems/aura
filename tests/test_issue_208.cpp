@@ -41,8 +41,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -50,9 +50,8 @@ import aura.core;
 import aura.compiler.value;
 
 
-
 namespace aura_issue_208_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Test 1: bindings_legacy_uses metric on integration path ──
 // Populate an env via Aura code, then iterate via the
@@ -76,11 +75,9 @@ bool test_metric_bumps_on_legacy_access() {
     env.set_pool(&pool);
     env.bind_symid(pool.intern("foo"), aura::compiler::types::make_int(1));
     env.bind_symid(pool.intern("bar"), aura::compiler::types::make_int(2));
-    CHECK(env.bindings_legacy_uses() == 0,
-          "counter starts at 0 before any access");
+    CHECK(env.bindings_legacy_uses() == 0, "counter starts at 0 before any access");
     auto legacy = env.bindings();
-    CHECK(env.bindings_legacy_uses() == 1,
-          "counter bumps to 1 after one legacy access");
+    CHECK(env.bindings_legacy_uses() == 1, "counter bumps to 1 after one legacy access");
     return true;
 }
 
@@ -94,12 +91,11 @@ bool test_metric_unchanged_on_new_access() {
     env.bind_symid(pool.intern("foo"), aura::compiler::types::make_int(1));
     CHECK(env.bindings_legacy_uses() == 0, "counter starts at 0");
     auto view = env.bindings_symid_iter();
-    CHECK(env.bindings_legacy_uses() == 0,
-          "counter unchanged after bindings_symid_iter access");
+    CHECK(env.bindings_legacy_uses() == 0, "counter unchanged after bindings_symid_iter access");
     auto names = env.bindings_with_names();
-    CHECK(env.bindings_legacy_uses() == 0,
-          "counter unchanged after bindings_with_names access");
-    (void)view; (void)names;
+    CHECK(env.bindings_legacy_uses() == 0, "counter unchanged after bindings_with_names access");
+    (void)view;
+    (void)names;
     return true;
 }
 
@@ -116,8 +112,7 @@ bool test_bindings_symid_iter_data_parity() {
     env.bind_symid(pool.intern("c"), aura::compiler::types::make_int(3));
     auto legacy = env.bindings();
     auto symid_view = env.bindings_symid_iter();
-    CHECK(legacy.size() == symid_view.size(),
-          "legacy and symid views have same size");
+    CHECK(legacy.size() == symid_view.size(), "legacy and symid views have same size");
     CHECK(legacy.size() == 3, "3 bindings");
     for (std::size_t i = 0; i < 3; ++i) {
         // Values match
@@ -125,8 +120,7 @@ bool test_bindings_symid_iter_data_parity() {
               "value at index " + std::to_string(i) + " matches");
         // Names match (resolve SymId via pool)
         std::string_view resolved = pool.resolve(symid_view[i].first);
-        CHECK(resolved == legacy[i].first,
-              "name at index " + std::to_string(i) + " matches");
+        CHECK(resolved == legacy[i].first, "name at index " + std::to_string(i) + " matches");
     }
     return true;
 }
@@ -144,7 +138,8 @@ bool test_reset_bindings_legacy_uses() {
     CHECK(env.bindings_legacy_uses() == 2, "counter is 2 after 2 accesses");
     env.reset_bindings_legacy_uses();
     CHECK(env.bindings_legacy_uses() == 0, "counter is 0 after reset");
-    (void)legacy; (void)legacy2;
+    (void)legacy;
+    (void)legacy2;
     return true;
 }
 
@@ -189,9 +184,9 @@ bool test_inspect_env_uses_bindings_with_names() {
     // The post-#209 code routes through bindings_with_names()
     // and does NOT bump the metric.
     auto& top = cs.evaluator().top_env();
-    cs.inspect_env();  // First call: 1 metric bump pre-#209
+    cs.inspect_env(); // First call: 1 metric bump pre-#209
     std::size_t uses_before = top.bindings_legacy_uses();
-    std::string out = cs.inspect_env();  // Second call: 0 metric bumps post-#209
+    std::string out = cs.inspect_env(); // Second call: 0 metric bumps post-#209
     std::size_t uses_after = top.bindings_legacy_uses();
     CHECK(uses_after == uses_before,
           "inspect_env does NOT bump bindings_legacy_uses (post-#209 migration)");
@@ -203,10 +198,8 @@ bool test_inspect_env_uses_bindings_with_names() {
     // (it uses a per-eval scratch env). The main check
     // is the metric: the inspect_env call does NOT bump
     // bindings_legacy_uses (post-#209 migration).
-    CHECK(out.find("env: ") != std::string::npos,
-          "output starts with 'env: ' header");
-    CHECK(out.find("bindings") != std::string::npos,
-          "output contains 'bindings' in header");
+    CHECK(out.find("env: ") != std::string::npos, "output starts with 'env: ' header");
+    CHECK(out.find("bindings") != std::string::npos, "output contains 'bindings' in header");
     return true;
 }
 
@@ -227,7 +220,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_208_detail
+} // namespace aura_issue_208_detail
 
-int aura_issue_208_run() { return aura_issue_208_detail::run_tests(); }
-
+int aura_issue_208_run() {
+    return aura_issue_208_detail::run_tests();
+}

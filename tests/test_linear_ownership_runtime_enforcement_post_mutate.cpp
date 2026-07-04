@@ -91,10 +91,8 @@ static void test_post_mutate_leak_violations() {
     rec.target_node = root;
     rec.mutation_id = 598;
     std::vector<aura::compiler::OwnershipNote> notes;
-    (void)aura::compiler::post_mutation_invariant_check(
-        *flat, *pool, reg, rec, notes, &metrics);
-    const auto violations =
-        metrics.linear_violations_caught_total.load(std::memory_order_relaxed);
+    (void)aura::compiler::post_mutation_invariant_check(*flat, *pool, reg, rec, notes, &metrics);
+    const auto violations = metrics.linear_violations_caught_total.load(std::memory_order_relaxed);
     CHECK(violations >= 1 || count_kind(notes, "leaked-linear") >= 1,
           "leaked-linear bumps violation counters");
 }
@@ -124,40 +122,30 @@ static void run_matrix(CompilerService& cs) {
     rec.target_node = root;
     rec.mutation_id = 5982;
     std::vector<aura::compiler::OwnershipNote> notes;
-    const auto status = aura::compiler::post_mutation_invariant_check(
-        *flat, *str_pool, reg, rec, notes, &metrics);
+    const auto status =
+        aura::compiler::post_mutation_invariant_check(*flat, *str_pool, reg, rec, notes, &metrics);
     CHECK(status == aura::ast::InvariantStatus::Ok,
           "moved linear binding passes post-mutate revalidate");
 
     std::println("\n--- AC3: invalidate path bumps deopt_on_invalidate ---");
-    const auto* m = static_cast<const CompilerMetrics*>(
-        cs.evaluator().compiler_metrics());
+    const auto* m = static_cast<const CompilerMetrics*>(cs.evaluator().compiler_metrics());
     (void)cs.eval("(f)");
-    const auto deopt0 = m
-        ? m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed)
-        : 0;
-    const auto enforce0 = m
-        ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed)
-        : 0;
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 99))) (move x)))\" "
-        "\"issue-598-invalidate\")");
-    const auto deopt1 = m
-        ? m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed)
-        : 0;
-    const auto enforce1 = m
-        ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed)
-        : 0;
-    std::println("  deopt_on_invalidate: {} -> {} enforcement_hits: {} -> {}",
-                 deopt0, deopt1, enforce0, enforce1);
+    const auto deopt0 = m ? m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed) : 0;
+    const auto enforce0 =
+        m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 99))) (move x)))\" "
+                  "\"issue-598-invalidate\")");
+    const auto deopt1 = m ? m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed) : 0;
+    const auto enforce1 =
+        m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
+    std::println("  deopt_on_invalidate: {} -> {} enforcement_hits: {} -> {}", deopt0, deopt1,
+                 enforce0, enforce1);
     CHECK(deopt1 >= deopt0, "deopt_on_invalidate observable");
-    CHECK(enforce1 > enforce0,
-          "mutate:rebind bumps post_mutate_enforcement_hits");
+    CHECK(enforce1 > enforce0, "mutate:rebind bumps post_mutate_enforcement_hits");
 
     std::println("\n--- AC5: gc-heap + linear mutate integration ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
-        "\"issue-598-gc\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
+                  "\"issue-598-gc\")");
     auto gc = cs.eval("(gc-heap)");
     CHECK(gc.has_value(), "(gc-heap) callable after linear mutate");
 
@@ -165,10 +153,8 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = runtime_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string body =
-            "(lambda () (let ((x (Linear " + std::to_string(round + 20) +
-            "))) (move x)))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" +
-                      std::to_string(round) + "\")");
+            "(lambda () (let ((x (Linear " + std::to_string(round + 20) + "))) (move x)))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) + "\")");
         auto r = cs.eval("(f)");
         CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
     }

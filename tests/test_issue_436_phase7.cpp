@@ -9,8 +9,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -45,9 +45,9 @@ static int64_t run_int(aura::compiler::CompilerService& cs, const std::string& s
 // ── AC1: C++ WireIR type — direct construction + accessors ──
 bool test_cpp_wire_ir_direct() {
     std::println("\n--- AC1: C++ WireIR direct construction ---");
-    using aura::compiler::sv_ir::WireKind;
-    using aura::compiler::sv_ir::WireIR;
     using aura::compiler::sv_ir::make_wire;
+    using aura::compiler::sv_ir::WireIR;
+    using aura::compiler::sv_ir::WireKind;
 
     WireIR w = make_wire("data", 8, WireKind::Wire);
     CHECK(w.name == "data", "WireIR.name == 'data'");
@@ -69,9 +69,9 @@ bool test_cpp_wire_ir_direct() {
 // ── AC2: C++ emit_wire — matches list-based eda:emit-wire output ──
 bool test_cpp_emit_wire() {
     std::println("\n--- AC2: C++ emit_wire matches list IR ---");
-    using aura::compiler::sv_ir::WireKind;
     using aura::compiler::sv_ir::emit_wire;
     using aura::compiler::sv_ir::make_wire;
+    using aura::compiler::sv_ir::WireKind;
 
     std::string r;
 
@@ -93,9 +93,9 @@ bool test_cpp_emit_wire() {
 // ── AC3: wire_kind_to_symbol / wire_kind_from_symbol roundtrip ──
 bool test_wire_kind_symbol_roundtrip() {
     std::println("\n--- AC3: WireKind symbol roundtrip ---");
-    using aura::compiler::sv_ir::WireKind;
     using aura::compiler::sv_ir::wire_kind_from_symbol;
     using aura::compiler::sv_ir::wire_kind_to_symbol;
+    using aura::compiler::sv_ir::WireKind;
 
     for (auto k : {WireKind::Wire, WireKind::Logic, WireKind::Reg, WireKind::Bit}) {
         const char* sym = wire_kind_to_symbol(k);
@@ -104,8 +104,7 @@ bool test_wire_kind_symbol_roundtrip() {
     }
 
     // Unknown symbol defaults to Wire.
-    CHECK(wire_kind_from_symbol("nonsense") == WireKind::Wire,
-          "unknown symbol → Wire");
+    CHECK(wire_kind_from_symbol("nonsense") == WireKind::Wire, "unknown symbol → Wire");
 
     return true;
 }
@@ -123,29 +122,21 @@ bool test_aura_bridge() {
     // We don't directly construct a C++ WireIR from Aura
     // (that needs full FFI), but we can verify the symbol
     // names match between Aura eda:wire-kind and C++ WireKind.
-    auto aura_wire_kind = run_string(cs,
-        "(eda:name-str (eda:wire-kind "
-        "  (make-eda:wire 'd 8)))");
-    CHECK(aura_wire_kind == "wire",
-          "Aura eda:wire-kind returns 'wire (default)");
+    auto aura_wire_kind = run_string(cs, "(eda:name-str (eda:wire-kind "
+                                         "  (make-eda:wire 'd 8)))");
+    CHECK(aura_wire_kind == "wire", "Aura eda:wire-kind returns 'wire (default)");
 
-    auto aura_logic_kind = run_string(cs,
-        "(eda:name-str (eda:wire-kind "
-        "  (make-eda:logic 'q 1)))");
-    CHECK(aura_logic_kind == "logic",
-          "Aura eda:wire-kind returns 'logic");
+    auto aura_logic_kind = run_string(cs, "(eda:name-str (eda:wire-kind "
+                                          "  (make-eda:logic 'q 1)))");
+    CHECK(aura_logic_kind == "logic", "Aura eda:wire-kind returns 'logic");
 
-    auto aura_reg_kind = run_string(cs,
-        "(eda:name-str (eda:wire-kind "
-        "  (make-eda:reg 'q 8)))");
-    CHECK(aura_reg_kind == "reg",
-          "Aura eda:wire-kind returns 'reg");
+    auto aura_reg_kind = run_string(cs, "(eda:name-str (eda:wire-kind "
+                                        "  (make-eda:reg 'q 8)))");
+    CHECK(aura_reg_kind == "reg", "Aura eda:wire-kind returns 'reg");
 
-    auto aura_bit_kind = run_string(cs,
-        "(eda:name-str (eda:wire-kind "
-        "  (make-eda:bit 'f 1)))");
-    CHECK(aura_bit_kind == "bit",
-          "Aura eda:wire-kind returns 'bit");
+    auto aura_bit_kind = run_string(cs, "(eda:name-str (eda:wire-kind "
+                                        "  (make-eda:bit 'f 1)))");
+    CHECK(aura_bit_kind == "bit", "Aura eda:wire-kind returns 'bit");
 
     return true;
 }
@@ -161,15 +152,11 @@ bool test_list_ir_still_works() {
 
     // Build the same wire via the list-based API and verify
     // its output matches the structured WireIR emit.
-    auto s = run_string(cs,
-        "(eda:emit-wire (make-eda:logic 'q 1))");
-    CHECK(s == "logic q;",
-          "list-based eda:emit-wire still emits 'logic q;'");
+    auto s = run_string(cs, "(eda:emit-wire (make-eda:logic 'q 1))");
+    CHECK(s == "logic q;", "list-based eda:emit-wire still emits 'logic q;'");
 
-    s = run_string(cs,
-        "(eda:emit-wire (make-eda:wire 'data 8))");
-    CHECK(s == "wire [8-1:0] data;",
-          "list-based eda:emit-wire still emits 'wire [8-1:0] data;'");
+    s = run_string(cs, "(eda:emit-wire (make-eda:wire 'data 8))");
+    CHECK(s == "wire [8-1:0] data;", "list-based eda:emit-wire still emits 'wire [8-1:0] data;'");
 
     return true;
 }
@@ -187,8 +174,12 @@ int run_tests() {
 
 } // namespace aura_issue_436_phase7_detail
 
-int aura_issue_436_phase7_run() { return aura_issue_436_phase7_detail::run_tests(); }
+int aura_issue_436_phase7_run() {
+    return aura_issue_436_phase7_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_436_phase7_run(); }
+int main() {
+    return aura_issue_436_phase7_run();
+}
 #endif

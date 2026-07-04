@@ -59,13 +59,13 @@ namespace aura::ast::mutators {
 // Shorter names within this module. Keep the fully-qualified
 // `aura::core::` path on the public API surface so callers
 // don't have to know about this namespace.
+using aura::ast::FlatAST;
+using aura::ast::NodeId;
+using aura::ast::NULL_NODE;
 using aura::core::AuraError;
 using aura::core::AuraErrorKind;
 using aura::core::AuraResult;
 using aura::core::make_unexpected;
-using aura::ast::NodeId;
-using aura::ast::NULL_NODE;
-using aura::ast::FlatAST;
 
 // ── ReplaceChildMutator ─────────────────────────────────────
 //
@@ -82,20 +82,19 @@ export struct ReplaceChildMutator {
     std::uint32_t index = 0;
     NodeId new_child = NULL_NODE;
 
-    [[nodiscard]] AuraResult<NodeId>
-    apply(FlatAST& flat, NodeId target) const {
+    [[nodiscard]] AuraResult<NodeId> apply(FlatAST& flat, NodeId target) const {
         if (!flat.is_valid(target)) {
-            return std::unexpected(make_unexpected(
-                AuraErrorKind::MutationInvalidTarget,
-                std::format("ReplaceChildMutator: invalid target NodeId {}",
-                            static_cast<std::uint64_t>(target))));
+            return std::unexpected(
+                make_unexpected(AuraErrorKind::MutationInvalidTarget,
+                                std::format("ReplaceChildMutator: invalid target NodeId {}",
+                                            static_cast<std::uint64_t>(target))));
         }
         const auto children = flat.children(target);
         if (index >= children.size()) {
-            return std::unexpected(make_unexpected(
-                AuraErrorKind::MutationOutOfRange,
-                std::format("ReplaceChildMutator: index {} >= child count {}",
-                            index, children.size())));
+            return std::unexpected(
+                make_unexpected(AuraErrorKind::MutationOutOfRange,
+                                std::format("ReplaceChildMutator: index {} >= child count {}",
+                                            index, children.size())));
         }
         flat.set_child(target, index, new_child);
         flat.mark_dirty_upward(target);
@@ -116,13 +115,12 @@ export struct InsertChildMutator {
     std::uint32_t index = 0;
     NodeId new_child = NULL_NODE;
 
-    [[nodiscard]] AuraResult<NodeId>
-    apply(FlatAST& flat, NodeId target) const {
+    [[nodiscard]] AuraResult<NodeId> apply(FlatAST& flat, NodeId target) const {
         if (!flat.is_valid(target)) {
-            return std::unexpected(make_unexpected(
-                AuraErrorKind::MutationInvalidTarget,
-                std::format("InsertChildMutator: invalid target NodeId {}",
-                            static_cast<std::uint64_t>(target))));
+            return std::unexpected(
+                make_unexpected(AuraErrorKind::MutationInvalidTarget,
+                                std::format("InsertChildMutator: invalid target NodeId {}",
+                                            static_cast<std::uint64_t>(target))));
         }
         flat.insert_child(target, index, new_child);
         flat.mark_dirty_upward(target);
@@ -141,20 +139,19 @@ export struct InsertChildMutator {
 export struct RemoveChildMutator {
     std::uint32_t index = 0;
 
-    [[nodiscard]] AuraResult<NodeId>
-    apply(FlatAST& flat, NodeId target) const {
+    [[nodiscard]] AuraResult<NodeId> apply(FlatAST& flat, NodeId target) const {
         if (!flat.is_valid(target)) {
-            return std::unexpected(make_unexpected(
-                AuraErrorKind::MutationInvalidTarget,
-                std::format("RemoveChildMutator: invalid target NodeId {}",
-                            static_cast<std::uint64_t>(target))));
+            return std::unexpected(
+                make_unexpected(AuraErrorKind::MutationInvalidTarget,
+                                std::format("RemoveChildMutator: invalid target NodeId {}",
+                                            static_cast<std::uint64_t>(target))));
         }
         const auto children = flat.children(target);
         if (index >= children.size()) {
-            return std::unexpected(make_unexpected(
-                AuraErrorKind::MutationOutOfRange,
-                std::format("RemoveChildMutator: index {} >= child count {}",
-                            index, children.size())));
+            return std::unexpected(
+                make_unexpected(AuraErrorKind::MutationOutOfRange,
+                                std::format("RemoveChildMutator: index {} >= child count {}", index,
+                                            children.size())));
         }
         flat.remove_child(target, index);
         flat.mark_dirty_upward(target);
@@ -169,8 +166,7 @@ export struct RemoveChildMutator {
 // (e.g., "if condition then Replace else NoOp") and as
 // a reference for the Mutator concept shape.
 export struct NoOpMutator {
-    [[nodiscard]] AuraResult<NodeId>
-    apply(FlatAST& /*flat*/, NodeId target) const {
+    [[nodiscard]] AuraResult<NodeId> apply(FlatAST& /*flat*/, NodeId target) const {
         return target;
     }
 };
@@ -199,8 +195,7 @@ static_assert(aura::core::Mutator<NoOpMutator, FlatAST>,
 // the contract: if a future refactor of FlatAST breaks
 // ASTContainer (e.g., by changing children() to return a
 // non-range), the build fails immediately.
-static_assert(aura::core::ASTContainer<FlatAST>,
-              "FlatAST must satisfy ASTContainer<FlatAST>");
+static_assert(aura::core::ASTContainer<FlatAST>, "FlatAST must satisfy ASTContainer<FlatAST>");
 
 // ── Generic dispatch template ──────────────────────────────
 //
@@ -246,21 +241,23 @@ export struct MutatorDispatchStats {
 
     // Per-kind success counters. Index = static_cast<uint8_t>(StrategyKind).
     std::atomic<std::uint64_t> kind_success[4] = {
-        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
-        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}};
+        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
+        std::atomic<std::uint64_t>{0}};
 
     // Per-kind failure counters. Same indexing.
     std::atomic<std::uint64_t> kind_failure[4] = {
-        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
-        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}};
+        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
+        std::atomic<std::uint64_t>{0}};
 
     void reset() noexcept {
         apply_mutation_total.store(0, std::memory_order_relaxed);
         apply_by_kind_total.store(0, std::memory_order_relaxed);
         apply_by_name_total.store(0, std::memory_order_relaxed);
         failure_total.store(0, std::memory_order_relaxed);
-        for (auto& c : kind_success) c.store(0, std::memory_order_relaxed);
-        for (auto& c : kind_failure) c.store(0, std::memory_order_relaxed);
+        for (auto& c : kind_success)
+            c.store(0, std::memory_order_relaxed);
+        for (auto& c : kind_failure)
+            c.store(0, std::memory_order_relaxed);
     }
 
     [[nodiscard]] std::uint64_t total() const noexcept {
@@ -278,8 +275,7 @@ export [[nodiscard]] MutatorDispatchStats& dispatch_stats() noexcept {
 }
 
 export template <aura::core::Mutator<FlatAST> M>
-[[nodiscard]] AuraResult<NodeId>
-apply_mutation(FlatAST& flat, NodeId target, M&& mut) {
+[[nodiscard]] AuraResult<NodeId> apply_mutation(FlatAST& flat, NodeId target, M&& mut) {
     dispatch_stats().apply_mutation_total.fetch_add(1, std::memory_order_relaxed);
     auto r = std::forward<M>(mut).apply(flat, target);
     if (!r) {
@@ -309,13 +305,16 @@ export enum class StrategyKind : std::uint8_t {
 //
 // Returns a short string for each StrategyKind. Useful in
 // REPL output, error messages, and EDSL observability.
-export [[nodiscard]] constexpr std::string_view
-kind_name(StrategyKind k) noexcept {
+export [[nodiscard]] constexpr std::string_view kind_name(StrategyKind k) noexcept {
     switch (k) {
-        case StrategyKind::NoOp:         return "no-op";
-        case StrategyKind::ReplaceChild: return "replace-child";
-        case StrategyKind::InsertChild:  return "insert-child";
-        case StrategyKind::RemoveChild:  return "remove-child";
+        case StrategyKind::NoOp:
+            return "no-op";
+        case StrategyKind::ReplaceChild:
+            return "replace-child";
+        case StrategyKind::InsertChild:
+            return "insert-child";
+        case StrategyKind::RemoveChild:
+            return "remove-child";
     }
     return "unknown";
 }
@@ -359,30 +358,32 @@ export struct StrategyParams {
 // kind without a case triggers an enum-value-not-handled
 // compiler warning (or error with -Werror=switch).
 export [[nodiscard]] AuraResult<NodeId>
-apply_by_kind(FlatAST& flat, NodeId target,
-              StrategyKind kind, const StrategyParams& params) {
+apply_by_kind(FlatAST& flat, NodeId target, StrategyKind kind, const StrategyParams& params) {
     dispatch_stats().apply_by_kind_total.fetch_add(1, std::memory_order_relaxed);
-    AuraResult<NodeId> result = std::unexpected(make_unexpected(
-        AuraErrorKind::InternalInvariantViolation,
-        std::format("apply_by_kind: unhandled StrategyKind value {}",
-                    static_cast<std::uint32_t>(kind))));
+    AuraResult<NodeId> result = std::unexpected(
+        make_unexpected(AuraErrorKind::InternalInvariantViolation,
+                        std::format("apply_by_kind: unhandled StrategyKind value {}",
+                                    static_cast<std::uint32_t>(kind))));
     bool ok = false;
     switch (kind) {
         case StrategyKind::NoOp:
             result = apply_mutation(flat, target, NoOpMutator{});
-            ok = true; break;
+            ok = true;
+            break;
         case StrategyKind::ReplaceChild:
-            result = apply_mutation(flat, target,
-                ReplaceChildMutator{params.index, params.new_child});
-            ok = true; break;
+            result =
+                apply_mutation(flat, target, ReplaceChildMutator{params.index, params.new_child});
+            ok = true;
+            break;
         case StrategyKind::InsertChild:
-            result = apply_mutation(flat, target,
-                InsertChildMutator{params.index, params.new_child});
-            ok = true; break;
+            result =
+                apply_mutation(flat, target, InsertChildMutator{params.index, params.new_child});
+            ok = true;
+            break;
         case StrategyKind::RemoveChild:
-            result = apply_mutation(flat, target,
-                RemoveChildMutator{params.index});
-            ok = true; break;
+            result = apply_mutation(flat, target, RemoveChildMutator{params.index});
+            ok = true;
+            break;
     }
     if (ok) {
         const auto idx = kind_index(kind);
@@ -403,25 +404,27 @@ apply_by_kind(FlatAST& flat, NodeId target,
 // strategy.
 //
 // kind_from_name is the inverse of kind_name.
-export [[nodiscard]] std::optional<StrategyKind>
-kind_from_name(std::string_view name) noexcept {
-    if (name == "no-op")         return StrategyKind::NoOp;
-    if (name == "replace-child") return StrategyKind::ReplaceChild;
-    if (name == "insert-child")  return StrategyKind::InsertChild;
-    if (name == "remove-child")  return StrategyKind::RemoveChild;
+export [[nodiscard]] std::optional<StrategyKind> kind_from_name(std::string_view name) noexcept {
+    if (name == "no-op")
+        return StrategyKind::NoOp;
+    if (name == "replace-child")
+        return StrategyKind::ReplaceChild;
+    if (name == "insert-child")
+        return StrategyKind::InsertChild;
+    if (name == "remove-child")
+        return StrategyKind::RemoveChild;
     return std::nullopt;
 }
 
 export [[nodiscard]] AuraResult<NodeId>
-apply_by_name(FlatAST& flat, NodeId target,
-              std::string_view name, const StrategyParams& params) {
+apply_by_name(FlatAST& flat, NodeId target, std::string_view name, const StrategyParams& params) {
     dispatch_stats().apply_by_name_total.fetch_add(1, std::memory_order_relaxed);
     auto kind = kind_from_name(name);
     if (!kind) {
         dispatch_stats().failure_total.fetch_add(1, std::memory_order_relaxed);
-        return std::unexpected(make_unexpected(
-            AuraErrorKind::MutationInvalidField,
-            std::format("apply_by_name: unknown strategy name '{}'", name)));
+        return std::unexpected(
+            make_unexpected(AuraErrorKind::MutationInvalidField,
+                            std::format("apply_by_name: unknown strategy name '{}'", name)));
     }
     return apply_by_kind(flat, target, *kind, params);
 }

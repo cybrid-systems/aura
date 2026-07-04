@@ -69,11 +69,9 @@ static void test_cross_delta_conflict_unit() {
     TypeRegistry reg;
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) == SolveResult::CONFLICT,
           "T~String cross-delta conflicts via reverify");
 }
 
@@ -90,9 +88,8 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: predicate mutate → narrowing + stats grow ---");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
     const auto stats0 = typed_mutation_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 6) 0))\" "
-        "\"issue-536-if\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 6) 0))\" "
+                  "\"issue-536-if\")");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto stats1 = typed_mutation_stats(cs);
     std::println("  narrowing_refresh: {} -> {}", n0, n1);
@@ -101,22 +98,18 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats1 >= stats0, "typed-mutation-stats monotonic");
 
     std::println("\n--- AC4: occurrence-stale-count == 0 after re-narrow ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
-        "\"issue-536-stale\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+                  "\"issue-536-stale\")");
     auto stale = cs.eval("(query:occurrence-stale-count)");
-    const auto stale_count =
-        stale && is_int(*stale) ? as_int(*stale) : -1;
+    const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
     std::println("  occurrence-stale-count = {}", stale_count);
     CHECK(stale_count == 0, "no stale occurrence nodes after auto re-narrow");
 
     std::println("\n--- AC5: passes_skipped monotonic under mutate ---");
     const auto ps0 = cs.evaluator().get_passes_skipped_type_dirty();
     for (int i = 0; i < 3; ++i) {
-        (void)cs.eval(
-            "(mutate:rebind \"g\" \"(lambda (y) (+ y " +
-            std::to_string(20 + i) + "))\" \"issue-536-ps-" +
-            std::to_string(i) + "\")");
+        (void)cs.eval("(mutate:rebind \"g\" \"(lambda (y) (+ y " + std::to_string(20 + i) +
+                      "))\" \"issue-536-ps-" + std::to_string(i) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto ps1 = cs.evaluator().get_passes_skipped_type_dirty();
@@ -127,24 +120,21 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = typed_mutation_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string f_body =
-            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 9) +
-            ") 0))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" +
-                      std::to_string(round) + "-f\")");
+            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 9) + ") 0))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+                      "-f\")");
         auto rf = cs.eval("(f 3)");
         CHECK(rf && is_int(*rf), "f eval ok round " + std::to_string(round));
         if (rf && is_int(*rf))
-            CHECK(as_int(*rf) == 3 + round + 9,
-                  "narrow semantics round " + std::to_string(round));
+            CHECK(as_int(*rf) == 3 + round + 9, "narrow semantics round " + std::to_string(round));
     }
     const auto stats6b = typed_mutation_stats(cs);
     std::println("  typed-mutation-stats: {} -> {}", stats6a, stats6b);
     CHECK(stats6b >= stats6a, "typed-mutation-stats monotonic over matrix");
 
     std::println("\n--- AC7: touched_roots_size after incremental infer ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
-        "\"issue-536-tr\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+                  "\"issue-536-tr\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
@@ -156,10 +146,8 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC8: sequential query/eval stress ---");
     std::int64_t stress_sum = 0;
     for (int i = 0; i < 8; ++i) {
-        (void)cs.eval(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
-            std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) +
-            "\")");
+        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+                      std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
         auto qs = cs.eval("(query:typed-mutation-stats)");
         CHECK(qs && is_int(*qs), "typed-mutation-stats during stress");
         if (qs && is_int(*qs))

@@ -22,8 +22,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -32,7 +32,6 @@ import aura.compiler.value;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_118_detail {
@@ -65,11 +64,11 @@ int count_node_errors(const aura::ast::FlatAST& flat, aura::ast::NodeId id) {
     return flat.node_error(id);
 }
 
-int count_diag_kind(std::span<const aura::diag::Diagnostic> diags,
-                    aura::diag::ErrorKind kind) {
+int count_diag_kind(std::span<const aura::diag::Diagnostic> diags, aura::diag::ErrorKind kind) {
     int n = 0;
     for (auto& d : diags) {
-        if (d.kind == kind) ++n;
+        if (d.kind == kind)
+            ++n;
     }
     return n;
 }
@@ -105,8 +104,7 @@ bool test_timeout_reports_unresolved() {
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "valid result returned for well-typed input");
-    CHECK(diag.diagnostics().empty(),
-          "well-typed input: no diagnostics");
+    CHECK(diag.diagnostics().empty(), "well-typed input: no diagnostics");
     return true;
 }
 
@@ -121,8 +119,7 @@ bool test_unbound_var_tags_node() {
     aura::diag::DiagnosticCollector diag;
     e.tc->infer_flat(*e.flat, *e.pool, root, diag);
 
-    int unbound = count_diag_kind(diag.diagnostics(),
-                                  aura::diag::ErrorKind::UnboundVariable);
+    int unbound = count_diag_kind(diag.diagnostics(), aura::diag::ErrorKind::UnboundVariable);
     CHECK(unbound >= 1, "unbound variable: UnboundVariable diagnostic emitted");
 
     // Issue #118: the node should be tagged.
@@ -150,8 +147,7 @@ bool test_module_member_not_found_tags_node() {
     // The lookup falls through to the unbound-variable path
     // (since "no_such_module" isn't bound). The diagnostic
     // should be UnboundVariable and the node should be tagged.
-    int unbound = count_diag_kind(diag.diagnostics(),
-                                  aura::diag::ErrorKind::UnboundVariable);
+    int unbound = count_diag_kind(diag.diagnostics(), aura::diag::ErrorKind::UnboundVariable);
     CHECK(unbound >= 1, "missing module: UnboundVariable diagnostic emitted");
     int tag = count_node_errors(*e.flat, root);
     CHECK(tag == static_cast<int>(aura::diag::ErrorKind::UnboundVariable),
@@ -210,13 +206,13 @@ bool test_fuzz_gradual_occurrence_linear() {
     // well-formed diagnostics. Each input should either succeed
     // (well-typed) or fail with a tagged diagnostic (malformed).
     const std::vector<std::string> inputs = {
-        "(let ((x (Linear 42))) (move x))",     // linear happy path
-        "(let ((x (Linear 42))) x)",            // linear leak (no move)
-        "(+ 1 2.5)",                            // gradual Float→Int
-        "(linear-basic 1 2)",                   // unbound var
-        "(let ((x 1)) (+ x 2))",                // basic let
-        "(if #t 1 2)",                          // if with literals
-        "(quote (1 2 3))",                      // quote
+        "(let ((x (Linear 42))) (move x))", // linear happy path
+        "(let ((x (Linear 42))) x)",        // linear leak (no move)
+        "(+ 1 2.5)",                        // gradual Float→Int
+        "(linear-basic 1 2)",               // unbound var
+        "(let ((x 1)) (+ x 2))",            // basic let
+        "(if #t 1 2)",                      // if with literals
+        "(quote (1 2 3))",                  // quote
     };
 
     int total = 0;
@@ -226,13 +222,16 @@ bool test_fuzz_gradual_occurrence_linear() {
         auto e = make_env();
         e.tc->set_strict(true);
         auto root = parse(e, src);
-        if (root == aura::ast::NULL_NODE) continue;  // parse error
+        if (root == aura::ast::NULL_NODE)
+            continue; // parse error
         aura::diag::DiagnosticCollector diag;
         try {
             e.tc->infer_flat(*e.flat, *e.pool, root, diag);
             ++total;
-            if (diag.diagnostics().empty()) ++well_typed;
-            else ++had_diag;
+            if (diag.diagnostics().empty())
+                ++well_typed;
+            else
+                ++had_diag;
         } catch (...) {
             std::println("  CRASH on input: {}", src);
             ++g_failed;
@@ -254,12 +253,12 @@ int run_tests() {
     test_well_defined_module_member_no_tag();
     test_error_path_blameinfo_uniform();
     test_fuzz_gradual_occurrence_linear();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_118_detail
+} // namespace aura_issue_118_detail
 
-int aura_issue_118_run() { return aura_issue_118_detail::run_tests(); }
-
+int aura_issue_118_run() {
+    return aura_issue_118_detail::run_tests();
+}

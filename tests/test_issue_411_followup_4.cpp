@@ -51,23 +51,35 @@ namespace aura_411fu4_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: per-DefUseIndex counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.per_defuse_index_used_total, 0u,
-             "per_defuse_index_used_total == 0");
+    CHECK_EQ(snap.per_defuse_index_used_total, 0u, "per_defuse_index_used_total == 0");
     CHECK_EQ(snap.per_defuse_index_visited_total, 0u,
              "per_defuse_index_visited_total == 0 (O(uses) signal)");
     CHECK_EQ(snap.per_defuse_index_walk_fallback_total, 0u,
@@ -91,8 +103,7 @@ bool test_caller_stores_node_id() {
         std::int64_t v = aura::compiler::types::as_int(*r);
         CHECK_EQ(v, 12345, "Caller stores NodeId 12345 (int round-trip)");
     } else {
-        std::println("  FAIL: hash-ref 12345 did not return int (val={})",
-                     r ? r->val : -1);
+        std::println("  FAIL: hash-ref 12345 did not return int (val={})", r ? r->val : -1);
         ++g_failed;
     }
     return true;
@@ -118,35 +129,31 @@ bool test_aura_callers_returns_nodeid_hash() {
     std::println("\n--- AC4: (compile:per-defuse-index-callers) returns hash ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" 11) "
-             "(compile:per-defuse-index-add \\\"foo\\\" 22))\")");
+            "(compile:per-defuse-index-add \\\"foo\\\" 22))\")");
     cs.eval("(eval-current)");
     // hash-ref with string key (the keys are stringified NodeIds)
     auto r11 = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"11\")");
     auto r22 = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"22\")");
     if (r11 && aura::compiler::types::is_int(*r11)) {
-        CHECK_EQ(aura::compiler::types::as_int(*r11), 11,
-                 "hash-ref \"11\" returns 11 (NodeId)");
+        CHECK_EQ(aura::compiler::types::as_int(*r11), 11, "hash-ref \"11\" returns 11 (NodeId)");
     } else {
-        std::println("  FAIL: hash-ref \"11\" failed (val={})",
-                     r11 ? r11->val : -1);
+        std::println("  FAIL: hash-ref \"11\" failed (val={})", r11 ? r11->val : -1);
         ++g_failed;
     }
     if (r22 && aura::compiler::types::is_int(*r22)) {
-        CHECK_EQ(aura::compiler::types::as_int(*r22), 22,
-                 "hash-ref \"22\" returns 22 (NodeId)");
+        CHECK_EQ(aura::compiler::types::as_int(*r22), 22, "hash-ref \"22\" returns 22 (NodeId)");
     } else {
-        std::println("  FAIL: hash-ref \"22\" failed (val={})",
-                     r22 ? r22->val : -1);
+        std::println("  FAIL: hash-ref \"22\" failed (val={})", r22 ? r22->val : -1);
         ++g_failed;
     }
     return true;
 }
 
 bool test_typed_mutate_populated_tracker_bumps_visited() {
-    std::println("\n--- AC5: typed_mutate with populated tracker bumps per_defuse_index_visited_total ---");
+    std::println(
+        "\n--- AC5: typed_mutate with populated tracker bumps per_defuse_index_visited_total ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define f 1) (define g (+ f 1))\")");
     cs.eval("(eval-current)");
     // Populate the tracker with a NodeId for the "f"
@@ -159,13 +166,15 @@ bool test_typed_mutate_populated_tracker_bumps_visited() {
     // Mutate:rebind f. The per-DefUseIndex path should
     // fire and bump per_defuse_index_visited_total.
     auto r = cs.eval("(mutate:rebind \"f\" \"100\" \"bump\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap1 = cs.snapshot();
-    std::println("  per_defuse_index_used: {} -> {}",
-                 snap0.per_defuse_index_used_total,
+    std::println("  per_defuse_index_used: {} -> {}", snap0.per_defuse_index_used_total,
                  snap1.per_defuse_index_used_total);
-    std::println("  per_defuse_index_visited: {} -> {}",
-                 snap0.per_defuse_index_visited_total,
+    std::println("  per_defuse_index_visited: {} -> {}", snap0.per_defuse_index_visited_total,
                  snap1.per_defuse_index_visited_total);
     CHECK(snap1.per_defuse_index_used_total > snap0.per_defuse_index_used_total,
           "per_defuse_index_used_total incremented (O(uses) path fired)");
@@ -177,8 +186,7 @@ bool test_typed_mutate_populated_tracker_bumps_visited() {
 bool test_typed_mutate_non_tracked_sym_bumps_walk_fallback() {
     std::println("\n--- AC6: typed_mutate with non-tracked sym bumps walk_fallback ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define f 1) (define g (+ f 1))\")");
     cs.eval("(eval-current)");
     // Populate the tracker for an UNRELATED sym "x".
@@ -190,18 +198,20 @@ bool test_typed_mutate_non_tracked_sym_bumps_walk_fallback() {
     cs.eval("(setup)");
     auto snap0 = cs.snapshot();
     auto r = cs.eval("(mutate:rebind \"f\" \"200\" \"bump2\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap1 = cs.snapshot();
-    std::println("  per_defuse_index_used: {} -> {}",
-                 snap0.per_defuse_index_used_total,
+    std::println("  per_defuse_index_used: {} -> {}", snap0.per_defuse_index_used_total,
                  snap1.per_defuse_index_used_total);
     std::println("  per_defuse_index_walk_fallback: {} -> {}",
                  snap0.per_defuse_index_walk_fallback_total,
                  snap1.per_defuse_index_walk_fallback_total);
     CHECK(snap1.per_defuse_index_used_total > snap0.per_defuse_index_used_total,
           "per_defuse_index_used_total incremented (path fired)");
-    CHECK(snap1.per_defuse_index_walk_fallback_total >
-              snap0.per_defuse_index_walk_fallback_total,
+    CHECK(snap1.per_defuse_index_walk_fallback_total > snap0.per_defuse_index_walk_fallback_total,
           "per_defuse_index_walk_fallback_total incremented (sym not in tracker → O(n) walk)");
     return true;
 }
@@ -212,13 +222,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define x 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define x 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_411fu4_detail
+} // namespace aura_411fu4_detail
 
 int main() {
     using namespace aura_411fu4_detail;
@@ -230,7 +239,7 @@ int main() {
     test_typed_mutate_populated_tracker_bumps_visited();
     test_typed_mutate_non_tracked_sym_bumps_walk_fallback();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

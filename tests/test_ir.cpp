@@ -26,29 +26,41 @@ bool test_arena_stats() {
     auto* d = arena.create<double>(3.14);
     auto* c = arena.create<char>('X');
 
-    if (*i != 42 || *d != 3.14 || *c != 'X') return false;
+    if (*i != 42 || *d != 3.14 || *c != 'X')
+        return false;
 
     auto s = arena.stats();
-    if (s.allocation_count < 3) return false;
-    if (s.used < 3) return false;       // small pool has at least 3 slots
-    if (s.peak_used < s.used) return false;
+    if (s.allocation_count < 3)
+        return false;
+    if (s.used < 3)
+        return false; // small pool has at least 3 slots
+    if (s.peak_used < s.used)
+        return false;
 
     // Allocate a large object (bypasses small pool, goes through main arena)
-    struct Large { char data[128]; };
+    struct Large {
+        char data[128];
+    };
     auto* big = arena.create<Large>();
-    if (!big) return false;
+    if (!big)
+        return false;
     auto s2 = arena.stats();
-    if (s2.allocation_count < 4) return false;
-    if (s2.used < 128) return false;
+    if (s2.allocation_count < 4)
+        return false;
+    if (s2.used < 128)
+        return false;
 
     arena.reset();
     auto after = arena.stats();
-    if (after.used != 0) return false;
-    if (after.capacity < 4096) return false;  // capacity includes 3MB small pool
+    if (after.used != 0)
+        return false;
+    if (after.capacity < 4096)
+        return false; // capacity includes 3MB small pool
 
     // Can still allocate after reset
     auto* x = arena.create<int>(99);
-    if (*x != 99) return false;
+    if (*x != 99)
+        return false;
 
     return true;
 }
@@ -62,30 +74,39 @@ bool test_arena_group() {
     auto& a2 = group.module_arena("module_b");
     auto* i2 = a2.create<int>(200);
 
-    if (*i1 != 100 || *i2 != 200) return false;
-    if (group.count() != 2) return false;
+    if (*i1 != 100 || *i2 != 200)
+        return false;
+    if (group.count() != 2)
+        return false;
 
     // Check per-module stats
     auto stats = group.module_stats();
-    if (stats.size() != 2) return false;
+    if (stats.size() != 2)
+        return false;
 
     // Check aggregate
     auto total = group.total_stats();
-    if (total.allocation_count < 2) return false;
+    if (total.allocation_count < 2)
+        return false;
 
     // Reset one module
     group.reset_module("module_a");
-    if (group.module_arena("module_a").used() != 0) return false;
-    if (group.module_arena("module_b").used() == 0) return false;
+    if (group.module_arena("module_a").used() != 0)
+        return false;
+    if (group.module_arena("module_b").used() == 0)
+        return false;
 
     // Reset all
     group.reset_all();
-    if (group.module_arena("module_a").used() != 0) return false;
-    if (group.module_arena("module_b").used() != 0) return false;
+    if (group.module_arena("module_a").used() != 0)
+        return false;
+    if (group.module_arena("module_b").used() != 0)
+        return false;
 
     // Format shouldn't crash
     auto fmt = total.format();
-    if (fmt.empty()) return false;
+    if (fmt.empty())
+        return false;
 
     return true;
 }
@@ -98,18 +119,21 @@ std::string check_compute_kind(const std::string& input) {
     aura::ast::FlatAST flat(alloc);
     auto pr = aura::parser::parse_to_flat(input, flat, pool);
     flat.root = pr.root;
-    if (!pr.success) return "parse_fail";
+    if (!pr.success)
+        return "parse_fail";
 
     auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
     auto& top_func = mod.entry();
 
     auto result = aura::compiler::compute_kind(top_func);
-    if (!result.valid) return "invalid";
+    if (!result.valid)
+        return "invalid";
 
     // Build a compact string per instruction: K=Known, U=Unknown
     std::string summary;
     for (std::size_t bi = 0; bi < result.per_block_inst_kind.size(); ++bi) {
-        if (bi > 0) summary += '|';
+        if (bi > 0)
+            summary += '|';
         for (auto k : result.per_block_inst_kind[bi]) {
             summary += (k == aura::compiler::ComputeKind::Known) ? 'K' : 'U';
         }
@@ -133,10 +157,10 @@ std::string check_compute_kind(const std::string& input) {
 // remain valid for the duration of the call.
 //
 bool test_type_registry_stable_storage() {
+    using aura::core::ModuleType;
     using aura::core::TypeId;
     using aura::core::TypeRegistry;
     using aura::core::TypeTag;
-    using aura::core::ModuleType;
 
     TypeRegistry reg;
 
@@ -256,10 +280,14 @@ int main() {
     aura::compiler::Evaluator evaluator;
     evaluator.set_arena(&arena);
 
-    if (!test_quote()) return 1;
+    if (!test_quote())
+        return 1;
 
     // Test cases: (input, expected_string)
-    struct Test { std::string input; std::string expected; };
+    struct Test {
+        std::string input;
+        std::string expected;
+    };
     Test tests[] = {
         // Literals and arithmetic
         {"42", "42"},
@@ -302,10 +330,11 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(t.input, flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         if (!pr.success || !pr.success) {
             std::println(std::cerr, "PARSE FAIL: {}", t.input);
-            ++failed; continue;
+            ++failed;
+            continue;
         }
 
         auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena);
@@ -314,7 +343,8 @@ int main() {
         aura::compiler::IRInterpreter ir_interp(ir_mod, ctx);
         auto result = ir_interp.execute();
 
-        auto got = result ? aura::compiler::types::format_value(*result) : std::string(result.error().message);
+        auto got = result ? aura::compiler::types::format_value(*result)
+                          : std::string(result.error().message);
         if (result && got == t.expected) {
             ++passed;
         } else {
@@ -325,10 +355,14 @@ int main() {
 
     std::println("IR test: {}/{} passed", passed, passed + failed);
 
-    if (failed > 0) return 1;
+    if (failed > 0)
+        return 1;
 
     // ── L2.3: compute-kind analysis tests ─────────────────────
-    struct CKTest { std::string input; std::string desc; };
+    struct CKTest {
+        std::string input;
+        std::string desc;
+    };
     CKTest ck_tests[] = {
         {"42", "literal"},
         {"(+ 1 2)", "add_const"},
@@ -351,11 +385,15 @@ int main() {
         }
     }
 
-    std::println("Compute-kind test: {}/{}/{} passed/failed/total",
-                 ck_passed, ck_failed, ck_passed + ck_failed);
+    std::println("Compute-kind test: {}/{}/{} passed/failed/total", ck_passed, ck_failed,
+                 ck_passed + ck_failed);
 
     // ── L2.4: arity checking tests ───────────────────────────
-    struct ArityTest { std::string input; bool expect_error; std::string desc; };
+    struct ArityTest {
+        std::string input;
+        bool expect_error;
+        std::string desc;
+    };
     ArityTest arity_tests[] = {
         {"((lambda (x) (* x 2)) 5)", false, "correct_1arg"},
         {"((lambda (x y) (+ x y)) 3 4)", false, "correct_2arg"},
@@ -371,8 +409,12 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(t.input, flat, pool);
-    flat.root = pr.root;
-        if (!pr.success) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
+        flat.root = pr.root;
+        if (!pr.success) {
+            std::println(std::cerr, "PARSE FAIL: {}", t.input);
+            ++arity_failed;
+            continue;
+        }
 
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
         auto result = aura::compiler::check_arity(mod);
@@ -381,8 +423,8 @@ int main() {
         if (got_error == t.expect_error) {
             ++arity_passed;
             if (got_error) {
-                std::println(R"(ARITY OK: {} → {} (expected error: "{}"))",
-                             t.desc, result.diagnostics[0].message, t.input);
+                std::println(R"(ARITY OK: {} → {} (expected error: "{}"))", t.desc,
+                             result.diagnostics[0].message, t.input);
             } else {
                 std::println(R"(ARITY OK: {} → no error ("{}"))", t.desc, t.input);
             }
@@ -398,8 +440,8 @@ int main() {
         }
     }
 
-    std::println("Arity test: {}/{}/{} passed/failed/total",
-                 arity_passed, arity_failed, arity_passed + arity_failed);
+    std::println("Arity test: {}/{}/{} passed/failed/total", arity_passed, arity_failed,
+                 arity_passed + arity_failed);
 
     // ── M2.1: QueryEngine tests ─────────────────────────────
     {
@@ -409,11 +451,11 @@ int main() {
         aura::ast::FlatAST flat(alloc);
 
         // Build a simple AST: (let ((x 10)) (+ x 5))
-        auto ten    = flat.add_literal(10);
-        auto x      = flat.add_variable(pool.intern("x"));
-        auto plus   = flat.add_variable(pool.intern("+"));
-        auto five   = flat.add_literal(5);
-        auto add    = flat.add_call(plus, std::vector{x, five});
+        auto ten = flat.add_literal(10);
+        auto x = flat.add_variable(pool.intern("x"));
+        auto plus = flat.add_variable(pool.intern("+"));
+        auto five = flat.add_literal(5);
+        auto add = flat.add_call(plus, std::vector{x, five});
         auto the_let = flat.add_let(pool.intern("x"), ten, add);
         flat.root = the_let;
 
@@ -425,32 +467,37 @@ int main() {
         if (parsed.kind == aura::compiler::QueryExpr::Kind::NodeType) {
             std::println("QE PARSE OK: kind=NodeType");
             auto pr = engine.execute(parsed);
-            if (pr.size() == 2) std::println("QE PARSE OK: 2 LiteralInt");
-            else std::println(std::cerr, "QE PARSE FAIL: got {} LiteralInt", pr.size());
+            if (pr.size() == 2)
+                std::println("QE PARSE OK: 2 LiteralInt");
+            else
+                std::println(std::cerr, "QE PARSE FAIL: got {} LiteralInt", pr.size());
         } else {
             std::println(std::cerr, "QE PARSE FAIL: kind={}", static_cast<int>(parsed.kind));
         }
 
         // Use manually-built queries to verify execute()/match() work
-        auto test_mq = [&](aura::compiler::QueryExpr q,
-                           std::size_t expected_count,
+        auto test_mq = [&](aura::compiler::QueryExpr q, std::size_t expected_count,
                            std::string_view desc) {
             auto results = engine.execute(q);
             if (results.size() == expected_count) {
                 std::println("QE OK: {} ({} matches)", desc, results.size());
                 ++q_passed;
             } else {
-                std::println(std::cerr, "QE FAIL: {} (expected {} got {})",
-                             desc, expected_count, results.size());
+                std::println(std::cerr, "QE FAIL: {} (expected {} got {})", desc, expected_count,
+                             results.size());
                 ++q_failed_local;
             }
         };
 
         aura::compiler::QueryExpr q_lit, q_var, q_call, q_let;
-        q_lit.kind = aura::compiler::QueryExpr::Kind::NodeType; q_lit.node_tag = aura::ast::NodeTag::LiteralInt;
-        q_var.kind = aura::compiler::QueryExpr::Kind::NodeType; q_var.node_tag = aura::ast::NodeTag::Variable;
-        q_call.kind = aura::compiler::QueryExpr::Kind::NodeType; q_call.node_tag = aura::ast::NodeTag::Call;
-        q_let.kind = aura::compiler::QueryExpr::Kind::NodeType; q_let.node_tag = aura::ast::NodeTag::Let;
+        q_lit.kind = aura::compiler::QueryExpr::Kind::NodeType;
+        q_lit.node_tag = aura::ast::NodeTag::LiteralInt;
+        q_var.kind = aura::compiler::QueryExpr::Kind::NodeType;
+        q_var.node_tag = aura::ast::NodeTag::Variable;
+        q_call.kind = aura::compiler::QueryExpr::Kind::NodeType;
+        q_call.node_tag = aura::ast::NodeTag::Call;
+        q_let.kind = aura::compiler::QueryExpr::Kind::NodeType;
+        q_let.node_tag = aura::ast::NodeTag::Let;
 
         aura::compiler::QueryExpr q_callee;
         q_callee.kind = aura::compiler::QueryExpr::Kind::Callee;
@@ -460,7 +507,8 @@ int main() {
         q_and.kind = aura::compiler::QueryExpr::Kind::And;
         aura::compiler::QueryExpr q_gt;
         q_gt.kind = aura::compiler::QueryExpr::Kind::Gt;
-        q_gt.field_name = "child-count"; q_gt.int_value = 0;
+        q_gt.field_name = "child-count";
+        q_gt.int_value = 0;
         q_and.children = {q_call, q_gt};
 
         test_mq(q_lit, 2, "all LiteralInt");
@@ -470,8 +518,8 @@ int main() {
         test_mq(q_callee, 1, "calls to +");
         test_mq(q_and, 1, "call with >0 children");
 
-        std::println("QueryEngine test: {}/{}/{} passed/failed/total",
-                     q_passed, q_failed_local, q_passed + q_failed_local);
+        std::println("QueryEngine test: {}/{}/{} passed/failed/total", q_passed, q_failed_local,
+                     q_passed + q_failed_local);
     }
 
     // ── M2.5: SymRefIndex tests ────────────────────────────
@@ -496,16 +544,21 @@ int main() {
 
         int sr_passed = 0, sr_failed = 0;
         auto check = [&](auto cnt, auto expected, std::string_view desc) {
-            if (cnt == expected) { std::println("SRI OK: {}", desc); ++sr_passed; }
-            else { std::println(std::cerr, "SRI FAIL: {} (got {} expected {})", desc, cnt, expected); ++sr_failed; }
+            if (cnt == expected) {
+                std::println("SRI OK: {}", desc);
+                ++sr_passed;
+            } else {
+                std::println(std::cerr, "SRI FAIL: {} (got {} expected {})", desc, cnt, expected);
+                ++sr_failed;
+            }
         };
 
         check(sri.count(x_sym), 2ul, "x refs (definition + use)");
         check(sri.count(y_sym), 1ul, "y refs");
         check(sri.unique_symbols(), 3ul, "unique symbols (x, y, +)");
 
-        std::println("SymRefIndex test: {}/{}/{} passed/failed/total",
-                     sr_passed, sr_failed, sr_passed + sr_failed);
+        std::println("SymRefIndex test: {}/{}/{} passed/failed/total", sr_passed, sr_failed,
+                     sr_passed + sr_failed);
     }
 
     // ── Phase 4: parse_to_flat tests (Issue #161 Phase 2) ───────────
@@ -515,11 +568,10 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         if (pr.success && flat.size() == 4) {
             auto v = flat.get(pr.root);
-            if (v.tag == aura::ast::NodeTag::Call &&
-                v.children.size() == 3) {
+            if (v.tag == aura::ast::NodeTag::Call && v.children.size() == 3) {
                 std::println("FP OK: parse (+ 1 2) → Call with 3 children");
             } else {
                 std::println(std::cerr, "FP FAIL: root not Call");
@@ -534,7 +586,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("((lambda (x) (* x 2)) 5)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         if (pr.success) {
             std::println("FP OK: parse lambda + call");
         } else {
@@ -547,7 +599,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("(let ((x 10)) x)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         if (pr.success) {
             std::println("FP OK: parse let");
         } else {
@@ -564,7 +616,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("((lambda (x) (* x 2)) 5)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
         auto& top = mod.functions[0];
         (void)mod.functions[1];
@@ -577,63 +629,76 @@ int main() {
                     has_closure = true;
 
         // Execute original — should be 10
-        { aura::compiler::IRContext ctx(eval.primitives());
-        aura::compiler::IRInterpreter interp(mod, ctx);
-        auto r1 = interp.execute();
+        {
+            aura::compiler::IRContext ctx(eval.primitives());
+            aura::compiler::IRInterpreter interp(mod, ctx);
+            auto r1 = interp.execute();
 
-        // Hot-swap: replace lambda body with (* x 3) → expects 15
-        aura::ir::IRFunction new_fn;
-        new_fn.name = "swapped";
-        new_fn.entry_block = 0;
-        new_fn.blocks.resize(1);
-        new_fn.blocks[0].id = 0;
-        new_fn.params = {"x"};
-        new_fn.arg_count = 1;
-        new_fn.blocks[0].instructions = {
-            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},
-            {aura::ir::IROpcode::ConstI64, {1, 3, 0, 0}},
-            {aura::ir::IROpcode::Mul, {2, 0, 1, 0}},
-            {aura::ir::IROpcode::Return, {2, 0, 0, 0}},
-        };
-        new_fn.local_count = 3;
+            // Hot-swap: replace lambda body with (* x 3) → expects 15
+            aura::ir::IRFunction new_fn;
+            new_fn.name = "swapped";
+            new_fn.entry_block = 0;
+            new_fn.blocks.resize(1);
+            new_fn.blocks[0].id = 0;
+            new_fn.params = {"x"};
+            new_fn.arg_count = 1;
+            new_fn.blocks[0].instructions = {
+                {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},
+                {aura::ir::IROpcode::ConstI64, {1, 3, 0, 0}},
+                {aura::ir::IROpcode::Mul, {2, 0, 1, 0}},
+                {aura::ir::IROpcode::Return, {2, 0, 0, 0}},
+            };
+            new_fn.local_count = 3;
 
-        bool ok = mod.hot_swap_function(0, std::move(new_fn));
+            bool ok = mod.hot_swap_function(0, std::move(new_fn));
 
-        // Re-execute — should be 15
-        aura::compiler::IRContext ctx2(eval.primitives());
-        aura::compiler::IRInterpreter interp2(mod, ctx2);
-        auto r2 = interp2.execute();
+            // Re-execute — should be 15
+            aura::compiler::IRContext ctx2(eval.primitives());
+            aura::compiler::IRInterpreter interp2(mod, ctx2);
+            auto r2 = interp2.execute();
 
-        if (ok && r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 10 && r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 15) {
-            std::println("HS OK: (* x 2) → (* x 3): {} → {}", aura::compiler::types::format_value(*r1), aura::compiler::types::format_value(*r2));
-        } else {
-            std::println(std::cerr, "HS FAIL: r1={} r2={}",
-                         r1 ? aura::compiler::types::format_value(*r1) : std::string("-1"), r2 ? aura::compiler::types::format_value(*r2) : std::string("-1"));
-        }
+            if (ok && r1 && aura::compiler::types::is_int(*r1) &&
+                aura::compiler::types::as_int(*r1) == 10 && r2 &&
+                aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 15) {
+                std::println("HS OK: (* x 2) → (* x 3): {} → {}",
+                             aura::compiler::types::format_value(*r1),
+                             aura::compiler::types::format_value(*r2));
+            } else {
+                std::println(std::cerr, "HS FAIL: r1={} r2={}",
+                             r1 ? aura::compiler::types::format_value(*r1) : std::string("-1"),
+                             r2 ? aura::compiler::types::format_value(*r2) : std::string("-1"));
+            }
         }
     }
 
     // ── Memory pool tests ───────────────────────────────────
     int mp_passed = 0, mp_failed = 0;
-    if (test_arena_stats()) { std::println("ARENA OK: stats"); ++mp_passed; }
-    else { std::println(std::cerr, "ARENA FAIL: stats"); ++mp_failed; }
+    if (test_arena_stats()) {
+        std::println("ARENA OK: stats");
+        ++mp_passed;
+    } else {
+        std::println(std::cerr, "ARENA FAIL: stats");
+        ++mp_failed;
+    }
 
     // ── A2.3: Pass Manager tests ─────────────────────────────
 
     // ── L2.5: Constant folding tests ────────────────────────────
     int cf_passed = 0, cf_failed = 0;
 
-    auto test_const_fold = [&](const std::string& input,
-                                std::string expected,
-                                std::size_t expected_folds,
-                                const std::string& desc) {
+    auto test_const_fold = [&](const std::string& input, std::string expected,
+                               std::size_t expected_folds, const std::string& desc) {
         arena.reset();
         auto alloc = arena.allocator();
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-    flat.root = pr.root;
-        if (!pr.success) { std::println(std::cerr, "CF PARSE FAIL: {}", input); ++cf_failed; return; }
+        flat.root = pr.root;
+        if (!pr.success) {
+            std::println(std::cerr, "CF PARSE FAIL: {}", input);
+            ++cf_failed;
+            return;
+        }
 
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
@@ -652,19 +717,21 @@ int main() {
             std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), got);
             ++cf_passed;
         } else {
-            std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result='{}' expected='{}')",
-                         desc, expected_folds, cf_pass.folded_count(), got, expected);
+            std::println(std::cerr,
+                         "CF FAIL: {} (expected {} folds, got {}; result='{}' expected='{}')", desc,
+                         expected_folds, cf_pass.folded_count(), got, expected);
             ++cf_failed;
         }
     };
 
     test_const_fold("(+ 1 2)", "3", 1, "add_const");
     test_const_fold("(* 2 3)", "6", 1, "mul_const");
-    test_const_fold("(+ 1 (* 2 3))", "7", 2, "nested_const");  // Mul(2,3) folds, Add(1,6) folds
-    test_const_fold("(if 1 42 0)", "42", 2, "if_condition_const");  // both branches' Local copies from Knowns fold
+    test_const_fold("(+ 1 (* 2 3))", "7", 2, "nested_const"); // Mul(2,3) folds, Add(1,6) folds
+    test_const_fold("(if 1 42 0)", "42", 2,
+                    "if_condition_const"); // both branches' Local copies from Knowns fold
     test_const_fold("(= 1 1)", "#t", 1, "eq_const");
     test_const_fold("(> 3 2)", "#t", 1, "gt_const");
-    test_const_fold("(let ((x 10)) x)", "10", 0, "let_copy");  // result correct, fold count varies
+    test_const_fold("(let ((x 10)) x)", "10", 0, "let_copy"); // result correct, fold count varies
     // (let ((x 10)) (+ x 5)): Local(x_copy, x_slot) folds, Add(x_copy, 5) also folds → 2
     test_const_fold("(let ((x 10)) (+ x 5))", "15", 0, "let_add");
     // lambda call: caller's Local(arg_copy, ConstI64) folds, but lambda's Arg doesn't → 1
@@ -672,8 +739,8 @@ int main() {
     // (+ 1 (+ 2 3)): inner Add(2,3) folds, outer Add(1,5) folds → 2
     test_const_fold("(+ 1 (+ 2 3))", "6", 2, "nested_add");
 
-    std::println("Constant-fold test: {}/{}/{} passed/failed/total",
-                 cf_passed, cf_failed, cf_passed + cf_failed);
+    std::println("Constant-fold test: {}/{}/{} passed/failed/total", cf_passed, cf_failed,
+                 cf_passed + cf_failed);
 
     // ── Pipeline tests (concept-based fold) ────────────────────
     int pm_passed = 0, pm_failed = 0;
@@ -687,7 +754,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         ck.run(mod);
@@ -712,7 +779,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("((lambda (x) x) 1 2)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         ck.run(mod);
@@ -738,7 +805,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
-    flat.root = pr.root;
+        flat.root = pr.root;
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         auto pipeline_ok = aura::compiler::run_pipeline(mod, ck, ar);
@@ -751,15 +818,25 @@ int main() {
         }
     }
 
-    std::println("Pipeline test: {}/{}/{} passed/failed/total",
-                 pm_passed, pm_failed, pm_passed + pm_failed);
+    std::println("Pipeline test: {}/{}/{} passed/failed/total", pm_passed, pm_failed,
+                 pm_passed + pm_failed);
 
-    if (test_arena_group()) { std::println("ARENA OK: group"); ++mp_passed; }
-    else { std::println(std::cerr, "ARENA FAIL: group"); ++mp_failed; }
+    if (test_arena_group()) {
+        std::println("ARENA OK: group");
+        ++mp_passed;
+    } else {
+        std::println(std::cerr, "ARENA FAIL: group");
+        ++mp_failed;
+    }
 
     // TypeEntryArena regression: must not UAF across reallocations.
-    if (test_type_registry_stable_storage()) { std::println("STABLE OK: type-registry"); ++mp_passed; }
-    else { std::println(std::cerr, "STABLE FAIL: type-registry"); ++mp_failed; }
+    if (test_type_registry_stable_storage()) {
+        std::println("STABLE OK: type-registry");
+        ++mp_passed;
+    } else {
+        std::println(std::cerr, "STABLE FAIL: type-registry");
+        ++mp_failed;
+    }
 
     // Demo: print stats from a real compilation
     {
@@ -772,9 +849,15 @@ int main() {
     // SmallObjectPool tier test: verify proper size class routing
     {
         aura::ast::ASTArena arena(4096);
-        struct S8  { char d[8];  };
-        struct S24 { char d[24]; };
-        struct S48 { char d[48]; };
+        struct S8 {
+            char d[8];
+        };
+        struct S24 {
+            char d[24];
+        };
+        struct S48 {
+            char d[48];
+        };
 
         auto* a = arena.create<S8>();
         auto* b = arena.create<S24>();
@@ -784,15 +867,17 @@ int main() {
         if (a && b && c && d) {
             auto s = arena.stats();
             // 4 small objects, all from SmallObjectPool; large check
-            struct Big { char d[256]; };
+            struct Big {
+                char d[256];
+            };
             (void)arena.create<Big>();
             auto s2 = arena.stats();
             if (s2.allocation_count == 5 && s2.used >= 256) {
                 std::println("ARENA OK: small-object tiers (16/32/64) + overflow");
                 ++mp_passed;
             } else {
-                std::println(std::cerr, "ARENA FAIL: tier routing (used={}, allocs={})",
-                             s2.used, s2.allocation_count);
+                std::println(std::cerr, "ARENA FAIL: tier routing (used={}, allocs={})", s2.used,
+                             s2.allocation_count);
                 ++mp_failed;
             }
         } else {
@@ -811,15 +896,14 @@ int main() {
         (void)mb.create<double>(2.71);
 
         auto total = cs.memory_stats();
-        std::println("ARENA MULTI: {} modules, total {}",
-                     cs.module_memory_stats().size(), total.format());
+        std::println("ARENA MULTI: {} modules, total {}", cs.module_memory_stats().size(),
+                     total.format());
 
         cs.reset_module("driver");
         auto after = cs.memory_stats();
         std::println("ARENA MULTI: after driver reset, total {}", after.format());
 
-        if (cs.module_arena("kernel").used() > 0 &&
-            cs.module_arena("driver").used() == 0) {
+        if (cs.module_arena("kernel").used() > 0 && cs.module_arena("driver").used() == 0) {
             std::println("ARENA OK: multi-module isolation");
             ++mp_passed;
         } else {
@@ -845,10 +929,12 @@ int main() {
             auto id = flat.add_literal(42);
             auto ty = tc.infer_flat(flat, pool, id, diag);
             if (ty == treg.int_type()) {
-                std::println("TC OK: literal int → Int"); ++tc_passed;
+                std::println("TC OK: literal int → Int");
+                ++tc_passed;
             } else {
                 std::println(std::cerr, "TC FAIL: literal int expected Int, got {}",
-                             treg.format_type(ty)); ++tc_failed;
+                             treg.format_type(ty));
+                ++tc_failed;
             }
         }
 
@@ -865,10 +951,12 @@ int main() {
             auto let_id = flat.add_let(x_id, val_id, body_id);
             auto ty = tc.infer_flat(flat, pool, let_id, diag);
             if (ty == treg.int_type()) {
-                std::println("TC OK: (let ((x 10)) x) → Int"); ++tc_passed;
+                std::println("TC OK: (let ((x 10)) x) → Int");
+                ++tc_passed;
             } else {
                 std::println(std::cerr, "TC FAIL: let int expected Int, got {}",
-                             treg.format_type(ty)); ++tc_failed;
+                             treg.format_type(ty));
+                ++tc_failed;
             }
         }
 
@@ -888,9 +976,11 @@ int main() {
             // (x gets fresh var, body returns 42 → Int, result is (-> ? Int))
             auto* fty = treg.func_of(ty);
             if (fty && fty->ret == treg.int_type() && fty->args.size() == 1) {
-                std::println("TC OK: (lambda (x) 42) → (-> _ Int)"); ++tc_passed;
+                std::println("TC OK: (lambda (x) 42) → (-> _ Int)");
+                ++tc_passed;
             } else {
-                std::println(std::cerr, "TC FAIL: lambda type unexpected"); ++tc_failed;
+                std::println(std::cerr, "TC FAIL: lambda type unexpected");
+                ++tc_failed;
             }
         }
 
@@ -913,10 +1003,12 @@ int main() {
             // Infer returns dynamic because there's no arity check in type inference
             // (arity is handled by the IR arity pass)
             if (ty == treg.dynamic_type() || ty == treg.int_type()) {
-                std::println("TC OK: call with mismatched arity → graceful"); ++tc_passed;
+                std::println("TC OK: call with mismatched arity → graceful");
+                ++tc_passed;
             } else {
                 std::println(std::cerr, "TC FAIL: call arity unexpected type {}",
-                             treg.format_type(ty)); ++tc_failed;
+                             treg.format_type(ty));
+                ++tc_failed;
             }
         }
 
@@ -949,11 +1041,11 @@ int main() {
             // x is String, then-branch refines to String, else is Int → lub = Dynamic
             // Or if occurrence typing works, then-branch returns String
             if (ty == treg.string_type() || ty == treg.dynamic_type()) {
-                std::println("TC OK: occurrence typing (string? x) → {}",
-                             treg.format_type(ty)); ++tc_passed;
+                std::println("TC OK: occurrence typing (string? x) → {}", treg.format_type(ty));
+                ++tc_passed;
             } else {
-                std::println(std::cerr, "TC FAIL: occurrence typing got {}",
-                             treg.format_type(ty)); ++tc_failed;
+                std::println(std::cerr, "TC FAIL: occurrence typing got {}", treg.format_type(ty));
+                ++tc_failed;
             }
         }
 
@@ -969,10 +1061,12 @@ int main() {
             auto annot_id = flat.add_type_annotation(int_sym, inner_id);
             auto ty = tc.infer_flat(flat, pool, annot_id, diag);
             if (ty == treg.int_type()) {
-                std::println("TC OK: type annotation (: 99 Int) → Int"); ++tc_passed;
+                std::println("TC OK: type annotation (: 99 Int) → Int");
+                ++tc_passed;
             } else {
                 std::println(std::cerr, "TC FAIL: annotation expected Int, got {}",
-                             treg.format_type(ty)); ++tc_failed;
+                             treg.format_type(ty));
+                ++tc_failed;
             }
         }
 
@@ -988,8 +1082,9 @@ int main() {
             auto annot_id = flat.add_type_annotation(int_sym, inner_id);
             auto ty = tc.infer_flat(flat, pool, annot_id, diag);
             // Should still work (consistent_unify with dynamic for strings)
-            std::println("TC OK: string annotated Int → {} ({} diags)",
-                         treg.format_type(ty), diag.diagnostics().size()); ++tc_passed;
+            std::println("TC OK: string annotated Int → {} ({} diags)", treg.format_type(ty),
+                         diag.diagnostics().size());
+            ++tc_passed;
         }
 
         // Test: forall type registration + format
@@ -999,7 +1094,8 @@ int main() {
             auto forall = treg.register_forall(a_var, int_type);
             auto tag = treg.tag_of(forall);
             auto fmt = treg.format_type(forall);
-            if (tag == aura::core::TypeTag::FORALL && (fmt.find("∀") != std::string::npos || fmt.find("forall") != std::string::npos)) {
+            if (tag == aura::core::TypeTag::FORALL &&
+                (fmt.find("∀") != std::string::npos || fmt.find("forall") != std::string::npos)) {
                 std::println("TC OK: forall type registered → {}", fmt);
                 ++tc_passed;
             } else {
@@ -1090,7 +1186,7 @@ int main() {
             auto alloc73 = arena73.allocator();
             aura::ast::FlatAST flat73(alloc73);
             auto lit_id = flat73.add_literal(42);
-            flat73.set_type(lit_id, 7);  // some TypeId (not 0)
+            flat73.set_type(lit_id, 7); // some TypeId (not 0)
             auto v = flat73.get(lit_id);
             if (v.type_id == 7) {
                 std::println("TC73 OK: NodeView.type_id from FlatAST");
@@ -1110,8 +1206,8 @@ int main() {
             auto lid = flat_w.add_literal(42);
             flat_w.set_type(lid, 9);
             flat_w.root = lid;
-            if (!aura::compiler::cache::write_cache(cache_path, flat_w, pool_w,
-                                                     lid, 12345, nullptr, nullptr)) {
+            if (!aura::compiler::cache::write_cache(cache_path, flat_w, pool_w, lid, 12345, nullptr,
+                                                    nullptr)) {
                 std::println(std::cerr, "TC73 SKIP: cache write failed (filesystem?)");
             } else {
                 auto mc = aura::compiler::cache::open_cache(cache_path);
@@ -1163,10 +1259,12 @@ int main() {
                     }
                 }
                 if (found_int > 0) {
-                    std::println("TC73 OK: pre-lowering typecheck populates FlatAST type_id (Phase 5)");
+                    std::println(
+                        "TC73 OK: pre-lowering typecheck populates FlatAST type_id (Phase 5)");
                     ++tc_passed;
                 } else {
-                    std::println(std::cerr, "TC73 FAIL: pre-lowering typecheck did not populate type_id");
+                    std::println(std::cerr,
+                                 "TC73 FAIL: pre-lowering typecheck did not populate type_id");
                     ++tc_failed;
                 }
             }
@@ -1178,16 +1276,20 @@ int main() {
             using AtomicFnPtr = std::atomic<ScalarFn>;
             AtomicFnPtr slot{nullptr};
             if (slot.load(std::memory_order_acquire) == nullptr) {
-                ++tc_passed; std::println("TC59 OK: atomic fn_ptr default-constructs to nullptr");
+                ++tc_passed;
+                std::println("TC59 OK: atomic fn_ptr default-constructs to nullptr");
             } else {
-                ++tc_failed; std::println(std::cerr, "TC59 FAIL: default not nullptr");
+                ++tc_failed;
+                std::println(std::cerr, "TC59 FAIL: default not nullptr");
             }
             auto sentinel = reinterpret_cast<long int (*)(long int*, unsigned int)>(0x1234);
             slot.store(sentinel, std::memory_order_release);
             if (slot.load(std::memory_order_acquire) == sentinel) {
-                ++tc_passed; std::println("TC59 OK: atomic fn_ptr store+load round-trips");
+                ++tc_passed;
+                std::println("TC59 OK: atomic fn_ptr store+load round-trips");
             } else {
-                ++tc_failed; std::println(std::cerr, "TC59 FAIL: store+load mismatch");
+                ++tc_failed;
+                std::println(std::cerr, "TC59 FAIL: store+load mismatch");
             }
             slot.store(sentinel, std::memory_order_release);
             std::atomic<int> errors{0};
@@ -1203,12 +1305,15 @@ int main() {
                     }
                 });
             }
-            for (auto& t : threads) t.join();
+            for (auto& t : threads)
+                t.join();
             if (errors.load() == 0) {
-                ++tc_passed; std::println("TC59 OK: {} concurrent readers see only valid values", N);
+                ++tc_passed;
+                std::println("TC59 OK: {} concurrent readers see only valid values", N);
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC59 FAIL: {} concurrent reads observed garbage", errors.load());
+                ++tc_failed;
+                std::println(std::cerr, "TC59 FAIL: {} concurrent reads observed garbage",
+                             errors.load());
             }
         }
         // Issue #60: IRInstruction carries shape_id; FlatInstruction
@@ -1224,27 +1329,30 @@ int main() {
             };
             FlatInstructionLocal fi{0, {0, 0, 0, 0}, 0};
             if (fi.shape_id == 0) {
-                ++tc_passed; std::println("TC60 OK: FlatInstruction.shape_id default = 0");
+                ++tc_passed;
+                std::println("TC60 OK: FlatInstruction.shape_id default = 0");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC60 FAIL: default shape_id not 0: {}", fi.shape_id);
+                ++tc_failed;
+                std::println(std::cerr, "TC60 FAIL: default shape_id not 0: {}", fi.shape_id);
             }
-            fi.shape_id = 1;  // SHAPE_INT
+            fi.shape_id = 1; // SHAPE_INT
             if (fi.shape_id == 1) {
-                ++tc_passed; std::println("TC60 OK: FlatInstruction.shape_id round-trips");
+                ++tc_passed;
+                std::println("TC60 OK: FlatInstruction.shape_id round-trips");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC60 FAIL: shape_id round-trip: {}", fi.shape_id);
+                ++tc_failed;
+                std::println(std::cerr, "TC60 FAIL: shape_id round-trip: {}", fi.shape_id);
             }
             // Verify the shape encoding constants used by both the
             // service (set_shape_map) and the JIT (Iter 3) agree.
-            constexpr std::uint32_t SHAPE_INT  = 1;
+            constexpr std::uint32_t SHAPE_INT = 1;
             constexpr std::uint32_t SHAPE_PAIR = 10;
             if (SHAPE_INT == 1 && SHAPE_PAIR == 10) {
-                ++tc_passed; std::println("TC60 OK: SHAPE_INT/SHAPE_PAIR constants stable");
+                ++tc_passed;
+                std::println("TC60 OK: SHAPE_INT/SHAPE_PAIR constants stable");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC60 FAIL: shape constants drift");
+                ++tc_failed;
+                std::println(std::cerr, "TC60 FAIL: shape constants drift");
             }
         }
         // Issue #61: IRFunction gains specialized_for + generic_id,
@@ -1254,25 +1362,29 @@ int main() {
             // Defaults: 0 (no specialization) and 0xFFFFFFFF
             // (no generic version).
             if (f.specialized_for == 0) {
-                ++tc_passed; std::println("TC61 OK: IRFunction.specialized_for default = 0");
+                ++tc_passed;
+                std::println("TC61 OK: IRFunction.specialized_for default = 0");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC61 FAIL: default specialized_for not 0: {}", f.specialized_for);
+                ++tc_failed;
+                std::println(std::cerr, "TC61 FAIL: default specialized_for not 0: {}",
+                             f.specialized_for);
             }
             if (f.generic_id == 0xFFFFFFFFu) {
-                ++tc_passed; std::println("TC61 OK: IRFunction.generic_id default = 0xFFFFFFFF");
+                ++tc_passed;
+                std::println("TC61 OK: IRFunction.generic_id default = 0xFFFFFFFF");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC61 FAIL: default generic_id: {}", f.generic_id);
+                ++tc_failed;
+                std::println(std::cerr, "TC61 FAIL: default generic_id: {}", f.generic_id);
             }
-            f.specialized_for = 1;       // SHAPE_INT
-            f.generic_id = 0;             // entry function as generic
+            f.specialized_for = 1; // SHAPE_INT
+            f.generic_id = 0;      // entry function as generic
             if (f.specialized_for == 1 && f.generic_id == 0) {
-                ++tc_passed; std::println("TC61 OK: specialized_for + generic_id round-trip");
+                ++tc_passed;
+                std::println("TC61 OK: specialized_for + generic_id round-trip");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC61 FAIL: round-trip: spec={} gen={}",
-                    f.specialized_for, f.generic_id);
+                ++tc_failed;
+                std::println(std::cerr, "TC61 FAIL: round-trip: spec={} gen={}", f.specialized_for,
+                             f.generic_id);
             }
             // GuardShape opcode is in the enum.
             // Issue #124 added TryBegin + TryEnd opcodes
@@ -1280,11 +1392,12 @@ int main() {
             // position 50 to position 52.
             aura::ir::IROpcode guard_op = aura::ir::IROpcode::GuardShape;
             if (static_cast<std::uint32_t>(guard_op) == 52) {
-                ++tc_passed; std::println("TC61 OK: GuardShape opcode value = 52");
+                ++tc_passed;
+                std::println("TC61 OK: GuardShape opcode value = 52");
             } else {
-                ++tc_failed; std::println(std::cerr,
-                    "TC61 FAIL: GuardShape opcode value: {} (expected 52)",
-                    static_cast<std::uint32_t>(guard_op));
+                ++tc_failed;
+                std::println(std::cerr, "TC61 FAIL: GuardShape opcode value: {} (expected 52)",
+                             static_cast<std::uint32_t>(guard_op));
             }
 
             // Issue #183 Cycle 1: 5-shape dispatch.
@@ -1303,13 +1416,13 @@ int main() {
             // SHAPE_STRING (4) — <= STRING_BIAS_VAL_2
             // SHAPE_BOOL (3) — val == 3 or 7
             // SHAPE_PAIR (10) — ref with ref_type = RefPair (0)
-            constexpr std::int64_t kFloatBias   = -10000000000000000LL;
-            constexpr std::int64_t kStringBias  = -9000000000000000000LL;  // v1 bias
-            constexpr std::int64_t kStringBias2 = -8999999999999999998LL;  // v2 bias
-            constexpr std::uint32_t kRefPair    = 0;  // RefPair = 0
+            constexpr std::int64_t kFloatBias = -10000000000000000LL;
+            constexpr std::int64_t kStringBias = -9000000000000000000LL;  // v1 bias
+            constexpr std::int64_t kStringBias2 = -8999999999999999998LL; // v2 bias
+            constexpr std::uint32_t kRefPair = 0;                         // RefPair = 0
             {
                 // SHAPE_INT (1): bit0=0 (fixnum) AND val > FLOAT_BIAS
-                std::int64_t fixnum_val = (10LL << 1);  // 20
+                std::int64_t fixnum_val = (10LL << 1); // 20
                 bool is_fixnum = (fixnum_val & 1) == 0;
                 bool is_int_range = fixnum_val > kFloatBias;
                 if (is_fixnum && is_int_range) {
@@ -1317,24 +1430,20 @@ int main() {
                     std::println("TC61 OK: fixnum-encoding → SHAPE_INT (1)");
                 } else {
                     ++tc_failed;
-                    std::println(std::cerr,
-                        "TC61 FAIL: fixnum check: is_fixnum={} is_int={}",
-                        is_fixnum, is_int_range);
+                    std::println(std::cerr, "TC61 FAIL: fixnum check: is_fixnum={} is_int={}",
+                                 is_fixnum, is_int_range);
                 }
             }
             {
                 // SHAPE_FLOAT (2): val <= FLOAT_BIAS AND val > STRING_BIAS_VAL_2
                 std::int64_t float_val = (kFloatBias + kStringBias2) / 2;
-                bool is_float_range = float_val <= kFloatBias
-                                   && float_val > kStringBias2;
+                bool is_float_range = float_val <= kFloatBias && float_val > kStringBias2;
                 if (is_float_range) {
                     ++tc_passed;
                     std::println("TC61 OK: float-encoding → SHAPE_FLOAT (2)");
                 } else {
                     ++tc_failed;
-                    std::println(std::cerr,
-                        "TC61 FAIL: float check failed for val={}",
-                        float_val);
+                    std::println(std::cerr, "TC61 FAIL: float check failed for val={}", float_val);
                 }
             }
             {
@@ -1346,9 +1455,8 @@ int main() {
                     std::println("TC61 OK: string-encoding → SHAPE_STRING (4)");
                 } else {
                     ++tc_failed;
-                    std::println(std::cerr,
-                        "TC61 FAIL: string check failed for val={}",
-                        string_val);
+                    std::println(std::cerr, "TC61 FAIL: string check failed for val={}",
+                                 string_val);
                 }
             }
             {
@@ -1360,9 +1468,7 @@ int main() {
                     std::println("TC61 OK: 3/7-encoding → SHAPE_BOOL (3)");
                 } else {
                     ++tc_failed;
-                    std::println(std::cerr,
-                        "TC61 FAIL: bool check failed b3={} b7={}",
-                        b3, b7);
+                    std::println(std::cerr, "TC61 FAIL: bool check failed b3={} b7={}", b3, b7);
                 }
             }
             {
@@ -1376,9 +1482,8 @@ int main() {
                     std::println("TC61 OK: RefPair-encoding → SHAPE_PAIR (10)");
                 } else {
                     ++tc_failed;
-                    std::println(std::cerr,
-                        "TC61 FAIL: pair check: is_ref={} ref_type={}",
-                        is_ref, ref_type);
+                    std::println(std::cerr, "TC61 FAIL: pair check: is_ref={} ref_type={}", is_ref,
+                                 ref_type);
                 }
             }
         }
@@ -1411,9 +1516,10 @@ int main() {
             }
         }
 
-        std::println("TypeChecker test: {}/{}/{} passed/failed/total",
-                     tc_passed, tc_failed, tc_passed + tc_failed);
-        if (tc_failed > 0) return 1;
+        std::println("TypeChecker test: {}/{}/{} passed/failed/total", tc_passed, tc_failed,
+                     tc_passed + tc_failed);
+        if (tc_failed > 0)
+            return 1;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1437,8 +1543,9 @@ int main() {
             }
 
             auto d2 = Diagnostic(ErrorKind::TypeError, "caller blame")
-                .with_blame(BlameInfo{BlameParty::Caller, "", "compile"});
-            if (d2.blame.has_value() && d2.blame->party == BlameParty::Caller && d2.blame->phase == "compile") {
+                          .with_blame(BlameInfo{BlameParty::Caller, "", "compile"});
+            if (d2.blame.has_value() && d2.blame->party == BlameParty::Caller &&
+                d2.blame->phase == "compile") {
                 ++ts_passed;
             } else {
                 std::println(std::cerr, "TS FAIL: blame with_caller not stored");
@@ -1449,12 +1556,13 @@ int main() {
             if (fmt.find("blamed: caller (compile)") != std::string::npos) {
                 ++ts_passed;
             } else {
-                std::println(std::cerr, "TS FAIL: blame format missing 'blamed: caller', got: {}", fmt);
+                std::println(std::cerr, "TS FAIL: blame format missing 'blamed: caller', got: {}",
+                             fmt);
                 ++ts_failed;
             }
 
             auto d3 = Diagnostic(ErrorKind::TypeError, "annotation blame")
-                .with_blame(BlameInfo{BlameParty::Annotation, ": x Int", "compile"});
+                          .with_blame(BlameInfo{BlameParty::Annotation, ": x Int", "compile"});
             auto fmt3 = d3.format();
             if (fmt3.find("blamed: annotation (compile)") != std::string::npos &&
                 fmt3.find("annotation: : x Int") != std::string::npos) {
@@ -1567,7 +1675,8 @@ int main() {
                     ++ts_passed;
                     std::println("TS OK: (∀α.Int → Int) <: (∀α.α → α) more-polymorphic");
                 } else {
-                    std::println(std::cerr, "TS FAIL: (∀α.Int → Int) should be subtype of (∀α.α → α)");
+                    std::println(std::cerr,
+                                 "TS FAIL: (∀α.Int → Int) should be subtype of (∀α.α → α)");
                     ++ts_failed;
                 }
             }
@@ -1585,7 +1694,8 @@ int main() {
                     ++ts_passed;
                     std::println("TS OK: (∀α.α → α) NOT <: (Int → Int) cross-tag");
                 } else {
-                    std::println(std::cerr, "TS FAIL: (∀α.α → α) should NOT be subtype of (Int → Int)");
+                    std::println(std::cerr,
+                                 "TS FAIL: (∀α.α → α) should NOT be subtype of (Int → Int)");
                     ++ts_failed;
                 }
             }
@@ -1658,9 +1768,11 @@ int main() {
                 }
                 if (!ie.is_coercible(p1, p2)) {
                     ++ts_passed;
-                    std::println("TS OK: Record width missing-field rejected (Person1 NOT <: Person2)");
+                    std::println(
+                        "TS OK: Record width missing-field rejected (Person1 NOT <: Person2)");
                 } else {
-                    std::println(std::cerr, "TS FAIL: Person1 should NOT coerce to Person2 (missing age)");
+                    std::println(std::cerr,
+                                 "TS FAIL: Person1 should NOT coerce to Person2 (missing age)");
                     ++ts_failed;
                 }
             }
@@ -1682,12 +1794,14 @@ int main() {
                     ++ts_passed;
                     std::println("TS OK: Record field coercible through Any");
                 } else {
-                    std::println(std::cerr, "TS FAIL: Record[age:Int] NOT coercible to Record[age:Any]");
+                    std::println(std::cerr,
+                                 "TS FAIL: Record[age:Int] NOT coercible to Record[age:Any]");
                     ++ts_failed;
                 }
                 if (!ie.is_coercible(r_int, r_str)) {
                     ++ts_passed;
-                    std::println("TS FAIL: Record[age:Int] should NOT coerce to Record[age:String]");
+                    std::println(
+                        "TS FAIL: Record[age:Int] should NOT coerce to Record[age:String]");
                     ++ts_failed;
                 } else {
                     std::println(std::cerr, "TS OK: Record field [Int] NOT coercible to [String]");
@@ -1715,9 +1829,11 @@ int main() {
                 }
                 if (!ie.is_coercible(m2, m1)) {
                     ++ts_passed;
-                    std::println("TS OK: Variant width missing-ctor rejected (Maybe2 NOT <: Maybe1)");
+                    std::println(
+                        "TS OK: Variant width missing-ctor rejected (Maybe2 NOT <: Maybe1)");
                 } else {
-                    std::println(std::cerr, "TS FAIL: Maybe2 should NOT coerce to Maybe1 (missing Just? no, extra ctor in sup is OK; check)");
+                    std::println(std::cerr, "TS FAIL: Maybe2 should NOT coerce to Maybe1 (missing "
+                                            "Just? no, extra ctor in sup is OK; check)");
                     ++ts_failed;
                 }
             }
@@ -1758,7 +1874,8 @@ int main() {
                     ++ts_passed;
                     std::println("TS OK: strict mode rejects structural Record coercion");
                 } else {
-                    std::println(std::cerr, "TS FAIL: strict mode accepted structural Record coercion");
+                    std::println(std::cerr,
+                                 "TS FAIL: strict mode accepted structural Record coercion");
                     ++ts_failed;
                 }
                 ie.set_strict(false);
@@ -1781,18 +1898,19 @@ int main() {
             // instantiation.
             TypeRegistry treg;
             auto a_var = treg.make_var("a");
-            auto id_type = treg.register_forall(a_var,
-                                                treg.register_func({a_var}, a_var));
+            auto id_type = treg.register_forall(a_var, treg.register_func({a_var}, a_var));
             // Instantiate with Int — should give Int → Int.
             auto id_int = treg.instantiate_forall(id_type, {treg.int_type()});
             auto id_int_func = treg.func_of(id_int);
             if (id_int_func && id_int_func->ret == treg.int_type() &&
-                id_int_func->args.size() == 1 &&
-                id_int_func->args[0] == treg.int_type()) {
+                id_int_func->args.size() == 1 && id_int_func->args[0] == treg.int_type()) {
                 ++ts_passed;
-                std::println("TS OK: instantiate \u2200\u03b1.\u03b1\u2192\u03b1 with Int yields Int\u2192Int");
+                std::println("TS OK: instantiate \u2200\u03b1.\u03b1\u2192\u03b1 with Int yields "
+                             "Int\u2192Int");
             } else {
-                std::println(std::cerr, "TS FAIL: instantiate \u2200\u03b1.\u03b1\u2192\u03b1 with Int broken");
+                std::println(
+                    std::cerr,
+                    "TS FAIL: instantiate \u2200\u03b1.\u03b1\u2192\u03b1 with Int broken");
                 ++ts_failed;
             }
 
@@ -1804,12 +1922,13 @@ int main() {
             auto id_str = treg.instantiate_forall(id_type, {treg.string_type()});
             auto id_str_func = treg.func_of(id_str);
             if (id_str_func && id_str_func->ret == treg.string_type() &&
-                id_str_func->args[0] == treg.string_type() &&
-                id_int != id_str) {
+                id_str_func->args[0] == treg.string_type() && id_int != id_str) {
                 ++ts_passed;
-                std::println("TS OK: instantiate \u2200\u03b1.\u03b1\u2192\u03b1 twice is referentially transparent");
+                std::println("TS OK: instantiate \u2200\u03b1.\u03b1\u2192\u03b1 twice is "
+                             "referentially transparent");
             } else {
-                std::println(std::cerr, "TS FAIL: Forall instantiation not referentially transparent");
+                std::println(std::cerr,
+                             "TS FAIL: Forall instantiation not referentially transparent");
                 ++ts_failed;
             }
 
@@ -1821,12 +1940,12 @@ int main() {
             // status code that callers must interpret.
             ConstraintSystem cs(treg);
             auto t_var = treg.make_var("t");
-            if (cs.consistent_unify(id_type, t_var) &&
-                cs.consistent_unify(t_var, id_type) &&
+            if (cs.consistent_unify(id_type, t_var) && cs.consistent_unify(t_var, id_type) &&
                 cs.consistent_unify(id_type, treg.int_type()) &&
                 cs.consistent_unify(treg.int_type(), id_type)) {
                 ++ts_passed;
-                std::println("TS OK: consistent_unify with \u2200\u03b1.\u03b1\u2192\u03b1 is gradual-consistent");
+                std::println("TS OK: consistent_unify with \u2200\u03b1.\u03b1\u2192\u03b1 is "
+                             "gradual-consistent");
             } else {
                 std::println(std::cerr, "TS FAIL: consistent_unify with Forall broken");
                 ++ts_failed;
@@ -1837,8 +1956,7 @@ int main() {
             // a different inner body), the old instantiation should
             // still work and the new one should reflect the new body.
             auto b_var = treg.make_var("b");
-            auto id2_type = treg.register_forall(a_var,
-                                                 treg.register_func({a_var}, b_var));
+            auto id2_type = treg.register_forall(a_var, treg.register_func({a_var}, b_var));
             auto id2_int = treg.instantiate_forall(id2_type, {treg.int_type()});
             auto id2_int_func = treg.func_of(id2_int);
             if (id2_int_func && id2_int_func->ret == b_var &&
@@ -1846,10 +1964,11 @@ int main() {
                 ++ts_passed;
                 std::println("TS OK: re-registered Forall is sound under instantiation");
             } else {
-                std::println(std::cerr, "TS FAIL: re-registered Forall not sound under instantiation");
+                std::println(std::cerr,
+                             "TS FAIL: re-registered Forall not sound under instantiation");
                 ++ts_failed;
             }
-                }
+        }
 
         // ── 2e. Issue #102: Type Hole (`_` / `:?`) support ─────────
         // The LLM can use `_` or `:?` in any type-annotation
@@ -1863,12 +1982,14 @@ int main() {
             DiagnosticCollector diag;
             // Detect the sentinels: single `_` or two-char `:?`.
             auto is_hole = [](std::string_view s) {
-                if (s.size() == 1 && s[0] == '_') return true;
-                if (s.size() == 2 && s[0] == ':' && s[1] == '?') return true;
+                if (s.size() == 1 && s[0] == '_')
+                    return true;
+                if (s.size() == 2 && s[0] == ':' && s[1] == '?')
+                    return true;
                 return false;
             };
-            if (is_hole("_") && is_hole(":?") && !is_hole("Int") &&
-                !is_hole("") && !is_hole("__")) {
+            if (is_hole("_") && is_hole(":?") && !is_hole("Int") && !is_hole("") &&
+                !is_hole("__")) {
                 ++ts_passed;
                 std::println("TS OK: type-hole sentinels detected correctly");
             } else {
@@ -1898,12 +2019,9 @@ int main() {
             // EQUAL uses `unify` (not gradual `consistent_unify`),
             // so a concrete mismatch fails solve() — exactly the
             // case #103's degrade-to-Dynamic should catch.
-            cs.add(Constraint{Constraint::EQUAL,
-                              treg.int_type(),
-                              treg.lookup_type("String")});
+            cs.add(Constraint{Constraint::EQUAL, treg.int_type(), treg.lookup_type("String")});
             if (cs.solve() == SolveResult::SOLVED) {
-                std::println(std::cerr,
-                             "TS FAIL: Int EQUAL String should not unify");
+                std::println(std::cerr, "TS FAIL: Int EQUAL String should not unify");
                 ++ts_failed;
                 // continue anyway to avoid crashes
             } else {
@@ -1923,7 +2041,8 @@ int main() {
             DiagnosticCollector diag;
             TypeChecker tc(treg);
 
-            auto run_occ_test = [&](std::string_view name, std::string_view pred, std::string_view code) -> bool {
+            auto run_occ_test = [&](std::string_view name, std::string_view pred,
+                                    std::string_view code) -> bool {
                 diag.clear();
                 ASTArena arena;
                 auto alloc = arena.allocator();
@@ -1942,34 +2061,36 @@ int main() {
             };
 
             // Test string? occurrence
-            if (run_occ_test("string?", "string?",
-                    "(let ((x \"hello\")) (if (string? x) x 0))"))
+            if (run_occ_test("string?", "string?", "(let ((x \"hello\")) (if (string? x) x 0))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
 
             // Test pair? occurrence (new in T2d)
-            if (run_occ_test("pair?", "pair?",
-                    "(let ((x (cons 1 2))) (if (pair? x) (car x) 0))"))
+            if (run_occ_test("pair?", "pair?", "(let ((x (cons 1 2))) (if (pair? x) (car x) 0))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
 
             // Test number? occurrence
-            if (run_occ_test("number?", "number?",
-                    "(let ((x 42)) (if (number? x) (+ x 1) 0))"))
+            if (run_occ_test("number?", "number?", "(let ((x 42)) (if (number? x) (+ x 1) 0))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
 
             // Test not + predicate combination
             if (run_occ_test("not-string?", "not (string? x)",
-                    "(let ((x 42)) (if (not (string? x)) x 0))"))
+                             "(let ((x 42)) (if (not (string? x)) x 0))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
 
             // Test and combination (two predicates, same variable)
             if (run_occ_test("and-string", "and",
-                    "(let ((x \"hi\")) (if (and (string? x) (number? x)) x 0))"))
+                             "(let ((x \"hi\")) (if (and (string? x) (number? x)) x 0))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
         }
 
         // ── 4. Value restriction — is_syntactic_value ───────────
@@ -2001,22 +2122,22 @@ int main() {
             };
 
             // Lambda (syntactic value) let → should be generalized
-            if (run_let_test("lambda-let",
-                    "(let ((id (lambda (x) x))) (id 42))"))
+            if (run_let_test("lambda-let", "(let ((id (lambda (x) x))) (id 42))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
 
             // Non-syntactic let (call result) → monomorphic
-            if (run_let_test("call-let",
-                    "(let ((x (+ 1 2))) (+ x 1))"))
+            if (run_let_test("call-let", "(let ((x (+ 1 2))) (+ x 1))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
 
             // Multiple lambdas with poly use
-            if (run_let_test("poly-use",
-                    "(let ((id (lambda (x) x))) (id 42) (id \"hi\"))"))
+            if (run_let_test("poly-use", "(let ((id (lambda (x) x))) (id 42) (id \"hi\"))"))
                 ++ts_passed;
-            else ++ts_failed;
+            else
+                ++ts_failed;
         }
 
         // ── 5. Query type clause ───────────────────────────────
@@ -2050,7 +2171,7 @@ int main() {
                 // (return-type? Int) — should match the call node
                 auto r2 = qe.query("(return-type? Int)");
                 std::println("TS OK: return-type? Int → {} nodes", r2.size());
-                ++ts_passed;  // informational
+                ++ts_passed; // informational
 
                 // (argument-type? 1 Int) — arg at index 1
                 auto r3 = qe.query("(argument-type? 1 Int)");
@@ -2064,9 +2185,8 @@ int main() {
 
         // ── 6. TypeAnnotation end-to-end pipeline tests ──────────
         {
-            auto run_annot_test = [&](std::string_view name,
-                                       std::string_view code,
-                                       std::string_view expected) {
+            auto run_annot_test = [&](std::string_view name, std::string_view code,
+                                      std::string_view expected) {
                 aura::diag::DiagnosticCollector d;
                 aura::ast::ASTArena arena;
                 auto alloc = arena.allocator();
@@ -2097,13 +2217,13 @@ int main() {
                         ++ts_passed;
                     } else {
                         ++ts_failed;
-                        std::println(std::cerr, "TS FAIL: annot({}) got {} expected {}",
-                                     name, got, expected);
+                        std::println(std::cerr, "TS FAIL: annot({}) got {} expected {}", name, got,
+                                     expected);
                     }
                 } else {
                     ++ts_failed;
-                    std::println(std::cerr, "TS FAIL: annot({}) exec error: {}",
-                                 name, res.error().format());
+                    std::println(std::cerr, "TS FAIL: annot({}) exec error: {}", name,
+                                 res.error().format());
                 }
             };
 
@@ -2140,8 +2260,7 @@ int main() {
             tc_c.infer_flat(flat_c, pool_c, let, diag_c);
 
             // Lower WITH TypeRegistry (triggers call-site coercion)
-            auto mod_c = aura::compiler::lower_to_ir(flat_c, pool_c, arena_c,
-                nullptr, &treg_c);
+            auto mod_c = aura::compiler::lower_to_ir(flat_c, pool_c, arena_c, nullptr, &treg_c);
 
             // Check for CastOp in IR (arg type matches param type, so no cast)
             // f: (-> t0 t0), arg: Int(42) — t0 unifies with Int, so arg should be Int
@@ -2166,7 +2285,7 @@ int main() {
                 auto got_c = aura::compiler::types::format_value(*res_c);
                 if (got_c == "42") {
                     std::println("TS OK: call-coerce type inference → {}{}", got_c,
-                        found_cast ? " (with cast)" : " (no cast)");
+                                 found_cast ? " (with cast)" : " (no cast)");
                     ++ts_passed;
                 } else if (got_c == "0" && found_cast) {
                     // CastOp may produce wrong result if type_id check incorrect
@@ -2185,9 +2304,8 @@ int main() {
 
         // Test: parse+typecheck+lower+exec with TypeRegistry
         {
-            auto run_cr = [&](std::string_view name,
-                               std::string_view code,
-                               std::string_view expected) {
+            auto run_cr = [&](std::string_view name, std::string_view code,
+                              std::string_view expected) {
                 aura::ast::ASTArena arena;
                 auto alloc = arena.allocator();
                 aura::ast::StringPool pool(alloc);
@@ -2196,7 +2314,8 @@ int main() {
                 flat.root = pr.root;
                 if (!pr.success) {
                     std::println(std::cerr, "TS FAIL: cr-parse failed for {}", name);
-                    ++ts_failed; return;
+                    ++ts_failed;
+                    return;
                 }
                 aura::core::TypeRegistry treg;
                 aura::diag::DiagnosticCollector d;
@@ -2215,23 +2334,21 @@ int main() {
                         ++ts_passed;
                     } else {
                         ++ts_failed;
-                        std::println(std::cerr, "TS FAIL: cr({}) got {} expected {}",
-                                     name, got, expected);
+                        std::println(std::cerr, "TS FAIL: cr({}) got {} expected {}", name, got,
+                                     expected);
                     }
                 } else {
                     ++ts_failed;
-                    std::println(std::cerr, "TS FAIL: cr({}) exec error: {}",
-                                 name, res.error().format());
+                    std::println(std::cerr, "TS FAIL: cr({}) exec error: {}", name,
+                                 res.error().format());
                 }
             };
 
             run_cr("annot-int", "(: x Int 42)", "42");
             run_cr("annot-expr", "(: x Int (+ 1 2))", "3");
             run_cr("lambda-call", "((lambda (x) (* x 2)) 5)", "10");
-            run_cr("let-call",
-                "(let ((f (lambda (x) (+ x 1)))) (f 41))", "42");
-            run_cr("poly-call",
-                "(let ((id (lambda (x) x))) (id 42))", "42");
+            run_cr("let-call", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "42");
+            run_cr("poly-call", "(let ((id (lambda (x) x))) (id 42))", "42");
         }
 
         // ── 14. VariantType registration + queries (Issue #41) ───
@@ -2246,25 +2363,31 @@ int main() {
             auto maybe_id = treg.register_variant(std::move(maybe_vt));
 
             if (treg.tag_of(maybe_id) == TypeTag::VARIANT) {
-                ++ts_passed; std::println("TS OK: variant registered with VARIANT tag");
+                ++ts_passed;
+                std::println("TS OK: variant registered with VARIANT tag");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: variant tag not VARIANT");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: variant tag not VARIANT");
             }
 
             auto* vt = treg.variant_of(maybe_id);
-            if (vt && vt->variants.size() == 2 &&
-                vt->variants[0].first == "Just" && vt->variants[0].second.size() == 1 &&
-                vt->variants[1].first == "Nothing" && vt->variants[1].second.empty()) {
-                ++ts_passed; std::println("TS OK: variant fields match");
+            if (vt && vt->variants.size() == 2 && vt->variants[0].first == "Just" &&
+                vt->variants[0].second.size() == 1 && vt->variants[1].first == "Nothing" &&
+                vt->variants[1].second.empty()) {
+                ++ts_passed;
+                std::println("TS OK: variant fields match");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: variant fields mismatch");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: variant fields mismatch");
             }
 
             auto fmt = treg.format_type(maybe_id);
             if (fmt.find("Variant") != std::string::npos) {
-                ++ts_passed; std::println("TS OK: variant format = {}", fmt);
+                ++ts_passed;
+                std::println("TS OK: variant format = {}", fmt);
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: variant format missing Variant");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: variant format missing Variant");
             }
         }
 
@@ -2278,25 +2401,31 @@ int main() {
             auto person_id = treg.register_record(std::move(person_rt));
 
             if (treg.tag_of(person_id) == TypeTag::RECORD) {
-                ++ts_passed; std::println("TS OK: record registered with RECORD tag");
+                ++ts_passed;
+                std::println("TS OK: record registered with RECORD tag");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: record tag not RECORD");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: record tag not RECORD");
             }
 
             auto* rt = treg.record_of(person_id);
-            if (rt && rt->fields.size() == 2 &&
-                rt->fields[0].first == "name" && rt->fields[0].second == treg.string_type() &&
-                rt->fields[1].first == "age" && rt->fields[1].second == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: record fields match");
+            if (rt && rt->fields.size() == 2 && rt->fields[0].first == "name" &&
+                rt->fields[0].second == treg.string_type() && rt->fields[1].first == "age" &&
+                rt->fields[1].second == treg.int_type()) {
+                ++ts_passed;
+                std::println("TS OK: record fields match");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: record fields mismatch");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: record fields mismatch");
             }
 
             auto fmt = treg.format_type(person_id);
             if (fmt.find("Record") != std::string::npos) {
-                ++ts_passed; std::println("TS OK: record format = {}", fmt);
+                ++ts_passed;
+                std::println("TS OK: record format = {}", fmt);
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: record format missing Record");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: record format missing Record");
             }
         }
 
@@ -2311,25 +2440,31 @@ int main() {
             // occurs check: a in FuncType (a → Int)
             auto func_a = treg.register_func({a_var}, treg.int_type());
             if (cs.occurs_check(a_var, func_a)) {
-                ++ts_passed; std::println("TS OK: occurs(FuncType: a in (-> a Int))");
+                ++ts_passed;
+                std::println("TS OK: occurs(FuncType: a in (-> a Int))");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in FuncType");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs missed a in FuncType");
             }
 
             // occurs check: a in ForallType (∀b. a)
             auto forall_a = treg.register_forall(b_var, a_var);
             if (cs.occurs_check(a_var, forall_a)) {
-                ++ts_passed; std::println("TS OK: occurs(ForallType: a in ∀b. a)");
+                ++ts_passed;
+                std::println("TS OK: occurs(ForallType: a in ∀b. a)");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in ForallType");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs missed a in ForallType");
             }
 
             // occurs check: a in LinearType (Linear a)
             auto linear_a = treg.register_linear(a_var);
             if (cs.occurs_check(a_var, linear_a)) {
-                ++ts_passed; std::println("TS OK: occurs(LinearType: a in Linear a)");
+                ++ts_passed;
+                std::println("TS OK: occurs(LinearType: a in Linear a)");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in LinearType");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs missed a in LinearType");
             }
 
             // occurs check: a in VariantType {Just: a}
@@ -2337,9 +2472,11 @@ int main() {
             vt.variants.push_back({"Just", {a_var}});
             auto var_id = treg.register_variant(std::move(vt));
             if (cs.occurs_check(a_var, var_id)) {
-                ++ts_passed; std::println("TS OK: occurs(VariantType: a in {{Just: a}})");
+                ++ts_passed;
+                std::println("TS OK: occurs(VariantType: a in {{Just: a}})");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in VariantType");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs missed a in VariantType");
             }
 
             // occurs check: a in RecordType {field: a}
@@ -2347,9 +2484,11 @@ int main() {
             rt.fields.push_back({"field", a_var});
             auto rec_id = treg.register_record(std::move(rt));
             if (cs.occurs_check(a_var, rec_id)) {
-                ++ts_passed; std::println("TS OK: occurs(RecordType: a in {{field: a}})");
+                ++ts_passed;
+                std::println("TS OK: occurs(RecordType: a in {{field: a}})");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in RecordType");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs missed a in RecordType");
             }
 
             // occurs check: a in ModuleType {x: a}
@@ -2357,24 +2496,30 @@ int main() {
             mt.members.push_back({"x", a_var});
             auto mod_id = treg.register_module(std::move(mt));
             if (cs.occurs_check(a_var, mod_id)) {
-                ++ts_passed; std::println("TS OK: occurs(ModuleType: a in {{x: a}})");
+                ++ts_passed;
+                std::println("TS OK: occurs(ModuleType: a in {{x: a}})");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in ModuleType");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs missed a in ModuleType");
             }
 
             // occurs check: a NOT in unrelated type (Int)
             if (!cs.occurs_check(a_var, treg.int_type())) {
-                ++ts_passed; std::println("TS OK: occurs(Int) — a not found");
+                ++ts_passed;
+                std::println("TS OK: occurs(Int) — a not found");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs falsely found a in Int");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs falsely found a in Int");
             }
 
             // occurs check: a NOT in nested unrelated type (b → b)
             auto func_bb = treg.register_func({b_var}, b_var);
             if (!cs.occurs_check(a_var, func_bb)) {
-                ++ts_passed; std::println("TS OK: occurs(b → b) — a not found");
+                ++ts_passed;
+                std::println("TS OK: occurs(b → b) — a not found");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs falsely found a in b→b");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: occurs falsely found a in b→b");
             }
         }
 
@@ -2393,10 +2538,13 @@ int main() {
             auto func_a = treg.register_func({a_var, treg.int_type()}, treg.int_type());
             auto func_subst = treg.substitute(func_a, subst);
             auto* f = treg.func_of(func_subst);
-            if (f && f->args.size() == 2 && f->args[0] == treg.int_type() && f->args[1] == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: substitute(FuncType) replaced a→Int");
+            if (f && f->args.size() == 2 && f->args[0] == treg.int_type() &&
+                f->args[1] == treg.int_type()) {
+                ++ts_passed;
+                std::println("TS OK: substitute(FuncType) replaced a→Int");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(FuncType) failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute(FuncType) failed");
             }
 
             // substitute in ForallType: ∀b. a → ∀b. Int
@@ -2404,9 +2552,11 @@ int main() {
             auto forall_s = treg.substitute(forall_a, subst);
             auto* ft = treg.forall_of(forall_s);
             if (ft && ft->body == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: substitute(ForallType) body replaced");
+                ++ts_passed;
+                std::println("TS OK: substitute(ForallType) body replaced");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(ForallType) failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute(ForallType) failed");
             }
 
             // substitute in LinearType: Linear a → Linear Int
@@ -2414,9 +2564,11 @@ int main() {
             auto linear_s = treg.substitute(linear_a, subst);
             auto* lt = treg.linear_of(linear_s);
             if (lt && lt->inner == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: substitute(LinearType) inner replaced");
+                ++ts_passed;
+                std::println("TS OK: substitute(LinearType) inner replaced");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(LinearType) failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute(LinearType) failed");
             }
 
             // substitute in VariantType: {Just: a, Nothing: []} → {Just: Int, Nothing: []}
@@ -2426,12 +2578,13 @@ int main() {
             auto var_id = treg.register_variant(std::move(vt));
             auto var_s = treg.substitute(var_id, subst);
             auto* vtp = treg.variant_of(var_s);
-            if (vtp && vtp->variants.size() == 2 &&
-                vtp->variants[0].second.size() == 1 && vtp->variants[0].second[0] == treg.int_type() &&
-                vtp->variants[1].second.empty()) {
-                ++ts_passed; std::println("TS OK: substitute(VariantType) field replaced");
+            if (vtp && vtp->variants.size() == 2 && vtp->variants[0].second.size() == 1 &&
+                vtp->variants[0].second[0] == treg.int_type() && vtp->variants[1].second.empty()) {
+                ++ts_passed;
+                std::println("TS OK: substitute(VariantType) field replaced");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(VariantType) failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute(VariantType) failed");
             }
 
             // substitute in RecordType: {field: a} → {field: Int}
@@ -2441,9 +2594,11 @@ int main() {
             auto rec_s = treg.substitute(rec_id, subst);
             auto* rtp = treg.record_of(rec_s);
             if (rtp && rtp->fields.size() == 1 && rtp->fields[0].second == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: substitute(RecordType) field replaced");
+                ++ts_passed;
+                std::println("TS OK: substitute(RecordType) field replaced");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(RecordType) failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute(RecordType) failed");
             }
 
             // substitute in ModuleType: {x: a} → {x: Int}
@@ -2453,9 +2608,11 @@ int main() {
             auto mod_s = treg.substitute(mod_id, subst);
             auto* mtp = treg.module_of(mod_s);
             if (mtp && mtp->members.size() == 1 && mtp->members[0].second == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: substitute(ModuleType) member replaced");
+                ++ts_passed;
+                std::println("TS OK: substitute(ModuleType) member replaced");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(ModuleType) failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute(ModuleType) failed");
             }
 
             // substitute: unbound variable stays unchanged
@@ -2463,9 +2620,11 @@ int main() {
             auto func_b_s = treg.substitute(func_b, subst);
             auto* fb = treg.func_of(func_b_s);
             if (fb && fb->args.size() == 1 && fb->args[0] == b_var) {
-                ++ts_passed; std::println("TS OK: substitute(unbound var b) unchanged");
+                ++ts_passed;
+                std::println("TS OK: substitute(unbound var b) unchanged");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute changed unbound var b");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: substitute changed unbound var b");
             }
         }
 
@@ -2481,9 +2640,11 @@ int main() {
             auto fv = treg.free_vars(func);
             // We just check count — vars appear in order they're discovered
             if (fv.size() == 2) {
-                ++ts_passed; std::println("TS OK: free_vars(FuncType a b) = 2 vars");
+                ++ts_passed;
+                std::println("TS OK: free_vars(FuncType a b) = 2 vars");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(FuncType) got {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(FuncType) got {} vars", fv.size());
             }
 
             // free_vars of VariantType: {Just: a, Nothing: []} → {a}
@@ -2493,9 +2654,11 @@ int main() {
             auto var_id = treg.register_variant(std::move(vt));
             fv = treg.free_vars(var_id);
             if (fv.size() == 1) {
-                ++ts_passed; std::println("TS OK: free_vars(VariantType {{Just: a}}) = 1 var");
+                ++ts_passed;
+                std::println("TS OK: free_vars(VariantType {{Just: a}}) = 1 var");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(VariantType) got {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(VariantType) got {} vars", fv.size());
             }
 
             // free_vars of RecordType: {field: a} → {a}
@@ -2504,18 +2667,22 @@ int main() {
             auto rec_id = treg.register_record(std::move(rt));
             fv = treg.free_vars(rec_id);
             if (fv.size() == 1) {
-                ++ts_passed; std::println("TS OK: free_vars(RecordType {{field: a}}) = 1 var");
+                ++ts_passed;
+                std::println("TS OK: free_vars(RecordType {{field: a}}) = 1 var");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(RecordType) got {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(RecordType) got {} vars", fv.size());
             }
 
             // free_vars of LinearType: Linear a → {a}
             auto linear_a = treg.register_linear(a_var);
             fv = treg.free_vars(linear_a);
             if (fv.size() == 1) {
-                ++ts_passed; std::println("TS OK: free_vars(LinearType a) = 1 var");
+                ++ts_passed;
+                std::println("TS OK: free_vars(LinearType a) = 1 var");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(LinearType) got {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(LinearType) got {} vars", fv.size());
             }
 
             // free_vars of ForallType: ∀b. (a → b) → {a} (b is bound)
@@ -2523,9 +2690,11 @@ int main() {
             auto forall = treg.register_forall(b_var, func_ab);
             fv = treg.free_vars(forall);
             if (fv.size() == 1) {
-                ++ts_passed; std::println("TS OK: free_vars(∀b. a → b) = 1 var (a free)");
+                ++ts_passed;
+                std::println("TS OK: free_vars(∀b. a → b) = 1 var (a free)");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(ForallType) got {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(ForallType) got {} vars", fv.size());
             }
 
             // free_vars of ModuleType: {x: a} → {a}
@@ -2534,17 +2703,21 @@ int main() {
             auto mod_id = treg.register_module(std::move(mt));
             fv = treg.free_vars(mod_id);
             if (fv.size() == 1) {
-                ++ts_passed; std::println("TS OK: free_vars(ModuleType {{x: a}}) = 1 var");
+                ++ts_passed;
+                std::println("TS OK: free_vars(ModuleType {{x: a}}) = 1 var");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(ModuleType) got {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(ModuleType) got {} vars", fv.size());
             }
 
             // free_vars of concrete type (Int) = 0
             fv = treg.free_vars(treg.int_type());
             if (fv.empty()) {
-                ++ts_passed; std::println("TS OK: free_vars(Int) = 0 vars");
+                ++ts_passed;
+                std::println("TS OK: free_vars(Int) = 0 vars");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(Int) returned {} vars", fv.size());
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: free_vars(Int) returned {} vars", fv.size());
             }
         }
 
@@ -2556,15 +2729,18 @@ int main() {
             auto b_var = treg.make_var("b");
 
             // Single instantiate: ∀a. a → Int  gives fresh_a → Int
-            auto forall_a = treg.register_forall(a_var, treg.register_func({a_var}, treg.int_type()));
+            auto forall_a =
+                treg.register_forall(a_var, treg.register_func({a_var}, treg.int_type()));
             auto inst = treg.instantiate(forall_a, [&]() { return treg.make_var("fresh"); });
             auto* fi = treg.func_of(inst);
             if (fi && fi->args.size() == 1 && treg.is_var(fi->args[0]) &&
                 treg.tag_of(fi->args[0]) == TypeTag::TYPE_VAR &&
-                fi->args[0] != a_var) {  // fresh variable, not the same as a
-                ++ts_passed; std::println("TS OK: instantiate(∀a. a→Int) → fresh→Int");
+                fi->args[0] != a_var) { // fresh variable, not the same as a
+                ++ts_passed;
+                std::println("TS OK: instantiate(∀a. a→Int) → fresh→Int");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate forall failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: instantiate forall failed");
             }
 
             // instantiate_forall: ∀a. ∀b. (a → b)  with [Int, String]
@@ -2575,9 +2751,11 @@ int main() {
             auto* fi2 = treg.func_of(inst2);
             if (fi2 && fi2->args.size() == 1 && fi2->args[0] == treg.int_type() &&
                 fi2->ret == treg.string_type()) {
-                ++ts_passed; std::println("TS OK: instantiate_forall(∀a∀b. a→b, [Int,String]) → Int→String");
+                ++ts_passed;
+                std::println("TS OK: instantiate_forall(∀a∀b. a→b, [Int,String]) → Int→String");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall batch failed");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: instantiate_forall batch failed");
             }
 
             // Issue #76: instantiate_forall with fewer args than ∀ layers
@@ -2588,9 +2766,13 @@ int main() {
             auto* fi3 = treg.func_of(inst3);
             if (fi3 && fi3->args.size() == 1 && fi3->args[0] == treg.int_type() &&
                 treg.is_var(fi3->ret) && fi3->ret != b_var) {
-                ++ts_passed; std::println("TS OK: instantiate_forall w/ partial args fully instantiates w/ fresh residual");
+                ++ts_passed;
+                std::println("TS OK: instantiate_forall w/ partial args fully instantiates w/ "
+                             "fresh residual");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall partial failed (expected Int→fresh_b)");
+                ++ts_failed;
+                std::println(std::cerr,
+                             "TS FAIL: instantiate_forall partial failed (expected Int→fresh_b)");
             }
 
             // Issue #76: instantiate_forall with empty args fully instantiates
@@ -2599,9 +2781,13 @@ int main() {
             auto* fi4 = treg.func_of(inst4);
             if (fi4 && treg.is_var(fi4->args[0]) && fi4->args[0] != a_var &&
                 treg.is_var(fi4->ret) && fi4->ret != b_var) {
-                ++ts_passed; std::println("TS OK: instantiate_forall w/ empty args fully instantiates w/ fresh vars");
+                ++ts_passed;
+                std::println(
+                    "TS OK: instantiate_forall w/ empty args fully instantiates w/ fresh vars");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall empty args (expected fresh→fresh, no ∀)");
+                ++ts_failed;
+                std::println(std::cerr,
+                             "TS FAIL: instantiate_forall empty args (expected fresh→fresh, no ∀)");
             }
 
             // Issue #77: capture avoidance in substitute. When the
@@ -2612,16 +2798,19 @@ int main() {
                 auto b2 = treg.make_var("b2");
                 auto forall_a = treg.register_forall(a2, treg.register_func({a2}, b2));
                 std::unordered_map<std::uint32_t, aura::core::TypeId> sub;
-                sub[a2.index] = treg.int_type();  // try to replace bound a2
+                sub[a2.index] = treg.int_type(); // try to replace bound a2
                 auto subst_result = treg.substitute(forall_a, sub);
                 // Expected: unchanged. The bound a2 shadows the subst
                 // entry. Pre-fix bug: result was ∀a2. (Int → b2).
                 auto fmt_before = treg.format_type(forall_a);
                 auto fmt_after = treg.format_type(subst_result);
                 if (fmt_before == fmt_after) {
-                    ++ts_passed; std::println("TS OK: substitute w/ bound-var target shadows (no capture)");
+                    ++ts_passed;
+                    std::println("TS OK: substitute w/ bound-var target shadows (no capture)");
                 } else {
-                    ++ts_failed; std::println(std::cerr, "TS FAIL: substitute captured bound var: {} -> {}", fmt_before, fmt_after);
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: substitute captured bound var: {} -> {}",
+                                 fmt_before, fmt_after);
                 }
             }
 
@@ -2636,8 +2825,8 @@ int main() {
                 auto forall_b_abc = treg.register_forall(b3, func_abc);
                 auto forall_a_b_abc = treg.register_forall(a3, forall_b_abc);
                 std::unordered_map<std::uint32_t, aura::core::TypeId> sub;
-                sub[a3.index] = treg.int_type();  // outer bound, should be shadowed
-                sub[c3.index] = treg.string_type();  // free, should be substituted
+                sub[a3.index] = treg.int_type();    // outer bound, should be shadowed
+                sub[c3.index] = treg.string_type(); // free, should be substituted
                 auto subst_result = treg.substitute(forall_a_b_abc, sub);
                 // Expected: ∀a3. (∀b3. (a3 → String))
                 // (a3 is the bound var, NOT Int; c3 became String.)
@@ -2646,14 +2835,16 @@ int main() {
                 auto* outer_ft = treg.forall_of(subst_result);
                 auto* inner_ft = outer_ft ? treg.forall_of(outer_ft->body) : nullptr;
                 auto* body_f = inner_ft ? treg.func_of(inner_ft->body) : nullptr;
-                if (outer_ft && inner_ft && body_f &&
-                    body_f->args.size() == 1 &&
-                    body_f->args[0] == a3 &&  // a3 preserved as bound
-                    body_f->ret == treg.string_type()  // c3 replaced
+                if (outer_ft && inner_ft && body_f && body_f->args.size() == 1 &&
+                    body_f->args[0] == a3 &&          // a3 preserved as bound
+                    body_f->ret == treg.string_type() // c3 replaced
                 ) {
-                    ++ts_passed; std::println("TS OK: substitute nested ∀ w/ bound+free targets (only free replaced)");
+                    ++ts_passed;
+                    std::println(
+                        "TS OK: substitute nested ∀ w/ bound+free targets (only free replaced)");
                 } else {
-                    ++ts_failed; std::println(std::cerr, "TS FAIL: substitute nested ∀ did mixed binding");
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: substitute nested ∀ did mixed binding");
                 }
             }
 
@@ -2680,9 +2871,11 @@ int main() {
                 auto t2 = treg.register_func_named({int_t, int_t}, int_t, "__decl_mul");
                 // The TypeId is the same (dedup is correct).
                 if (t1.index == t2.index) {
-                    ++ts_passed; std::println("TS OK: dedup w/ same (args, ret) returns same TypeId");
+                    ++ts_passed;
+                    std::println("TS OK: dedup w/ same (args, ret) returns same TypeId");
                 } else {
-                    ++ts_failed; std::println(std::cerr, "TS FAIL: dedup didn't unify equal sigs");
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: dedup didn't unify equal sigs");
                 }
                 // The bug: pre-fix, only the LAST name is preserved. Post-fix
                 // we don't rely on the name for binding (TypeChecker tracks
@@ -2690,9 +2883,12 @@ int main() {
                 // SOME __decl_ name (the format used for env binding pre-fix).
                 auto name_at_idx = treg.name_of(t1);
                 if (name_at_idx.starts_with("__decl_")) {
-                    ++ts_passed; std::println("TS OK: dedup w/ same sig keeps a __decl_ name (used for env binding)");
+                    ++ts_passed;
+                    std::println(
+                        "TS OK: dedup w/ same sig keeps a __decl_ name (used for env binding)");
                 } else {
-                    ++ts_failed; std::println(std::cerr, "TS FAIL: dedup lost __decl_ prefix: {}", name_at_idx);
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: dedup lost __decl_ prefix: {}", name_at_idx);
                 }
             }
 
@@ -2702,25 +2898,32 @@ int main() {
             {
                 TypeEnv env(treg);
                 auto a_var = treg.make_var("a");
-                auto poly_id = treg.register_forall(a_var, treg.register_func({a_var}, treg.int_type()));
+                auto poly_id =
+                    treg.register_forall(a_var, treg.register_func({a_var}, treg.int_type()));
                 // Verify bind auto-detects is_poly=true for a Forall.
                 env.bind("id", poly_id);
                 // Verify lookup returns a fresh instantiation (NOT the
                 // raw poly, which would leak a).
                 auto looked_up = env.lookup("id");
                 if (treg.forall_of(looked_up) != nullptr) {
-                    ++ts_failed; std::println(std::cerr, "TS FAIL: lookup returned raw Forall (is_poly not auto-instantiated)");
+                    ++ts_failed;
+                    std::println(
+                        std::cerr,
+                        "TS FAIL: lookup returned raw Forall (is_poly not auto-instantiated)");
                 } else {
-                    ++ts_passed; std::println("TS OK: lookup auto-instantiates poly bindings");
+                    ++ts_passed;
+                    std::println("TS OK: lookup auto-instantiates poly bindings");
                 }
                 // Verify a monomorphic binding is returned as-is.
                 auto int_t = treg.int_type();
                 env.bind("forty-two", int_t);
                 auto lookup_int = env.lookup("forty-two");
                 if (lookup_int == int_t) {
-                    ++ts_passed; std::println("TS OK: lookup passes monomorphic bindings through");
+                    ++ts_passed;
+                    std::println("TS OK: lookup passes monomorphic bindings through");
                 } else {
-                    ++ts_failed; std::println(std::cerr, "TS FAIL: lookup changed monomorphic type");
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: lookup changed monomorphic type");
                 }
             }
         }
@@ -2730,7 +2933,7 @@ int main() {
         // to stderr and exits cleanly. Verify no crash and no exception.
         {
             aura::ir::IRModule mod;
-            aura::compiler::TypeSpecializationWrap ts_no_reg;  // default ctor, type_reg_=nullptr
+            aura::compiler::TypeSpecializationWrap ts_no_reg; // default ctor, type_reg_=nullptr
             aura::ir::IRFunction fn;
             fn.id = 0;
             fn.name = "__top__";
@@ -2739,15 +2942,18 @@ int main() {
             mod.add_function(fn);
             try {
                 ts_no_reg.run(mod);
-                ++ts_passed; std::println("TS OK: TypeSpecializationWrap no-reg run is safe");
+                ++ts_passed;
+                std::println("TS OK: TypeSpecializationWrap no-reg run is safe");
             } catch (...) {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: TypeSpecializationWrap no-reg run threw");
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: TypeSpecializationWrap no-reg run threw");
             }
         }
 
-        std::println("Type system detail tests: {}/{}/{} passed/failed/total",
-                     ts_passed, ts_failed, ts_passed + ts_failed);
-        if (ts_failed > 0) return 1;
+        std::println("Type system detail tests: {}/{}/{} passed/failed/total", ts_passed, ts_failed,
+                     ts_passed + ts_failed);
+        if (ts_failed > 0)
+            return 1;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2772,92 +2978,112 @@ int main() {
         flat.root = call;
 
         // Record mutations
-        auto m1 = flat.add_mutation(lit1, "replace-value", "Int", "Float",
-                                     "change 1 to 1.0");
+        auto m1 = flat.add_mutation(lit1, "replace-value", "Int", "Float", "change 1 to 1.0");
         auto m2 = flat.add_mutation(call, "replace-op", "(Int Int -> Int)",
-                                     "(Float Float -> Float)", "change + to f+");
-        auto m3 = flat.add_mutation(lit1, "refine-constraint", "Int",
-                                     "{x: Int | x > 0}", "add positive constraint");
+                                    "(Float Float -> Float)", "change + to f+");
+        auto m3 = flat.add_mutation(lit1, "refine-constraint", "Int", "{x: Int | x > 0}",
+                                    "add positive constraint");
 
         if (flat.mutation_count() == 3) {
-            std::println("MU OK: mutation_count = 3"); ++mu_passed;
+            std::println("MU OK: mutation_count = 3");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: expected 3, got {}", flat.mutation_count()); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: expected 3, got {}", flat.mutation_count());
+            ++mu_failed;
         }
 
         auto hist1 = flat.mutation_history(lit1);
         if (hist1.size() == 2) {
-            std::println("MU OK: lit1 has 2 mutations"); ++mu_passed;
+            std::println("MU OK: lit1 has 2 mutations");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: lit1 expected 2, got {}", hist1.size()); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: lit1 expected 2, got {}", hist1.size());
+            ++mu_failed;
         }
 
         if (hist1[0].operator_name == hist1[1].operator_name) {
-            std::println(std::cerr, "MU FAIL: same operator on lit1"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: same operator on lit1");
+            ++mu_failed;
         } else {
-            std::println("MU OK: lit1 ops differ ({})", hist1[1].operator_name); ++mu_passed;
+            std::println("MU OK: lit1 ops differ ({})", hist1[1].operator_name);
+            ++mu_passed;
         }
 
         auto hist2 = flat.mutation_history(call);
         if (hist2.size() == 1 && hist2[0].operator_name == "replace-op") {
-            std::println("MU OK: call mutation correct"); ++mu_passed;
+            std::println("MU OK: call mutation correct");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: call mutation"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: call mutation");
+            ++mu_failed;
         }
 
         auto hist3 = flat.mutation_history(lit2);
         if (hist3.empty()) {
-            std::println("MU OK: lit2 has 0 mutations"); ++mu_passed;
+            std::println("MU OK: lit2 has 0 mutations");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: lit2 expected 0"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: lit2 expected 0");
+            ++mu_failed;
         }
 
         // Verify mutation_id monotonic
         if (m1 < m2 && m2 < m3) {
-            std::println("MU OK: mutation IDs monotonic"); ++mu_passed;
+            std::println("MU OK: mutation IDs monotonic");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: non-monotonic IDs"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: non-monotonic IDs");
+            ++mu_failed;
         }
 
         // Test: rollback — use with_rollback variant
-        auto l1_id = flat.add_mutation_with_rollback(lit1, "replace-value",
-            "Int", "Int", "change 1 to 42",
-            aura::ast::MutationStatus::Committed, 0, 1, 42, true);
+        auto l1_id =
+            flat.add_mutation_with_rollback(lit1, "replace-value", "Int", "Int", "change 1 to 42",
+                                            aura::ast::MutationStatus::Committed, 0, 1, 42, true);
         if (flat.mutation_count() == 4) {
-            std::println("MU OK: rollback mutation recorded"); ++mu_passed;
+            std::println("MU OK: rollback mutation recorded");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: rollback mutation not recorded"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: rollback mutation not recorded");
+            ++mu_failed;
         }
 
         if (flat.rollback(l1_id)) {
-            std::println("MU OK: rollback succeeded"); ++mu_passed;
+            std::println("MU OK: rollback succeeded");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: rollback failed"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: rollback failed");
+            ++mu_failed;
         }
 
         // Second rollback should fail (already rolled back)
         // Wait — we need to check mutation status AFTER rollback
         if (!flat.rollback(l1_id)) {
-            std::println("MU OK: rollback idempotent"); ++mu_passed;
+            std::println("MU OK: rollback idempotent");
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: rollback not idempotent"); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: rollback not idempotent");
+            ++mu_failed;
         }
 
         // Test: rollback_since (with new rollback-capable mutations)
-        auto r1 = flat.add_mutation_with_rollback(lit1, "op1", "", "",
-            "test 1", aura::ast::MutationStatus::Committed, 0, 0, 1, true);
-        auto r2 = flat.add_mutation_with_rollback(lit1, "op2", "", "",
-            "test 2", aura::ast::MutationStatus::Committed, 0, 0, 2, true);
+        auto r1 = flat.add_mutation_with_rollback(
+            lit1, "op1", "", "", "test 1", aura::ast::MutationStatus::Committed, 0, 0, 1, true);
+        auto r2 = flat.add_mutation_with_rollback(
+            lit1, "op2", "", "", "test 2", aura::ast::MutationStatus::Committed, 0, 0, 2, true);
         auto rb_count = flat.rollback_since(r1);
         if (rb_count == 2) {
-            std::println("MU OK: rollback_since = {}", rb_count); ++mu_passed;
+            std::println("MU OK: rollback_since = {}", rb_count);
+            ++mu_passed;
         } else {
-            std::println(std::cerr, "MU FAIL: rollback_since = {} (expected 2)", rb_count); ++mu_failed;
+            std::println(std::cerr, "MU FAIL: rollback_since = {} (expected 2)", rb_count);
+            ++mu_failed;
         }
 
-        std::println("Mutation audit: {}/{}/{} passed/failed/total",
-                     mu_passed, mu_failed, mu_passed + mu_failed);
-        if (mu_failed > 0) return 1;
+        std::println("Mutation audit: {}/{}/{} passed/failed/total", mu_passed, mu_failed,
+                     mu_passed + mu_failed);
+        if (mu_failed > 0)
+            return 1;
     }
 
     // CompilerService mutation API tests
@@ -2878,37 +3104,45 @@ int main() {
         auto eval_result = cs.eval("(define x 42) x");
         if (eval_result && aura::compiler::types::is_int(*eval_result) &&
             aura::compiler::types::as_int(*eval_result) == 42) {
-            std::println("CS OK: eval returns 42"); ++cs_passed;
+            std::println("CS OK: eval returns 42");
+            ++cs_passed;
         } else {
             std::println(std::cerr, "CS FAIL: eval: {}",
-                eval_result ? std::to_string(aura::compiler::types::as_int(*eval_result)) :
-                eval_result.error().message); ++cs_failed;
+                         eval_result ? std::to_string(aura::compiler::types::as_int(*eval_result))
+                                     : eval_result.error().message);
+            ++cs_failed;
         }
 
         // 2. Query mutation log on the persistent AST (should be empty)
         auto entries = cs.query_mutation_log();
         if (entries.empty()) {
-            std::println("CS OK: empty mutation log"); ++cs_passed;
+            std::println("CS OK: empty mutation log");
+            ++cs_passed;
         } else {
-            std::println(std::cerr, "CS FAIL: expected empty log, got {}", entries.size()); ++cs_failed;
+            std::println(std::cerr, "CS FAIL: expected empty log, got {}", entries.size());
+            ++cs_failed;
         }
 
         // 3. Just verify the CompilerService API fields exist and work
         auto* c_ast = cs.current_ast();
         auto* c_pool = cs.current_pool();
         if (c_ast != nullptr && c_pool != nullptr) {
-            std::println("CS OK: current_ast/current_pool available"); ++cs_passed;
+            std::println("CS OK: current_ast/current_pool available");
+            ++cs_passed;
         } else {
-            std::println(std::cerr, "CS FAIL: no current AST after eval"); ++cs_failed;
+            std::println(std::cerr, "CS FAIL: no current AST after eval");
+            ++cs_failed;
         }
 
         // Verify query_mutation_log returns empty for a fresh AST
         auto fresh_entries = cs.query_mutation_log();
         if (fresh_entries.empty()) {
-            std::println("CS OK: fresh AST has empty mutation log"); ++cs_passed;
+            std::println("CS OK: fresh AST has empty mutation log");
+            ++cs_passed;
         } else {
             std::println(std::cerr, "CS FAIL: fresh AST should have 0 entries, got {}",
-                         fresh_entries.size()); ++cs_failed;
+                         fresh_entries.size());
+            ++cs_failed;
         }
 
         // Verify query_mutation_log structure by manually adding a mutation
@@ -2920,9 +3154,9 @@ int main() {
 
             // Build a simple node and add a mutation
             auto lit = tf.add_literal(42);
-            auto mid = tf.add_mutation_with_rollback(lit, "test-op",
-                "Int", "Float", "test summary",
-                aura::ast::MutationStatus::Committed, 0, 42, 0, true);
+            auto mid =
+                tf.add_mutation_with_rollback(lit, "test-op", "Int", "Float", "test summary",
+                                              aura::ast::MutationStatus::Committed, 0, 42, 0, true);
 
             // Query via CompilerService's query_mutation_log
             // We can't directly test query_mutation_log here since it reads
@@ -2935,14 +3169,14 @@ int main() {
                 std::string status;
             };
             auto log = tf.all_mutations();
-            if (!log.empty() && log[0].mutation_id == mid &&
-                log[0].operator_name == "test-op" &&
-                log[0].old_type_str == "Int" &&
-                log[0].new_type_str == "Float" &&
+            if (!log.empty() && log[0].mutation_id == mid && log[0].operator_name == "test-op" &&
+                log[0].old_type_str == "Int" && log[0].new_type_str == "Float" &&
                 log[0].status == aura::ast::MutationStatus::Committed) {
-                std::println("CS OK: mutation entry fields match"); ++cs_passed;
+                std::println("CS OK: mutation entry fields match");
+                ++cs_passed;
             } else {
-                std::println(std::cerr, "CS FAIL: mutation entry field mismatch"); ++cs_failed;
+                std::println(std::cerr, "CS FAIL: mutation entry field mismatch");
+                ++cs_failed;
             }
 
             // Verify rollback works via the FlatAST directly
@@ -2950,18 +3184,22 @@ int main() {
                 auto post_rollback = tf.all_mutations();
                 if (!post_rollback.empty() &&
                     post_rollback[0].status == aura::ast::MutationStatus::RolledBack) {
-                    std::println("CS OK: rollback changes status"); ++cs_passed;
+                    std::println("CS OK: rollback changes status");
+                    ++cs_passed;
                 } else {
-                    std::println(std::cerr, "CS FAIL: rollback status not updated"); ++cs_failed;
+                    std::println(std::cerr, "CS FAIL: rollback status not updated");
+                    ++cs_failed;
                 }
             } else {
-                std::println(std::cerr, "CS FAIL: rollback failed"); ++cs_failed;
+                std::println(std::cerr, "CS FAIL: rollback failed");
+                ++cs_failed;
             }
         }
 
-        std::println("CompilerService mutation API: {}/{}/{} passed/failed/total",
-                     cs_passed, cs_failed, cs_passed + cs_failed);
-        if (cs_failed > 0) return 1;
+        std::println("CompilerService mutation API: {}/{}/{} passed/failed/total", cs_passed,
+                     cs_failed, cs_passed + cs_failed);
+        if (cs_failed > 0)
+            return 1;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2983,10 +3221,11 @@ int main() {
         {
             auto setup = cs34.eval_current();
             if (setup) {
-                std::println("CS34 OK: setup eval succeeded"); ++cs34_passed;
+                std::println("CS34 OK: setup eval succeeded");
+                ++cs34_passed;
             } else {
-                std::println(std::cerr, "CS34 FAIL: setup: {}",
-                    setup.error().message); ++cs34_failed;
+                std::println(std::cerr, "CS34 FAIL: setup: {}", setup.error().message);
+                ++cs34_failed;
             }
         }
 
@@ -2995,10 +3234,11 @@ int main() {
             (void)cs34.eval("(set-code \"(define (f x) (+ x 1))\")");
             auto v = cs34.eval_current();
             if (v) {
-                std::println("CS34 OK: set-code + eval succeeded"); ++cs34_passed;
+                std::println("CS34 OK: set-code + eval succeeded");
+                ++cs34_passed;
             } else {
-                std::println(std::cerr, "CS34 FAIL: set-code: {}",
-                    v.error().message); ++cs34_failed;
+                std::println(std::cerr, "CS34 FAIL: set-code: {}", v.error().message);
+                ++cs34_failed;
             }
         }
 
@@ -3007,10 +3247,11 @@ int main() {
         {
             auto mr = cs34.typed_mutate("(define y 42)");
             if (mr.success && mr.mutation_id > 0) {
-                std::println("CS34 OK: typed_mutate define accepted (mid={})", mr.mutation_id); ++cs34_passed;
+                std::println("CS34 OK: typed_mutate define accepted (mid={})", mr.mutation_id);
+                ++cs34_passed;
             } else {
-                std::println(std::cerr, "CS34 FAIL: typed_mutate define rejected: {}",
-                             mr.error); ++cs34_failed;
+                std::println(std::cerr, "CS34 FAIL: typed_mutate define rejected: {}", mr.error);
+                ++cs34_failed;
             }
         }
 
@@ -3018,20 +3259,22 @@ int main() {
         // This tests Bug 1 fix: make_bool(true) must be accepted.
         {
             // First use eval to run the mutation (workspace path)
-            auto mr = cs34.typed_mutate(
-                R"cs((mutate:rebind "f" "(lambda (x) (* x 2))" "double-it"))cs");
+            auto mr =
+                cs34.typed_mutate(R"cs((mutate:rebind "f" "(lambda (x) (* x 2))" "double-it"))cs");
             if (mr.success) {
-                std::println("CS34 OK: typed_mutate rebind accepted"); ++cs34_passed;
+                std::println("CS34 OK: typed_mutate rebind accepted");
+                ++cs34_passed;
             } else {
-                std::println(std::cerr, "CS34 FAIL: typed_mutate rebind rejected: {}",
-                             mr.error); ++cs34_failed;
+                std::println(std::cerr, "CS34 FAIL: typed_mutate rebind rejected: {}", mr.error);
+                ++cs34_failed;
             }
             // Verify the mutation was accepted (Bug 1 fix: bool true return)
             // The mutation modifies workspace_flat_ which is separate from
             // current_ast_ used by eval_current(), so we verify the
             // typed_mutate API contract, not the AS effect via eval.
             // Actual workspace mutation effect is tested via Aura eval layer.
-            std::println("CS34 OK: typed_mutate accepts bool-true from mutation"); ++cs34_passed;
+            std::println("CS34 OK: typed_mutate accepts bool-true from mutation");
+            ++cs34_passed;
         }
 
         // Test 3: Verify multiple mutation results in the same session
@@ -3040,16 +3283,18 @@ int main() {
             auto mr2 = cs34.typed_mutate("(define b 2)");
             auto mr3 = cs34.typed_mutate("(define c 3)");
             if (mr1.success && mr2.success && mr3.success) {
-                std::println("CS34 OK: multiple typed_mutate calls work"); ++cs34_passed;
+                std::println("CS34 OK: multiple typed_mutate calls work");
+                ++cs34_passed;
             } else {
                 std::println(std::cerr, "CS34 FAIL: multiple typed_mutate failed");
                 ++cs34_failed;
             }
         }
 
-        std::println("typed_mutate typecheck (#34): {}/{}/{} passed/failed/total",
-                     cs34_passed, cs34_failed, cs34_passed + cs34_failed);
-        if (cs34_failed > 0) return 1;
+        std::println("typed_mutate typecheck (#34): {}/{}/{} passed/failed/total", cs34_passed,
+                     cs34_failed, cs34_passed + cs34_failed);
+        if (cs34_failed > 0)
+            return 1;
     }
 
     int dce_passed = 0, dce_failed = 0, gg_passed = 0, gg_failed = 0;
@@ -3059,51 +3304,71 @@ int main() {
         // Test 1: identity cast (same source and target type → remove)
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
             // IRInstruction fields: opcode, operands, source_ast_node_id, type_id
             block.instructions = {
-                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0 = 42, type_id=1 (Int)
-                {aura::ir::IROpcode::CastOp,   {1, 0, 1, 0}, 0, 1},    // cast to Int → identity (type_id=1)
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1}, // slot0 = 42, type_id=1 (Int)
+                {aura::ir::IROpcode::CastOp,
+                 {1, 0, 1, 0},
+                 0,
+                 1}, // cast to Int → identity (type_id=1)
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
             dce.run(mod);
             bool found_cast = false;
             for (auto& instr : block.instructions)
-                if (instr.opcode == aura::ir::IROpcode::CastOp) found_cast = true;
-            if (!found_cast) { ++dce_passed; std::println("DCE OK: identity cast eliminated"); }
-            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: identity cast not removed"); }
+                if (instr.opcode == aura::ir::IROpcode::CastOp)
+                    found_cast = true;
+            if (!found_cast) {
+                ++dce_passed;
+                std::println("DCE OK: identity cast eliminated");
+            } else {
+                ++dce_failed;
+                std::println(std::cerr, "DCE FAIL: identity cast not removed");
+            }
         }
 
         // Test 2: nested cast — (cast (cast x T1) T2) → (cast x T2)
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
             // IRInstruction fields: opcode, operands, source_ast_node_id, type_id
             block.instructions = {
-                {aura::ir::IROpcode::ConstI64, {0, 300, 0, 0}, 0, 1},   // slot0 = 300, type_id=1 (Int)
-                {aura::ir::IROpcode::CastOp,   {1, 0, 1, 0}, 0, 3},    // cast String (type_tag=1), type_id=3
-                {aura::ir::IROpcode::CastOp,   {2, 1, 0, 0}, 0, 1},    // cast back Int (type_tag=0), type_id=1
-                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::ConstI64,
+                 {0, 300, 0, 0},
+                 0,
+                 1}, // slot0 = 300, type_id=1 (Int)
+                {aura::ir::IROpcode::CastOp,
+                 {1, 0, 1, 0},
+                 0,
+                 3}, // cast String (type_tag=1), type_id=3
+                {aura::ir::IROpcode::CastOp,
+                 {2, 1, 0, 0},
+                 0,
+                 1}, // cast back Int (type_tag=0), type_id=1
+                {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
             dce.run(mod);
             // After elimination: only one CastOp (directly from slot0→slot2)
             int cast_count = 0;
             for (auto& instr : block.instructions)
-                if (instr.opcode == aura::ir::IROpcode::CastOp) ++cast_count;
-            if (cast_count == 1) { ++dce_passed; std::println("DCE OK: nested cast collapsed"); }
-            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: {} casts remain (expected 1)", cast_count); }
+                if (instr.opcode == aura::ir::IROpcode::CastOp)
+                    ++cast_count;
+            if (cast_count == 1) {
+                ++dce_passed;
+                std::println("DCE OK: nested cast collapsed");
+            } else {
+                ++dce_failed;
+                std::println(std::cerr, "DCE FAIL: {} casts remain (expected 1)", cast_count);
+            }
         }
 
         // Test 3: DCE doesn't break real code (smoke test)
@@ -3118,7 +3383,7 @@ int main() {
                 auto ir_mod2 = aura::compiler::lower_to_ir(flat2, pool2, arena2);
 
                 aura::compiler::DeadCoercionEliminationPass dce(&reg2);
-                dce.run(ir_mod2);  // should not crash or corrupt
+                dce.run(ir_mod2); // should not crash or corrupt
 
                 aura::compiler::IRContext ctx2(evaluator.primitives());
                 aura::compiler::IRInterpreter ir2(ir_mod2, ctx2);
@@ -3151,20 +3416,32 @@ int main() {
             auto& block = func.blocks.back();
             // Chain: Int → Int → Int → String, should collapse to single cast
             block.instructions = {
-                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0 = 42, type_id=1 (Int)
-                {aura::ir::IROpcode::CastOp,   {1, 0, 0, 0}, 0, 1},    // identity Int→Int (type_tag=0, redundant)
-                {aura::ir::IROpcode::CastOp,   {2, 1, 0, 0}, 0, 1},    // identity Int→Int (redundant)
-                {aura::ir::IROpcode::CastOp,   {3, 2, 1, 0}, 0, 3},    // real cast Int→String (type_tag=1)
-                {aura::ir::IROpcode::Return,   {3, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1}, // slot0 = 42, type_id=1 (Int)
+                {aura::ir::IROpcode::CastOp,
+                 {1, 0, 0, 0},
+                 0,
+                 1}, // identity Int→Int (type_tag=0, redundant)
+                {aura::ir::IROpcode::CastOp, {2, 1, 0, 0}, 0, 1}, // identity Int→Int (redundant)
+                {aura::ir::IROpcode::CastOp,
+                 {3, 2, 1, 0},
+                 0,
+                 3}, // real cast Int→String (type_tag=1)
+                {aura::ir::IROpcode::Return, {3, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
             dce.run(mod);
             int cast_count = 0;
             for (auto& instr : block.instructions)
-                if (instr.opcode == aura::ir::IROpcode::CastOp) ++cast_count;
+                if (instr.opcode == aura::ir::IROpcode::CastOp)
+                    ++cast_count;
             // Expected: 1 cast (Int→String), all identities removed
-            if (cast_count == 1) { ++dce_passed; std::println("DCE OK: chain of casts collapsed"); }
-            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: {} casts remain (expected 1)", cast_count); }
+            if (cast_count == 1) {
+                ++dce_passed;
+                std::println("DCE OK: chain of casts collapsed");
+            } else {
+                ++dce_failed;
+                std::println(std::cerr, "DCE FAIL: {} casts remain (expected 1)", cast_count);
+            }
         }
 
         // Test 5: DCE with type_id propagation through locals
@@ -3176,18 +3453,27 @@ int main() {
             auto& block = func.blocks.back();
             // ConstI64 has type_id=1 (Int). The CastOp targeting Int should be removed.
             block.instructions = {
-                {aura::ir::IROpcode::ConstI64, {0, 99, 0, 0}, 0, 1},   // slot0 = 99, type_id=1
-                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 1},     // slot1 = slot0 (pass-through), type_id=1
-                {aura::ir::IROpcode::CastOp,   {2, 1, 1, 0}, 0, 1},     // cast slot1→Int (redundant)
-                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::ConstI64, {0, 99, 0, 0}, 0, 1}, // slot0 = 99, type_id=1
+                {aura::ir::IROpcode::Local,
+                 {1, 0, 0, 0},
+                 0,
+                 1}, // slot1 = slot0 (pass-through), type_id=1
+                {aura::ir::IROpcode::CastOp, {2, 1, 1, 0}, 0, 1}, // cast slot1→Int (redundant)
+                {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
             dce.run(mod);
             bool found_cast = false;
             for (auto& instr : block.instructions)
-                if (instr.opcode == aura::ir::IROpcode::CastOp) found_cast = true;
-            if (!found_cast) { ++dce_passed; std::println("DCE OK: type propagation through Local"); }
-            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: cast not removed after propagation"); }
+                if (instr.opcode == aura::ir::IROpcode::CastOp)
+                    found_cast = true;
+            if (!found_cast) {
+                ++dce_passed;
+                std::println("DCE OK: type propagation through Local");
+            } else {
+                ++dce_failed;
+                std::println(std::cerr, "DCE FAIL: cast not removed after propagation");
+            }
         }
 
         // Test 6: DCE Float identity (different type tag)
@@ -3199,22 +3485,32 @@ int main() {
             auto& block = func.blocks.back();
             // Float constant → identity cast to Float
             block.instructions = {
-                {aura::ir::IROpcode::ConstF64, {0, 0, 0, 0}, 0, 4},   // slot0 = 3.14, type_id=4 (Float)
-                {aura::ir::IROpcode::CastOp,   {1, 0, 4, 0}, 0, 4},    // cast Float→Float (redundant)
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::ConstF64,
+                 {0, 0, 0, 0},
+                 0,
+                 4},                                              // slot0 = 3.14, type_id=4 (Float)
+                {aura::ir::IROpcode::CastOp, {1, 0, 4, 0}, 0, 4}, // cast Float→Float (redundant)
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
             dce.run(mod);
             bool found_cast = false;
             for (auto& instr : block.instructions)
-                if (instr.opcode == aura::ir::IROpcode::CastOp) found_cast = true;
-            if (!found_cast) { ++dce_passed; std::println("DCE OK: Float identity cast eliminated"); }
-            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: Float identity cast not removed"); }
+                if (instr.opcode == aura::ir::IROpcode::CastOp)
+                    found_cast = true;
+            if (!found_cast) {
+                ++dce_passed;
+                std::println("DCE OK: Float identity cast eliminated");
+            } else {
+                ++dce_failed;
+                std::println(std::cerr, "DCE FAIL: Float identity cast not removed");
+            }
         }
 
-        std::println("Dead coercion elimination: {}/{}/{} passed/failed/total",
-                     dce_passed, dce_failed, dce_passed + dce_failed);
-        if (dce_failed > 0) return 1;
+        std::println("Dead coercion elimination: {}/{}/{} passed/failed/total", dce_passed,
+                     dce_failed, dce_passed + dce_failed);
+        if (dce_failed > 0)
+            return 1;
     }
 
     // ── Issue #160: General Dead Code Elimination (DCEPass) ──
@@ -3227,9 +3523,7 @@ int main() {
         // Test 1: dead constant
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3238,8 +3532,11 @@ int main() {
             // produces slot1 which IS used.
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Local,    {1, 99, 0, 0}, 0, 1},  // slot1 = 99 (constant); slot0 not referenced
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Local,
+                 {1, 99, 0, 0},
+                 0,
+                 1}, // slot1 = 99 (constant); slot0 not referenced
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DCEPass dce;
             dce.run(mod);
@@ -3259,27 +3556,30 @@ int main() {
                     const_to_nop = true;
                 }
             }
-            if (const_to_nop) { ++dce2_passed; std::println("DCE OK: dead const eliminated"); }
-            else { ++dce2_failed; std::println(std::cerr, "DCE FAIL: dead const not removed"); }
+            if (const_to_nop) {
+                ++dce2_passed;
+                std::println("DCE OK: dead const eliminated");
+            } else {
+                ++dce2_failed;
+                std::println(std::cerr, "DCE FAIL: dead const not removed");
+            }
         }
 
         // Test 2: dead arithmetic
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
             // (let ((a (+ 1 2))) a) — but the (+ 1 2) result IS used.
             // (let ((a (+ 1 2))) 99) — the (+ 1 2) result is unused.
             block.instructions = {
-                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},   // slot0 = 1
-                {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},   // slot1 = 2
-                {aura::ir::IROpcode::Add,       {2, 0, 1, 0}, 0, 1},   // slot2 = slot0 + slot1
-                {aura::ir::IROpcode::ConstI64, {3, 99, 0, 0}, 0, 1},  // slot3 = 99 (used by Return)
-                {aura::ir::IROpcode::Return,   {3, 0, 0, 0}, 0, 0},   // return slot3
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},  // slot0 = 1
+                {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},  // slot1 = 2
+                {aura::ir::IROpcode::Add, {2, 0, 1, 0}, 0, 1},       // slot2 = slot0 + slot1
+                {aura::ir::IROpcode::ConstI64, {3, 99, 0, 0}, 0, 1}, // slot3 = 99 (used by Return)
+                {aura::ir::IROpcode::Return, {3, 0, 0, 0}, 0, 0},    // return slot3
             };
             aura::compiler::DCEPass dce;
             dce.run(mod);
@@ -3288,18 +3588,22 @@ int main() {
             // of Add) are also unreferenced → also Nop.
             int add_count = 0;
             for (auto& instr : block.instructions) {
-                if (instr.opcode == aura::ir::IROpcode::Add) ++add_count;
+                if (instr.opcode == aura::ir::IROpcode::Add)
+                    ++add_count;
             }
-            if (add_count == 0) { ++dce2_passed; std::println("DCE OK: dead arithmetic eliminated"); }
-            else { ++dce2_failed; std::println(std::cerr, "DCE FAIL: {} Add(s) remain (expected 0)", add_count); }
+            if (add_count == 0) {
+                ++dce2_passed;
+                std::println("DCE OK: dead arithmetic eliminated");
+            } else {
+                ++dce2_failed;
+                std::println(std::cerr, "DCE FAIL: {} Add(s) remain (expected 0)", add_count);
+            }
         }
 
         // Test 3: used result is preserved
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3307,59 +3611,64 @@ int main() {
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
                 {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Add,       {2, 0, 1, 0}, 0, 1},
-                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Add, {2, 0, 1, 0}, 0, 1},
+                {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DCEPass dce;
             dce.run(mod);
             int add_count = 0, const_count = 0;
             for (auto& instr : block.instructions) {
-                if (instr.opcode == aura::ir::IROpcode::Add) ++add_count;
-                if (instr.opcode == aura::ir::IROpcode::ConstI64) ++const_count;
+                if (instr.opcode == aura::ir::IROpcode::Add)
+                    ++add_count;
+                if (instr.opcode == aura::ir::IROpcode::ConstI64)
+                    ++const_count;
             }
             if (add_count == 1 && const_count == 2) {
                 ++dce2_passed;
                 std::println("DCE OK: used result preserved (no false positives)");
             } else {
                 ++dce2_failed;
-                std::println(std::cerr, "DCE FAIL: add={} const={} (expected 1, 2)", add_count, const_count);
+                std::println(std::cerr, "DCE FAIL: add={} const={} (expected 1, 2)", add_count,
+                             const_count);
             }
         }
 
         // Test 4: side-effecting ops are preserved (Call, Return, Branch)
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
             // Even with unused results, side-effecting ops stay.
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Call,      {99, 0, 0, 1}, 0, 0},  // Call(99, 0, 0, slot1)
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},   // return slot1
+                {aura::ir::IROpcode::Call, {99, 0, 0, 1}, 0, 0},  // Call(99, 0, 0, slot1)
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0}, // return slot1
             };
             aura::compiler::DCEPass dce;
             dce.run(mod);
             int call_count = 0, return_count = 0;
             for (auto& instr : block.instructions) {
-                if (instr.opcode == aura::ir::IROpcode::Call) ++call_count;
-                if (instr.opcode == aura::ir::IROpcode::Return) ++return_count;
+                if (instr.opcode == aura::ir::IROpcode::Call)
+                    ++call_count;
+                if (instr.opcode == aura::ir::IROpcode::Return)
+                    ++return_count;
             }
             if (call_count == 1 && return_count == 1) {
                 ++dce2_passed;
                 std::println("DCE OK: side-effecting ops preserved (Call, Return)");
             } else {
                 ++dce2_failed;
-                std::println(std::cerr, "DCE FAIL: call={} return={} (expected 1, 1)", call_count, return_count);
+                std::println(std::cerr, "DCE FAIL: call={} return={} (expected 1, 1)", call_count,
+                             return_count);
             }
         }
 
-        std::println("DCE (Issue #160): {}/{}/{} passed/failed/total",
-                     dce2_passed, dce2_failed, dce2_passed + dce2_failed);
-        if (dce2_failed > 0) return 1;
+        std::println("DCE (Issue #160): {}/{}/{} passed/failed/total", dce2_passed, dce2_failed,
+                     dce2_passed + dce2_failed);
+        if (dce2_failed > 0)
+            return 1;
     }
 
     // ── Issue #160: Escape Analysis Pass ─────────────
@@ -3372,9 +3681,7 @@ int main() {
         // Test 1: non-escaping local stays in escape_map[slot] = 0
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3394,17 +3701,14 @@ int main() {
             } else {
                 ++ea_failed;
                 std::println(std::cerr, "EA FAIL: escape_map[0]={} (expected 1)",
-                             func.escape_map.size() > 0 ?
-                             (int)func.escape_map[0] : -1);
+                             func.escape_map.size() > 0 ? (int)func.escape_map[0] : -1);
             }
         }
 
         // Test 2: non-escaping local (just used internally)
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3412,15 +3716,15 @@ int main() {
             // Return(slot1). slot0 escapes transitively via slot1.
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 1},  // slot1 = slot0
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Local, {1, 0, 0, 0}, 0, 1}, // slot1 = slot0
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::EscapeAnalysisPass ea;
             ea.run(mod);
             // slot0 escapes (used by slot1 which is returned).
             // slot1 escapes (returned).
-            if (func.escape_map.size() == 10 &&
-                func.escape_map[0] == 1 && func.escape_map[1] == 1) {
+            if (func.escape_map.size() == 10 && func.escape_map[0] == 1 &&
+                func.escape_map[1] == 1) {
                 ++ea_passed;
                 std::println("EA OK: transitive escape propagated through Local");
             } else {
@@ -3434,9 +3738,7 @@ int main() {
         // Test 3: unused local doesn't escape
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3444,15 +3746,15 @@ int main() {
             // (the Return uses literal 99 directly).
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Local,    {1, 99, 0, 0}, 0, 1},  // slot1 = literal 99
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Local, {1, 99, 0, 0}, 0, 1}, // slot1 = literal 99
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::EscapeAnalysisPass ea;
             ea.run(mod);
             // slot0 is unused (no one references it). slot1 escapes
             // (it's returned).
-            if (func.escape_map.size() == 10 &&
-                func.escape_map[0] == 0 && func.escape_map[1] == 1) {
+            if (func.escape_map.size() == 10 && func.escape_map[0] == 0 &&
+                func.escape_map[1] == 1) {
                 ++ea_passed;
                 std::println("EA OK: unused local not marked escaped");
             } else {
@@ -3463,9 +3765,10 @@ int main() {
             }
         }
 
-        std::println("Escape analysis (Issue #160): {}/{}/{} passed/failed/total",
-                     ea_passed, ea_failed, ea_passed + ea_failed);
-        if (ea_failed > 0) return 1;
+        std::println("Escape analysis (Issue #160): {}/{}/{} passed/failed/total", ea_passed,
+                     ea_failed, ea_passed + ea_failed);
+        if (ea_failed > 0)
+            return 1;
     }
 
     // ── Issue #160: Linear Ownership Pass (validation) ──
@@ -3482,15 +3785,13 @@ int main() {
         // Test 1: no linear ops → no warnings
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Return,   {0, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Return, {0, 0, 0, 0}, 0, 0},
             };
             aura::compiler::LinearOwnershipPass lo;
             lo.run(mod);
@@ -3507,9 +3808,7 @@ int main() {
         // Test 2: single MoveOp → no warning (just a normal move)
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3517,8 +3816,8 @@ int main() {
             // Single move, no double-move, no warning.
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::MoveOp,   {1, 0, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::MoveOp, {1, 0, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::LinearOwnershipPass lo;
             lo.run(mod);
@@ -3535,9 +3834,7 @@ int main() {
         // Test 3: double-move (slot moved twice) → use-after-move warning
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3545,9 +3842,9 @@ int main() {
             // slot0 is moved twice → use-after-move.
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::MoveOp,   {1, 0, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::MoveOp,   {2, 0, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::MoveOp, {1, 0, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::MoveOp, {2, 0, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
             };
             aura::compiler::LinearOwnershipPass lo;
             lo.run(mod);
@@ -3561,9 +3858,10 @@ int main() {
             }
         }
 
-        std::println("Linear ownership (Issue #160): {}/{}/{} passed/failed/total",
-                     lo_passed, lo_failed, lo_passed + lo_failed);
-        if (lo_failed > 0) return 1;
+        std::println("Linear ownership (Issue #160): {}/{}/{} passed/failed/total", lo_passed,
+                     lo_failed, lo_passed + lo_failed);
+        if (lo_failed > 0)
+            return 1;
     }
 
     // ── Issue #160: Type Propagation Pass (sub-item #4 partial) ──
@@ -3577,9 +3875,7 @@ int main() {
         // Test 1: Local propagates type_id from source
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3587,9 +3883,9 @@ int main() {
             // Local slot1 = slot0 (no type_id set, should propagate)
             // Return slot1
             block.instructions = {
-                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0, type_id=1
-                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 0},    // slot1, no type_id
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1}, // slot0, type_id=1
+                {aura::ir::IROpcode::Local, {1, 0, 0, 0}, 0, 0},     // slot1, no type_id
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::TypePropagationPass tp;
             tp.run(mod);
@@ -3606,9 +3902,7 @@ int main() {
         // Test 2: already-set type_id is preserved (no-op)
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3616,8 +3910,8 @@ int main() {
             // (already set). Pass should be a no-op.
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 1},  // already set
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Local, {1, 0, 0, 0}, 0, 1}, // already set
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             aura::compiler::TypePropagationPass tp;
             tp.run(mod);
@@ -3634,9 +3928,7 @@ int main() {
         // Test 3: binary op with two same-type operands propagates
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "test", .local_count = 10
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
@@ -3647,8 +3939,8 @@ int main() {
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
                 {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Add,       {2, 0, 1, 0}, 0, 0},  // no type_id
-                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Add, {2, 0, 1, 0}, 0, 0}, // no type_id
+                {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
             };
             aura::compiler::TypePropagationPass tp;
             tp.run(mod);
@@ -3662,9 +3954,10 @@ int main() {
             }
         }
 
-        std::println("Type propagation (Issue #160): {}/{}/{} passed/failed/total",
-                     tp_passed, tp_failed, tp_passed + tp_failed);
-        if (tp_failed > 0) return 1;
+        std::println("Type propagation (Issue #160): {}/{}/{} passed/failed/total", tp_passed,
+                     tp_failed, tp_passed + tp_failed);
+        if (tp_failed > 0)
+            return 1;
     }
 
     // ── Issue #160: Inline Expansion Pass (sub-item #6 minimal) ──
@@ -3678,16 +3971,14 @@ int main() {
         // recognized as inlinable
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "k42", .local_count = 2
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "k42", .local_count = 2});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             auto& block = func.blocks.back();
             // ConstI64 → Return
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Return,   {0, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Return, {0, 0, 0, 0}, 0, 0},
             };
             if (aura::compiler::InlinePass::is_trivial_inlinable_for_test(func)) {
                 ++inl_passed;
@@ -3701,9 +3992,7 @@ int main() {
         // Test 2: multi-block function is NOT recognized
         {
             aura::ir::IRModule mod;
-            mod.functions.push_back(aura::ir::IRFunction{
-                .name = "multi", .local_count = 5
-            });
+            mod.functions.push_back(aura::ir::IRFunction{.name = "multi", .local_count = 5});
             auto& func = mod.functions.back();
             func.blocks.push_back({0});
             func.blocks.push_back({1});
@@ -3711,11 +4000,11 @@ int main() {
             auto& b1 = func.blocks[1];
             b0.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Branch,   {0, 0, 1, 0}, 0, 0},
+                {aura::ir::IROpcode::Branch, {0, 0, 1, 0}, 0, 0},
             };
             b1.instructions = {
                 {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},
-                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             if (!aura::compiler::InlinePass::is_trivial_inlinable_for_test(func)) {
                 ++inl_passed;
@@ -3726,20 +4015,25 @@ int main() {
             }
         }
 
-        std::println("Inline (Issue #160): {}/{}/{} passed/failed/total",
-                     inl_passed, inl_failed, inl_passed + inl_failed);
-        if (inl_failed > 0) return 1;
+        std::println("Inline (Issue #160): {}/{}/{} passed/failed/total", inl_passed, inl_failed,
+                     inl_passed + inl_failed);
+        if (inl_failed > 0)
+            return 1;
     }
 
     // ── Iter 8: Gradual Guarantee tests ────────────────────────
     {
 
         // Test: annotation erasure — code works with or without annotations
-        struct GGTest { std::string annotated; std::string erased; std::string expected; };
+        struct GGTest {
+            std::string annotated;
+            std::string erased;
+            std::string expected;
+        };
         GGTest gg_tests[] = {
-            {"(: x Int 42)",            "42",                "42"},
-            {"(: x Int (+ 1 2))",       "(+ 1 2)",          "3"},
-            {"42",                      "42",                "42"},
+            {"(: x Int 42)", "42", "42"},
+            {"(: x Int (+ 1 2))", "(+ 1 2)", "3"},
+            {"42", "42", "42"},
         };
 
         for (auto& t : gg_tests) {
@@ -3752,21 +4046,25 @@ int main() {
                 flat_a.root = pr_a.root;
                 if (!pr_a.success) {
                     std::println(std::cerr, "GG FAIL: parse(annotated) failed: {}", t.annotated);
-                    ++gg_failed; continue;
+                    ++gg_failed;
+                    continue;
                 }
                 auto ir_a = aura::compiler::lower_to_ir(flat_a, pool_a, arena_a);
                 aura::compiler::IRContext ctx(evaluator.primitives());
                 aura::compiler::IRInterpreter ir_a_run(ir_a, ctx);
                 auto res_a = ir_a_run.execute();
                 if (!res_a) {
-                    std::println(std::cerr, "GG FAIL: exec(annotated) failed: {}", res_a.error().format());
-                    ++gg_failed; continue;
+                    std::println(std::cerr, "GG FAIL: exec(annotated) failed: {}",
+                                 res_a.error().format());
+                    ++gg_failed;
+                    continue;
                 }
                 auto got_a = aura::compiler::types::format_value(*res_a);
                 if (got_a != t.expected) {
                     std::println(std::cerr, "GG FAIL: annotated '{}' got '{}' expected '{}'",
-                                  t.annotated, got_a, t.expected);
-                    ++gg_failed; continue;
+                                 t.annotated, got_a, t.expected);
+                    ++gg_failed;
+                    continue;
                 }
             }
             // Test erased version (all annotations removed)
@@ -3778,45 +4076,54 @@ int main() {
                 flat_e.root = pr_e.root;
                 if (!pr_e.success) {
                     std::println(std::cerr, "GG FAIL: parse(erased) failed: {}", t.erased);
-                    ++gg_failed; continue;
+                    ++gg_failed;
+                    continue;
                 }
                 auto ir_e = aura::compiler::lower_to_ir(flat_e, pool_e, arena_e);
                 aura::compiler::IRContext ctx(evaluator.primitives());
                 aura::compiler::IRInterpreter ir_e_run(ir_e, ctx);
                 auto res_e = ir_e_run.execute();
                 if (!res_e) {
-                    std::println(std::cerr, "GG FAIL: exec(erased) failed: {}", res_e.error().format());
-                    ++gg_failed; continue;
+                    std::println(std::cerr, "GG FAIL: exec(erased) failed: {}",
+                                 res_e.error().format());
+                    ++gg_failed;
+                    continue;
                 }
                 auto got_e = aura::compiler::types::format_value(*res_e);
                 if (got_e != t.expected) {
-                    std::println(std::cerr, "GG FAIL: erased '{}' got '{}' expected '{}'",
-                                  t.erased, got_e, t.expected);
-                    ++gg_failed; continue;
+                    std::println(std::cerr, "GG FAIL: erased '{}' got '{}' expected '{}'", t.erased,
+                                 got_e, t.expected);
+                    ++gg_failed;
+                    continue;
                 }
                 ++gg_passed;
-                std::println("GG OK: annotated=erased for '{}' (both got {})", t.annotated, t.expected);
+                std::println("GG OK: annotated=erased for '{}' (both got {})", t.annotated,
+                             t.expected);
             }
         }
 
-        std::println("Gradual guarantee: {}/{}/{} passed/failed/total",
-                     gg_passed, gg_failed, gg_passed + gg_failed);
-        if (gg_failed > 0) return 1;
+        std::println("Gradual guarantee: {}/{}/{} passed/failed/total", gg_passed, gg_failed,
+                     gg_passed + gg_failed);
+        if (gg_failed > 0)
+            return 1;
     }
 
-    std::println("Memory pool test: {}/{}/{} passed/failed/total",
-                 mp_passed, mp_failed, mp_passed + mp_failed);
-    
-    
+    std::println("Memory pool test: {}/{}/{} passed/failed/total", mp_passed, mp_failed,
+                 mp_passed + mp_failed);
 
-// ── FlatAST child_count preservation test ────────────────────
-// This test reproduces the splice bug: parse_to_flat with an existing
-// non-empty FlatAST corrupts child_count_ of existing nodes.
+
+    // ── FlatAST child_count preservation test ────────────────────
+    // This test reproduces the splice bug: parse_to_flat with an existing
+    // non-empty FlatAST corrupts child_count_ of existing nodes.
     // ── FlatAST child_count preservation test (arena ver) ────────
     bool flat_failed = false;
     auto flat_test = [&](const std::string& name, bool ok) {
-        if (ok) std::println("  [32mOK[0m: {}", name);
-        else { std::println("  [31mFAIL[0m: {}", name); flat_failed = true; }
+        if (ok)
+            std::println("  [32mOK[0m: {}", name);
+        else {
+            std::println("  [31mFAIL[0m: {}", name);
+            flat_failed = true;
+        }
     };
 
     {
@@ -3842,7 +4149,7 @@ int main() {
             } else {
                 auto v2 = flat->get(pr1.root);
                 flat_test("arena: root children preserved after second parse_to_flat",
-                    v2.children.size() == count_before);
+                          v2.children.size() == count_before);
             }
         }
 
@@ -3860,7 +4167,7 @@ int main() {
                 if (pr4.success && pr4.root != aura::ast::NULL_NODE) {
                     auto v4 = f2.get(pr3.root);
                     flat_test("non-arena: root children preserved after second parse",
-                        v4.children.size() == count3);
+                              v4.children.size() == count3);
                 }
             }
         }
@@ -3884,7 +4191,8 @@ int main() {
             for (auto& func : mod.functions) {
                 for (auto& blk : func.blocks) {
                     for (auto& instr : blk.instructions) {
-                        if (instr.type_id == 0) continue;
+                        if (instr.type_id == 0)
+                            continue;
                         if (filter_op == IROpcode::Nop || instr.opcode == filter_op)
                             ++count;
                     }
@@ -3897,7 +4205,8 @@ int main() {
             for (auto& func : mod.functions)
                 for (auto& blk : func.blocks)
                     for (auto& instr : blk.instructions)
-                        if (instr.opcode == op) ++count;
+                        if (instr.opcode == op)
+                            ++count;
             return count;
         };
 
@@ -3921,7 +4230,8 @@ int main() {
                     for (auto& instr : blk.instructions)
                         if (instr.opcode == IROpcode::ConstI64) {
                             ++const_total;
-                            if (instr.type_id == 1) ++const_with_type;
+                            if (instr.type_id == 1)
+                                ++const_with_type;
                         }
             if (const_total >= 1 && const_with_type == const_total) {
                 std::println("TP OK: literal int → {} ConstI64 with type_id=1", const_total);
@@ -3952,10 +4262,12 @@ int main() {
             for (auto& func : mod.functions) {
                 for (auto& blk : func.blocks) {
                     for (auto& instr : blk.instructions) {
-                        if (instr.type_id != 0) ++with_type;
+                        if (instr.type_id != 0)
+                            ++with_type;
                         if (instr.opcode == IROpcode::Add) {
                             ++add_count;
-                            if (instr.type_id == 1) ++with_type; // INT = 1
+                            if (instr.type_id == 1)
+                                ++with_type; // INT = 1
                         }
                     }
                 }
@@ -3965,7 +4277,8 @@ int main() {
                              with_type);
                 ++ti_passed;
             } else {
-                std::println(std::cerr,
+                std::println(
+                    std::cerr,
                     "TP FAIL: (+ 1 2) expected Add type_id=1, add_count={} typed_instrs={}",
                     add_count, with_type);
                 ++ti_failed;
@@ -3993,7 +4306,8 @@ int main() {
                         if (instr.opcode == IROpcode::CastOp) {
                             ++total_cast;
                             // CastOp should have type_id=3 (target is String)
-                            if (instr.type_id == 3) ++cast_type_ok;
+                            if (instr.type_id == 3)
+                                ++cast_type_ok;
                         }
                     }
                 }
@@ -4004,8 +4318,8 @@ int main() {
                 ++ti_passed;
             } else {
                 std::println(std::cerr,
-                    "TP FAIL: Coercion CastOp expected type_id=3, cast={} ok={}",
-                    total_cast, cast_type_ok);
+                             "TP FAIL: Coercion CastOp expected type_id=3, cast={} ok={}",
+                             total_cast, cast_type_ok);
                 ++ti_failed;
             }
         }
@@ -4020,21 +4334,21 @@ int main() {
             auto& block = func.blocks.back();
             // ConstI64(slot0, 42) with type_id=1 (Int), then redundant CastOp(Int→Int)
             block.instructions = {
-                {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},  // slot0=42, type_id=1 (Int)
-                {IROpcode::CastOp,   {1, 0, 1, 0}, 0, 1},   // cast Int→Int, type_id=1
-                {IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+                {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1}, // slot0=42, type_id=1 (Int)
+                {IROpcode::CastOp, {1, 0, 1, 0}, 0, 1},    // cast Int→Int, type_id=1
+                {IROpcode::Return, {1, 0, 0, 0}, 0, 0},
             };
             int casts_before = find_instructions_with_opcode(mod, IROpcode::CastOp);
             mod.optimize_type_info();
             int casts_after = find_instructions_with_opcode(mod, IROpcode::CastOp);
             if (casts_after < casts_before) {
-                std::println("TP OK: optimize_type_info eliminated CastOp ({}→{})",
-                             casts_before, casts_after);
+                std::println("TP OK: optimize_type_info eliminated CastOp ({}→{})", casts_before,
+                             casts_after);
                 ++ti_passed;
             } else {
                 std::println(std::cerr,
-                    "TP FAIL: optimize_type_info did not eliminate CastOp ({}→{})",
-                    casts_before, casts_after);
+                             "TP FAIL: optimize_type_info did not eliminate CastOp ({}→{})",
+                             casts_before, casts_after);
                 ++ti_failed;
             }
         }
@@ -4062,7 +4376,8 @@ int main() {
                 for (auto& blk : func.blocks)
                     for (auto& instr : blk.instructions) {
                         ++instr_count;
-                        if (instr.type_id != 0) ++with_type;
+                        if (instr.type_id != 0)
+                            ++with_type;
                     }
             // Without SourceScope, most compound instrs would have type_id=0
             // With fix, > 50% should have type info
@@ -4072,15 +4387,16 @@ int main() {
                 ++ti_passed;
             } else {
                 std::println(std::cerr,
-                    "TP FAIL: (if ...) — only {}/{} instrs have type_id (expected >={})",
-                    with_type, instr_count, instr_count / 2);
+                             "TP FAIL: (if ...) — only {}/{} instrs have type_id (expected >={})",
+                             with_type, instr_count, instr_count / 2);
                 ++ti_failed;
             }
         }
 
-        std::println("TypeID propagation tests: {}/{}/{} passed/failed/total",
-                     ti_passed, ti_failed, ti_passed + ti_failed);
-        if (ti_failed > 0) return 1;
+        std::println("TypeID propagation tests: {}/{}/{} passed/failed/total", ti_passed, ti_failed,
+                     ti_passed + ti_failed);
+        if (ti_failed > 0)
+            return 1;
     }
 
     // ── Dirty propagation tests (Issue #28) ────────────────────
@@ -4097,19 +4413,22 @@ int main() {
             // Build: (let ((x 10)) (+ x 1))
             // let node: child[0]=x, child[1]=10, child[2]=(+ x 1)
             // (+ x 1): child[0]=+, child[1]=x, child[2]=1
-            auto ten = flat.add_literal(10);           // node 0
-            auto one = flat.add_literal(1);             // node 1
+            auto ten = flat.add_literal(10); // node 0
+            auto one = flat.add_literal(1);  // node 1
             auto x_sym_val = static_cast<aura::ast::SymId>(42);
-            auto x_var = flat.add_variable(x_sym_val);  // node 2
-            auto plus_var = flat.add_variable(0);        // node 3 (sym 0 = "+" placeholder)
+            auto x_var = flat.add_variable(x_sym_val); // node 2
+            auto plus_var = flat.add_variable(0);      // node 3 (sym 0 = "+" placeholder)
             aura::ast::NodeId plus_args[] = {plus_var, x_var, one};
-            auto plus_call = flat.add_call(plus_var, plus_args); // node 4
+            auto plus_call = flat.add_call(plus_var, plus_args);     // node 4
             auto let_node = flat.add_let(x_sym_val, ten, plus_call); // node 5
             flat.root = let_node;
             // Verify no node is dirty initially
             bool all_clean = true;
             for (aura::ast::NodeId i = 0; i < flat.size(); ++i)
-                if (flat.is_dirty(i)) { all_clean = false; break; }
+                if (flat.is_dirty(i)) {
+                    all_clean = false;
+                    break;
+                }
             // Mark ten (the value) dirty + upward: should mark ten, let_node
             flat.mark_dirty_upward(ten);
             bool ten_dirty = flat.is_dirty(ten);
@@ -4118,12 +4437,14 @@ int main() {
             bool x_clean = !flat.is_dirty(x_var);
             bool plus_clean = !flat.is_dirty(plus_call);
             if (all_clean && ten_dirty && let_dirty && one_clean && x_clean && plus_clean) {
-                std::println("DP OK: mark_dirty_upward ten → ancestors (let) dirty, siblings clean");
+                std::println(
+                    "DP OK: mark_dirty_upward ten → ancestors (let) dirty, siblings clean");
                 ++dp_passed;
             } else {
                 std::println(std::cerr,
-                    "DP FAIL: all_clean={} ten_dirty={} let_dirty={} one_clean={} x_clean={} plus_clean={}",
-                    all_clean, ten_dirty, let_dirty, one_clean, x_clean, plus_clean);
+                             "DP FAIL: all_clean={} ten_dirty={} let_dirty={} one_clean={} "
+                             "x_clean={} plus_clean={}",
+                             all_clean, ten_dirty, let_dirty, one_clean, x_clean, plus_clean);
                 ++dp_failed;
             }
         }
@@ -4148,9 +4469,8 @@ int main() {
                 std::println("DP OK: mark_dirty_upward root → root dirty, children clean");
                 ++dp_passed;
             } else {
-                std::println(std::cerr,
-                    "DP FAIL: root_dirty={} lit_clean={} var_clean={}",
-                    root_dirty, lit_clean, var_clean);
+                std::println(std::cerr, "DP FAIL: root_dirty={} lit_clean={} var_clean={}",
+                             root_dirty, lit_clean, var_clean);
                 ++dp_failed;
             }
         }
@@ -4170,7 +4490,10 @@ int main() {
             flat.clear_all_dirty();
             bool all_clean = true;
             for (aura::ast::NodeId i = 0; i < flat.size(); ++i)
-                if (flat.is_dirty(i)) { all_clean = false; break; }
+                if (flat.is_dirty(i)) {
+                    all_clean = false;
+                    break;
+                }
             if (all_clean) {
                 std::println("DP OK: clear_all_dirty resets all nodes");
                 ++dp_passed;
@@ -4219,9 +4542,8 @@ int main() {
                 std::println("DP OK: typecheck after mark_dirty_upward returns consistent type");
                 ++dp_passed;
             } else {
-                std::println(std::cerr,
-                    "DP FAIL: first_check_ok={} second_check_ok={}",
-                    first_check_ok, second_check_ok);
+                std::println(std::cerr, "DP FAIL: first_check_ok={} second_check_ok={}",
+                             first_check_ok, second_check_ok);
                 ++dp_failed;
             }
         }
@@ -4257,15 +4579,14 @@ int main() {
             // Verify cache actually fired (the post-#72 fix should
             // make this > 0). We test via the exposed stats API.
             auto stats2 = tc.stats();
-            if (ty1 == treg.int_type() && ty2 == treg.int_type() &&
-                stats2.cache_hits > 0) {
+            if (ty1 == treg.int_type() && ty2 == treg.int_type() && stats2.cache_hits > 0) {
                 std::println("DP OK: incremental typecheck fires cache_hits={} on clean tree",
                              stats2.cache_hits);
                 ++dp_passed;
             } else {
-                std::println(std::cerr, "DP FAIL: clean tree typecheck: ty1={} ty2={} cache_hits={}",
-                             treg.format_type(ty1), treg.format_type(ty2),
-                             stats2.cache_hits);
+                std::println(std::cerr,
+                             "DP FAIL: clean tree typecheck: ty1={} ty2={} cache_hits={}",
+                             treg.format_type(ty1), treg.format_type(ty2), stats2.cache_hits);
                 ++dp_failed;
             }
         }
@@ -4304,9 +4625,10 @@ int main() {
             }
         }
 
-        std::println("Dirty propagation tests: {}/{}/{} passed/failed/total",
-                     dp_passed, dp_failed, dp_passed + dp_failed);
-        if (dp_failed > 0) return 1;
+        std::println("Dirty propagation tests: {}/{}/{} passed/failed/total", dp_passed, dp_failed,
+                     dp_passed + dp_failed);
+        if (dp_failed > 0)
+            return 1;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -4317,9 +4639,10 @@ int main() {
 
         // Helper: build a FlatAST with a single dirty linear binding
         // and a body, then run validate_ownership.
-        auto run_own = [&](const std::string& name, std::function<void(
-                aura::ast::FlatAST&, aura::ast::StringPool&,
-                aura::ast::NodeId&)> build_ast) -> int {
+        auto run_own =
+            [&](const std::string& name,
+                std::function<void(aura::ast::FlatAST&, aura::ast::StringPool&, aura::ast::NodeId&)>
+                    build_ast) -> int {
             aura::ast::ASTArena arena3;
             auto alloc = arena3.allocator();
             aura::ast::FlatAST flat(alloc);
@@ -4329,23 +4652,27 @@ int main() {
             flat.root = root;
             std::unordered_set<std::string> dirty = {"x"};
             std::vector<aura::compiler::OwnershipNote> notes;
-            bool pass = aura::compiler::OwnershipEnv::validate_ownership(
-                flat, pool, root, dirty, notes);
+            bool pass =
+                aura::compiler::OwnershipEnv::validate_ownership(flat, pool, root, dirty, notes);
             int leak_count = 0;
             int use_after_move_count = 0;
             for (auto& n : notes) {
-                if (n.kind == "leaked-linear") leak_count++;
-                if (n.kind == "use-after-move") use_after_move_count++;
+                if (n.kind == "leaked-linear")
+                    leak_count++;
+                if (n.kind == "use-after-move")
+                    use_after_move_count++;
             }
-            std::println("OWN: {} → pass={} leaks={} uam={}", name, pass, leak_count, use_after_move_count);
+            std::println("OWN: {} → pass={} leaks={} uam={}", name, pass, leak_count,
+                         use_after_move_count);
             return leak_count;
         };
 
         // Test 1: linear resource declared but never moved → leaked-linear
         // Build: (let ((x mk)) (display x))  — x is never moved
         {
-            int leaks = run_own("let-no-move",
-                [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId& root) {
+            int leaks =
+                run_own("let-no-move", [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                          aura::ast::NodeId& root) {
                     auto x_sym = pool.intern("x");
                     auto x_var = flat.add_variable(x_sym);
                     auto mk = pool.intern("mk");
@@ -4374,7 +4701,8 @@ int main() {
         // (Actually with my walker, the let introduces x and y both in the
         // let body scope. y is moved, x is leaked.)
         {
-            int leaks = run_own("let-y-moved-x-leaked",
+            int leaks = run_own(
+                "let-y-moved-x-leaked",
                 [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId& root) {
                     auto x_sym = pool.intern("x");
                     auto y_sym = pool.intern("y");
@@ -4402,8 +4730,9 @@ int main() {
         // Test 3: linear resource properly moved → no leak
         // Build: (let ((x mk)) (move x))  — x is moved at end of body
         {
-            int leaks = run_own("let-moved",
-                [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId& root) {
+            int leaks =
+                run_own("let-moved", [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                        aura::ast::NodeId& root) {
                     auto x_sym = pool.intern("x");
                     auto mk = pool.intern("mk");
                     auto mk_var = flat.add_variable(mk);
@@ -4422,9 +4751,10 @@ int main() {
             }
         }
 
-        std::println("Ownership validation tests: {}/{}/{} passed/failed/total",
-                     own_passed, own_failed, own_passed + own_failed);
-        if (own_failed > 0) return 1;
+        std::println("Ownership validation tests: {}/{}/{} passed/failed/total", own_passed,
+                     own_failed, own_passed + own_failed);
+        if (own_failed > 0)
+            return 1;
     }
 
     // ── 2g. Issue #106 sub-task 4: AOT pair? precedence regression ─
@@ -4450,7 +4780,8 @@ int main() {
     // trigger a false positive.
     {
         std::ifstream src("/home/dev/code/aura/src/main.cpp");
-        std::stringstream buf; buf << src.rdbuf();
+        std::stringstream buf;
+        buf << src.rdbuf();
         std::string s = buf.str();
         std::size_t pos = 0;
         int found = 0;
@@ -4458,9 +4789,13 @@ int main() {
             ++pos;
             // Read the next line; skip if it's a comment.
             std::size_t eol = s.find('\n', pos);
-            if (eol == std::string::npos) break;
+            if (eol == std::string::npos)
+                break;
             std::string line = s.substr(pos, eol - pos);
-            if (line.find("//") != std::string::npos) { pos = eol + 1; continue; }
+            if (line.find("//") != std::string::npos) {
+                pos = eol + 1;
+                continue;
+            }
             // Look for the exact generated pattern: a return
             // statement with `a[0]<0` in a non-comment line.
             if (line.find("return") != std::string::npos &&
@@ -4471,12 +4806,13 @@ int main() {
         }
         if (found == 0) {
             ++ts_passed;
-            std::println("AOT OK: no generated return statement contains stale `a[0]<0` (Issue #106)");
+            std::println(
+                "AOT OK: no generated return statement contains stale `a[0]<0` (Issue #106)");
         } else {
             ++ts_failed;
             std::println(std::cerr,
-                "AOT FAIL: {} generated return statement(s) contain stale `a[0]<0` clause",
-                found);
+                         "AOT FAIL: {} generated return statement(s) contain stale `a[0]<0` clause",
+                         found);
         }
     }
 
@@ -4488,7 +4824,7 @@ int main() {
     // that's outside the type-checker test surface.
     {
         if constexpr (std::is_same_v<aura::compiler::Evaluator::WorkspaceMutex,
-                                    std::shared_mutex>) {
+                                     std::shared_mutex>) {
             ++ts_passed;
             std::println("TS OK: Evaluator::WorkspaceMutex is std::shared_mutex (Issue #107)");
         } else {
@@ -4497,5 +4833,8 @@ int main() {
         }
     }
 
-    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
+    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed +
+            gg_failed + ts_failed + flat_failed) > 0
+               ? 1
+               : 0;
 }

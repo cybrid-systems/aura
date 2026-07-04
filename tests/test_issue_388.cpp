@@ -77,8 +77,7 @@ bool test_inline_pass_stats_shape() {
     CompilerService cs;
     auto r = cs.eval("(compile:inline-pass-stats)");
     CHECK(r.has_value(), "(compile:inline-pass-stats) callable");
-    CHECK(r && aura::compiler::types::is_hash(*r),
-          "inline-pass-stats returns a hash");
+    CHECK(r && aura::compiler::types::is_hash(*r), "inline-pass-stats returns a hash");
     // Walk the hash to confirm 4 keys (inlined, branch-aware,
     // macro-hygiene-skipped, total). Without a hash-ref
     // primitive, we just verify the hash is non-empty.

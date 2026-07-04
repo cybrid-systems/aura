@@ -63,14 +63,14 @@ void register_type_and_char_primitives(PrimRegistrar add) {
     add("char=?", [](const auto& a) {
         if (a.size() < 2)
             return types::make_bool(false);
-        return types::make_bool(types::is_int(a[0]) && types::is_int(a[1])
-                                && types::as_int(a[0]) == types::as_int(a[1]));
+        return types::make_bool(types::is_int(a[0]) && types::is_int(a[1]) &&
+                                types::as_int(a[0]) == types::as_int(a[1]));
     });
     add("char<?", [](const auto& a) {
         if (a.size() < 2)
             return types::make_bool(false);
-        return types::make_bool(types::is_int(a[0]) && types::is_int(a[1])
-                                && types::as_int(a[0]) < types::as_int(a[1]));
+        return types::make_bool(types::is_int(a[0]) && types::is_int(a[1]) &&
+                                types::as_int(a[0]) < types::as_int(a[1]));
     });
     add("char->integer", [](const auto& a) {
         if (a.empty() || !types::is_int(a[0]))
@@ -119,4 +119,4 @@ void register_type_and_char_primitives(PrimRegistrar add) {
     });
 }
 
-}  // namespace aura::compiler::primitives_detail
+} // namespace aura::compiler::primitives_detail

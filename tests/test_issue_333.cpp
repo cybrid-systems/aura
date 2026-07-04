@@ -43,15 +43,17 @@ bool test_roundtrip_preserves_state() {
     auto n1 = src.add_raw_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
     src.set_child(n0, 0, n1);
     // Bump generation a few times via raw API.
-    src.mark_dirty(n0, 0x01);  // kGeneralDirty
-    src.mark_dirty(n1, 0x02);  // kConstraintDirty
+    src.mark_dirty(n0, 0x01); // kGeneralDirty
+    src.mark_dirty(n1, 0x02); // kConstraintDirty
     src.bump_generation();
     src.bump_generation();
     std::uint16_t gen_src = src.generation();
     const auto* dirty_col_src = &src.dirty_column();
     std::size_t dirty_count_src = 0;
     if (dirty_col_src) {
-        for (auto b : *dirty_col_src) if (b) ++dirty_count_src;
+        for (auto b : *dirty_col_src)
+            if (b)
+                ++dirty_count_src;
     }
     std::println("  src: gen={} dirty_count={}", gen_src, dirty_count_src);
     // Serialize.
@@ -65,7 +67,9 @@ bool test_roundtrip_preserves_state() {
     const auto* dirty_col_dst = &dst.dirty_column();
     std::size_t dirty_count_dst = 0;
     if (dirty_col_dst) {
-        for (auto b : *dirty_col_dst) if (b) ++dirty_count_dst;
+        for (auto b : *dirty_col_dst)
+            if (b)
+                ++dirty_count_dst;
     }
     std::println("  dst: gen={} dirty_count={}", gen_dst, dirty_count_dst);
     CHECK(gen_dst == gen_src, "generation_ preserved exactly");
@@ -88,8 +92,8 @@ bool test_stable_ref_post_restore() {
     std::uint16_t gen_at_capture = ref_pre.gen;
     std::uint16_t current_gen = src.generation();
     bool valid_pre = ref_pre.is_valid_in(src);
-    std::println("  pre-serialize: ref.gen={} current.gen={} valid={}",
-                 gen_at_capture, current_gen, valid_pre);
+    std::println("  pre-serialize: ref.gen={} current.gen={} valid={}", gen_at_capture, current_gen,
+                 valid_pre);
     std::vector<char> buf;
     src.serialize_soa(buf);
     std::size_t pos = 0;
@@ -101,15 +105,14 @@ bool test_stable_ref_post_restore() {
     auto ref_post = dst.make_ref(n0);
     bool valid_post = ref_post.is_valid_in(dst);
     std::uint16_t post_gen = dst.generation();
-    std::println("  post-restore: ref.gen={} dst.gen={} valid={}",
-                 ref_post.gen, post_gen, valid_post);
+    std::println("  post-restore: ref.gen={} dst.gen={} valid={}", ref_post.gen, post_gen,
+                 valid_post);
     CHECK(post_gen == current_gen, "post-restore gen matches pre-serialize gen");
     // Note: is_valid_in may check fields beyond gen (mutation_id_at_capture,
     // workspace_id per Issue #291). The pre-serialize ref can't be
     // validated against dst (different object), but a ref created
     // in dst with matching gen should match gen exactly.
-    CHECK(ref_post.gen == post_gen,
-          "post-restore ref.gen == dst.gen (foundation for validity)");
+    CHECK(ref_post.gen == post_gen, "post-restore ref.gen == dst.gen (foundation for validity)");
     return true;
 }
 
@@ -120,8 +123,8 @@ bool test_50_cycle_random_stress() {
     // Seed with 10 nodes.
     std::vector<NodeId> nodes;
     for (int i = 0; i < 10; ++i) {
-        nodes.push_back(src.add_raw_node(aura::ast::NodeTag::LiteralInt,
-                                     aura::ast::SyntaxMarker::User));
+        nodes.push_back(
+            src.add_raw_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User));
     }
     // Wire a simple chain via set_child_locked (no guard acquisition needed).
     for (std::size_t i = 1; i < nodes.size(); ++i) {
@@ -142,11 +145,12 @@ bool test_50_cycle_random_stress() {
         src.serialize_soa(buf);
         std::size_t pos = 0;
         FlatAST dst = FlatAST::deserialize_soa(buf, pos);
-        if (dst.generation() == src.generation()) ++roundtrips_ok;
+        if (dst.generation() == src.generation())
+            ++roundtrips_ok;
     }
     std::uint16_t gen_final = src.generation();
-    std::println("  initial gen={} final gen={} delta={}",
-                 gen_initial, gen_final, gen_final - gen_initial);
+    std::println("  initial gen={} final gen={} delta={}", gen_initial, gen_final,
+                 gen_final - gen_initial);
     std::println("  roundtrips_ok: {}/50", roundtrips_ok);
     CHECK(roundtrips_ok == 50, "all 50 roundtrips preserve gen exactly");
     CHECK(gen_final >= gen_initial + 49,

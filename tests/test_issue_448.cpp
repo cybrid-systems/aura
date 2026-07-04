@@ -19,8 +19,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -52,8 +52,7 @@ bool test_evaluator_accessors() {
         ++g_failed;
         return false;
     }
-    const auto baseline =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     // Bumping via the public API must change the query result.
     // The test does it via direct call into the service's
     // Evaluator; we can also bump via the API exposed through
@@ -64,10 +63,8 @@ bool test_evaluator_accessors() {
         ++g_failed;
         return false;
     }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(after >= baseline,
-          "query:mutation-coordination-stats is monotonic (>= baseline)");
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(after >= baseline, "query:mutation-coordination-stats is monotonic (>= baseline)");
     return true;
 }
 
@@ -84,10 +81,8 @@ bool test_bump_helpers() {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count >= 0,
-          "query:mutation-coordination-stats count >= 0 (sanity)");
+    const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    CHECK(count >= 0, "query:mutation-coordination-stats count >= 0 (sanity)");
     return true;
 }
 
@@ -105,8 +100,7 @@ bool test_steal_violation_accessor() {
         ++g_failed;
         return false;
     }
-    CHECK(r.has_value(),
-          "query:mutation-coordination-stats reachable (service API surface)");
+    CHECK(r.has_value(), "query:mutation-coordination-stats reachable (service API surface)");
     return true;
 }
 
@@ -158,13 +152,13 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 11 31) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 11 31) == 42 (regression)");
     return true;
 }
 
 int run_tests() {
-    std::println("Issue #448 (per-fiber MutationBoundary + GC safepoint + work-steal coordination)\n");
+    std::println(
+        "Issue #448 (per-fiber MutationBoundary + GC safepoint + work-steal coordination)\n");
     test_query_mutation_coordination_stats();
     test_evaluator_accessors();
     test_bump_helpers();
@@ -178,8 +172,12 @@ int run_tests() {
 
 } // namespace aura_issue_448_detail
 
-int aura_issue_448_run() { return aura_issue_448_detail::run_tests(); }
+int aura_issue_448_run() {
+    return aura_issue_448_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_448_run(); }
+int main() {
+    return aura_issue_448_run();
+}
 #endif

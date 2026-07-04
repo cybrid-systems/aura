@@ -33,16 +33,29 @@ namespace {
 int g_passed = 0;
 int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println(std::cerr, "  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}  ({} != {})", msg, _a, _b);                        \
+        }                                                                                          \
+    } while (0)
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::EvalValue;
@@ -63,7 +76,8 @@ using aura::compiler::types::EvalValue;
 static bool load_and_eval(CompilerService& cs, const char* code) {
     std::string full = std::string("(set-code \"") + code + "\")";
     auto r1 = cs.eval(full);
-    if (!r1) return false;
+    if (!r1)
+        return false;
     auto r2 = cs.eval("(eval-current)");
     return static_cast<bool>(r2);
 }
@@ -78,8 +92,7 @@ void test_compile_snapshot_registered() {
     CHECK(load_and_eval(cs, "(define x 1)"), "set-code + eval-current succeeds");
     auto r = cs.eval("(compile:snapshot)");
     CHECK(r.has_value(), "(compile:snapshot) is callable (returns a value)");
-    CHECK(r && aura::compiler::types::is_hash(*r),
-          "(compile:snapshot) returns a hash");
+    CHECK(r && aura::compiler::types::is_hash(*r), "(compile:snapshot) returns a hash");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -93,16 +106,13 @@ void test_snapshot_hash_shape() {
     CHECK(load_and_eval(cs, "(define x 1)"), "set-code + eval-current succeeds");
     auto r = cs.eval("(compile:snapshot)");
     CHECK(r && aura::compiler::types::is_hash(*r), "snapshot returns a hash");
-    if (!r || !aura::compiler::types::is_hash(*r)) return;
+    if (!r || !aura::compiler::types::is_hash(*r))
+        return;
     static const std::array<std::string_view, 8> expected_keys = {
-        "marker-user-count",
-        "marker-macro-introduced-count",
-        "marker-bool-literal-count",
-        "marker-total-count",
-        "current-generation",
-        "current-wrap-epoch",
-        "generation-wrap-count",
-        "node-count",
+        "marker-user-count",         "marker-macro-introduced-count",
+        "marker-bool-literal-count", "marker-total-count",
+        "current-generation",        "current-wrap-epoch",
+        "generation-wrap-count",     "node-count",
     };
     for (auto key : expected_keys) {
         auto v = cs.eval(std::string("(hash-ref (compile:snapshot) \"") + std::string(key) + "\")");
@@ -124,14 +134,16 @@ void test_marker_counts_match_query_marker_stats() {
     auto list = cs.eval("(query:marker-stats)");
     CHECK(snap && aura::compiler::types::is_hash(*snap), "snapshot is hash");
     CHECK(list && aura::compiler::types::is_pair(*list), "marker-stats is list");
-    if (!snap || !list) return;
+    if (!snap || !list)
+        return;
     // Compare each of the 4 marker keys against the corresponding
     // list element. list order is (user macro-introduced bool-literal total)
     // (matches query:marker-stats definition in
     // evaluator_primitives_query_workspace.cpp).
     auto read_key = [&](const std::string& k) -> std::int64_t {
         auto v = cs.eval(std::string("(hash-ref (compile:snapshot) \"") + k + "\")");
-        if (!v || !aura::compiler::types::is_int(*v)) return -1;
+        if (!v || !aura::compiler::types::is_int(*v))
+            return -1;
         return aura::compiler::types::as_int(*v);
     };
     std::int64_t snap_user = read_key("marker-user-count");
@@ -149,7 +161,8 @@ void test_marker_counts_match_query_marker_stats() {
     // + (car ...).
     auto list_total = cs.eval("(car (cdddr (query:marker-stats)))");
     auto as_int_checked = [](auto& r) -> std::int64_t {
-        if (!r || !aura::compiler::types::is_int(*r)) return -1;
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
         return aura::compiler::types::as_int(*r);
     };
     CHECK_EQ(snap_user, as_int_checked(list_user),
@@ -175,8 +188,7 @@ void test_hygienic_macro_bumps_macro_introduced_count() {
     // runs the body. The body uses (mk-pair 42) to trigger macro
     // expansion; after that (compile:snapshot) should see a non-zero
     // marker-macro-introduced-count.
-    CHECK(load_and_eval(cs,
-                        "(define-hygienic-macro (mk-pair x) (cons x x)) (mk-pair 42)"),
+    CHECK(load_and_eval(cs, "(define-hygienic-macro (mk-pair x) (cons x x)) (mk-pair 42)"),
           "set-code + eval-current succeeds");
     auto macro_count = cs.eval("(hash-ref (compile:snapshot) \"marker-macro-introduced-count\")");
     CHECK(macro_count.has_value(), "marker-macro-introduced-count readable");
@@ -199,7 +211,8 @@ void test_node_count_tracks_workspace() {
     CHECK(load_and_eval(cs, "(define x 1)"), "set-code + eval-current succeeds");
     auto r = cs.eval("(compile:snapshot)");
     CHECK(r && aura::compiler::types::is_hash(*r), "snapshot is hash");
-    if (!r || !aura::compiler::types::is_hash(*r)) return;
+    if (!r || !aura::compiler::types::is_hash(*r))
+        return;
     auto n = cs.eval("(hash-ref (compile:snapshot) \"node-count\")");
     CHECK(n.has_value(), "node-count readable");
     if (n && aura::compiler::types::is_int(*n)) {

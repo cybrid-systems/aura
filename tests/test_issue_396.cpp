@@ -27,8 +27,8 @@
 #include "test_harness.hpp"
 #include "messaging_bridge.h"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.value;
@@ -40,10 +40,14 @@ namespace aura_issue_396_detail {
 // Local CS helper (mirrors test_issue_393's pattern).
 struct CS {
     aura::compiler::CompilerService svc;
-    struct EvalResult { bool ok = false; aura::compiler::types::EvalValue v{}; };
+    struct EvalResult {
+        bool ok = false;
+        aura::compiler::types::EvalValue v{};
+    };
     EvalResult try_run(std::string_view src) {
         auto r = svc.eval(src);
-        if (!r) return {false, aura::compiler::types::make_void()};
+        if (!r)
+            return {false, aura::compiler::types::make_void()};
         return {true, *r};
     }
     bool set_source(const std::string& src) {
@@ -62,7 +66,10 @@ struct CS {
 struct SetterProbe {
     int call_count = 0;
     static SetterProbe* current;
-    static void probe_fn() { if (current) ++current->call_count; }
+    static void probe_fn() {
+        if (current)
+            ++current->call_count;
+    }
 };
 SetterProbe* SetterProbe::current = nullptr;
 
@@ -70,7 +77,8 @@ bool test_ac1_fiber_setter_invoked() {
     std::println("\n--- AC1: bridge setter invoked on atomic-batch Guard entry ---");
     CS cs;
     if (!cs.set_source("(define x 1)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     // Install the mock setter.
@@ -85,21 +93,25 @@ bool test_ac1_fiber_setter_invoked() {
     aura::messaging::g_fiber_set_yield_reason_mutation_boundary = prev;
     SetterProbe::current = nullptr;
     if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
-        ++g_failed; std::println("  FAIL: batch eval failed");
+        ++g_failed;
+        std::println("  FAIL: batch eval failed");
         return false;
     }
     bool batch_ok = aura::compiler::types::as_bool(r.v);
     if (!batch_ok) {
-        ++g_failed; std::println("  FAIL: batch returned #f");
+        ++g_failed;
+        std::println("  FAIL: batch returned #f");
         return false;
     }
-    ++g_passed; std::println("  PASS: batch returned #t");
+    ++g_passed;
+    std::println("  PASS: batch returned #t");
     if (probe.call_count != 1) {
-        ++g_failed; std::println("  FAIL: setter call_count = {} (expected 1)",
-                                 probe.call_count);
+        ++g_failed;
+        std::println("  FAIL: setter call_count = {} (expected 1)", probe.call_count);
         return false;
     }
-    ++g_passed; std::println("  PASS: setter called exactly once on Guard entry");
+    ++g_passed;
+    std::println("  PASS: setter called exactly once on Guard entry");
     return true;
 }
 
@@ -109,51 +121,56 @@ bool test_ac2_lockless_remove_and_insert() {
     std::println("\n--- AC2: remove-node + insert-child work inside atomic-batch ---");
     CS cs;
     if (!cs.set_source("(define x 1) (define y 2)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     // Find the node ids of x and y so we can mutate them.
-    auto r_ids = cs.try_run(
-        "(let ((defs (query:defines-by-marker \"User\")))"
-        "  (list (car defs) (car (cdr defs))))");
+    auto r_ids = cs.try_run("(let ((defs (query:defines-by-marker \"User\")))"
+                            "  (list (car defs) (car (cdr defs))))");
     if (!r_ids.ok || !aura::compiler::types::is_pair(r_ids.v)) {
-        ++g_failed; std::println("  FAIL: list of define ids not returned");
+        ++g_failed;
+        std::println("  FAIL: list of define ids not returned");
         return false;
     }
     // Run an atomic-batch that:
     //   1. removes y
     //   2. inserts 99 as a child of x
     // Both ops should succeed inside the batch.
-    auto r = cs.try_run(
-        "(let* ((defs (query:defines-by-marker \"User\"))"
-        "       (x-id (car defs))"
-        "       (y-id (car (cdr defs))))"
-        "  (mutate:atomic-batch"
-        "    (list (list \"mutate:remove-node\" y-id)"
-        "          (list \"mutate:insert-child\" x-id 0 \"99\"))"
-        "    \"ac2-test\"))");
+    auto r = cs.try_run("(let* ((defs (query:defines-by-marker \"User\"))"
+                        "       (x-id (car defs))"
+                        "       (y-id (car (cdr defs))))"
+                        "  (mutate:atomic-batch"
+                        "    (list (list \"mutate:remove-node\" y-id)"
+                        "          (list \"mutate:insert-child\" x-id 0 \"99\"))"
+                        "    \"ac2-test\"))");
     if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
-        ++g_failed; std::println("  FAIL: batch eval failed");
+        ++g_failed;
+        std::println("  FAIL: batch eval failed");
         return false;
     }
     bool batch_ok = aura::compiler::types::as_bool(r.v);
     if (!batch_ok) {
-        ++g_failed; std::println("  FAIL: batch returned #f (sub-op failed)");
+        ++g_failed;
+        std::println("  FAIL: batch returned #f (sub-op failed)");
         return false;
     }
-    ++g_passed; std::println("  PASS: batch with remove-node + insert-child returned #t");
+    ++g_passed;
+    std::println("  PASS: batch with remove-node + insert-child returned #t");
     // Verify the ops took effect: y should be gone, x's body should be 99.
     auto r_after = cs.try_run(
         "(query:ref-valid? (query:stable-ref (car (query:defines-by-marker \"User\"))))");
     if (!r_after.ok) {
-        ++g_failed; std::println("  FAIL: post-batch ref-valid? check failed");
+        ++g_failed;
+        std::println("  FAIL: post-batch ref-valid? check failed");
         return false;
     }
-    if (aura::compiler::types::is_bool(r_after.v) &&
-        aura::compiler::types::as_bool(r_after.v)) {
-        ++g_passed; std::println("  PASS: x still queryable after batch (single Define remains)");
+    if (aura::compiler::types::is_bool(r_after.v) && aura::compiler::types::as_bool(r_after.v)) {
+        ++g_passed;
+        std::println("  PASS: x still queryable after batch (single Define remains)");
     } else {
-        ++g_failed; std::println("  FAIL: x not queryable after batch");
+        ++g_failed;
+        std::println("  FAIL: x not queryable after batch");
     }
     return true;
 }
@@ -165,20 +182,24 @@ bool test_ac3_regression_rebind_still_works() {
     std::println("\n--- AC3: regression — mutate:rebind still works in atomic-batch ---");
     CS cs;
     if (!cs.set_source("(define x 1)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     auto r = cs.try_run(
         "(mutate:atomic-batch (list (list \"mutate:rebind\" \"x\" \"999\")) \"rebind-test\")");
     if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
-        ++g_failed; std::println("  FAIL: rebind batch failed");
+        ++g_failed;
+        std::println("  FAIL: rebind batch failed");
         return false;
     }
     if (!aura::compiler::types::as_bool(r.v)) {
-        ++g_failed; std::println("  FAIL: rebind batch returned #f");
+        ++g_failed;
+        std::println("  FAIL: rebind batch returned #f");
         return false;
     }
-    ++g_passed; std::println("  PASS: mutate:rebind still works in atomic-batch");
+    ++g_passed;
+    std::println("  PASS: mutate:rebind still works in atomic-batch");
     return true;
 }
 
@@ -190,27 +211,29 @@ bool test_ac4_new_stats_key() {
     std::println("\n--- AC4: atomic-batch:stats includes executed-under-concurrent-fiber ---");
     CS cs;
     if (!cs.set_source("(define x 1)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     // Run a batch to bump the batch-count.
-    auto r_batch = cs.try_run(
-        "(mutate:atomic-batch (list (list \"mutate:rebind\" \"x\" \"2\")) \"ac4\")");
+    auto r_batch =
+        cs.try_run("(mutate:atomic-batch (list (list \"mutate:rebind\" \"x\" \"2\")) \"ac4\")");
     if (!r_batch.ok) {
-        ++g_failed; std::println("  FAIL: batch failed");
+        ++g_failed;
+        std::println("  FAIL: batch failed");
         return false;
     }
     // Hash-ref on each expected key.
     auto check_key = [&](const char* key, const char* desc) {
         auto r = cs.try_run(std::string("(hash-ref (atomic-batch:stats) \"") + key + "\")");
         if (!r.ok || !aura::compiler::types::is_int(r.v)) {
-            ++g_failed; std::println("  FAIL: key {} ({}) missing or not int",
-                                     key, desc);
+            ++g_failed;
+            std::println("  FAIL: key {} ({}) missing or not int", key, desc);
             return false;
         }
-        ++g_passed; std::println("  PASS: {} ({}) = {}",
-                                 key, desc,
-                                 (long long)aura::compiler::types::as_int(r.v));
+        ++g_passed;
+        std::println("  PASS: {} ({}) = {}", key, desc,
+                     (long long)aura::compiler::types::as_int(r.v));
         return true;
     };
     check_key("batch-count", "total batches since startup");
@@ -222,8 +245,7 @@ bool test_ac4_new_stats_key() {
     // stays 0 because the bridge setter is null in
     // non-serve binaries. Its presence in the hash is
     // the new contract.
-    check_key("executed-under-concurrent-fiber",
-              "Issue #396 Phase 3 heuristic (0 in test mode)");
+    check_key("executed-under-concurrent-fiber", "Issue #396 Phase 3 heuristic (0 in test mode)");
     return true;
 }
 

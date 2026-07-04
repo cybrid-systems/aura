@@ -18,8 +18,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -29,9 +29,11 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_169_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: enum is defined with 3 distinct values ──
 bool test_enum_values() {
@@ -44,10 +46,10 @@ bool test_enum_values() {
           "Aggressive = 2");
     // Distinct values
     CHECK(aura::compiler::IncrementalStrictness::Conservative !=
-          aura::compiler::IncrementalStrictness::Balanced,
+              aura::compiler::IncrementalStrictness::Balanced,
           "Conservative != Balanced");
     CHECK(aura::compiler::IncrementalStrictness::Balanced !=
-          aura::compiler::IncrementalStrictness::Aggressive,
+              aura::compiler::IncrementalStrictness::Aggressive,
           "Balanced != Aggressive");
     return true;
 }
@@ -98,7 +100,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_169_detail
+} // namespace aura_issue_169_detail
 
-int aura_issue_169_run() { return aura_issue_169_detail::run_tests(); }
-
+int aura_issue_169_run() {
+    return aura_issue_169_detail::run_tests();
+}

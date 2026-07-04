@@ -175,8 +175,7 @@ export struct LoweringState {
             // per-function IRFunction::marker check from #246).
             // 0=User, 1=MacroIntroduced, 2=BoolLiteral.
             auto mk = current_flat->marker(current_source_id);
-            blk.instructions.back().source_marker =
-                static_cast<std::uint8_t>(mk);
+            blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);
         }
         // Issue #254: dual-emit to SoA (when enabled). Mirrors
         // the AoS push above. The SoA path uses

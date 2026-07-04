@@ -46,8 +46,7 @@ static std::int64_t coverage_stats(Evaluator& ev) {
     if (!ws)
         return 0;
     return static_cast<std::int64_t>(
-        ws->structural_rollback_success() +
-        ws->structural_rollback_besteffort() +
+        ws->structural_rollback_success() + ws->structural_rollback_besteffort() +
         ev.get_mutation_log_rollback_count() + ev.atomic_batch_rollbacks());
 }
 
@@ -70,11 +69,9 @@ static void test_sym_id_rollback() {
     ev.enter_mutation_boundary();
     flat.set_sym(x, new_sym);
     flat.add_mutation_with_rollback(
-        x, "replace-value", "Sym", "Sym", "x -> y",
-        aura::ast::MutationStatus::Committed,
+        x, "replace-value", "Sym", "Sym", "x -> y", aura::ast::MutationStatus::Committed,
         static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId),
-        static_cast<std::uint64_t>(old_sym),
-        static_cast<std::uint64_t>(new_sym), true);
+        static_cast<std::uint64_t>(old_sym), static_cast<std::uint64_t>(new_sym), true);
     CHECK(flat.sym_id(x) == new_sym, "mid-boundary sym is y");
     ev.exit_mutation_boundary(false);
 
@@ -101,8 +98,7 @@ static void test_structural_insert_rollback() {
     ev.enter_mutation_boundary();
     auto extra = flat.add_literal(2);
     flat.insert_child(root, 1, extra);
-    CHECK(flat.get(root).children.size() == before + 1,
-          "mid-boundary has inserted child");
+    CHECK(flat.get(root).children.size() == before + 1, "mid-boundary has inserted child");
     ev.exit_mutation_boundary(false);
     CHECK(flat.get(root).children.size() == before,
           "children count restored after failed boundary");
@@ -118,8 +114,8 @@ static void test_structural_counter_on_rollback() {
     flat.set_child(parent, 0, child);
 
     const auto success0 = flat.structural_rollback_success();
-    auto mid = flat.add_structural_mutation_log_entry(
-        parent, 0, child, aura::ast::NULL_NODE, "remove-node");
+    auto mid = flat.add_structural_mutation_log_entry(parent, 0, child, aura::ast::NULL_NODE,
+                                                      "remove-node");
     CHECK(mid > 0, "structural log entry recorded");
     CHECK(flat.rollback(mid), "rollback(mutation_id) succeeds for remove-node");
     CHECK(flat.structural_rollback_success() >= success0 + 1,
@@ -140,10 +136,8 @@ static void test_field_int_rollback() {
     ev.enter_mutation_boundary();
     flat.set_int(lit, 99);
     flat.add_mutation_with_rollback(
-        lit, "test:set", "Int", "Int", "10 -> 99",
-        aura::ast::MutationStatus::Committed,
-        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
-        10, 99, true);
+        lit, "test:set", "Int", "Int", "10 -> 99", aura::ast::MutationStatus::Committed,
+        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), 10, 99, true);
     ev.exit_mutation_boundary(false);
     const auto roll1 = ev.get_mutation_log_rollback_count();
     CHECK(flat.int_val(lit) == 10, "int_val restored after failed boundary");
@@ -152,8 +146,7 @@ static void test_field_int_rollback() {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:mutation-rollback-coverage-stats ---");
-    CHECK(cs.eval("(set-code \"(define acc 0)\")").has_value(),
-          "workspace setup");
+    CHECK(cs.eval("(set-code \"(define acc 0)\")").has_value(), "workspace setup");
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
     const auto s0 = coverage_stats(cs);
     std::println("  mutation-rollback-coverage-stats = {}", s0);
@@ -162,8 +155,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate matrix ---");
     const auto stats6a = coverage_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = coverage_stats(cs);

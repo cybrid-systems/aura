@@ -63,8 +63,8 @@ import aura.compiler.service;
 
 namespace aura_issue_464_detail {
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── AC1: empty group auto_compact_with_safety returns 0
 bool test_empty_group() {
@@ -86,8 +86,7 @@ bool test_bump_guard_call() {
     g.bump_auto_compact_guard_call();
     g.bump_auto_compact_guard_call();
     CHECK(g.auto_compact_guard_call_count() == 3,
-          std::format("after 3 bumps == 3 (got {})",
-                      g.auto_compact_guard_call_count()));
+          std::format("after 3 bumps == 3 (got {})", g.auto_compact_guard_call_count()));
     return true;
 }
 
@@ -99,8 +98,7 @@ bool test_bump_yield_check() {
     g.bump_compaction_yield_check();
     g.bump_compaction_yield_check();
     CHECK(g.compaction_yield_checks_group() == 2,
-          std::format("after 2 bumps == 2 (got {})",
-                      g.compaction_yield_checks_group()));
+          std::format("after 2 bumps == 2 (got {})", g.compaction_yield_checks_group()));
     return true;
 }
 
@@ -111,7 +109,7 @@ bool test_with_safety_bumps_both() {
     // Pre-populate an arena so adaptive_compact_all has
     // something to consider.
     auto& arena = g.module_arena("test_module", 4096);
-    (void)arena;  // existence is enough
+    (void)arena; // existence is enough
     auto before_guard = g.auto_compact_guard_call_count();
     auto before_yield = g.compaction_yield_checks_group();
     g.auto_compact_with_safety();
@@ -133,20 +131,15 @@ bool test_edsl_stats_returns_hash() {
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v),
-          "(query:arena-auto-stats) returns a hash");
-    for (auto key : {"auto-compact-guard-call-count",
-                     "compaction-yield-checks",
-                     "auto-compact-trigger-count",
-                     "auto-compact-skip-count"}) {
-        auto rr = cs.eval(std::format(
-            "(hash-ref (query:arena-auto-stats) '{}')", key));
+    CHECK(aura::compiler::types::is_hash(v), "(query:arena-auto-stats) returns a hash");
+    for (auto key : {"auto-compact-guard-call-count", "compaction-yield-checks",
+                     "auto-compact-trigger-count", "auto-compact-skip-count"}) {
+        auto rr = cs.eval(std::format("(hash-ref (query:arena-auto-stats) '{}')", key));
         if (!rr) {
             CHECK(false, std::format("hash-ref for '{}' failed", key));
             continue;
         }
-        CHECK(aura::compiler::types::is_int(*rr),
-              std::format("hash-ref '{}' returns int", key));
+        CHECK(aura::compiler::types::is_int(*rr), std::format("hash-ref '{}' returns int", key));
     }
     return true;
 }
@@ -157,8 +150,7 @@ bool test_guard_dtor_bumps_counter() {
     std::println("\n--- AC6: guard dtor bumps counter ---");
     aura::compiler::CompilerService cs;
     // Get baseline
-    auto before = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto before = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
     if (!before || !aura::compiler::types::is_int(*before)) {
         CHECK(false, "could not read baseline guard-call count");
         return true;
@@ -170,16 +162,14 @@ bool test_guard_dtor_bumps_counter() {
     cs.eval(R"((mutate:rebind 'foo 42))");
 
     // Read again
-    auto after = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto after = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
     if (!after || !aura::compiler::types::is_int(*after)) {
         CHECK(false, "could not read post-mutate guard-call count");
         return true;
     }
     auto after_n = aura::compiler::types::as_int(*after);
     CHECK(after_n > before_n,
-          std::format("guard-call count advances (before={}, after={})",
-                      before_n, after_n));
+          std::format("guard-call count advances (before={}, after={})", before_n, after_n));
     return true;
 }
 
@@ -216,14 +206,10 @@ bool test_stats_list_includes() {
 bool test_fresh_service_defaults() {
     std::println("\n--- AC9: fresh service defaults ---");
     aura::compiler::CompilerService cs;
-    auto guard = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
-    auto yield_ = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'compaction-yield-checks)");
-    auto trigger = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-trigger-count)");
-    auto skip = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-skip-count)");
+    auto guard = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto yield_ = cs.eval("(hash-ref (query:arena-auto-stats) 'compaction-yield-checks)");
+    auto trigger = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-trigger-count)");
+    auto skip = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-skip-count)");
     CHECK(aura::compiler::types::as_int(*guard) == 0, "guard-call == 0");
     CHECK(aura::compiler::types::as_int(*yield_) == 0, "yield-check == 0");
     CHECK(aura::compiler::types::as_int(*trigger) == 0, "trigger == 0");
@@ -236,22 +222,20 @@ bool test_fresh_service_defaults() {
 bool test_long_session_signal() {
     std::println("\n--- AC10: long AI session signal ---");
     aura::compiler::CompilerService cs;
-    auto before = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto before = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
     auto before_n = aura::compiler::types::as_int(*before);
     for (int i = 0; i < 5; ++i) {
         cs.eval(std::format(R"((mutate:rebind 'foo_{} {}))", i, i * 10));
     }
-    auto after = cs.eval(
-        "(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto after = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
     auto after_n = aura::compiler::types::as_int(*after);
-    CHECK(after_n >= before_n + 5,
-          std::format("5 mutates bump guard-call by >= 5 (before={}, after={})",
-                      before_n, after_n));
+    CHECK(
+        after_n >= before_n + 5,
+        std::format("5 mutates bump guard-call by >= 5 (before={}, after={})", before_n, after_n));
     return true;
 }
 
-}  // namespace aura_issue_464_detail
+} // namespace aura_issue_464_detail
 
 int main() {
     using namespace aura_issue_464_detail;

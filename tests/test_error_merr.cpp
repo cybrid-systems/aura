@@ -10,7 +10,7 @@
 // Full exercising of make_merr error paths will be covered by the main test_ir
 // and later pilots / full dedup.
 
-#include "issue_test_harness.hpp"  // 3.2 dedup pilot (common CHECK + globals)
+#include "issue_test_harness.hpp" // 3.2 dedup pilot (common CHECK + globals)
 
 import std;
 namespace aura_issue_error_merr_detail {
@@ -31,7 +31,8 @@ int run_tests() {
     std::println("\n--- Results ---");
     return run_pilot_tests();
 }
-}  // namespace aura_issue_error_merr_detail
+} // namespace aura_issue_error_merr_detail
 
-int aura_issue_error_merr_run() { return aura_issue_error_merr_detail::run_tests(); }
-
+int aura_issue_error_merr_run() {
+    return aura_issue_error_merr_detail::run_tests();
+}

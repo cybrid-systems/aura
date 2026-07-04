@@ -73,9 +73,8 @@ static bool missing_has(const std::vector<std::string>& missing, const char* cto
 // AC1: stale TypeRegistry (missing new ctor) fixed by refresh
 bool test_stale_registry_detects_added_variant() {
     std::println("\n--- AC1: refresh ADT registry after variant add ---");
-    const std::string src =
-        "(begin (define-type (Color) (Red) (Green) (Blue) (Yellow)) "
-        "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))";
+    const std::string src = "(begin (define-type (Color) (Red) (Green) (Blue) (Yellow)) "
+                            "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))";
     auto ctx = typecheck_src(src);
     auto match_id = find_match_let(*ctx.flat);
     auto def_id = find_define_type_color(*ctx.flat, *ctx.pool);
@@ -88,17 +87,16 @@ bool test_stale_registry_detects_added_variant() {
     CHECK(tid.valid(), "Color type registered");
     // Simulate stale registry: only RGB, AST has Yellow too.
     ctx.reg->register_adt_constructors(tid, {"Red", "Green", "Blue"});
-    auto missing_stale = aura::compiler::analyze_match_exhaustiveness(
-        *ctx.flat, *ctx.pool, *ctx.reg, match_id);
-    CHECK(missing_stale.empty(),
-          "stale registry hides missing Yellow (pre-refresh baseline)");
+    auto missing_stale =
+        aura::compiler::analyze_match_exhaustiveness(*ctx.flat, *ctx.pool, *ctx.reg, match_id);
+    CHECK(missing_stale.empty(), "stale registry hides missing Yellow (pre-refresh baseline)");
 
     std::vector<aura::ast::NodeId> dirty = {def_id};
-    aura::compiler::refresh_adt_constructors_for_dirty_define_types(
-        *ctx.flat, *ctx.pool, *ctx.reg, dirty, nullptr);
+    aura::compiler::refresh_adt_constructors_for_dirty_define_types(*ctx.flat, *ctx.pool, *ctx.reg,
+                                                                    dirty, nullptr);
 
-    auto missing = aura::compiler::analyze_match_exhaustiveness(
-        *ctx.flat, *ctx.pool, *ctx.reg, match_id);
+    auto missing =
+        aura::compiler::analyze_match_exhaustiveness(*ctx.flat, *ctx.pool, *ctx.reg, match_id);
     CHECK(!missing.empty(), "post-refresh reports non-exhaustive match");
     CHECK(missing_has(missing, "Yellow"), "missing constructor is Yellow");
     return true;
@@ -107,9 +105,8 @@ bool test_stale_registry_detects_added_variant() {
 // AC2: post_mutation_invariant_check emits note after refresh path
 bool test_post_mutation_missing_ctor_after_refresh() {
     std::println("\n--- AC2: post_mutation MissingConstructor after ADT refresh ---");
-    const std::string src =
-        "(begin (define-type (Color) (Red) (Green) (Blue) (Yellow)) "
-        "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))";
+    const std::string src = "(begin (define-type (Color) (Red) (Green) (Blue) (Yellow)) "
+                            "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))";
     auto ctx = typecheck_src(src);
     auto def_id = find_define_type_color(*ctx.flat, *ctx.pool);
     auto match_id = find_match_let(*ctx.flat);
@@ -128,14 +125,13 @@ bool test_post_mutation_missing_ctor_after_refresh() {
     rec.operator_name = "mutate:replace-subtree";
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    auto st = aura::compiler::post_mutation_invariant_check(
-        *ctx.flat, *ctx.pool, *ctx.reg, rec, notes, nullptr);
+    auto st = aura::compiler::post_mutation_invariant_check(*ctx.flat, *ctx.pool, *ctx.reg, rec,
+                                                            notes, nullptr);
     bool found = false;
     for (auto& n : notes) {
         if (n.kind == "MissingConstructorInNestedMatch") {
             found = true;
-            CHECK(n.message.find("Yellow") != std::string::npos,
-                  "note mentions missing Yellow");
+            CHECK(n.message.find("Yellow") != std::string::npos, "note mentions missing Yellow");
         }
     }
     CHECK(found, "MissingConstructorInNestedMatch after DefineType mutate");
@@ -146,9 +142,8 @@ bool test_post_mutation_missing_ctor_after_refresh() {
 // AC3: complete match stays complete after refresh
 bool test_complete_match_stable_after_refresh() {
     std::println("\n--- AC3: complete match stable after ADT refresh ---");
-    const std::string src =
-        "(begin (define-type (Color) (Red) (Green) (Blue)) "
-        "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))";
+    const std::string src = "(begin (define-type (Color) (Red) (Green) (Blue)) "
+                            "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))";
     auto ctx = typecheck_src(src);
     auto def_id = find_define_type_color(*ctx.flat, *ctx.pool);
     auto match_id = find_match_let(*ctx.flat);
@@ -156,10 +151,10 @@ bool test_complete_match_stable_after_refresh() {
           "define + match present");
 
     std::vector<aura::ast::NodeId> dirty = {def_id, match_id};
-    aura::compiler::refresh_adt_constructors_for_dirty_define_types(
-        *ctx.flat, *ctx.pool, *ctx.reg, dirty, nullptr);
-    auto missing = aura::compiler::analyze_match_exhaustiveness(
-        *ctx.flat, *ctx.pool, *ctx.reg, match_id);
+    aura::compiler::refresh_adt_constructors_for_dirty_define_types(*ctx.flat, *ctx.pool, *ctx.reg,
+                                                                    dirty, nullptr);
+    auto missing =
+        aura::compiler::analyze_match_exhaustiveness(*ctx.flat, *ctx.pool, *ctx.reg, match_id);
     CHECK(missing.empty(), "complete match remains exhaustive post-refresh");
     return true;
 }
@@ -200,10 +195,14 @@ int run_tests() {
     return RUN_ALL_TESTS();
 }
 
-}  // namespace aura_612_detail
+} // namespace aura_612_detail
 
-int aura_issue_612_run() { return aura_612_detail::run_tests(); }
+int aura_issue_612_run() {
+    return aura_612_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_612_run(); }
+int main() {
+    return aura_issue_612_run();
+}
 #endif

@@ -30,13 +30,15 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 namespace aura_issue_204_detail {
-#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("%s\n", (msg));                                                                 \
+    } while (0)
 
 // ── Test 1: mark_env_frame_roots sets the bits ──
 bool test_env_frame_roots_marks_bits() {
@@ -45,8 +47,8 @@ bool test_env_frame_roots_marks_bits() {
     // mark_env_frame_roots doesn't touch the scheduler.
     aura::serve::GCCollector gc(nullptr);
     // Size the mark vectors (mark_from_roots will resize)
-    std::vector<int64_t> dummy_pairs = {0};  // just to size pair_marks_
-    std::vector<int64_t> dummy_closures = {0};  // size closure_marks_
+    std::vector<int64_t> dummy_pairs = {0};    // just to size pair_marks_
+    std::vector<int64_t> dummy_closures = {0}; // size closure_marks_
     // We need heap sizes to size the mark vectors properly
     gc.mark_from_roots(
         /*roots=*/{}, /*string_heap_size=*/10, /*pairs_size=*/20,
@@ -164,7 +166,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_204_detail
+} // namespace aura_issue_204_detail
 
-int aura_issue_204_run() { return aura_issue_204_detail::run_tests(); }
-
+int aura_issue_204_run() {
+    return aura_issue_204_detail::run_tests();
+}

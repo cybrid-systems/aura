@@ -10,7 +10,7 @@ namespace aura::compiler::hardware {
 
 namespace {
 
-StructuralMutationHook g_structural_mutation_hook;
+    StructuralMutationHook g_structural_mutation_hook;
 
 } // namespace
 
@@ -18,7 +18,9 @@ void register_structural_mutation_hook(StructuralMutationHook hook) {
     g_structural_mutation_hook = std::move(hook);
 }
 
-void clear_structural_mutation_hook() { g_structural_mutation_hook = nullptr; }
+void clear_structural_mutation_hook() {
+    g_structural_mutation_hook = nullptr;
+}
 
 void on_structural_mutation(const aura::ast::NodeId node, const std::uint8_t dirty_reasons,
                             const std::uint8_t ppa_reasons) {
@@ -26,8 +28,7 @@ void on_structural_mutation(const aura::ast::NodeId node, const std::uint8_t dir
         g_structural_mutation_hook(node, dirty_reasons, ppa_reasons);
 }
 
-bool is_sv_structural_node(const aura::ast::FlatAST& flat,
-                           const aura::ast::NodeId id) noexcept {
+bool is_sv_structural_node(const aura::ast::FlatAST& flat, const aura::ast::NodeId id) noexcept {
     if (id == aura::ast::NULL_NODE || id >= flat.size())
         return false;
     const auto tag = flat.get(id).tag;

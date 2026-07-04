@@ -35,15 +35,16 @@
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", (msg)); \
-        ++g_passed; \
-    } \
-} while(0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__);                      \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", (msg));                                                     \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── Test 1: Metrics struct is default-initialized to zero ──
 // All counters start at 0; format() produces a non-empty string.
@@ -111,7 +112,8 @@ bool test_metrics_atomic_concurrent() {
             }
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
 
     auto expected = static_cast<std::uint64_t>(kThreads * kPerThread);
     CHECK(m.compile_count.load() == expected, "compile_count is exact under contention");
@@ -131,14 +133,12 @@ bool test_metrics_format_edge_cases() {
     // Tiny buffer — should not crash, content truncated
     char tiny[8];
     m.format(tiny, sizeof(tiny));
-    CHECK(tiny[sizeof(tiny) - 1] == '\0' || tiny[0] != '\0',
-          "tiny buffer does not crash");
+    CHECK(tiny[sizeof(tiny) - 1] == '\0' || tiny[0] != '\0', "tiny buffer does not crash");
 
     // Just barely enough
     char ok[256];
     m.format(ok, sizeof(ok));
-    CHECK(std::strstr(ok, "compiles=42") != nullptr,
-          "ok buffer has expected count");
+    CHECK(std::strstr(ok, "compiles=42") != nullptr, "ok buffer has expected count");
 
     // Reasonable size
     char nice[512];
@@ -168,8 +168,7 @@ bool test_hot_swap_counter() {
 
     char buf[256];
     m.format(buf, sizeof(buf));
-    CHECK(std::strstr(buf, "hot_swaps=5") != nullptr,
-          "format() reflects hot_swap_count");
+    CHECK(std::strstr(buf, "hot_swaps=5") != nullptr, "format() reflects hot_swap_count");
     return true;
 }
 

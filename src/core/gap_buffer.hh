@@ -54,25 +54,24 @@
 // triggering the GCC 16.1 std module + local std #include ICE.
 // (The C headers put symbols in the global namespace, so they
 // don't conflict with the std module's `std::` symbols.)
-#include <stddef.h>      // size_t, ptrdiff_t
-#include <string.h>      // memcpy, memmove
-#include <new>           // ::operator new, placement new (no std namespace)
-#include <type_traits>   // is_trivially_copyable_v, is_trivially_destructible_v
-#include <utility>       // std::move, std::swap (uses <utility> which is std-namespace)
-#include <stdexcept>     // std::out_of_range
+#include <stddef.h>    // size_t, ptrdiff_t
+#include <string.h>    // memcpy, memmove
+#include <new>         // ::operator new, placement new (no std namespace)
+#include <type_traits> // is_trivially_copyable_v, is_trivially_destructible_v
+#include <utility>     // std::move, std::swap (uses <utility> which is std-namespace)
+#include <stdexcept>   // std::out_of_range
 
 namespace aura::ast {
 
-template <typename T>
-class GapBuffer {
+template <typename T> class GapBuffer {
 public:
-    using value_type      = T;
-    using size_type       = std::size_t;
+    using value_type = T;
+    using size_type = std::size_t;
     using difference_type = std::ptrdiff_t;
-    using reference       = T&;
+    using reference = T&;
     using const_reference = const T&;
-    using pointer         = T*;
-    using const_pointer   = const T*;
+    using pointer = T*;
+    using const_pointer = const T*;
 
     constexpr GapBuffer() noexcept = default;
 
@@ -82,10 +81,11 @@ public:
     // `std::pmr::polymorphic_allocator<std::byte>`. Accept any
     // single-argument and ignore it so the call site is
     // well-formed.
-    template <typename A>
-    constexpr GapBuffer(const A&) noexcept {}
+    template <typename A> constexpr GapBuffer(const A&) noexcept {}
 
-    GapBuffer(const GapBuffer& other) : size_(other.size_), capacity_(other.capacity_) {
+    GapBuffer(const GapBuffer& other)
+        : size_(other.size_)
+        , capacity_(other.capacity_) {
         if (capacity_ == 0) {
             gap_start_ = gap_end_ = 0;
             return;
@@ -99,40 +99,45 @@ public:
             copy_init(data_ + other.gap_end_, other.data_ + other.gap_end_, post);
         }
         gap_start_ = other.gap_start_;
-        gap_end_   = other.gap_end_;
+        gap_end_ = other.gap_end_;
     }
 
     GapBuffer(GapBuffer&& other) noexcept
-        : data_(other.data_), size_(other.size_), capacity_(other.capacity_),
-          gap_start_(other.gap_start_), gap_end_(other.gap_end_) {
-        other.data_      = nullptr;
-        other.size_      = 0;
-        other.capacity_  = 0;
+        : data_(other.data_)
+        , size_(other.size_)
+        , capacity_(other.capacity_)
+        , gap_start_(other.gap_start_)
+        , gap_end_(other.gap_end_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+        other.capacity_ = 0;
         other.gap_start_ = 0;
-        other.gap_end_   = 0;
+        other.gap_end_ = 0;
     }
 
     GapBuffer& operator=(const GapBuffer& other) {
-        if (this == &other) return *this;
+        if (this == &other)
+            return *this;
         GapBuffer tmp(other);
         swap(tmp);
         return *this;
     }
 
     GapBuffer& operator=(GapBuffer&& other) noexcept {
-        if (this == &other) return *this;
+        if (this == &other)
+            return *this;
         destroy_all();
         ::operator delete(data_);
-        data_         = other.data_;
-        size_         = other.size_;
-        capacity_     = other.capacity_;
-        gap_start_    = other.gap_start_;
-        gap_end_      = other.gap_end_;
-        other.data_   = nullptr;
-        other.size_   = 0;
+        data_ = other.data_;
+        size_ = other.size_;
+        capacity_ = other.capacity_;
+        gap_start_ = other.gap_start_;
+        gap_end_ = other.gap_end_;
+        other.data_ = nullptr;
+        other.size_ = 0;
         other.capacity_ = 0;
         other.gap_start_ = 0;
-        other.gap_end_   = 0;
+        other.gap_end_ = 0;
         return *this;
     }
 
@@ -156,18 +161,16 @@ public:
     constexpr size_type gap_size() const noexcept { return gap_end_ - gap_start_; }
 
     // ── Element access (logical) ─────────────────────────────
-    reference operator[](size_type l) noexcept {
-        return data_[logical_to_physical(l)];
-    }
-    const_reference operator[](size_type l) const noexcept {
-        return data_[logical_to_physical(l)];
-    }
+    reference operator[](size_type l) noexcept { return data_[logical_to_physical(l)]; }
+    const_reference operator[](size_type l) const noexcept { return data_[logical_to_physical(l)]; }
     reference at(size_type l) {
-        if (l >= size_) throw std::out_of_range("GapBuffer::at");
+        if (l >= size_)
+            throw std::out_of_range("GapBuffer::at");
         return (*this)[l];
     }
     const_reference at(size_type l) const {
-        if (l >= size_) throw std::out_of_range("GapBuffer::at");
+        if (l >= size_)
+            throw std::out_of_range("GapBuffer::at");
         return (*this)[l];
     }
     reference front() noexcept { return (*this)[0]; }
@@ -184,16 +187,17 @@ public:
     // ── Modifiers ────────────────────────────────────────────
     void clear() noexcept {
         destroy_all();
-        size_      = 0;
+        size_ = 0;
         gap_start_ = 0;
-        gap_end_   = capacity_;
+        gap_end_ = capacity_;
     }
 
     // Resize to exactly n elements. After resize, call
     // compact() if you need a contiguous buffer (e.g. for
     // serialization via data()).
     void resize(size_type n) {
-        if (n == size_) return;
+        if (n == size_)
+            return;
         if (n < size_) {
             for (size_type i = size_; i > n; --i) {
                 erase(i - 1);
@@ -206,15 +210,17 @@ public:
     }
 
     void reserve(size_type new_cap) {
-        if (new_cap <= capacity_) return;
+        if (new_cap <= capacity_)
+            return;
         reallocate_to(new_cap);
     }
 
     void push_back(const T& v) { insert(size_, v); }
-    void push_back(T&& v)      { insert(size_, std::move(v)); }
+    void push_back(T&& v) { insert(size_, std::move(v)); }
 
     void insert(size_type pos, const T& v) {
-        if (pos > size_) pos = size_;
+        if (pos > size_)
+            pos = size_;
         ensure_room_for_one();
         if (pos <= gap_start_) {
             shift_right(pos, gap_start_ - pos);
@@ -233,13 +239,14 @@ public:
             gap_start_ = pos;
             // New gap_end_ = old_gap_size + pos - 1 (1 slot for the v,
             // minus the 1 slot the v takes from the old gap).
-            gap_end_   = (old_ge - old_gs) + pos - 1;
+            gap_end_ = (old_ge - old_gs) + pos - 1;
         }
         ++size_;
     }
 
     void insert(size_type pos, T&& v) {
-        if (pos > size_) pos = size_;
+        if (pos > size_)
+            pos = size_;
         ensure_room_for_one();
         if (pos <= gap_start_) {
             shift_right(pos, gap_start_ - pos);
@@ -254,7 +261,7 @@ public:
             }
             ::new (static_cast<void*>(data_ + old_ge)) T(std::move(v));
             gap_start_ = pos;
-            gap_end_   = (old_ge - old_gs) + pos - 1;
+            gap_end_ = (old_ge - old_gs) + pos - 1;
         }
         ++size_;
     }
@@ -263,15 +270,15 @@ public:
     // loop of push_backs to avoid the complexity of the post-gap
     // range-insert case. The cost is O(n) for n elements, same as
     // the alternative but simpler.
-    template <typename It>
-    void append(It first, It last) {
+    template <typename It> void append(It first, It last) {
         for (; first != last; ++first) {
             push_back(*first);
         }
     }
 
     void erase(size_type pos) {
-        if (pos >= size_) return;
+        if (pos >= size_)
+            return;
         if (pos < gap_start_) {
             // Pre-gap: shift [pos+1, gap_start_) left by 1.
             // The gap expands by 1 to the LEFT (absorbing the
@@ -289,13 +296,14 @@ public:
 
     // Compact: collapse the gap to the end (no-op if no gap).
     void compact() noexcept {
-        if (gap_start_ == gap_end_) return;
+        if (gap_start_ == gap_end_)
+            return;
         size_type post = capacity_ - gap_end_;
         if (post > 0) {
             ::memmove(data_ + gap_start_, data_ + gap_end_, post * sizeof(T));
         }
         gap_start_ = size_;
-        gap_end_   = capacity_;
+        gap_end_ = capacity_;
     }
 
     // Shrink the underlying storage to fit size_ (after
@@ -308,11 +316,11 @@ public:
     }
 
 private:
-    pointer   data_      = nullptr;
-    size_type size_      = 0;
-    size_type capacity_  = 0;
+    pointer data_ = nullptr;
+    size_type size_ = 0;
+    size_type capacity_ = 0;
     size_type gap_start_ = 0;
-    size_type gap_end_   = 0;
+    size_type gap_end_ = 0;
 
     // ── Logical <-> physical mapping ─────────────────────────
     constexpr size_type logical_to_physical(size_type l) const noexcept {
@@ -342,10 +350,10 @@ private:
         }
         destroy_all();
         ::operator delete(data_);
-        data_     = new_data;
+        data_ = new_data;
         capacity_ = new_cap;
         gap_start_ = size_;
-        gap_end_   = capacity_;
+        gap_end_ = capacity_;
     }
 
     void destroy_all() noexcept {
@@ -360,7 +368,8 @@ private:
     }
 
     void shift_right(size_type pos, size_type n) {
-        if (n == 0) return;
+        if (n == 0)
+            return;
         if constexpr (std::is_trivially_copyable_v<T>) {
             ::memmove(data_ + pos + 1, data_ + pos, n * sizeof(T));
         } else {
@@ -374,7 +383,8 @@ private:
     }
 
     void shift_left(size_type pos, size_type n) {
-        if (n == 0) return;
+        if (n == 0)
+            return;
         if constexpr (std::is_trivially_copyable_v<T>) {
             ::memmove(data_ + pos, data_ + pos + 1, n * sizeof(T));
         } else {
@@ -398,6 +408,6 @@ private:
     }
 };
 
-}  // namespace aura::ast
+} // namespace aura::ast
 
-#endif  // AURA_CORE_GAP_BUFFER_HH
+#endif // AURA_CORE_GAP_BUFFER_HH

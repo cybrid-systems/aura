@@ -50,16 +50,29 @@ namespace aura_issue_259_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: type propagation counters start at 0 on a fresh CompilerService ---");
@@ -75,21 +88,29 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:type-propagation-stats) primitive returns a hash ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:type-propagation-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t (val={})", rh ? rh->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:type-propagation-stats) returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
-    if (!rp || !aura::compiler::types::is_bool(*rp) ||
-        aura::compiler::types::as_bool(*rp)) {
+    if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:type-propagation-stats) is not a pair (pair? is #f)");
     // Verify the 3 keys exist with int values.
@@ -98,8 +119,8 @@ bool test_aura_primitive_returns_hash() {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
-            std::println("  FAIL: hash-ref h {} did not return int (val={})",
-                         key, rv ? rv->val : -1);
+            std::println("  FAIL: hash-ref h {} did not return int (val={})", key,
+                         rv ? rv->val : -1);
             ++g_failed;
         } else {
             CHECK(true, std::string("hash-ref h \"") + key + "\" returns int");
@@ -112,13 +133,23 @@ bool test_ir_instructions_total_bumps() {
     std::println("\n--- AC3: ir_instructions_total bumps on IR execution ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     // Capture baseline.
     auto rg = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-total\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto baseline = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg));
     // Run some IR by evaluating expressions. Each eval
@@ -126,15 +157,20 @@ bool test_ir_instructions_total_bumps() {
     for (int i = 0; i < 5; ++i) {
         std::string src = std::string("(+ x ") + std::to_string(i) + ")";
         auto r = cs.eval(src);
-        if (!r) { std::println("  FAIL: eval {} failed", src); ++g_failed; return false; }
+        if (!r) {
+            std::println("  FAIL: eval {} failed", src);
+            ++g_failed;
+            return false;
+        }
     }
     auto rg2 = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-total\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
-        std::println("  FAIL: hash-ref after eval failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref after eval failed");
+        ++g_failed;
+        return false;
     }
     auto after = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg2));
-    CHECK(after > baseline,
-          "ir-instructions-total increased after 5 eval calls");
+    CHECK(after > baseline, "ir-instructions-total increased after 5 eval calls");
     return true;
 }
 
@@ -142,9 +178,17 @@ bool test_coverage_in_valid_range() {
     std::println("\n--- AC4: type_propagation_coverage_bp in valid range (0-10000) ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     for (int i = 0; i < 3; ++i) {
         std::string src = std::string("(+ x ") + std::to_string(i) + ")";
         (void)cs.eval(src);
@@ -156,12 +200,16 @@ bool test_coverage_in_valid_range() {
     // Capture into let bindings first, then read all 3 from
     // the same hash.
     auto r_total = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-total\")");
-    auto r_with = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-with-type-total\")");
-    auto r_cov = cs.eval("(hash-ref (compile:type-propagation-stats) \"type-propagation-coverage-bp\")");
-    if (!r_total || !aura::compiler::types::is_int(*r_total) ||
-        !r_with || !aura::compiler::types::is_int(*r_with) ||
-        !r_cov || !aura::compiler::types::is_int(*r_cov)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+    auto r_with =
+        cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-with-type-total\")");
+    auto r_cov =
+        cs.eval("(hash-ref (compile:type-propagation-stats) \"type-propagation-coverage-bp\")");
+    if (!r_total || !aura::compiler::types::is_int(*r_total) || !r_with ||
+        !aura::compiler::types::is_int(*r_with) || !r_cov ||
+        !aura::compiler::types::is_int(*r_cov)) {
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     // After read, capture the values that were in those 3
     // separate hash snapshots. The with_type value was
@@ -184,10 +232,13 @@ bool test_no_regression() {
     std::println("\n--- AC5: zero regression — existing eval still works ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(set-code \"(define x 42) x\")");
-    if (!r) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     r = cs.eval("(eval-current)");
-    if (!r || !aura::compiler::types::is_int(*r) ||
-        aura::compiler::types::as_int(*r) != 42) {
+    if (!r || !aura::compiler::types::is_int(*r) || aura::compiler::types::as_int(*r) != 42) {
         std::println("  FAIL: eval result != 42 (val={})", r ? r->val : -1);
         ++g_failed;
     } else {
@@ -206,11 +257,12 @@ int run_tests() {
     test_ir_instructions_total_bumps();
     test_coverage_in_valid_range();
     test_no_regression();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_259_detail
+} // namespace aura_issue_259_detail
 
-int aura_issue_259_run() { return aura_issue_259_detail::run_tests(); }
+int aura_issue_259_run() {
+    return aura_issue_259_detail::run_tests();
+}

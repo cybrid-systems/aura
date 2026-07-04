@@ -63,24 +63,39 @@ struct EvalResult {
 
 static EvalResult try_run(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return {false, aura::compiler::types::make_void()};
+    if (!r)
+        return {false, aura::compiler::types::make_void()};
     return {true, *r};
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ_INT(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ_INT(a, b, msg)                                                                    \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t is_pair_result(aura::compiler::CompilerService& cs, std::string_view expr) {
     auto r = try_run(cs, std::string("(if (pair? ") + std::string(expr) + ") 1 0)");
-    if (!r.ok || !aura::compiler::types::is_int(r.v)) return -1;
+    if (!r.ok || !aura::compiler::types::is_int(r.v))
+        return -1;
     return aura::compiler::types::as_int(r.v);
 }
 
@@ -97,9 +112,15 @@ static bool set_source(aura::compiler::CompilerService& cs, const std::string& s
 bool test_returns_list() {
     std::println("\n--- AC1: query:schema-of-marker returns a list ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     auto r = try_run(cs, "(typecheck-current)");
-    if (!r.ok) { ++g_failed; return false; }
+    if (!r.ok) {
+        ++g_failed;
+        return false;
+    }
     std::int64_t is_pair = is_pair_result(cs, "(query:schema-of-marker \"User\")");
     CHECK_EQ_INT(is_pair, 1, "query:schema-of-marker \"User\" returns a non-empty list");
     return true;
@@ -109,15 +130,22 @@ bool test_returns_list() {
 bool test_user_marker_results() {
     std::println("\n--- AC2: with fresh set-code + typecheck, User marker has results ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     auto r = try_run(cs, "(typecheck-current)");
-    if (!r.ok) { ++g_failed; return false; }
+    if (!r.ok) {
+        ++g_failed;
+        return false;
+    }
     // The result is a list of (NodeId . type-name) pairs.
     // Count them by destructuring: (length ...) on the list.
     auto r2 = try_run(cs, "(length (query:schema-of-marker \"User\"))");
     if (!r2.ok || !aura::compiler::types::is_int(r2.v)) {
         std::println("  FAIL: result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     std::int64_t n = aura::compiler::types::as_int(r2.v);
     std::println("    [info] User-marker count = {}", n);
@@ -129,16 +157,20 @@ bool test_user_marker_results() {
 bool test_macro_introduced_marker() {
     std::println("\n--- AC3: MacroIntroduced marker returns a (possibly empty) list ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(define x 5) (define-hygienic-macro (d y) (* y 2))")) {
-        ++g_failed; return false;
+    if (!set_source(cs, "(define x 5) (define-hygienic-macro (d y) (* y 2))")) {
+        ++g_failed;
+        return false;
     }
     auto r = try_run(cs, "(typecheck-current)");
-    if (!r.ok) { ++g_failed; return false; }
+    if (!r.ok) {
+        ++g_failed;
+        return false;
+    }
     auto r2 = try_run(cs, "(length (query:schema-of-marker \"MacroIntroduced\"))");
     if (!r2.ok || !aura::compiler::types::is_int(r2.v)) {
         std::println("  FAIL: result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     std::int64_t n = aura::compiler::types::as_int(r2.v);
     std::println("    [info] MacroIntroduced-marker count = {} (see #244 note)", n);
@@ -155,9 +187,15 @@ bool test_macro_introduced_marker() {
 bool test_unknown_marker() {
     std::println("\n--- AC4: query:schema-of-marker with unknown marker name ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     auto r = try_run(cs, "(typecheck-current)");
-    if (!r.ok) { ++g_failed; return false; }
+    if (!r.ok) {
+        ++g_failed;
+        return false;
+    }
     std::int64_t is_pair = is_pair_result(cs, "(query:schema-of-marker \"NoSuch\")");
     CHECK_EQ_INT(is_pair, 1, "unknown marker returns a pair (error)");
     return true;
@@ -167,9 +205,15 @@ bool test_unknown_marker() {
 bool test_bad_args() {
     std::println("\n--- AC5: query:schema-of-marker with bad arg types ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     auto r = try_run(cs, "(typecheck-current)");
-    if (!r.ok) { ++g_failed; return false; }
+    if (!r.ok) {
+        ++g_failed;
+        return false;
+    }
 
     std::int64_t p1 = is_pair_result(cs, "(query:schema-of-marker)");
     CHECK_EQ_INT(p1, 1, "no-args returns a pair (error)");
@@ -187,19 +231,23 @@ bool test_limit() {
     std::println("\n--- AC6: query:schema-of-marker with limit ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(define x 5) (define y 10) (define z 15)")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto r = try_run(cs, "(typecheck-current)");
-    if (!r.ok) { ++g_failed; return false; }
+    if (!r.ok) {
+        ++g_failed;
+        return false;
+    }
     // Total User-marker count should be > 3 (each define has
     // multiple nodes). limit=1 should give 1.
     auto r1 = try_run(cs, "(length (query:schema-of-marker \"User\" 1))");
     if (!r1.ok || !aura::compiler::types::is_int(r1.v)) {
         std::println("  FAIL: result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
-    CHECK_EQ_INT(aura::compiler::types::as_int(r1.v), 1,
-                 "limit=1 returns exactly 1 item");
+    CHECK_EQ_INT(aura::compiler::types::as_int(r1.v), 1, "limit=1 returns exactly 1 item");
     return true;
 }
 
@@ -242,12 +290,12 @@ int run_tests() {
     std::println("\nAC #6: limit-N caps result");
     test_limit();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_248_detail
+} // namespace aura_issue_248_detail
 
-int aura_issue_248_run() { return aura_issue_248_detail::run_tests(); }
-
+int aura_issue_248_run() {
+    return aura_issue_248_detail::run_tests();
+}

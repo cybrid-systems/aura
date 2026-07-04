@@ -77,9 +77,8 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: match site mutate → stats grow + eval ---");
     const auto stats3a = adt_exhaustiveness_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21) "
-        "((Bool) 31)))\" \"issue-577-match\")");
+    (void)cs.eval("(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21) "
+                  "((Bool) 31)))\" \"issue-577-match\")");
     const auto stats3b = adt_exhaustiveness_stats(cs);
     std::println("  adt-exhaustiveness-stats: {} -> {}", stats3a, stats3b);
     CHECK(stats3b >= stats3a, "adt-exhaustiveness-stats monotonic after match mutate");
@@ -89,16 +88,14 @@ static void run_matrix(CompilerService& cs) {
         CHECK(as_int(*r3) == 11, "Num arm returns 11 after mutate");
 
     std::println("\n--- AC4: incremental_infer → exhaust rechecks observable ---");
-    (void)cs.eval(
-        "(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 12) ((Str) 22) "
-        "((Bool) 32)))\" \"issue-577-infer\")");
+    (void)cs.eval("(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 12) ((Str) 22) "
+                  "((Bool) 32)))\" \"issue-577-infer\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     const auto snap4a = cs.snapshot();
     (void)cs.incremental_infer(ws->all_mutations().back());
     const auto snap4b = cs.snapshot();
-    std::println("  adt_exhaust_rechecks: {} -> {}",
-                 snap4a.adt_exhaust_rechecks_total,
+    std::println("  adt_exhaust_rechecks: {} -> {}", snap4a.adt_exhaust_rechecks_total,
                  snap4b.adt_exhaust_rechecks_total);
     CHECK(snap4b.adt_exhaust_rechecks_total >= snap4a.adt_exhaust_rechecks_total,
           "adt_exhaust_rechecks monotonic after incremental infer");
@@ -110,22 +107,19 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round match arm mutate matrix ---");
     const auto stats6a = adt_exhaustiveness_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        const std::string m_body =
-            "(lambda (t) (match t ((Num) " + std::to_string(round + 40) +
-            ") ((Str) " + std::to_string(round + 50) +
-            ") ((Bool) " + std::to_string(round + 60) + ")))";
-        (void)cs.eval("(mutate:rebind \"m\" \"" + m_body + "\" \"r" +
-                      std::to_string(round) + "-m\")");
+        const std::string m_body = "(lambda (t) (match t ((Num) " + std::to_string(round + 40) +
+                                   ") ((Str) " + std::to_string(round + 50) + ") ((Bool) " +
+                                   std::to_string(round + 60) + ")))";
+        (void)cs.eval("(mutate:rebind \"m\" \"" + m_body + "\" \"r" + std::to_string(round) +
+                      "-m\")");
         auto rn = cs.eval("(m Num)");
         auto rs = cs.eval("(m Str)");
         CHECK(rn && is_int(*rn), "m Num ok round " + std::to_string(round));
         CHECK(rs && is_int(*rs), "m Str ok round " + std::to_string(round));
         if (rn && is_int(*rn))
-            CHECK(as_int(*rn) == round + 40,
-                  "Num semantics round " + std::to_string(round));
+            CHECK(as_int(*rn) == round + 40, "Num semantics round " + std::to_string(round));
         if (rs && is_int(*rs))
-            CHECK(as_int(*rs) == round + 50,
-                  "Str semantics round " + std::to_string(round));
+            CHECK(as_int(*rs) == round + 50, "Str semantics round " + std::to_string(round));
     }
     const auto stats6b = adt_exhaustiveness_stats(cs);
     std::println("  adt-exhaustiveness-stats: {} -> {}", stats6a, stats6b);
@@ -138,20 +132,18 @@ static void run_matrix(CompilerService& cs) {
     CHECK(mns.has_value(), "compile:match-narrowing-stats returns value");
 
     std::println("\n--- AC8: if-narrowed match subject counters ---");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (m Num) (m Str)))\" "
-        "\"issue-577-narrow\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (m Num) (m Str)))\" "
+                  "\"issue-577-narrow\")");
     (void)cs.eval("(typecheck-current)");
     const auto snap8 = cs.snapshot();
-    std::println("  match_subject_total={} match_subject_narrowed={}",
-                 snap8.match_subject_total, snap8.match_subject_narrowed_total);
+    std::println("  match_subject_total={} match_subject_narrowed={}", snap8.match_subject_total,
+                 snap8.match_subject_narrowed_total);
     CHECK(snap8.match_subject_total >= 0,
           "match_subject_total observable after if+match typecheck");
 
     const auto rechecks = cs.snapshot().adt_exhaust_rechecks_total;
     const auto impacts = cs.snapshot().adt_variant_mutate_impacts_total;
-    std::println("  final adt_exhaust_rechecks={} variant_impacts={}",
-                 rechecks, impacts);
+    std::println("  final adt_exhaust_rechecks={} variant_impacts={}", rechecks, impacts);
     CHECK(rechecks >= 0, "exhaustiveness_checks counter observable");
 }
 

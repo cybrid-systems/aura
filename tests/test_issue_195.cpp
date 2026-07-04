@@ -28,16 +28,15 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // Forward declarations of the extern "C" functions defined in
 // src/compiler/aura_jit_runtime.cpp. The structured EH shipped
 // in ae11053 (Issue #170 follow-up). These are the runtime
 // functions the JIT lowering's OpTryBegin / OpTryEnd / OpRaise /
 // OpIsError call into.
-extern "C" void aura_exception_push(std::uint64_t handler_block,
-                                    std::uint64_t payload_slot);
+extern "C" void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot);
 extern "C" void aura_exception_pop();
 extern "C" std::uint64_t aura_exception_top_handler();
 extern "C" std::uint64_t aura_exception_top_payload();
@@ -58,9 +57,8 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -283,10 +281,8 @@ bool test_existing_eh_not_regressed() {
 
 // Forward declarations of the C-side extern functions
 // (defined in aura_jit_runtime.cpp).
-extern "C" uint64_t aura_personality(int version, int actions,
-                                      uint64_t exceptionClass,
-                                      void* exceptionInfo,
-                                      void* context);
+extern "C" uint64_t aura_personality(int version, int actions, uint64_t exceptionClass,
+                                     void* exceptionInfo, void* context);
 
 bool test_personality_function_linkable() {
     std::println("\n--- Test 6.1: aura_personality is linkable ---");

@@ -145,8 +145,8 @@ export struct CapabilityType {
 // BitVec types have matching width + signedness; a mismatch is
 // the canonical hardware bug caught at type-check time.
 export struct BitVecType {
-    std::uint32_t width = 0;  // bit width (0 = not a hw bitvec)
-    bool is_signed = false;   // false = unsigned, true = signed
+    std::uint32_t width = 0; // bit width (0 = not a hw bitvec)
+    bool is_signed = false;  // false = unsigned, true = signed
 };
 
 // ── TypeRegistry ──────────────────────────────────────────────
@@ -237,8 +237,7 @@ public:
     std::atomic<std::uint64_t>* poly_register_counter_ = nullptr;
     std::atomic<std::uint64_t>* poly_dedup_hits_counter_ = nullptr;
     std::atomic<std::uint64_t>* poly_instantiate_counter_ = nullptr;
-    void set_poly_metrics(std::atomic<std::uint64_t>* reg,
-                          std::atomic<std::uint64_t>* dedup,
+    void set_poly_metrics(std::atomic<std::uint64_t>* reg, std::atomic<std::uint64_t>* dedup,
                           std::atomic<std::uint64_t>* inst) {
         poly_register_counter_ = reg;
         poly_dedup_hits_counter_ = dedup;

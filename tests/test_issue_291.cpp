@@ -13,8 +13,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.compiler.value;
 import aura.compiler.evaluator;
@@ -24,9 +24,11 @@ namespace test_291_detail {
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
-    if (!aura::compiler::types::is_int(v)) return -1;
+    if (!aura::compiler::types::is_int(v))
+        return -1;
     return aura::compiler::types::as_int(v);
 }
 
@@ -36,12 +38,10 @@ bool test_struct_defaults() {
     aura::ast::FlatAST::StableNodeRef r{};
     CHECK(r.id == aura::ast::NULL_NODE, "default id == NULL_NODE");
     CHECK(r.gen == 0, "default gen == 0");
-    CHECK(r.mutation_id_at_capture == 0,
-          "default mutation_id_at_capture == 0 (got " +
-          std::to_string(r.mutation_id_at_capture) + ")");
+    CHECK(r.mutation_id_at_capture == 0, "default mutation_id_at_capture == 0 (got " +
+                                             std::to_string(r.mutation_id_at_capture) + ")");
     CHECK(r.workspace_id == 0,
-          "default workspace_id == 0 (got " +
-          std::to_string(r.workspace_id) + ")");
+          "default workspace_id == 0 (got " + std::to_string(r.workspace_id) + ")");
     return true;
 }
 
@@ -49,8 +49,7 @@ bool test_struct_defaults() {
 bool test_serialized_size() {
     std::println("\n--- AC #2: kStableRefSerializedSize == 24 ---");
     CHECK(aura::ast::FlatAST::kStableRefSerializedSize == 24,
-          "size == 24 (got " +
-          std::to_string(aura::ast::FlatAST::kStableRefSerializedSize) + ")");
+          "size == 24 (got " + std::to_string(aura::ast::FlatAST::kStableRefSerializedSize) + ")");
     return true;
 }
 
@@ -72,28 +71,26 @@ bool test_serialize_roundtrip() {
     // Check magic
     std::uint32_t magic = 0;
     std::memcpy(&magic, buf, 4);
-    CHECK(magic == aura::ast::FlatAST::kStableRefMagic,
-          "magic = 0x" + [&]() {
-              char tmp[16];
-              std::snprintf(tmp, sizeof(tmp), "%08X", magic);
-              return std::string(tmp);
-          }());
+    CHECK(
+        magic == aura::ast::FlatAST::kStableRefMagic, "magic = 0x" + [&]() {
+            char tmp[16];
+            std::snprintf(tmp, sizeof(tmp), "%08X", magic);
+            return std::string(tmp);
+        }());
     // Roundtrip
     aura::ast::FlatAST::StableNodeRef out{};
     bool ok = flat.deserialize_stable_ref(buf, n, out);
     CHECK(ok, "deserialize returned true");
-    CHECK(out.id == ref.id, "roundtrip id (got " + std::to_string(out.id) +
-          ", want " + std::to_string(ref.id) + ")");
-    CHECK(out.gen == ref.gen, "roundtrip gen (got " +
-          std::to_string(out.gen) + ", want " + std::to_string(ref.gen) + ")");
+    CHECK(out.id == ref.id,
+          "roundtrip id (got " + std::to_string(out.id) + ", want " + std::to_string(ref.id) + ")");
+    CHECK(out.gen == ref.gen, "roundtrip gen (got " + std::to_string(out.gen) + ", want " +
+                                  std::to_string(ref.gen) + ")");
     CHECK(out.mutation_id_at_capture == ref.mutation_id_at_capture,
-          "roundtrip mutation_id (got " +
-          std::to_string(out.mutation_id_at_capture) + ", want " +
-          std::to_string(ref.mutation_id_at_capture) + ")");
-    CHECK(out.workspace_id == ref.workspace_id,
-          "roundtrip workspace_id (got " +
-          std::to_string(out.workspace_id) + ", want " +
-          std::to_string(ref.workspace_id) + ")");
+          "roundtrip mutation_id (got " + std::to_string(out.mutation_id_at_capture) + ", want " +
+              std::to_string(ref.mutation_id_at_capture) + ")");
+    CHECK(out.workspace_id == ref.workspace_id, "roundtrip workspace_id (got " +
+                                                    std::to_string(out.workspace_id) + ", want " +
+                                                    std::to_string(ref.workspace_id) + ")");
     return true;
 }
 
@@ -102,7 +99,10 @@ bool test_deserialize_rejects_bad_magic() {
     std::println("\n--- AC #4: deserialize rejects non-#291 buffers ---");
     aura::ast::FlatAST flat;
     std::uint8_t bad[24] = {};
-    bad[0] = 0xDE; bad[1] = 0xAD; bad[2] = 0xBE; bad[3] = 0xEF;
+    bad[0] = 0xDE;
+    bad[1] = 0xAD;
+    bad[2] = 0xBE;
+    bad[3] = 0xEF;
     aura::ast::FlatAST::StableNodeRef out{};
     bool ok = flat.deserialize_stable_ref(bad, sizeof(bad), out);
     CHECK(!ok, "deserialize returned false for bad magic");
@@ -129,9 +129,8 @@ bool test_make_ref_captures_mutation_id() {
     flat.add_variable(x);
     // Before any mutation, next_mutation_id_ == 1
     auto ref1 = flat.make_ref(0);
-    CHECK(ref1.mutation_id_at_capture == 1,
-          "first make_ref: mutation_id_at_capture == 1 (got " +
-          std::to_string(ref1.mutation_id_at_capture) + ")");
+    CHECK(ref1.mutation_id_at_capture == 1, "first make_ref: mutation_id_at_capture == 1 (got " +
+                                                std::to_string(ref1.mutation_id_at_capture) + ")");
     return true;
 }
 
@@ -144,10 +143,8 @@ bool test_aura_helpers_extract() {
     // Pass 4 ints: id, gen, mutation_id, workspace_id
     auto mut_id = run_int(cs, "(ast:ref-mutation-id 5 3 99 2)");
     auto ws_id = run_int(cs, "(ast:ref-workspace-id 5 3 99 2)");
-    CHECK(mut_id == 99, "ref-mutation-id == 99 (got " +
-          std::to_string(mut_id) + ")");
-    CHECK(ws_id == 2, "ref-workspace-id == 2 (got " +
-          std::to_string(ws_id) + ")");
+    CHECK(mut_id == 99, "ref-mutation-id == 99 (got " + std::to_string(mut_id) + ")");
+    CHECK(ws_id == 2, "ref-workspace-id == 2 (got " + std::to_string(ws_id) + ")");
     return true;
 }
 
@@ -166,11 +163,12 @@ bool test_aura_serialize_deserialize() {
     // Verify the string is 24 bytes
     auto sidx = aura::compiler::types::as_string_idx(*r);
     if (sidx >= cs.evaluator().string_heap().size()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     const std::string& blob = cs.evaluator().string_heap()[sidx];
     CHECK(static_cast<int>(blob.size()) ==
-          static_cast<int>(aura::ast::FlatAST::kStableRefSerializedSize),
+              static_cast<int>(aura::ast::FlatAST::kStableRefSerializedSize),
           "blob size == 24 (got " + std::to_string(blob.size()) + ")");
     // P0: full deserialize roundtrip via Aura source is
     // deferred (binary blobs in string literals have
@@ -183,8 +181,7 @@ bool test_aura_serialize_deserialize() {
     // roundtrip refs without raw-byte issues.
     std::uint32_t magic = 0;
     std::memcpy(&magic, blob.data(), 4);
-    CHECK(magic == aura::ast::FlatAST::kStableRefMagic,
-          "blob starts with #291 magic");
+    CHECK(magic == aura::ast::FlatAST::kStableRefMagic, "blob starts with #291 magic");
     return true;
 }
 
@@ -219,15 +216,19 @@ int run_tests() {
     test_aura_helpers_extract();
     test_aura_serialize_deserialize();
     test_backward_compat();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_291_detail
+
+int aura_issue_291_run() {
+    return test_291_detail::run_tests();
 }
 
-int aura_issue_291_run() { return test_291_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_291_run(); }
+int main() {
+    return aura_issue_291_run();
+}
 #endif

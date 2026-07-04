@@ -42,28 +42,38 @@ namespace aura_409_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → delta_constraints_* = 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: delta_constraints_* counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.delta_constraints_processed_total, 0u,
-             "delta_constraints_processed_total == 0");
-    CHECK_EQ(snap.delta_constraints_total, 0u,
-             "delta_constraints_total == 0");
-    CHECK_EQ(snap.delta_solve_constraints_ratio_bp, 0u,
-             "delta_solve_constraints_ratio_bp == 0");
+    CHECK_EQ(snap.delta_constraints_processed_total, 0u, "delta_constraints_processed_total == 0");
+    CHECK_EQ(snap.delta_constraints_total, 0u, "delta_constraints_total == 0");
+    CHECK_EQ(snap.delta_solve_constraints_ratio_bp, 0u, "delta_solve_constraints_ratio_bp == 0");
     return true;
 }
 
@@ -104,14 +114,11 @@ bool test_typecheck_bumps_counters() {
     // typecheck-current goes through the inference
     // engine which calls solve_delta internally. The
     // counters should be plumbed end-to-end.
-    auto r = cs.typecheck(
-        "(define (id x) x) (id 5)");
+    auto r = cs.typecheck("(define (id x) x) (id 5)");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  delta_constraints_processed_total: {}",
-                 snap.delta_constraints_processed_total);
-    std::println("  delta_constraints_total: {}",
-                 snap.delta_constraints_total);
+    std::println("  delta_constraints_processed_total: {}", snap.delta_constraints_processed_total);
+    std::println("  delta_constraints_total: {}", snap.delta_constraints_total);
     // The counters may be 0 if the typecheck
     // path didn't go through solve_delta (it might
     // have gone through solve() instead). We just
@@ -127,13 +134,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define cde 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define cde 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_409_detail
+} // namespace aura_409_detail
 
 int main() {
     using namespace aura_409_detail;
@@ -143,7 +149,7 @@ int main() {
     test_constraint_dep_stats_primitive();
     test_typecheck_bumps_counters();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -23,16 +23,29 @@ import aura.core.mutation;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: AuraError default construction + field access ────
 bool test_aura_error_defaults() {
@@ -48,16 +61,11 @@ bool test_aura_error_defaults() {
 // ── AC2: AuraError 4-arg construction ─────────────────────
 bool test_aura_error_construction() {
     std::println("\n--- AC2: AuraError 4-arg construction ---");
-    aura::core::AuraError err(
-        aura::core::AuraErrorKind::TypeError,
-        "test message",
-        std::source_location::current(),
-        42u);
-    CHECK_EQ(static_cast<int>(err.kind),
-             static_cast<int>(aura::core::AuraErrorKind::TypeError),
+    aura::core::AuraError err(aura::core::AuraErrorKind::TypeError, "test message",
+                              std::source_location::current(), 42u);
+    CHECK_EQ(static_cast<int>(err.kind), static_cast<int>(aura::core::AuraErrorKind::TypeError),
              "kind == TypeError");
-    CHECK_EQ(err.message, std::string{"test message"},
-             "message stored correctly");
+    CHECK_EQ(err.message, std::string{"test message"}, "message stored correctly");
     CHECK_EQ(err.generation, 42u, "generation == 42");
     return true;
 }
@@ -65,41 +73,27 @@ bool test_aura_error_construction() {
 // ── AC3: kind_name static + instance method ──────────────
 bool test_kind_name() {
     std::println("\n--- AC3: AuraErrorKind::kind_name ---");
-    CHECK_EQ(aura::core::AuraError::kind_name(
-                 aura::core::AuraErrorKind::TypeError),
-             std::string_view{"TypeError"},
-             "TypeError name");
-    CHECK_EQ(aura::core::AuraError::kind_name(
-                 aura::core::AuraErrorKind::MutationNotCommitted),
-             std::string_view{"MutationNotCommitted"},
-             "MutationNotCommitted name");
-    CHECK_EQ(aura::core::AuraError::kind_name(
-                 aura::core::AuraErrorKind::ArenaOutOfMemory),
-             std::string_view{"ArenaOutOfMemory"},
-             "ArenaOutOfMemory name");
-    CHECK_EQ(aura::core::AuraError::kind_name(
-                 aura::core::AuraErrorKind::InternalInvariantViolation),
-             std::string_view{"InternalInvariantViolation"},
-             "InternalInvariantViolation name");
+    CHECK_EQ(aura::core::AuraError::kind_name(aura::core::AuraErrorKind::TypeError),
+             std::string_view{"TypeError"}, "TypeError name");
+    CHECK_EQ(aura::core::AuraError::kind_name(aura::core::AuraErrorKind::MutationNotCommitted),
+             std::string_view{"MutationNotCommitted"}, "MutationNotCommitted name");
+    CHECK_EQ(aura::core::AuraError::kind_name(aura::core::AuraErrorKind::ArenaOutOfMemory),
+             std::string_view{"ArenaOutOfMemory"}, "ArenaOutOfMemory name");
+    CHECK_EQ(
+        aura::core::AuraError::kind_name(aura::core::AuraErrorKind::InternalInvariantViolation),
+        std::string_view{"InternalInvariantViolation"}, "InternalInvariantViolation name");
     return true;
 }
 
 // ── AC4: make_unexpected builder ─────────────────────────
 bool test_make_unexpected() {
     std::println("\n--- AC4: make_unexpected builder ---");
-    auto r = aura::core::AuraResult<int>{
-        aura::core::make_unexpected(
-            aura::core::AuraErrorKind::EvalError,
-            "eval failed",
-            std::source_location::current(),
-            7u)};
-    CHECK(r.has_value() == false,
-          "AuraResult from make_unexpected has no value");
+    auto r = aura::core::AuraResult<int>{aura::core::make_unexpected(
+        aura::core::AuraErrorKind::EvalError, "eval failed", std::source_location::current(), 7u)};
+    CHECK(r.has_value() == false, "AuraResult from make_unexpected has no value");
     CHECK_EQ(static_cast<int>(r.error().kind),
-             static_cast<int>(aura::core::AuraErrorKind::EvalError),
-             "error kind is EvalError");
-    CHECK_EQ(r.error().message, std::string{"eval failed"},
-             "error message stored");
+             static_cast<int>(aura::core::AuraErrorKind::EvalError), "error kind is EvalError");
+    CHECK_EQ(r.error().message, std::string{"eval failed"}, "error message stored");
     CHECK_EQ(r.error().generation, 7u, "error generation == 7");
     return true;
 }
@@ -111,10 +105,8 @@ bool test_auraresult_int() {
     CHECK(ok.has_value(), "success has value");
     CHECK_EQ(*ok, 42, "value is 42");
 
-    auto err = aura::core::AuraResult<int>{
-        aura::core::make_unexpected(
-            aura::core::AuraErrorKind::InternalInvariantViolation,
-            std::string{"failed"})};
+    auto err = aura::core::AuraResult<int>{aura::core::make_unexpected(
+        aura::core::AuraErrorKind::InternalInvariantViolation, std::string{"failed"})};
     CHECK(err.has_value() == false, "failure has no value");
     CHECK_EQ(static_cast<int>(err.error().kind),
              static_cast<int>(aura::core::AuraErrorKind::InternalInvariantViolation),
@@ -128,8 +120,8 @@ bool test_void_result() {
     aura::core::VoidResult ok{};
     CHECK(ok.has_value(), "VoidResult default is success");
 
-    aura::core::VoidResult err = aura::core::make_unexpected(
-        aura::core::AuraErrorKind::ArenaOutOfMemory, "OOM");
+    aura::core::VoidResult err =
+        aura::core::make_unexpected(aura::core::AuraErrorKind::ArenaOutOfMemory, "OOM");
     CHECK(err.has_value() == false, "VoidResult with unexpected has no value");
     return true;
 }
@@ -145,11 +137,9 @@ bool test_auraresult_monadic() {
 
     // failure propagation
     auto bad = aura::core::AuraResult<int>{
-        aura::core::make_unexpected(
-            aura::core::AuraErrorKind::TypeError, "type mismatch")};
+        aura::core::make_unexpected(aura::core::AuraErrorKind::TypeError, "type mismatch")};
     auto bad_transformed = bad.transform([](int x) { return x * 2; });
-    CHECK(bad_transformed.has_value() == false,
-          "transform propagates failure");
+    CHECK(bad_transformed.has_value() == false, "transform propagates failure");
 
     // and_then short-circuits on error
     int calls = 0;
@@ -165,8 +155,7 @@ bool test_auraresult_monadic() {
         ++calls;
         return aura::core::AuraResult<int>{0};
     });
-    CHECK(and_then_bad.has_value() == false,
-          "and_then short-circuits on error");
+    CHECK(and_then_bad.has_value() == false, "and_then short-circuits on error");
     CHECK_EQ(calls, 1, "and_then did NOT call fn on error");
     return true;
 }
@@ -174,36 +163,30 @@ bool test_auraresult_monadic() {
 // ── AC8: MutationError → AuraErrorKind conversion ────────
 bool test_mutation_to_aura_kind() {
     std::println("\n--- AC8: MutationError → AuraErrorKind ---");
+    using aura::ast::mutation_error_to_aura_error_kind;
     using aura::ast::MutationError;
     using aura::core::AuraErrorKind;
-    using aura::ast::mutation_error_to_aura_error_kind;
 
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::NotCommitted)),
+    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(MutationError::NotCommitted)),
              static_cast<int>(AuraErrorKind::MutationNotCommitted),
              "NotCommitted → MutationNotCommitted");
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::NoRollbackData)),
+    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(MutationError::NoRollbackData)),
              static_cast<int>(AuraErrorKind::MutationNoRollbackData),
              "NoRollbackData → MutationNoRollbackData");
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::InvalidTarget)),
+    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(MutationError::InvalidTarget)),
              static_cast<int>(AuraErrorKind::MutationInvalidTarget),
              "InvalidTarget → MutationInvalidTarget");
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::InvalidParent)),
+    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(MutationError::InvalidParent)),
              static_cast<int>(AuraErrorKind::MutationInvalidParent),
              "InvalidParent → MutationInvalidParent");
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::InvalidField)),
+    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(MutationError::InvalidField)),
              static_cast<int>(AuraErrorKind::MutationInvalidField),
              "InvalidField → MutationInvalidField");
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::UnknownStructuralOp)),
-             static_cast<int>(AuraErrorKind::MutationUnknownStructuralOp),
-             "UnknownStructuralOp → MutationUnknownStructuralOp");
-    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(
-                 MutationError::OutOfRange)),
+    CHECK_EQ(
+        static_cast<int>(mutation_error_to_aura_error_kind(MutationError::UnknownStructuralOp)),
+        static_cast<int>(AuraErrorKind::MutationUnknownStructuralOp),
+        "UnknownStructuralOp → MutationUnknownStructuralOp");
+    CHECK_EQ(static_cast<int>(mutation_error_to_aura_error_kind(MutationError::OutOfRange)),
              static_cast<int>(AuraErrorKind::MutationOutOfRange),
              "OutOfRange → MutationOutOfRange");
     return true;
@@ -215,25 +198,19 @@ bool test_kind_categories() {
     // Sanity check: all categories we documented are
     // present (kinda spotty — this is more of a build
     // smoke test than a strict equality).
-    CHECK_EQ(static_cast<int>(aura::core::AuraErrorKind::ParseError),
-             0, "ParseError is enum[0]");
-    CHECK_EQ(static_cast<int>(aura::core::AuraErrorKind::TypeError),
-             7, "TypeError is enum[7]");
-    CHECK_EQ(static_cast<int>(aura::core::AuraErrorKind::MutationNotCommitted),
-             13, "MutationNotCommitted is enum[13]");
+    CHECK_EQ(static_cast<int>(aura::core::AuraErrorKind::ParseError), 0, "ParseError is enum[0]");
+    CHECK_EQ(static_cast<int>(aura::core::AuraErrorKind::TypeError), 7, "TypeError is enum[7]");
+    CHECK_EQ(static_cast<int>(aura::core::AuraErrorKind::MutationNotCommitted), 13,
+             "MutationNotCommitted is enum[13]");
     return true;
 }
 
 // ── AC10: source_location captured at call site ──────────
 bool test_source_location() {
     std::println("\n--- AC10: source_location captured ---");
-    aura::core::AuraError err(
-        aura::core::AuraErrorKind::InternalInvariantViolation,
-        "test",
-        std::source_location::current(),
-        0);
-    CHECK(err.location.line() > 0,
-          "source_location.line() is captured (>0)");
+    aura::core::AuraError err(aura::core::AuraErrorKind::InternalInvariantViolation, "test",
+                              std::source_location::current(), 0);
+    CHECK(err.location.line() > 0, "source_location.line() is captured (>0)");
     return true;
 }
 

@@ -31,22 +31,33 @@ import aura.core.error;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} == {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} == {})", msg, _a, _b);                                   \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // Helper: build a 2-child let node.
-static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat,
-                                    aura::ast::StringPool& pool,
-                                    const char* name,
-                                    std::int64_t val) {
+static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                    const char* name, std::int64_t val) {
     auto name_sym = pool.intern(name);
     auto val_node = flat.add_literal(val);
     auto id = flat.add_let(name_sym, val_node, aura::ast::NULL_NODE);
@@ -70,27 +81,23 @@ bool test_apply_mutation_counter() {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
-        aura::ast::mutators::apply_mutation(
-            flat, let_id, aura::ast::mutators::NoOpMutator{});
+        aura::ast::mutators::apply_mutation(flat, let_id, aura::ast::mutators::NoOpMutator{});
     }
     {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "b", 2);
-        aura::ast::mutators::apply_mutation(
-            flat, let_id, aura::ast::mutators::NoOpMutator{});
+        aura::ast::mutators::apply_mutation(flat, let_id, aura::ast::mutators::NoOpMutator{});
     }
     {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "c", 3);
-        aura::ast::mutators::apply_mutation(
-            flat, let_id, aura::ast::mutators::NoOpMutator{});
+        aura::ast::mutators::apply_mutation(flat, let_id, aura::ast::mutators::NoOpMutator{});
     }
 
     auto after = s.apply_mutation_total.load(std::memory_order_relaxed);
-    CHECK_EQ(after - before, 3u,
-             "apply_mutation_total incremented by 3 for 3 calls");
+    CHECK_EQ(after - before, 3u, "apply_mutation_total incremented by 3 for 3 calls");
     return true;
 }
 
@@ -111,18 +118,15 @@ bool test_apply_by_kind_counter() {
 
     using namespace aura::ast;
     auto before_total = s.apply_by_kind_total.load(std::memory_order_relaxed);
-    auto before_replace_succ = s.kind_success[
-        aura::ast::mutators::kind_index(
-            aura::ast::mutators::StrategyKind::ReplaceChild)]
-        .load(std::memory_order_relaxed);
-    auto before_insert_succ = s.kind_success[
-        aura::ast::mutators::kind_index(
-            aura::ast::mutators::StrategyKind::InsertChild)]
-        .load(std::memory_order_relaxed);
-    auto before_remove_succ = s.kind_success[
-        aura::ast::mutators::kind_index(
-            aura::ast::mutators::StrategyKind::RemoveChild)]
-        .load(std::memory_order_relaxed);
+    auto before_replace_succ = s.kind_success[aura::ast::mutators::kind_index(
+                                                  aura::ast::mutators::StrategyKind::ReplaceChild)]
+                                   .load(std::memory_order_relaxed);
+    auto before_insert_succ = s.kind_success[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::InsertChild)]
+                                  .load(std::memory_order_relaxed);
+    auto before_remove_succ = s.kind_success[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::RemoveChild)]
+                                  .load(std::memory_order_relaxed);
 
     // Each call uses its own FlatAST to avoid generation
     // invalidation across mutations.
@@ -131,16 +135,16 @@ bool test_apply_by_kind_counter() {
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
         aura::ast::mutators::apply_by_kind(flat, let_id,
-            aura::ast::mutators::StrategyKind::ReplaceChild,
-            aura::ast::mutators::StrategyParams{0, NULL_NODE});
+                                           aura::ast::mutators::StrategyKind::ReplaceChild,
+                                           aura::ast::mutators::StrategyParams{0, NULL_NODE});
     }
     {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "b", 2);
         aura::ast::mutators::apply_by_kind(flat, let_id,
-            aura::ast::mutators::StrategyKind::ReplaceChild,
-            aura::ast::mutators::StrategyParams{0, NULL_NODE});
+                                           aura::ast::mutators::StrategyKind::ReplaceChild,
+                                           aura::ast::mutators::StrategyParams{0, NULL_NODE});
     }
     {
         FlatAST flat;
@@ -148,34 +152,30 @@ bool test_apply_by_kind_counter() {
         auto let_id = make_let_2(flat, pool, "c", 3);
         auto two = flat.add_literal(2);
         aura::ast::mutators::apply_by_kind(flat, let_id,
-            aura::ast::mutators::StrategyKind::InsertChild,
-            aura::ast::mutators::StrategyParams{0, two});
+                                           aura::ast::mutators::StrategyKind::InsertChild,
+                                           aura::ast::mutators::StrategyParams{0, two});
     }
     {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "d", 4);
         aura::ast::mutators::apply_by_kind(flat, let_id,
-            aura::ast::mutators::StrategyKind::RemoveChild,
-            aura::ast::mutators::StrategyParams{0});
+                                           aura::ast::mutators::StrategyKind::RemoveChild,
+                                           aura::ast::mutators::StrategyParams{0});
     }
 
     auto after_total = s.apply_by_kind_total.load(std::memory_order_relaxed);
-    auto after_replace_succ = s.kind_success[
-        aura::ast::mutators::kind_index(
-            aura::ast::mutators::StrategyKind::ReplaceChild)]
-        .load(std::memory_order_relaxed);
-    auto after_insert_succ = s.kind_success[
-        aura::ast::mutators::kind_index(
-            aura::ast::mutators::StrategyKind::InsertChild)]
-        .load(std::memory_order_relaxed);
-    auto after_remove_succ = s.kind_success[
-        aura::ast::mutators::kind_index(
-            aura::ast::mutators::StrategyKind::RemoveChild)]
-        .load(std::memory_order_relaxed);
+    auto after_replace_succ = s.kind_success[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::ReplaceChild)]
+                                  .load(std::memory_order_relaxed);
+    auto after_insert_succ = s.kind_success[aura::ast::mutators::kind_index(
+                                                aura::ast::mutators::StrategyKind::InsertChild)]
+                                 .load(std::memory_order_relaxed);
+    auto after_remove_succ = s.kind_success[aura::ast::mutators::kind_index(
+                                                aura::ast::mutators::StrategyKind::RemoveChild)]
+                                 .load(std::memory_order_relaxed);
 
-    CHECK_EQ(after_total - before_total, 4u,
-             "apply_by_kind_total incremented by 4");
+    CHECK_EQ(after_total - before_total, 4u, "apply_by_kind_total incremented by 4");
     CHECK_EQ(after_replace_succ - before_replace_succ, 2u,
              "ReplaceChild success count incremented by 2");
     CHECK_EQ(after_insert_succ - before_insert_succ, 1u,
@@ -221,8 +221,7 @@ bool test_failure_counters() {
     auto after_failure = s.failure_total.load(std::memory_order_relaxed);
     auto after_apply_mutation = s.apply_mutation_total.load(std::memory_order_relaxed);
 
-    CHECK_EQ(after_failure - before_failure, 2u,
-             "failure_total incremented by 2");
+    CHECK_EQ(after_failure - before_failure, 2u, "failure_total incremented by 2");
     CHECK_EQ(after_apply_mutation - before_apply_mutation, 2u,
              "apply_mutation_total incremented by 2");
     return true;
@@ -243,19 +242,18 @@ bool test_apply_by_name_counter() {
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
         aura::ast::mutators::apply_by_name(flat, let_id, "replace-child",
-            aura::ast::mutators::StrategyParams{0, NULL_NODE});
+                                           aura::ast::mutators::StrategyParams{0, NULL_NODE});
     }
     {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "b", 2);
         aura::ast::mutators::apply_by_name(flat, let_id, "no-op",
-            aura::ast::mutators::StrategyParams{});
+                                           aura::ast::mutators::StrategyParams{});
     }
 
     auto after = s.apply_by_name_total.load(std::memory_order_relaxed);
-    CHECK_EQ(after - before, 2u,
-             "apply_by_name_total incremented by 2");
+    CHECK_EQ(after - before, 2u, "apply_by_name_total incremented by 2");
     return true;
 }
 
@@ -271,11 +269,10 @@ bool test_apply_by_name_unknown_failure() {
     auto let_id = make_let_2(flat, pool, "a", 1);
 
     aura::ast::mutators::apply_by_name(flat, let_id, "nonexistent",
-        aura::ast::mutators::StrategyParams{});
+                                       aura::ast::mutators::StrategyParams{});
 
     auto failure_total = s.failure_total.load(std::memory_order_relaxed);
-    CHECK_EQ(failure_total, 1u,
-             "unknown strategy name bumps failure_total");
+    CHECK_EQ(failure_total, 1u, "unknown strategy name bumps failure_total");
     return true;
 }
 
@@ -289,8 +286,7 @@ bool test_reset() {
     FlatAST flat;
     StringPool pool;
     auto let_id = make_let_2(flat, pool, "a", 1);
-    aura::ast::mutators::apply_mutation(
-        flat, let_id, aura::ast::mutators::NoOpMutator{});
+    aura::ast::mutators::apply_mutation(flat, let_id, aura::ast::mutators::NoOpMutator{});
     CHECK(s.total() > 0, "counters non-zero after dispatch");
     s.reset();
     CHECK_EQ(s.total(), 0u, "reset() zeros total");
@@ -331,15 +327,14 @@ bool test_total_aggregation() {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "a", 1);
-        aura::ast::mutators::apply_mutation(
-            flat, let_id, aura::ast::mutators::NoOpMutator{});
+        aura::ast::mutators::apply_mutation(flat, let_id, aura::ast::mutators::NoOpMutator{});
     }
     {
         FlatAST flat;
         StringPool pool;
         auto let_id = make_let_2(flat, pool, "b", 2);
-        aura::ast::mutators::apply_by_kind(flat, let_id,
-            aura::ast::mutators::StrategyKind::NoOp, {});
+        aura::ast::mutators::apply_by_kind(flat, let_id, aura::ast::mutators::StrategyKind::NoOp,
+                                           {});
     }
     {
         FlatAST flat;
@@ -358,8 +353,7 @@ bool test_total_aggregation() {
     CHECK_EQ(s.apply_by_kind_total.load(), 2u,
              "apply_by_kind_total = 2 (1 direct + nested from by_name)");
     // apply_by_name_total: 1
-    CHECK_EQ(s.apply_by_name_total.load(), 1u,
-             "apply_by_name_total = 1");
+    CHECK_EQ(s.apply_by_name_total.load(), 1u, "apply_by_name_total = 1");
     // total() sums all three (with nesting), so 3+2+1 = 6.
     CHECK_EQ(s.total(), 6u, "total() = 6 (sum of all 3 counters)");
     return true;
@@ -368,17 +362,13 @@ bool test_total_aggregation() {
 // ── AC8: kind_index maps StrategyKind → array index ───────
 bool test_kind_index_mapping() {
     std::println("\n--- AC8: kind_index mapping ---");
-    CHECK_EQ(aura::ast::mutators::kind_index(
-                 aura::ast::mutators::StrategyKind::NoOp), 0u,
+    CHECK_EQ(aura::ast::mutators::kind_index(aura::ast::mutators::StrategyKind::NoOp), 0u,
              "kind_index(NoOp) = 0");
-    CHECK_EQ(aura::ast::mutators::kind_index(
-                 aura::ast::mutators::StrategyKind::ReplaceChild), 1u,
+    CHECK_EQ(aura::ast::mutators::kind_index(aura::ast::mutators::StrategyKind::ReplaceChild), 1u,
              "kind_index(ReplaceChild) = 1");
-    CHECK_EQ(aura::ast::mutators::kind_index(
-                 aura::ast::mutators::StrategyKind::InsertChild), 2u,
+    CHECK_EQ(aura::ast::mutators::kind_index(aura::ast::mutators::StrategyKind::InsertChild), 2u,
              "kind_index(InsertChild) = 2");
-    CHECK_EQ(aura::ast::mutators::kind_index(
-                 aura::ast::mutators::StrategyKind::RemoveChild), 3u,
+    CHECK_EQ(aura::ast::mutators::kind_index(aura::ast::mutators::StrategyKind::RemoveChild), 3u,
              "kind_index(RemoveChild) = 3");
     return true;
 }

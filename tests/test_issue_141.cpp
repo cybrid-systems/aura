@@ -47,8 +47,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -59,7 +59,6 @@ import aura.diag;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_141_detail {
@@ -78,24 +77,29 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 
 static bool run_ok(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return false;
+    if (!r)
+        return false;
     auto& v = *r;
-    if (aura::compiler::types::is_bool(v)) return aura::compiler::types::as_bool(v);
-    if (aura::compiler::types::is_void(v)) return false;
+    if (aura::compiler::types::is_bool(v))
+        return aura::compiler::types::as_bool(v);
+    if (aura::compiler::types::is_void(v))
+        return false;
     return true;
 }
 
 // Helper: extract std::string from a string EvalValue via the
 // evaluator's string heap.
-static std::string string_value(aura::compiler::CompilerService& cs,
-                                 std::string_view src) {
+static std::string string_value(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return "";
+    if (!r)
+        return "";
     auto& v = *r;
-    if (!aura::compiler::types::is_string(v)) return "";
+    if (!aura::compiler::types::is_string(v))
+        return "";
     auto idx = aura::compiler::types::as_string_idx(v);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
@@ -106,63 +110,54 @@ static std::string string_value(aura::compiler::CompilerService& cs,
 bool test_workspace_create_increasing_ids() {
     std::println("\n--- Test 1.1: workspace:create returns increasing IDs ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"alpha\") "
-        "  (workspace:create \"beta\") "
-        "  (workspace:create \"gamma\") "
-        "  (length (workspace:list)))");
-    CHECK(result >= 4, "root + 3 children = 4 entries (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"alpha\") "
+                                 "  (workspace:create \"beta\") "
+                                 "  (workspace:create \"gamma\") "
+                                 "  (length (workspace:list)))");
+    CHECK(result >= 4, "root + 3 children = 4 entries (got " + std::to_string(result) + ")");
     return true;
 }
 
 bool test_workspace_list() {
     std::println("\n--- Test 1.2: workspace:list shows created workspaces ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"alpha\") "
-        "  (workspace:create \"beta\") "
-        "  (length (workspace:list)))");
-    CHECK(result >= 3, "root + 2 children = 3 entries (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"alpha\") "
+                                 "  (workspace:create \"beta\") "
+                                 "  (length (workspace:list)))");
+    CHECK(result >= 3, "root + 2 children = 3 entries (got " + std::to_string(result) + ")");
     return true;
 }
 
 bool test_workspace_current() {
     std::println("\n--- Test 1.3: workspace:current returns the active ID ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"tmp\") "
-        "  (workspace:switch 1) "
-        "  (workspace:current))");
-    CHECK(result == 1, "after switch to 1, current is 1 (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"tmp\") "
+                                 "  (workspace:switch 1) "
+                                 "  (workspace:current))");
+    CHECK(result == 1, "after switch to 1, current is 1 (got " + std::to_string(result) + ")");
     return true;
 }
 
 bool test_workspace_switch() {
     std::println("\n--- Test 1.4: workspace:switch changes active layer ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"test\") "
-        "  (workspace:switch 1) "
-        "  (workspace:current))");
-    CHECK(result == 1, "after switch, current is 1 (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"test\") "
+                                 "  (workspace:switch 1) "
+                                 "  (workspace:current))");
+    CHECK(result == 1, "after switch, current is 1 (got " + std::to_string(result) + ")");
     return true;
 }
 
 bool test_workspace_delete() {
     std::println("\n--- Test 1.5: workspace:delete returns success boolean ---");
     aura::compiler::CompilerService cs;
-    bool result = run_ok(cs,
-        "(begin "
-        "  (define w (workspace:create \"delete-me\")) "
-        "  (workspace:delete w))");
+    bool result = run_ok(cs, "(begin "
+                             "  (define w (workspace:create \"delete-me\")) "
+                             "  (workspace:delete w))");
     CHECK(result, "delete returns truthy on success");
     return true;
 }
@@ -176,17 +171,15 @@ bool test_workspace_can_write() {
     aura::compiler::CompilerService cs;
     // can-write? is the correct primitive name (with '?' suffix).
     // We use nested let* so each binding sees the prior lock state.
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"canwrite-test\") "
-        "  (let* ((b1 (if (workspace:can-write? 1) 1 0))) "
-        "    (workspace:lock 1 #t) "
-        "    (let* ((b2 (if (workspace:can-write? 1) 1 0))) "
-        "      (workspace:lock 1 #f) "
-        "      (let* ((b3 (if (workspace:can-write? 1) 1 0))) "
-        "        (+ (* b1 100) (+ (* b2 10) b3))))))");
-    CHECK(result == 101, "fresh=1, locked=0, unlocked=1 (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"canwrite-test\") "
+                                 "  (let* ((b1 (if (workspace:can-write? 1) 1 0))) "
+                                 "    (workspace:lock 1 #t) "
+                                 "    (let* ((b2 (if (workspace:can-write? 1) 1 0))) "
+                                 "      (workspace:lock 1 #f) "
+                                 "      (let* ((b3 (if (workspace:can-write? 1) 1 0))) "
+                                 "        (+ (* b1 100) (+ (* b2 10) b3))))))");
+    CHECK(result == 101, "fresh=1, locked=0, unlocked=1 (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -204,8 +197,7 @@ bool test_workspace_lock_prevents_mutation() {
             "  (workspace:switch 0))");
     std::string root_src = string_value(cs, "(current-source :workspace)");
     bool result = (root_src == "(define f (lambda (x) (+ x 1)))");
-    CHECK(result, "mutate in locked workspace rejected (source unchanged, got '" +
-          root_src + "')");
+    CHECK(result, "mutate in locked workspace rejected (source unchanged, got '" + root_src + "')");
     return true;
 }
 
@@ -221,8 +213,8 @@ bool test_issue_example_scenario() {
             "  (workspace:switch 0))");
     std::string root_src = string_value(cs, "(current-source :workspace)");
     bool root_unchanged = (root_src == "(define f (lambda (x) (+ x 1)))");
-    CHECK(root_unchanged, "root workspace source unchanged after child mutate (got '" +
-          root_src + "')");
+    CHECK(root_unchanged,
+          "root workspace source unchanged after child mutate (got '" + root_src + "')");
     cs.eval("(begin "
             "  (set-code \"(define (f x) (+ x 1))\") "
             "  (workspace:create \"experiment\") "
@@ -240,14 +232,13 @@ bool test_cow_lazy_clone() {
     // Issue #141 AC: COW triggers only on mutate, not on switch.
     // After switch (no mutate), memory-used on the child should be 0
     // (parent's flat is still shared, no clone happened).
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(define x 1)\") "
-        "  (workspace:create \"cow-test\") "
-        "  (workspace:switch 1) "
-        "  (workspace:memory-used 1))");
-    CHECK(result == 0, "after switch (no mutate): memory-used = 0 (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (set-code \"(define x 1)\") "
+                                 "  (workspace:create \"cow-test\") "
+                                 "  (workspace:switch 1) "
+                                 "  (workspace:memory-used 1))");
+    CHECK(result == 0,
+          "after switch (no mutate): memory-used = 0 (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -255,15 +246,14 @@ bool test_cow_triggers_on_mutate() {
     std::println("\n--- Test 2.5: COW triggers on first mutate in child ---");
     aura::compiler::CompilerService cs;
     // After mutate in child, child's source changes and memory-used > 0.
-    int64_t mem_after_mutate = run_int(cs,
-        "(begin "
-        "  (set-code \"(define x 1)\") "
-        "  (workspace:create \"cow-mut\") "
-        "  (workspace:switch 1) "
-        "  (mutate:rebind \"x\" \"(quote 99)\" \"test\") "
-        "  (workspace:memory-used))");
-    CHECK(mem_after_mutate > 0, "after mutate in child: memory-used > 0 (got " +
-          std::to_string(mem_after_mutate) + ")");
+    int64_t mem_after_mutate = run_int(cs, "(begin "
+                                           "  (set-code \"(define x 1)\") "
+                                           "  (workspace:create \"cow-mut\") "
+                                           "  (workspace:switch 1) "
+                                           "  (mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                                           "  (workspace:memory-used))");
+    CHECK(mem_after_mutate > 0,
+          "after mutate in child: memory-used > 0 (got " + std::to_string(mem_after_mutate) + ")");
     cs.eval("(begin "
             "  (set-code \"(define x 1)\") "
             "  (workspace:create \"cow-mut\") "
@@ -310,8 +300,7 @@ bool test_workspace_merge() {
             "  (workspace:switch 0))");
     std::string merged = string_value(cs, "(current-source :workspace)");
     bool result = (merged.find("(define f (lambda (x) (* x 2)))") != std::string::npos);
-    CHECK(result, "after merge: root source contains child's mutation (got '" +
-          merged + "')");
+    CHECK(result, "after merge: root source contains child's mutation (got '" + merged + "')");
     return true;
 }
 
@@ -328,20 +317,18 @@ bool test_workspace_sync_from() {
             "  (workspace:sync-from 0 1) "
             "  (workspace:switch 1))");
     std::string child_src = string_value(cs, "(current-source :workspace)");
-    bool result = !child_src.empty() &&
-                  (child_src.find("x") != std::string::npos);
-    CHECK(result, "after sync-from: child source non-empty and contains x (got '" +
-          child_src + "')");
+    bool result = !child_src.empty() && (child_src.find("x") != std::string::npos);
+    CHECK(result,
+          "after sync-from: child source non-empty and contains x (got '" + child_src + "')");
     return true;
 }
 
 bool test_workspace_conflicts_with() {
     std::println("\n--- Test 3.4: workspace:conflicts-with primitive exists ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(if (procedure? workspace:conflicts-with) 1 0)");
-    CHECK(result == 1, "workspace:conflicts-with is a procedure (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(if (procedure? workspace:conflicts-with) 1 0)");
+    CHECK(result == 1,
+          "workspace:conflicts-with is a procedure (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -352,26 +339,22 @@ bool test_workspace_conflicts_with() {
 bool test_workspace_memory_primitives() {
     std::println("\n--- Test 4.1: memory-used + memory-limit primitives exist ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"mem-test\") "
-        "  (+ (workspace:memory-used 1) "
-        "     (* 10 (+ (workspace:memory-limit 1) 2))))");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"mem-test\") "
+                                 "  (+ (workspace:memory-used 1) "
+                                 "     (* 10 (+ (workspace:memory-limit 1) 2))))");
     // memory-used=0 (no mutate, no COW), memory-limit=-1 (unlimited) -> 0 + 10*1 = 10
-    CHECK(result == 10, "memory-used=0, memory-limit=-1 (got " +
-          std::to_string(result) + ")");
+    CHECK(result == 10, "memory-used=0, memory-limit=-1 (got " + std::to_string(result) + ")");
     return true;
 }
 
 bool test_workspace_cow_refused_count() {
     std::println("\n--- Test 4.2: cow-refused-count starts at 0 ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"cow-refused-test\") "
-        "  (workspace:cow-refused-count 1))");
-    CHECK(result == 0, "cow-refused-count starts at 0 (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"cow-refused-test\") "
+                                 "  (workspace:cow-refused-count 1))");
+    CHECK(result == 0, "cow-refused-count starts at 0 (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -380,15 +363,14 @@ bool test_workspace_set_memory_limit() {
     aura::compiler::CompilerService cs;
     // Signature is (workspace:set-memory-limit bytes). The current
     // primitive operates on the active workspace, not on an arg id.
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (workspace:create \"limit-test\") "
-        "  (workspace:switch 1) "
-        "  (if (workspace:set-memory-limit 1048576) "
-        "      (workspace:memory-limit) "
-        "      -1))");
-    CHECK(result == 1048576, "after set 1MB, memory-limit = 1048576 (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (workspace:create \"limit-test\") "
+                                 "  (workspace:switch 1) "
+                                 "  (if (workspace:set-memory-limit 1048576) "
+                                 "      (workspace:memory-limit) "
+                                 "      -1))");
+    CHECK(result == 1048576,
+          "after set 1MB, memory-limit = 1048576 (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -399,15 +381,13 @@ bool test_workspace_set_memory_limit() {
 bool test_stress_20_workspaces() {
     std::println("\n--- Test 5.1: 20 workspaces in a single eval ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (define i 0) "
-        "  (while (< i 20) (begin "
-        "    (workspace:create \"ws\") "
-        "    (set! i (+ i 1)))) "
-        "  (length (workspace:list)))");
-    CHECK(result >= 21, "20+ workspaces in list (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (define i 0) "
+                                 "  (while (< i 20) (begin "
+                                 "    (workspace:create \"ws\") "
+                                 "    (set! i (+ i 1)))) "
+                                 "  (length (workspace:list)))");
+    CHECK(result >= 21, "20+ workspaces in list (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -430,8 +410,7 @@ bool test_stress_mutate_across_workspaces() {
             "  (workspace:switch 1))");
     std::string ws1_src = string_value(cs, "(current-source :workspace)");
     bool result = (ws1_src.find("(quote 0)") != std::string::npos);
-    CHECK(result, "workspace 1 source contains its own counter=0 (got '" +
-          ws1_src + "')");
+    CHECK(result, "workspace 1 source contains its own counter=0 (got '" + ws1_src + "')");
     return true;
 }
 
@@ -444,16 +423,15 @@ bool test_node_id_isolation() {
     aura::compiler::CompilerService cs;
     // Initially, child shares parent's flat (COW). So NodeIds
     // should be the same until mutate.
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(define x 1)\") "
-        "  (define root-id (car (query:find \"x\"))) "
-        "  (workspace:create \"isolated\") "
-        "  (workspace:switch 1) "
-        "  (define child-id (car (query:find \"x\"))) "
-        "  (if (= root-id child-id) 1 0))");
-    CHECK(result == 1, "child initially shares NodeIds with parent (got " +
-          std::to_string(result) + ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (set-code \"(define x 1)\") "
+                                 "  (define root-id (car (query:find \"x\"))) "
+                                 "  (workspace:create \"isolated\") "
+                                 "  (workspace:switch 1) "
+                                 "  (define child-id (car (query:find \"x\"))) "
+                                 "  (if (= root-id child-id) 1 0))");
+    CHECK(result == 1,
+          "child initially shares NodeIds with parent (got " + std::to_string(result) + ")");
     return true;
 }
 
@@ -496,12 +474,12 @@ int run_tests() {
     std::println("\n── AC #6: Cross-layer NodeId isolation ──");
     test_node_id_isolation();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_141_detail
+} // namespace aura_issue_141_detail
 
-int aura_issue_141_run() { return aura_issue_141_detail::run_tests(); }
-
+int aura_issue_141_run() {
+    return aura_issue_141_detail::run_tests();
+}

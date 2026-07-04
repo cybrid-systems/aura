@@ -48,8 +48,7 @@ static bool setup_macro_workspace(CompilerService& cs) {
     return cs.eval("(eval-current)").has_value();
 }
 
-static std::int64_t result_count(CompilerService& cs,
-                                 const std::string& expr) {
+static std::int64_t result_count(CompilerService& cs, const std::string& expr) {
     auto r = cs.eval("(length " + expr + ")");
     if (!r || !is_int(*r))
         return -1;
@@ -78,37 +77,28 @@ static void run_matrix(CompilerService& cs) {
     const auto root3b = ev.get_macro_introduced_skipped_in_query();
     const auto rec3b = ev.get_pattern_recursive_macro_skipped();
     std::println("  filter stats: {} -> {}", stats3a, stats3b);
-    std::println("  root_skips: {} -> {}, recursive: {} -> {}",
-                 root3a, root3b, rec3a, rec3b);
+    std::println("  root_skips: {} -> {}, recursive: {} -> {}", root3a, root3b, rec3a, rec3b);
     CHECK(stats3b > stats3a, "query:pattern bumps filter stats");
     CHECK(root3b > root3a, "query:pattern bumps root macro skips");
 
     std::println("\n--- AC4: macro-introduced vs by-marker ---");
     auto by_marker = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(by_marker && is_int(*by_marker), "by-marker length is int");
-    std::println("  macro-introduced = {}, by-marker = {}",
-                 as_int(*macro_n), as_int(*by_marker));
-    CHECK(as_int(*macro_n) == as_int(*by_marker),
-          "macro-introduced matches by-marker");
+    std::println("  macro-introduced = {}, by-marker = {}", as_int(*macro_n), as_int(*by_marker));
+    CHECK(as_int(*macro_n) == as_int(*by_marker), "macro-introduced matches by-marker");
 
     std::println("\n--- AC5: ensure_pattern_macro_filter_consistency ---");
     auto* ws = ev.workspace_flat();
     CHECK(ws != nullptr, "workspace flat available");
     ev.ensure_pattern_macro_filter_consistency(*ws);
-    CHECK(ev.get_pattern_macro_filter_violations() == 0,
-          "zero pattern macro filter violations");
+    CHECK(ev.get_pattern_macro_filter_violations() == 0, "zero pattern macro filter violations");
 
     std::println("\n--- AC6: :include-macro-introduced opt-in ---");
-    const auto default_cnt =
-        result_count(cs, "(query:pattern \"*\")");
-    const auto include_cnt = result_count(
-        cs, "(query:pattern \"*\" :include-macro-introduced #t)");
-    std::println("  default matches = {}, include matches = {}",
-                 default_cnt, include_cnt);
-    CHECK(default_cnt >= 0 && include_cnt >= 0,
-          "pattern match counts observable");
-    CHECK(include_cnt >= default_cnt,
-          "include-macro-introduced yields >= default matches");
+    const auto default_cnt = result_count(cs, "(query:pattern \"*\")");
+    const auto include_cnt = result_count(cs, "(query:pattern \"*\" :include-macro-introduced #t)");
+    std::println("  default matches = {}, include matches = {}", default_cnt, include_cnt);
+    CHECK(default_cnt >= 0 && include_cnt >= 0, "pattern match counts observable");
+    CHECK(include_cnt >= default_cnt, "include-macro-introduced yields >= default matches");
 
     std::println("\n--- AC7: query regression ---");
     auto phs = cs.eval("(query:pattern-hygiene-stats)");

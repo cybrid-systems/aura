@@ -45,8 +45,7 @@ static void test_int_then_string_conflict() {
     const auto t = cs.fresh_var();
     CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "first delta T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) == SolveResult::CONFLICT,
           "second delta T~String conflicts");
 }
 
@@ -110,8 +109,7 @@ static void test_conflict_matrix_detection_rate() {
         const auto t = cs.fresh_var();
         (void)solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()});
         ++conflict_injected;
-        if (solve_delta_with(cs, {Constraint::EQUAL, t, reg.bool_type()}) ==
-            SolveResult::CONFLICT)
+        if (solve_delta_with(cs, {Constraint::EQUAL, t, reg.bool_type()}) == SolveResult::CONFLICT)
             ++conflict_detected;
     }
     {
@@ -125,8 +123,7 @@ static void test_conflict_matrix_detection_rate() {
     }
 
     std::println("  conflict_detected={}/{}", conflict_detected, conflict_injected);
-    CHECK(conflict_detected * 2 >= conflict_injected,
-          "≥50% injected conflict scenarios detected");
+    CHECK(conflict_detected * 2 >= conflict_injected, "≥50% injected conflict scenarios detected");
 }
 
 static void test_happy_path_compatible_deltas() {
@@ -154,19 +151,16 @@ static void test_constraint_stats_query() {
 static void test_incremental_infer_multi_mutate_smoke() {
     std::println("\n--- AC7: incremental_infer multi-mutate smoke ---");
     CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define (f x) (if (number? x) (+ x 1) 0))\")"),
-          "load workspace");
+    CHECK(cs.eval("(set-code \"(define (f x) (if (number? x) (+ x 1) 0))\")"), "load workspace");
     (void)cs.eval("(eval-current)");
     (void)cs.eval("(typecheck-current)");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
-        "\"issue-466-a\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+                  "\"issue-466-a\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
-        "\"issue-466-b\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+                  "\"issue-466-b\")");
     (void)cs.incremental_infer(ws->all_mutations().back());
     auto r = cs.eval("(f 4)");
     CHECK(r && is_int(*r), "eval after multi-mutate incremental infer");

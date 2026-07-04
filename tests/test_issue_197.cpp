@@ -27,8 +27,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import std;
 import aura.core;
@@ -36,9 +36,11 @@ import aura.compiler.ir;
 import aura.compiler.pass_manager;
 
 
-
 namespace aura_issue_197_detail {
-#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("%s\n", (msg));                                                                 \
+    } while (0)
 
 // Helper: build a single-block callee with N params and a body
 // that does Local(2, 0) + Local(3, 1) + Add(4, 2, 3) + Return(4).
@@ -51,10 +53,10 @@ static aura::ir::IRFunction make_add2_callee() {
     func.arg_count = 2;
     func.blocks.push_back({0});
     func.blocks[0].instructions = {
-        {aura::ir::IROpcode::Local, {2, 0, 0, 0}, 0, 0},   // local2 = local0 (param 0)
-        {aura::ir::IROpcode::Local, {3, 1, 0, 0}, 0, 0},   // local3 = local1 (param 1)
-        {aura::ir::IROpcode::Add,   {4, 2, 3, 0}, 0, 0},   // local4 = local2 + local3
-        {aura::ir::IROpcode::Return, {4, 0, 0, 0}, 0, 0},   // return local4
+        {aura::ir::IROpcode::Local, {2, 0, 0, 0}, 0, 0},  // local2 = local0 (param 0)
+        {aura::ir::IROpcode::Local, {3, 1, 0, 0}, 0, 0},  // local3 = local1 (param 1)
+        {aura::ir::IROpcode::Add, {4, 2, 3, 0}, 0, 0},    // local4 = local2 + local3
+        {aura::ir::IROpcode::Return, {4, 0, 0, 0}, 0, 0}, // return local4
     };
     return func;
 }
@@ -77,11 +79,11 @@ static aura::ir::IRFunction make_branch_aware_callee() {
     };
     func.blocks[1].instructions = {
         {aura::ir::IROpcode::ConstI64, {1, 7, 0, 0}, 0, 1},
-        {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
     };
     func.blocks[2].instructions = {
         {aura::ir::IROpcode::ConstI64, {2, 9, 0, 0}, 0, 1},
-        {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
     };
     return func;
 }
@@ -115,8 +117,8 @@ bool test_predicate_rejects_nested_call() {
     func.blocks.push_back({0});
     func.blocks[0].instructions = {
         {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
-        {aura::ir::IROpcode::Call,     {0, 0, 0, 0}, 0, 0},  // nested Call
-        {aura::ir::IROpcode::Return,   {0, 0, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Call, {0, 0, 0, 0}, 0, 0}, // nested Call
+        {aura::ir::IROpcode::Return, {0, 0, 0, 0}, 0, 0},
     };
     bool ok = aura::compiler::InlinePass::is_inlinable_branch_aware_for_test(func);
     CHECK(!ok, "callee with nested Call: NOT inlinable");
@@ -132,7 +134,7 @@ bool test_predicate_rejects_nested_make_closure() {
     func.blocks.push_back({0});
     func.blocks[0].instructions = {
         {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
-        {aura::ir::IROpcode::Return,     {0, 0, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Return, {0, 0, 0, 0}, 0, 0},
     };
     bool ok = aura::compiler::InlinePass::is_inlinable_branch_aware_for_test(func);
     CHECK(!ok, "callee with nested MakeClosure: NOT inlinable");
@@ -148,8 +150,8 @@ bool test_predicate_rejects_cell_set() {
     func.blocks.push_back({0});
     func.blocks[0].instructions = {
         {aura::ir::IROpcode::NewCell, {0, 0, 0, 0}, 0, 0},
-        {aura::ir::IROpcode::CellSet, {0, 1, 0, 0}, 0, 0},  // side effect
-        {aura::ir::IROpcode::Return,  {1, 0, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::CellSet, {0, 1, 0, 0}, 0, 0}, // side effect
+        {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
     };
     bool ok = aura::compiler::InlinePass::is_inlinable_branch_aware_for_test(func);
     CHECK(!ok, "callee with CellSet side effect: NOT inlinable");
@@ -166,7 +168,7 @@ bool test_predicate_rejects_loop() {
     func.blocks.push_back({0});
     func.blocks[0].instructions = {
         {aura::ir::IROpcode::ConstI64, {0, 0, 0, 0}, 0, 1},
-        {aura::ir::IROpcode::Branch,   {0, 0, 0, 0}, 0, 0},  // cond=local0, true=0, false=0
+        {aura::ir::IROpcode::Branch, {0, 0, 0, 0}, 0, 0}, // cond=local0, true=0, false=0
     };
     bool ok = aura::compiler::InlinePass::is_inlinable_branch_aware_for_test(func);
     CHECK(!ok, "callee with self-loop: NOT inlinable");
@@ -218,7 +220,7 @@ bool test_predicate_rejects_no_terminator() {
 bool test_inline_single_block_with_params() {
     PRINTLN("\n--- Test 2.1: try_inline_branch_aware single-block + params ---");
     aura::ir::IRModule mod;
-    mod.functions.push_back(make_add2_callee());  // func_id=0
+    mod.functions.push_back(make_add2_callee()); // func_id=0
     // Caller: 2 args at slots 0, 1; result at slot 2
     aura::ir::IRFunction caller;
     caller.name = "caller";
@@ -226,13 +228,16 @@ bool test_inline_single_block_with_params() {
     caller.arg_count = 0;
     caller.blocks.push_back({0});
     caller.blocks[0].instructions = {
-        {aura::ir::IROpcode::MakeClosure, {2, 0, 0, 0}, 0, 13},  // closure slot=2, func_id=0
+        {aura::ir::IROpcode::MakeClosure, {2, 0, 0, 0}, 0, 13}, // closure slot=2, func_id=0
         // Need to set up the arg_base: the Call passes arg_base=3
         // but the caller has no slot 3 — we need 2 new slots
         // for the params. The inliner allocates them.
         // Actually arg_base is the slot index where the args
         // start. Let's use a call site with arg_base=3.
-        {aura::ir::IROpcode::Call, {2, 3, 2, 4}, 0, 0},  // call(closure=2, args at slot 3+, 2 args, result=4)
+        {aura::ir::IROpcode::Call,
+         {2, 3, 2, 4},
+         0,
+         0}, // call(closure=2, args at slot 3+, 2 args, result=4)
     };
     // Pre-allocate slots 3, 4 in the caller (so arg_base=3 works)
     caller.local_count = 5;
@@ -244,20 +249,18 @@ bool test_inline_single_block_with_params() {
     auto& callee_ref = mod.functions[0];
     auto& block_ref = caller_ref.blocks[0];
     auto& call_instr = block_ref.instructions[1];
-    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(
-        caller_ref, block_ref, 1, callee_ref, call_instr);
+    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(caller_ref, block_ref, 1,
+                                                                           callee_ref, call_instr);
 
     CHECK(ok, "try_inline_branch_aware returns true on success");
     // callee_ref.local_count=5 and the max operand in
     // callee instructions is also 4 (Local(4,...), Add(4,2,3),
     // Return(4)) so caller.local_count grew by 5.
-    CHECK(caller_ref.local_count >= 5 + 5,
-          "caller.local_count grew by 5 (callee.local_count=5)");
-    // After inlining: [MakeClosure, Local(5,3), Local(6,4), Local(7,5), Local(8,6), Add(9,7,8), Local(4, 9)]
-    // Wait, the caller's local_count was 5 (slots 0..4). The
-    // inliner allocates fresh slots starting at 5. The callee's
-    // local_count was 5 (slots 0..4 mapped to 5..9).
-    // The new instructions should be:
+    CHECK(caller_ref.local_count >= 5 + 5, "caller.local_count grew by 5 (callee.local_count=5)");
+    // After inlining: [MakeClosure, Local(5,3), Local(6,4), Local(7,5), Local(8,6), Add(9,7,8),
+    // Local(4, 9)] Wait, the caller's local_count was 5 (slots 0..4). The inliner allocates fresh
+    // slots starting at 5. The callee's local_count was 5 (slots 0..4 mapped to 5..9). The new
+    // instructions should be:
     //   [MakeClosure, Local(5,3), Local(6,4), Local(7,5), Local(8,6), Add(9,7,8), Local(4, 9)]
     // Note: after inlining the block.instructions should have
     // 7 entries (1 MakeClosure + 6 from inlined body).
@@ -267,12 +270,9 @@ bool test_inline_single_block_with_params() {
           "first inlined instr is Local (param 0 copy)");
     CHECK(block_ref.instructions[1].operands[0] == 5,
           "param 0 copies to slot 5 (fresh caller slot)");
-    CHECK(block_ref.instructions[1].operands[1] == 3,
-          "param 0 reads from caller's arg_base (3)");
-    CHECK(block_ref.instructions[2].operands[0] == 6,
-          "param 1 copies to slot 6");
-    CHECK(block_ref.instructions[2].operands[1] == 4,
-          "param 1 reads from caller's arg_base+1 (4)");
+    CHECK(block_ref.instructions[1].operands[1] == 3, "param 0 reads from caller's arg_base (3)");
+    CHECK(block_ref.instructions[2].operands[0] == 6, "param 1 copies to slot 6");
+    CHECK(block_ref.instructions[2].operands[1] == 4, "param 1 reads from caller's arg_base+1 (4)");
     // Local(7, 5) — copies callee's local 0 to slot 7
     // (this is the Local in the callee body that reads param 0)
     CHECK(block_ref.instructions[3].operands[0] == 7,
@@ -290,14 +290,14 @@ bool test_inline_single_block_with_params() {
 bool test_inline_rejects_arg_count_mismatch() {
     PRINTLN("\n--- Test 2.2: try_inline_branch_aware rejects arg_count mismatch ---");
     aura::ir::IRModule mod;
-    mod.functions.push_back(make_add2_callee());  // 2 args
+    mod.functions.push_back(make_add2_callee()); // 2 args
     aura::ir::IRFunction caller;
     caller.name = "caller";
     caller.local_count = 5;
     caller.blocks.push_back({0});
     caller.blocks[0].instructions = {
         {aura::ir::IROpcode::MakeClosure, {2, 0, 0, 0}, 0, 13},
-        {aura::ir::IROpcode::Call, {2, 3, 5, 4}, 0, 0},  // 5 args but callee wants 2
+        {aura::ir::IROpcode::Call, {2, 3, 5, 4}, 0, 0}, // 5 args but callee wants 2
     };
     mod.functions.push_back(std::move(caller));
 
@@ -305,8 +305,8 @@ bool test_inline_rejects_arg_count_mismatch() {
     auto& callee_ref = mod.functions[0];
     auto& block_ref = caller_ref.blocks[0];
     auto& call_instr = block_ref.instructions[1];
-    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(
-        caller_ref, block_ref, 1, callee_ref, call_instr);
+    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(caller_ref, block_ref, 1,
+                                                                           callee_ref, call_instr);
     CHECK(!ok, "try_inline_branch_aware returns false on arg_count mismatch");
     CHECK(block_ref.instructions[1].opcode == aura::ir::IROpcode::Call,
           "Call preserved when arg_count mismatches");
@@ -316,7 +316,8 @@ bool test_inline_rejects_arg_count_mismatch() {
 bool test_inline_accepts_multi_block_branch_aware() {
     PRINTLN("\n--- Test 2.3: try_inline_branch_aware multi-block CFG splicing ---");
     aura::ir::IRModule mod;
-    mod.functions.push_back(make_branch_aware_callee());  // 3 blocks: Branch, true/return, false/return
+    mod.functions.push_back(
+        make_branch_aware_callee()); // 3 blocks: Branch, true/return, false/return
     // Caller: 1 arg at slot 3, result at slot 4
     aura::ir::IRFunction caller;
     caller.name = "caller";
@@ -324,7 +325,7 @@ bool test_inline_accepts_multi_block_branch_aware() {
     caller.blocks.push_back({0});
     caller.blocks[0].instructions = {
         {aura::ir::IROpcode::MakeClosure, {2, 0, 0, 0}, 0, 13},
-        {aura::ir::IROpcode::Call, {2, 3, 1, 4}, 0, 0},  // 1 arg, result at slot 4
+        {aura::ir::IROpcode::Call, {2, 3, 1, 4}, 0, 0}, // 1 arg, result at slot 4
     };
     mod.functions.push_back(std::move(caller));
 
@@ -332,13 +333,12 @@ bool test_inline_accepts_multi_block_branch_aware() {
     auto& callee_ref = mod.functions[0];
     auto& block_ref = caller_ref.blocks[0];
     auto& call_instr = block_ref.instructions[1];
-    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(
-        caller_ref, block_ref, 1, callee_ref, call_instr);
+    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(caller_ref, block_ref, 1,
+                                                                           callee_ref, call_instr);
     CHECK(ok, "try_inline_branch_aware returns true on multi-block callee");
     // After inlining: caller has original block (now B_before) +
     // 3 cloned callee blocks + 1 B_after = 5 blocks total.
-    CHECK(caller_ref.blocks.size() == 5,
-          "caller now has 5 blocks (B_before + 3 clones + B_after)");
+    CHECK(caller_ref.blocks.size() == 5, "caller now has 5 blocks (B_before + 3 clones + B_after)");
     // B_before: [MakeClosure, Local(slot_remap[0]=5, 3), Jump(1)]
     // (slot 5 is the fresh slot for callee's local 0;
     //  Jump(1) goes to the cloned entry block, which is the
@@ -387,20 +387,16 @@ bool test_inline_accepts_multi_block_branch_aware() {
     std::size_t idx = 0;
     for (std::uint32_t j : {2u, 3u}) {
         const auto& cb = caller_ref.blocks[j].instructions;
-        CHECK(cb.size() == 3,
-              "cloned exit block has 3 instructions (ConstI64 + Local + Jump)");
+        CHECK(cb.size() == 3, "cloned exit block has 3 instructions (ConstI64 + Local + Jump)");
         CHECK(cb[0].opcode == aura::ir::IROpcode::ConstI64,
               "cloned exit block starts with ConstI64");
         CHECK(cb[1].opcode == aura::ir::IROpcode::Local,
               "cloned exit block[1] is Local (return copy)");
-        CHECK(cb[1].operands[0] == 4,
-              "Local writes to call result slot (4)");
+        CHECK(cb[1].operands[0] == 4, "Local writes to call result slot (4)");
         CHECK(cb[1].operands[1] == expected_ret_src[idx],
               "Local reads from remapped return slot (per-block)");
-        CHECK(cb[2].opcode == aura::ir::IROpcode::Jump,
-              "cloned exit block[2] is Jump");
-        CHECK(cb[2].operands[0] == 4,
-              "Jump target is B_after id (4)");
+        CHECK(cb[2].opcode == aura::ir::IROpcode::Jump, "cloned exit block[2] is Jump");
+        CHECK(cb[2].operands[0] == 4, "Jump target is B_after id (4)");
         ++idx;
     }
     // B_after (block id 4): empty (the Call was the last
@@ -415,15 +411,15 @@ bool test_inline_accepts_multi_block_branch_aware() {
 bool test_inline_handles_call_in_middle() {
     PRINTLN("\n--- Test 2.4: try_inline_branch_aware call-in-middle (block split) ---");
     aura::ir::IRModule mod;
-    mod.functions.push_back(make_add2_callee());  // single-block, but tests the split path
+    mod.functions.push_back(make_add2_callee()); // single-block, but tests the split path
     aura::ir::IRFunction caller;
     caller.name = "caller";
     caller.local_count = 5;
     caller.blocks.push_back({0});
     caller.blocks[0].instructions = {
         {aura::ir::IROpcode::MakeClosure, {2, 0, 0, 0}, 0, 13},
-        {aura::ir::IROpcode::Call, {2, 3, 2, 4}, 0, 0},  // NOT the last
-        {aura::ir::IROpcode::Return, {4, 0, 0, 0}, 0, 0},  // follows the call
+        {aura::ir::IROpcode::Call, {2, 3, 2, 4}, 0, 0},   // NOT the last
+        {aura::ir::IROpcode::Return, {4, 0, 0, 0}, 0, 0}, // follows the call
     };
     mod.functions.push_back(std::move(caller));
 
@@ -431,8 +427,8 @@ bool test_inline_handles_call_in_middle() {
     auto& callee_ref = mod.functions[0];
     auto& block_ref = caller_ref.blocks[0];
     auto& call_instr = block_ref.instructions[1];
-    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(
-        caller_ref, block_ref, 1, callee_ref, call_instr);
+    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(caller_ref, block_ref, 1,
+                                                                           callee_ref, call_instr);
     // Single-block callee: the single-block fast path runs,
     // which requires call_pos == last. Since Call is in the
     // middle, the single-block path returns false. The
@@ -449,7 +445,7 @@ bool test_inline_handles_call_in_middle() {
 bool test_branch_aware_counter_separate() {
     PRINTLN("\n--- Test 3.1: inlined_branch_aware_count tracks branch-aware path ---");
     aura::ir::IRModule mod;
-    mod.functions.push_back(make_add2_callee());  // single-block, not const-return
+    mod.functions.push_back(make_add2_callee()); // single-block, not const-return
     aura::ir::IRFunction caller;
     caller.name = "caller";
     caller.local_count = 5;
@@ -463,12 +459,10 @@ bool test_branch_aware_counter_separate() {
     aura::compiler::InlinePass inliner;
     inliner.run(mod);
 
-    CHECK(inliner.inlined_count() == 0,
-          "inlined_count() == 0 (pre-#197 path didn't match)");
+    CHECK(inliner.inlined_count() == 0, "inlined_count() == 0 (pre-#197 path didn't match)");
     CHECK(inliner.inlined_branch_aware_count() == 1,
           "inlined_branch_aware_count() == 1 (new path matched)");
-    CHECK(inliner.run_inlined() == 0,
-          "run_inlined() == 0 (pre-#197 path didn't run)");
+    CHECK(inliner.run_inlined() == 0, "run_inlined() == 0 (pre-#197 path didn't run)");
     CHECK(inliner.run_inlined_branch_aware() == 1,
           "run_inlined_branch_aware() == 1 (new path ran this run)");
     return true;
@@ -481,10 +475,8 @@ bool test_lifetime_counters() {
     // and accumulate; we can only read them, not reset them.
     // So we measure the DELTA before/after a run, not the
     // absolute value.)
-    std::size_t before_inlined =
-        aura::compiler::InlinePass::total_inlined();
-    std::size_t before_branch =
-        aura::compiler::InlinePass::total_inlined_branch_aware();
+    std::size_t before_inlined = aura::compiler::InlinePass::total_inlined();
+    std::size_t before_branch = aura::compiler::InlinePass::total_inlined_branch_aware();
     // Run the inliner with a multi-block callee.
     aura::ir::IRModule mod;
     mod.functions.push_back(make_branch_aware_callee());
@@ -499,14 +491,10 @@ bool test_lifetime_counters() {
     mod.functions.push_back(std::move(caller));
     aura::compiler::InlinePass inliner;
     inliner.run(mod);
-    std::size_t after_inlined =
-        aura::compiler::InlinePass::total_inlined();
-    std::size_t after_branch =
-        aura::compiler::InlinePass::total_inlined_branch_aware();
-    CHECK(after_inlined == before_inlined,
-          "total_inlined() unchanged (no constant-substitution)");
-    CHECK(after_branch == before_branch + 1,
-          "total_inlined_branch_aware() increased by 1");
+    std::size_t after_inlined = aura::compiler::InlinePass::total_inlined();
+    std::size_t after_branch = aura::compiler::InlinePass::total_inlined_branch_aware();
+    CHECK(after_inlined == before_inlined, "total_inlined() unchanged (no constant-substitution)");
+    CHECK(after_branch == before_branch + 1, "total_inlined_branch_aware() increased by 1");
     return true;
 }
 
@@ -518,7 +506,8 @@ bool test_call_in_middle_with_terminator_preserved() {
     // is the caller's original terminator, preserved
     // across the block split.
     aura::ir::IRModule mod;
-    mod.functions.push_back(make_add2_callee());  // single-block, but goes via multi-block path because of call-in-middle
+    mod.functions.push_back(make_add2_callee()); // single-block, but goes via multi-block path
+                                                 // because of call-in-middle
     aura::ir::IRFunction caller;
     caller.name = "caller";
     caller.local_count = 5;
@@ -533,8 +522,8 @@ bool test_call_in_middle_with_terminator_preserved() {
     auto& callee_ref = mod.functions[0];
     auto& block_ref = caller_ref.blocks[0];
     auto& call_instr = block_ref.instructions[1];
-    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(
-        caller_ref, block_ref, 1, callee_ref, call_instr);
+    bool ok = aura::compiler::InlinePass::try_inline_branch_aware_for_test(caller_ref, block_ref, 1,
+                                                                           callee_ref, call_instr);
     CHECK(ok, "try_inline_branch_aware succeeds for call-in-middle");
     // B_before (caller_ref.blocks[0]) has [MakeClosure, Local(5,3),
     // Local(6,4), Jump(1)] — 1 MakeClosure + 2 param copies (add2
@@ -554,8 +543,7 @@ bool test_call_in_middle_with_terminator_preserved() {
     // The second-to-last instruction is the Local (return copy)
     CHECK(caller_ref.blocks[1].instructions[3].opcode == aura::ir::IROpcode::Local,
           "cloned block[3] is Local (return-value copy)");
-    CHECK(caller_ref.blocks[1].instructions[3].operands[0] == 4,
-          "Local writes to call_result (4)");
+    CHECK(caller_ref.blocks[1].instructions[3].operands[0] == 4, "Local writes to call_result (4)");
     CHECK(caller_ref.blocks[1].instructions[3].operands[1] == 9,
           "Local reads from remapped return slot (9)");
     // The last instruction is the Jump to B_after
@@ -565,8 +553,7 @@ bool test_call_in_middle_with_terminator_preserved() {
           "Jump target is B_after (block id 2)");
     // B_after is at index 2. It should hold the original
     // terminator (Return).
-    CHECK(caller_ref.blocks.size() == 3,
-          "caller has 3 blocks (B_before + clone + B_after)");
+    CHECK(caller_ref.blocks.size() == 3, "caller has 3 blocks (B_before + clone + B_after)");
     CHECK(caller_ref.blocks[2].instructions.size() == 1,
           "B_after has 1 instruction (preserved Return)");
     CHECK(caller_ref.blocks[2].instructions[0].opcode == aura::ir::IROpcode::Return,
@@ -604,7 +591,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_197_detail
+} // namespace aura_issue_197_detail
 
-int aura_issue_197_run() { return aura_issue_197_detail::run_tests(); }
-
+int aura_issue_197_run() {
+    return aura_issue_197_detail::run_tests();
+}

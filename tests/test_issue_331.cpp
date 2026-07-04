@@ -34,10 +34,16 @@ namespace aura_331_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::compiler::CompilerService;
 
@@ -93,8 +99,7 @@ bool test_compiler_cache_stats_shape() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:compiler-cache-stats)");
     CHECK(r.has_value(), "query:compiler-cache-stats returns a result");
-    CHECK(is_pair_result(r),
-          "query:compiler-cache-stats result is a pair (3-tuple shape)");
+    CHECK(is_pair_result(r), "query:compiler-cache-stats result is a pair (3-tuple shape)");
     return true;
 }
 
@@ -109,8 +114,7 @@ bool test_incremental_effectiveness_shape() {
     (void)cs.eval("(mutate:replace-value (define x 999) (define x 999))");
     auto r = cs.eval("(query:incremental-effectiveness)");
     CHECK(r.has_value(), "query:incremental-effectiveness returns a result");
-    CHECK(is_pair_result(r),
-          "query:incremental-effectiveness result is a pair (4-tuple shape)");
+    CHECK(is_pair_result(r), "query:incremental-effectiveness result is a pair (4-tuple shape)");
     return true;
 }
 
@@ -118,7 +122,8 @@ bool test_incremental_effectiveness_shape() {
 bool test_targeted_dirty_observed() {
     std::println("\n--- Scenario 5: targeted dirty observed via recompile-ratio ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+    (void)cs.eval(
+        "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
     (void)cs.eval("(eval-current)");
     // Mutate just ONE binding.
     auto r = cs.eval("(mutate:query-and-replace a 100)");
@@ -127,8 +132,7 @@ bool test_targeted_dirty_observed() {
     // With 5 defines and 1 dirty (assuming 1:1 mapping), the
     // ratio should be < 10000 (not "everything dirty").
     auto eff = cs.eval("(query:incremental-effectiveness)");
-    CHECK(eff.has_value(),
-          "incremental-effectiveness observable post-targeted-mutate");
+    CHECK(eff.has_value(), "incremental-effectiveness observable post-targeted-mutate");
     return true;
 }
 
@@ -150,8 +154,7 @@ bool test_chained_mutate_pattern_stress() {
         code += std::to_string(100 + i);
         code += ")";
         auto r = cs.eval(code);
-        CHECK(r.has_value(),
-              std::string("mutate cycle #") + std::to_string(i) + " succeeds");
+        CHECK(r.has_value(), std::string("mutate cycle #") + std::to_string(i) + " succeeds");
     }
     // Final pattern query: workspace should still be queryable.
     auto q = cs.eval("(query:pattern \"x\")");
@@ -202,7 +205,6 @@ int main() {
     test_mutate_reeval_consistency();
     test_multiple_dirty_reasons();
     std::println("\nDirty bitmask + query:pattern integration (#331): {}/{} passed, {}/{} failed",
-                 g_passed, g_passed + g_failed,
-                 g_failed, g_passed + g_failed);
+                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -48,8 +48,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -61,12 +61,10 @@ namespace aura_issue_339_detail {
 // Build a workspace with a few nodes (a few
 // variables inside a Begin block + an if-expr
 // that we'll use for the stale tests).
-static int build_workspace(
-    aura::compiler::CompilerService& cs) {
-    std::string code =
-        "(begin "
-        "  (define x 0) "
-        "  (if (> x 0) 'pos 'neg))";
+static int build_workspace(aura::compiler::CompilerService& cs) {
+    std::string code = "(begin "
+                       "  (define x 0) "
+                       "  (if (> x 0) 'pos 'neg))";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
         return 0;
     if (!cs.eval("(eval-current)").has_value())
@@ -85,14 +83,10 @@ bool test_occ_stale_column_plumbed() {
     const auto a = flat.add_variable(0);
     const auto b = flat.add_variable(1);
     const auto c = flat.add_if(0, 0, 0);
-    CHECK(flat.is_occurrence_stale(a) == 0,
-          "fresh variable: occ_stale is 0");
-    CHECK(flat.is_occurrence_stale(b) == 0,
-          "fresh variable (2nd): occ_stale is 0");
-    CHECK(flat.is_occurrence_stale(c) == 0,
-          "fresh if: occ_stale is 0");
-    CHECK(flat.is_occurrence_stale(99999) == 0,
-          "out-of-range returns 0 (default)");
+    CHECK(flat.is_occurrence_stale(a) == 0, "fresh variable: occ_stale is 0");
+    CHECK(flat.is_occurrence_stale(b) == 0, "fresh variable (2nd): occ_stale is 0");
+    CHECK(flat.is_occurrence_stale(c) == 0, "fresh if: occ_stale is 0");
+    CHECK(flat.is_occurrence_stale(99999) == 0, "out-of-range returns 0 (default)");
     return true;
 }
 
@@ -105,22 +99,17 @@ bool test_mark_and_read_occurrence_stale() {
     using namespace aura;
     ast::FlatAST flat;
     const auto a = flat.add_variable(0);
-    CHECK(flat.is_occurrence_stale(a) == 0,
-          "pre-mark: occ_stale is 0");
+    CHECK(flat.is_occurrence_stale(a) == 0, "pre-mark: occ_stale is 0");
     flat.mark_occurrence_stale(a);
-    CHECK(flat.is_occurrence_stale(a) == 1,
-          "post-mark: occ_stale is 1");
+    CHECK(flat.is_occurrence_stale(a) == 1, "post-mark: occ_stale is 1");
     // Marking twice is idempotent (still 1).
     flat.mark_occurrence_stale(a);
-    CHECK(flat.is_occurrence_stale(a) == 1,
-          "double-mark: still 1");
+    CHECK(flat.is_occurrence_stale(a) == 1, "double-mark: still 1");
     // Marking a different node doesn't affect a.
     const auto b = flat.add_variable(1);
     flat.mark_occurrence_stale(b);
-    CHECK(flat.is_occurrence_stale(b) == 1,
-          "other node marked");
-    CHECK(flat.is_occurrence_stale(a) == 1,
-          "first node still stale");
+    CHECK(flat.is_occurrence_stale(b) == 1, "other node marked");
+    CHECK(flat.is_occurrence_stale(a) == 1, "first node still stale");
     return true;
 }
 
@@ -134,15 +123,12 @@ bool test_clear_occurrence_stale() {
     ast::FlatAST flat;
     const auto a = flat.add_variable(0);
     flat.mark_occurrence_stale(a);
-    CHECK(flat.is_occurrence_stale(a) == 1,
-          "pre-clear: stale");
+    CHECK(flat.is_occurrence_stale(a) == 1, "pre-clear: stale");
     flat.clear_occurrence_stale(a);
-    CHECK(flat.is_occurrence_stale(a) == 0,
-          "post-clear: fresh");
+    CHECK(flat.is_occurrence_stale(a) == 0, "post-clear: fresh");
     // Clearing a non-stale node is a no-op.
     flat.clear_occurrence_stale(a);
-    CHECK(flat.is_occurrence_stale(a) == 0,
-          "double-clear: still fresh");
+    CHECK(flat.is_occurrence_stale(a) == 0, "double-clear: still fresh");
     return true;
 }
 
@@ -155,8 +141,7 @@ bool test_occurrence_stale_count() {
     using namespace aura;
     ast::FlatAST flat;
     // No stale nodes initially.
-    CHECK(flat.occurrence_stale_count() == 0,
-          "fresh flat: 0 stale nodes");
+    CHECK(flat.occurrence_stale_count() == 0, "fresh flat: 0 stale nodes");
     // Add 5 nodes, mark 3 stale.
     std::vector<aura::ast::NodeId> ids;
     for (int i = 0; i < 5; ++i)
@@ -164,12 +149,10 @@ bool test_occurrence_stale_count() {
     flat.mark_occurrence_stale(ids[0]);
     flat.mark_occurrence_stale(ids[2]);
     flat.mark_occurrence_stale(ids[4]);
-    CHECK(flat.occurrence_stale_count() == 3,
-          "after 3 marks: 3 stale nodes");
+    CHECK(flat.occurrence_stale_count() == 3, "after 3 marks: 3 stale nodes");
     // Clear 1, count should be 2.
     flat.clear_occurrence_stale(ids[2]);
-    CHECK(flat.occurrence_stale_count() == 2,
-          "after 1 clear: 2 stale nodes");
+    CHECK(flat.occurrence_stale_count() == 2, "after 1 clear: 2 stale nodes");
     return true;
 }
 
@@ -181,16 +164,21 @@ bool test_end_to_end_via_aura() {
     std::println("\n--- AC5: end-to-end via Aura primitives ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs)) { ++g_failed; return false; }
+    if (!build_workspace(cs)) {
+        ++g_failed;
+        return false;
+    }
     auto* ws = cs.workspace_flat();
-    if (!ws) { ++g_failed; return false; }
+    if (!ws) {
+        ++g_failed;
+        return false;
+    }
     // Mark a node stale via the C++ accessor (the
     // Aura primitive has the same effect; this
     // exercises the column path the primitive
     // writes to).
     if (ws->size() > 0) {
-        ws->mark_occurrence_stale(
-            static_cast<aura::ast::NodeId>(0));
+        ws->mark_occurrence_stale(static_cast<aura::ast::NodeId>(0));
     }
     // Now the count should be > 0 via the Aura
     // primitive.
@@ -198,16 +186,14 @@ bool test_end_to_end_via_aura() {
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),
           "(query:occurrence-stale-count) returns an int");
     if (r && aura::compiler::types::is_int(*r)) {
-        const auto n = static_cast<long long>(
-            aura::compiler::types::as_int(*r));
-        CHECK(n >= 1,
-              "occurrence-stale-count >= 1 after mark");
+        const auto n = static_cast<long long>(aura::compiler::types::as_int(*r));
+        CHECK(n >= 1, "occurrence-stale-count >= 1 after mark");
     }
     // (query:occurrence-stale? node-id) returns #t
     // for the marked node.
     auto r2 = cs.eval("(query:occurrence-stale? 0)");
-    CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2)
-          && aura::compiler::types::as_bool(*r2),
+    CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2) &&
+              aura::compiler::types::as_bool(*r2),
           "(query:occurrence-stale? 0) returns #t");
     return true;
 }
@@ -224,10 +210,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_339_detail
+} // namespace aura_issue_339_detail
 
-int aura_issue_339_run() { return aura_issue_339_detail::run_tests(); }
+int aura_issue_339_run() {
+    return aura_issue_339_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_339_run(); }
+int main() {
+    return aura_issue_339_run();
+}
 #endif

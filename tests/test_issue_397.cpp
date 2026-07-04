@@ -20,8 +20,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.value;
@@ -32,10 +32,14 @@ namespace aura_issue_397_detail {
 
 struct CS {
     aura::compiler::CompilerService svc;
-    struct EvalResult { bool ok = false; aura::compiler::types::EvalValue v{}; };
+    struct EvalResult {
+        bool ok = false;
+        aura::compiler::types::EvalValue v{};
+    };
     EvalResult try_run(std::string_view src) {
         auto r = svc.eval(src);
-        if (!r) return {false, aura::compiler::types::make_void()};
+        if (!r)
+            return {false, aura::compiler::types::make_void()};
         return {true, *r};
     }
     bool set_source(const std::string& src) {
@@ -53,53 +57,60 @@ bool test_ac1_helper_user_vs_macro() {
     std::println("\n--- AC1: is_macro_introduced returns correct bool per marker ---");
     CS cs;
     if (!cs.set_source("(define x 1) (define y 2) (define z 3)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     auto defs = cs.try_run("(query:defines)");
     if (!defs.ok || !aura::compiler::types::is_pair(defs.v)) {
-        ++g_failed; std::println("  FAIL: could not read defines");
+        ++g_failed;
+        std::println("  FAIL: could not read defines");
         return false;
     }
     // Set markers: x=0 (User), y=1 (MacroIntroduced), z=2 (BoolLiteral).
     auto set_user = cs.try_run("(syntax:set-marker (car (query:defines)) 0)");
     if (!set_user.ok || !aura::compiler::types::as_bool(set_user.v)) {
-        ++g_failed; std::println("  FAIL: set User marker");
+        ++g_failed;
+        std::println("  FAIL: set User marker");
         return false;
     }
     auto set_macro = cs.try_run("(syntax:set-marker (car (cdr (query:defines))) 1)");
     if (!set_macro.ok || !aura::compiler::types::as_bool(set_macro.v)) {
-        ++g_failed; std::println("  FAIL: set MacroIntroduced marker");
+        ++g_failed;
+        std::println("  FAIL: set MacroIntroduced marker");
         return false;
     }
     auto set_bool = cs.try_run("(syntax:set-marker (car (cdr (cdr (query:defines)))) 2)");
     if (!set_bool.ok || !aura::compiler::types::as_bool(set_bool.v)) {
-        ++g_failed; std::println("  FAIL: set BoolLiteral marker");
+        ++g_failed;
+        std::println("  FAIL: set BoolLiteral marker");
         return false;
     }
     auto check = [&](const char* marker_name, int which, bool expected) {
-        auto r = cs.try_run(std::string(
-            "(let ((defs (query:defines)))"
-            "  (hygiene:protected? (car ") +
-            std::string(which == 0 ? "defs"
-                                   : which == 1 ? "(cdr defs)"
-                                                : "(cdr (cdr defs))")
-            + ")))");
+        auto r = cs.try_run(std::string("(let ((defs (query:defines)))"
+                                        "  (hygiene:protected? (car ") +
+                            std::string(which == 0   ? "defs"
+                                        : which == 1 ? "(cdr defs)"
+                                                     : "(cdr (cdr defs))") +
+                            ")))");
         if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
-            ++g_failed; std::println("  FAIL: {} check did not return bool", marker_name);
+            ++g_failed;
+            std::println("  FAIL: {} check did not return bool", marker_name);
             return;
         }
         bool got = aura::compiler::types::as_bool(r.v);
         if (got != expected) {
-            ++g_failed; std::println("  FAIL: {} → {} (expected {})",
-                                     marker_name, got ? "#t" : "#f", expected ? "#t" : "#f");
+            ++g_failed;
+            std::println("  FAIL: {} → {} (expected {})", marker_name, got ? "#t" : "#f",
+                         expected ? "#t" : "#f");
             return;
         }
-        ++g_passed; std::println("  PASS: {} → {}", marker_name, got ? "#t" : "#f");
+        ++g_passed;
+        std::println("  PASS: {} → {}", marker_name, got ? "#t" : "#f");
     };
-    check("User",          0, false);
+    check("User", 0, false);
     check("MacroIntroduced", 1, true);
-    check("BoolLiteral",    2, false);
+    check("BoolLiteral", 2, false);
     return true;
 }
 
@@ -113,7 +124,8 @@ bool test_ac2_helper_out_of_bounds() {
     std::println("\n--- AC2: is_macro_introduced out-of-bounds id returns false ---");
     CS cs;
     if (!cs.set_source("(define x 1)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     // Surface-level check: passing the wrapped primitive an
@@ -123,14 +135,17 @@ bool test_ac2_helper_out_of_bounds() {
     // returns User for out-of-bounds).
     auto r_oob = cs.try_run("(hygiene:protected? 999999)");
     if (!r_oob.ok || !aura::compiler::types::is_bool(r_oob.v)) {
-        ++g_failed; std::println("  FAIL: OOB check did not return bool");
+        ++g_failed;
+        std::println("  FAIL: OOB check did not return bool");
         return false;
     }
     if (aura::compiler::types::as_bool(r_oob.v)) {
-        ++g_failed; std::println("  FAIL: OOB id is_macro_introduced = #t (expected #f)");
+        ++g_failed;
+        std::println("  FAIL: OOB id is_macro_introduced = #t (expected #f)");
         return false;
     }
-    ++g_passed; std::println("  PASS: out-of-bounds id → is_macro_introduced = #f");
+    ++g_passed;
+    std::println("  PASS: out-of-bounds id → is_macro_introduced = #f");
     return true;
 }
 
@@ -142,26 +157,30 @@ bool test_ac3_query_macro_introduced_unchanged() {
     std::println("\n--- AC3: (query:macro-introduced) refactor preserves behavior ---");
     CS cs;
     if (!cs.set_source("(define x 1) (define y 2) (define z 3) (define w 4)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     // Mark y (defs[1]) and w (defs[3]) as MacroIntroduced.
     // x and z stay User.
     auto r_set1 = cs.try_run("(syntax:set-marker (car (cdr (query:defines))) 1)");
     if (!r_set1.ok) {
-        ++g_failed; std::println("  FAIL: set marker on y");
+        ++g_failed;
+        std::println("  FAIL: set marker on y");
         return false;
     }
     auto r_set2 = cs.try_run("(syntax:set-marker (car (cdr (cdr (cdr (query:defines))))) 1)");
     if (!r_set2.ok) {
-        ++g_failed; std::println("  FAIL: set marker on w");
+        ++g_failed;
+        std::println("  FAIL: set marker on w");
         return false;
     }
     // Query: (query:macro-introduced) returns a list of
     // node ids with the MacroIntroduced marker.
     auto r = cs.try_run("(query:macro-introduced)");
     if (!r.ok || !aura::compiler::types::is_pair(r.v)) {
-        ++g_failed; std::println("  FAIL: (query:macro-introduced) did not return pair (list)");
+        ++g_failed;
+        std::println("  FAIL: (query:macro-introduced) did not return pair (list)");
         return false;
     }
     // Count the list length via stdlib pattern. For a 2-element
@@ -170,15 +189,18 @@ bool test_ac3_query_macro_introduced_unchanged() {
                             "  (let loop ((l lst) (n 0))"
                             "    (if (pair? l) (loop (cdr l) (+ n 1)) n)))");
     if (!r_len.ok || !aura::compiler::types::is_int(r_len.v)) {
-        ++g_failed; std::println("  FAIL: could not compute list length");
+        ++g_failed;
+        std::println("  FAIL: could not compute list length");
         return false;
     }
     auto len = aura::compiler::types::as_int(r_len.v);
     if (len != 2) {
-        ++g_failed; std::println("  FAIL: (query:macro-introduced) length = {} (expected 2)", len);
+        ++g_failed;
+        std::println("  FAIL: (query:macro-introduced) length = {} (expected 2)", len);
         return false;
     }
-    ++g_passed; std::println("  PASS: (query:macro-introduced) returned 2 ids (y and w)");
+    ++g_passed;
+    std::println("  PASS: (query:macro-introduced) returned 2 ids (y and w)");
     return true;
 }
 
@@ -190,23 +212,26 @@ bool test_ac4_replace_subtree_hygiene_still_blocks() {
     std::println("\n--- AC4: mutate:replace-subtree hygiene gate still blocks ---");
     CS cs;
     if (!cs.set_source("(define x 1)")) {
-        ++g_failed; std::println("  FAIL: set-source failed");
+        ++g_failed;
+        std::println("  FAIL: set-source failed");
         return false;
     }
     cs.try_run("(syntax:set-marker (car (query:defines)) 1)"); // mark x as MacroIntroduced
-    auto r = cs.try_run(
-        "(mutate:replace-subtree (car (query:defines)) \"99\" \"hygiene-test\")");
+    auto r = cs.try_run("(mutate:replace-subtree (car (query:defines)) \"99\" \"hygiene-test\")");
     if (!r.ok) {
-        ++g_failed; std::println("  FAIL: replace-subtree eval errored");
+        ++g_failed;
+        std::println("  FAIL: replace-subtree eval errored");
         return false;
     }
     // The hygiene gate returns a tagged pair like (\"hygiene-protected\" \"...\").
     bool is_error = aura::compiler::types::is_pair(r.v);
     if (!is_error) {
-        ++g_failed; std::println("  FAIL: replace-subtree on macro-introduced did not return error pair");
+        ++g_failed;
+        std::println("  FAIL: replace-subtree on macro-introduced did not return error pair");
         return false;
     }
-    ++g_passed; std::println("  PASS: replace-subtree on macro-introduced returns hygiene error pair");
+    ++g_passed;
+    std::println("  PASS: replace-subtree on macro-introduced returns hygiene error pair");
     return true;
 }
 

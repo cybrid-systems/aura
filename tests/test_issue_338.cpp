@@ -43,16 +43,29 @@ namespace aura_338_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: and_or_* counters start at 0 ---");
@@ -80,8 +93,7 @@ bool test_and_with_matching_types_bumps_meet() {
     // helper is called once (the same-var path).
     // The refined_type is Number (the meet of Number
     // and Number is Number).
-    auto result = cs.typecheck(
-        "(let ((x 5)) (if (and (number? x) (number? x)) x 0))");
+    auto result = cs.typecheck("(let ((x 5)) (if (and (number? x) (number? x)) x 0))");
     std::println("  typecheck result: {} chars", result.size());
     auto snap = cs.snapshot();
     std::println("  and_or_meet_uses_total: {}", snap.and_or_meet_uses_total);
@@ -99,8 +111,7 @@ bool test_or_with_matching_types_bumps_join() {
     // helper is called once. The refined_type is
     // Number (the join of Number and Number is
     // Number).
-    auto result = cs.typecheck(
-        "(let ((x 5)) (if (or (number? x) (number? x)) x 0))");
+    auto result = cs.typecheck("(let ((x 5)) (if (or (number? x) (number? x)) x 0))");
     std::println("  typecheck result: {} chars", result.size());
     auto snap = cs.snapshot();
     std::println("  and_or_meet_uses_total: {}", snap.and_or_meet_uses_total);
@@ -134,13 +145,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define v 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define v 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_338_detail
+} // namespace aura_338_detail
 
 int main() {
     using namespace aura_338_detail;
@@ -151,7 +161,7 @@ int main() {
     test_or_with_matching_types_bumps_join();
     test_and_or_precision_stats_primitive();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

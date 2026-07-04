@@ -50,8 +50,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -61,10 +61,9 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_191_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -147,7 +146,7 @@ bool test_set_child_bumps_generation() {
     auto b = ast.add_variable(2);
     auto c = ast.add_call(0, {});
     auto gen_before = ast.generation();
-    ast.set_child(c, 0, a);  // structural change
+    ast.set_child(c, 0, a); // structural change
     CHECK(ast.generation() > gen_before, "set_child bumped generation");
     return true;
 }
@@ -185,7 +184,7 @@ bool test_structural_mutate_invalidates_stable_ref() {
     auto c = ast.add_call(a, {});
     auto ref = ast.make_ref(c);
     CHECK(ref.is_valid_in(ast), "ref valid before structural mutate");
-    ast.set_child(c, 0, a);  // bump
+    ast.set_child(c, 0, a); // bump
     CHECK(!ref.is_valid_in(ast), "ref invalid after structural mutate");
     return true;
 }
@@ -200,7 +199,7 @@ bool test_add_node_does_not_bump_generation() {
     auto a = ast.add_variable(1);
     auto ref = ast.make_ref(a);
     auto gen_before = ast.generation();
-    ast.add_variable(2);  // pure addition, no structural change
+    ast.add_variable(2); // pure addition, no structural change
     CHECK(ast.generation() == gen_before, "add_node does not bump generation");
     CHECK(ref.is_valid_in(ast), "stored ref still valid after add_node");
     return true;
@@ -213,15 +212,13 @@ bool test_add_node_does_not_bump_generation() {
 bool test_ast_generation_primitive() {
     std::println("\n--- Test 3.1: (ast:generation) primitive ---");
     aura::compiler::CompilerService cs;
-    int64_t g0 = run_int(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x x))\") "
-        "  (ast:generation))");
-    int64_t g1 = run_int(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x x))\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-        "  (ast:generation))");
+    int64_t g0 = run_int(cs, "(begin "
+                             "  (set-code \"(define (f x) (* x x))\") "
+                             "  (ast:generation))");
+    int64_t g1 = run_int(cs, "(begin "
+                             "  (set-code \"(define (f x) (* x x))\") "
+                             "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
+                             "  (ast:generation))");
     CHECK(g0 >= 0, "(ast:generation) returns non-negative");
     CHECK(g1 > g0, "(ast:generation) increased after mutate:rebind");
     return true;
@@ -230,10 +227,9 @@ bool test_ast_generation_primitive() {
 bool test_ast_stable_ref_primitive() {
     std::println("\n--- Test 3.2: (ast:stable-ref node-id) primitive ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x x))\") "
-        "  (ast:stable-ref 0))");
+    auto v = run_on(cs, "(begin "
+                        "  (set-code \"(define (f x) (* x x))\") "
+                        "  (ast:stable-ref 0))");
     // Returns a pair; not void
     if (v.val == 11) {
         std::println("    [expected pair, got void]");
@@ -280,14 +276,13 @@ bool test_capture_ref_then_mutate_invalidates() {
     // Use let to bind the generation value at capture time
     // (define is also a top-level form that may re-evaluate).
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x x))\") "
-        "  (let ((gen0 (ast:generation))) "
-        "    (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-        "    (let ((gen1 (ast:generation))) "
-        "      (- gen1 gen0)))"
-        ")");
+    int64_t result = run_int(cs, "(begin "
+                                 "  (set-code \"(define (f x) (* x x))\") "
+                                 "  (let ((gen0 (ast:generation))) "
+                                 "    (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
+                                 "    (let ((gen1 (ast:generation))) "
+                                 "      (- gen1 gen0)))"
+                                 ")");
     CHECK(result > 0, "generation increased by structural mutate");
     return true;
 }
@@ -301,16 +296,15 @@ bool test_fuzzer_many_structural_mutations() {
     aura::compiler::CompilerService cs;
     // 20 rebinds in sequence; verify the generation monotonically
     // increases by 20 (one bump per structural mutate).
-    int64_t g_final = run_int(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (define g0 (ast:generation)) "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"1\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"2\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"3\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"4\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"5\") "
-        "  (- (ast:generation) g0))");
+    int64_t g_final = run_int(cs, "(begin "
+                                  "  (set-code \"(define (f x) (* x 2))\") "
+                                  "  (define g0 (ast:generation)) "
+                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"1\") "
+                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"2\") "
+                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"3\") "
+                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"4\") "
+                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"5\") "
+                                  "  (- (ast:generation) g0))");
     CHECK(g_final >= 5, "generation increased by at least 5 after 5 rebinds");
     return true;
 }
@@ -348,7 +342,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_191_detail
+} // namespace aura_issue_191_detail
 
-int aura_issue_191_run() { return aura_issue_191_detail::run_tests(); }
-
+int aura_issue_191_run() {
+    return aura_issue_191_detail::run_tests();
+}

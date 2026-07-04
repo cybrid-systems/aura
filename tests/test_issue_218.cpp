@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.value;
 import aura.compiler.evaluator;
@@ -37,19 +37,22 @@ struct EvalResult {
 
 static EvalResult try_run(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return {false, aura::compiler::types::make_void()};
+    if (!r)
+        return {false, aura::compiler::types::make_void()};
     return {true, *r};
 }
 
 static std::int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = try_run(cs, src);
-    if (!r.ok || !aura::compiler::types::is_int(r.v)) return -1;
+    if (!r.ok || !aura::compiler::types::is_int(r.v))
+        return -1;
     return aura::compiler::types::as_int(r.v);
 }
 
 static std::int64_t is_pair_result(aura::compiler::CompilerService& cs, std::string_view expr) {
     auto r = try_run(cs, std::string("(if (pair? ") + std::string(expr) + ") 1 0)");
-    if (!r.ok || !aura::compiler::types::is_int(r.v)) return -1;
+    if (!r.ok || !aura::compiler::types::is_int(r.v))
+        return -1;
     return aura::compiler::types::as_int(r.v);
 }
 
@@ -66,10 +69,9 @@ static bool set_source(aura::compiler::CompilerService& cs, const std::string& s
 bool test_macro_introduced_schema() {
     std::println("\n--- Test 1: macro-introduced binding schema ---");
     aura::compiler::CompilerService cs;
-    const std::string code =
-        "(define-hygienic-macro (typed-let name val) "
-        "  (let ((name val)) name)) "
-        "(typed-let x 42)";
+    const std::string code = "(define-hygienic-macro (typed-let name val) "
+                             "  (let ((name val)) name)) "
+                             "(typed-let x 42)";
     if (!set_source(cs, code)) {
         CHECK(false, "set-code succeeded");
         return false;
@@ -100,21 +102,18 @@ bool test_macro_introduced_schema() {
 bool test_hygiene_and_schema_compose() {
     std::println("\n--- Test 2: query:pattern hygiene + schema compose ---");
     aura::compiler::CompilerService cs;
-    const std::string code =
-        "(define-hygienic-macro (my-add) (+ 1 2)) "
-        "(my-add) "
-        "(+ 1 2)";
+    const std::string code = "(define-hygienic-macro (my-add) (+ 1 2)) "
+                             "(my-add) "
+                             "(+ 1 2)";
     if (!set_source(cs, code)) {
         CHECK(false, "set-code succeeded");
         return false;
     }
     (void)try_run(cs, "(typecheck-current)");
     // #140: outer (my-add) call is MacroIntroduced and skipped.
-    const std::int64_t pattern_count = run_int(
-        cs, "(length (query:pattern \"(+ 1 2)\"))");
-    CHECK(pattern_count >= 1,
-          "query:pattern finds user (+ 1 2) despite macro hygiene (got " +
-              std::to_string(pattern_count) + ")");
+    const std::int64_t pattern_count = run_int(cs, "(length (query:pattern \"(+ 1 2)\"))");
+    CHECK(pattern_count >= 1, "query:pattern finds user (+ 1 2) despite macro hygiene (got " +
+                                  std::to_string(pattern_count) + ")");
     // Schema query still works on User-marker typed nodes.
     std::int64_t schema_ok = is_pair_result(cs, "(query:schema-of-marker \"User\")");
     CHECK(schema_ok == 1, "query:schema-of-marker User still returns a list");
@@ -125,10 +124,9 @@ bool test_hygiene_and_schema_compose() {
 bool test_mutate_preserves_macro_schema() {
     std::println("\n--- Test 3: mutate + macro schema coexist ---");
     aura::compiler::CompilerService cs;
-    const std::string setup =
-        "(define (base n) (* n 2)) "
-        "(define-hygienic-macro (triple x) (* x 3)) "
-        "(define result (triple 5))";
+    const std::string setup = "(define (base n) (* n 2)) "
+                              "(define-hygienic-macro (triple x) (* x 3)) "
+                              "(define result (triple 5))";
     if (!set_source(cs, setup)) {
         CHECK(false, "set-code succeeded");
         return false;
@@ -136,8 +134,8 @@ bool test_mutate_preserves_macro_schema() {
     (void)try_run(cs, "(typecheck-current)");
     const std::int64_t macro_val = run_int(cs, "(triple 7)");
     CHECK(macro_val == 21, "macro works before mutate (triple 7) = 21");
-    const std::int64_t mutate_ok = run_int(
-        cs, "(mutate:rebind \"base\" \"(lambda (n) (* n 4))\" \"issue218\")");
+    const std::int64_t mutate_ok =
+        run_int(cs, "(mutate:rebind \"base\" \"(lambda (n) (* n 4))\" \"issue218\")");
     (void)mutate_ok;
     const std::int64_t macro_after = run_int(cs, "(triple 7)");
     CHECK(macro_after == 21, "macro still works after unrelated mutate (triple 7) = 21");

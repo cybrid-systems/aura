@@ -24,9 +24,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 namespace aura_issue_115_detail {
@@ -64,7 +63,8 @@ bool test_parallel_speedup() {
         while (done.load(std::memory_order_acquire) < N)
             std::this_thread::yield();
         ms1 = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start).count();
+                  std::chrono::steady_clock::now() - start)
+                  .count();
         sched.stop();
         t.join();
         std::println("  1 worker: {}ms", ms1);
@@ -86,7 +86,8 @@ bool test_parallel_speedup() {
         while (done.load(std::memory_order_acquire) < N)
             std::this_thread::yield();
         ms4 = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start).count();
+                  std::chrono::steady_clock::now() - start)
+                  .count();
         sched.stop();
         t.join();
         std::println("  4 workers: {}ms", ms4);
@@ -101,8 +102,7 @@ bool test_parallel_speedup() {
     // competes for cores with other test_issue_* processes, so a strict
     // multi-core speedup ratio is flaky. Correctness is already covered by
     // the scheduler/fiber tests; here we only require 4 workers not slower.
-    CHECK(ms4 <= std::max<int64_t>(ms1, 1),
-          "4-worker run is no slower than 1-worker");
+    CHECK(ms4 <= std::max<int64_t>(ms1, 1), "4-worker run is no slower than 1-worker");
     return true;
 }
 
@@ -151,7 +151,8 @@ bool test_long_running_stability() {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             sched.request_gc_safepoint();
             bool ok = sched.wait_for_safepoint(500);
-            if (ok) safepoint_arrivals.fetch_add(1, std::memory_order_relaxed);
+            if (ok)
+                safepoint_arrivals.fetch_add(1, std::memory_order_relaxed);
             safepoint_pings.fetch_add(1, std::memory_order_relaxed);
             sched.resume_from_gc();
         }
@@ -180,12 +181,13 @@ bool test_long_running_stability() {
     int pings = safepoint_pings.load(std::memory_order_relaxed);
     int arrivals = safepoint_arrivals.load(std::memory_order_relaxed);
     std::println("  producer work units: {}  gc-checkin yields: {}", s, ch);
-    std::println("  safepoint pings: {}  arrivals: {}  ({:.0f}%)",
-                 pings, arrivals,
+    std::println("  safepoint pings: {}  arrivals: {}  ({:.0f}%)", pings, arrivals,
                  pings > 0 ? (100.0 * arrivals / pings) : 0.0);
 
     int done_count = 0;
-    for (auto* f : producers) if (f->is_done()) ++done_count;
+    for (auto* f : producers)
+        if (f->is_done())
+            ++done_count;
     CHECK(done_count == NUM_PRODUCERS, "all producers finished within timeout");
     CHECK(s > 0, "producers did meaningful work");
     CHECK(pings > 0, "GC pinger made at least one request");
@@ -194,8 +196,7 @@ bool test_long_running_stability() {
     // check (any 0 arrivals would indicate a deadlock). The original
     // "quarter" threshold was too tight under jobs=4 parallel issue-test
     // load (4 test_issue_* processes share cores; most pings time out).
-    CHECK(arrivals >= 1,
-          "at least one safepoint request arrived (no deadlock)");
+    CHECK(arrivals >= 1, "at least one safepoint request arrived (no deadlock)");
     return true;
 }
 
@@ -203,12 +204,12 @@ int run_tests() {
     std::println("═══ Issue #115 verification tests ═══\n");
     test_parallel_speedup();
     test_long_running_stability();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_115_detail
+} // namespace aura_issue_115_detail
 
-int aura_issue_115_run() { return aura_issue_115_detail::run_tests(); }
-
+int aura_issue_115_run() {
+    return aura_issue_115_detail::run_tests();
+}

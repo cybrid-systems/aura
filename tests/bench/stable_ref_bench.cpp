@@ -35,10 +35,10 @@ import aura.core.ast;
 
 namespace {
 
-constexpr int kNumDefines = 100;        // top-level defines
-constexpr int kChildrenPerDefine = 10;  // literal children per define
-constexpr int kRounds = 1000;           // mutation rounds
-constexpr int kBumpEveryNRounds = 7;    // bump one define every N rounds
+constexpr int kNumDefines = 100;       // top-level defines
+constexpr int kChildrenPerDefine = 10; // literal children per define
+constexpr int kRounds = 1000;          // mutation rounds
+constexpr int kBumpEveryNRounds = 7;   // bump one define every N rounds
 
 // Build a flat with `kNumDefines` top-level defines, each
 // holding `kChildrenPerDefine` literal values. Returns the
@@ -80,8 +80,7 @@ Workload build_workload(aura::ast::StringPool& pool) {
     return w;
 }
 
-template <typename F>
-long long time_us(F&& fn) {
+template <typename F> long long time_us(F&& fn) {
     using namespace std::chrono;
     auto t0 = steady_clock::now();
     fn();
@@ -152,8 +151,8 @@ StableResult run_stable_path(aura::ast::FlatAST& flat,
 
 int main() {
     std::println("=== Issue #393 bench: stable-ref vs raw re-query ===");
-    std::println("workload: {} defines × {} children × {} rounds",
-                 kNumDefines, kChildrenPerDefine, kRounds);
+    std::println("workload: {} defines × {} children × {} rounds", kNumDefines, kChildrenPerDefine,
+                 kRounds);
 
     // ── RAW path ──────────────────────────────────────────────
     long long raw_total_us = 0;
@@ -200,10 +199,9 @@ int main() {
     // ── Report ────────────────────────────────────────────────
     const auto raw_avg = raw_total_us / kRounds;
     const auto stable_avg = stable_total_us / kRounds;
-    const auto speedup_pct = raw_avg > 0
-        ? (100 * (raw_avg - stable_avg)) / raw_avg : 0;
-    const auto re_query_ratio_pct = raw_re_queries_total > 0
-        ? (100 * stable_re_queries_total) / raw_re_queries_total : 0;
+    const auto speedup_pct = raw_avg > 0 ? (100 * (raw_avg - stable_avg)) / raw_avg : 0;
+    const auto re_query_ratio_pct =
+        raw_re_queries_total > 0 ? (100 * stable_re_queries_total) / raw_re_queries_total : 0;
 
     std::println("");
     std::println("  raw   : total {:>8} \u00b5s  (avg {:>5} \u00b5s/round)  re-queries {}",
@@ -212,21 +210,17 @@ int main() {
                  stable_total_us, stable_avg, stable_re_queries_total);
     std::println("");
     std::println("  speedup: {}%  (positive = stable is faster)", speedup_pct);
-    std::println("  stable re-queries are {}% of raw re-queries",
-                 re_query_ratio_pct);
+    std::println("  stable re-queries are {}% of raw re-queries", re_query_ratio_pct);
 
     // Issue #393 AC: stable re-queries < 50% of raw OR
     // speedup >= 30% (permissive latency check).
-    const bool ac_met =
-        (re_query_ratio_pct < 50) || (speedup_pct >= 30);
+    const bool ac_met = (re_query_ratio_pct < 50) || (speedup_pct >= 30);
 
     std::println("");
     std::println("AC check: stable re-queries < 50% of raw OR speedup >= 30% : {}",
                  ac_met ? "PASS" : "FAIL");
-    std::println("  re_query_ratio = {}% (< 50%): {}",
-                 re_query_ratio_pct, re_query_ratio_pct < 50);
-    std::println("  speedup_pct    = {}% (>= 30%): {}",
-                 speedup_pct, speedup_pct >= 30);
+    std::println("  re_query_ratio = {}% (< 50%): {}", re_query_ratio_pct, re_query_ratio_pct < 50);
+    std::println("  speedup_pct    = {}% (>= 30%): {}", speedup_pct, speedup_pct >= 30);
 
     return ac_met ? 0 : 1;
 }

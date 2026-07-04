@@ -50,27 +50,48 @@ namespace aura_issue_376_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_GE(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a >= _b) { ++g_passed; std::println("  PASS: {}  ({} >= {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} < {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_GE(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a >= _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} >= {})", msg, _a, _b);                                   \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} < {})", msg, _a, _b);                                    \
+        }                                                                                          \
+    } while (0)
 
 // Helper: set-code + eval-current + return the result.
 bool load_source(aura::compiler::CompilerService& cs, const std::string& source) {
     auto r1 = cs.eval(std::string("(set-code \"") + source + "\")");
-    if (!r1) return false;
+    if (!r1)
+        return false;
     auto r2 = cs.eval("(eval-current)");
     return r2.has_value();
 }
@@ -100,17 +121,19 @@ bool test_map_workload_baseline() {
     aura::compiler::CompilerService cs;
     // Use eval_ir to force IR pipeline (otherwise cs.eval
     // short-circuits to tree-walker on workspace).
-    auto r = cs.eval_ir(
-        "(let ((xs (let loop ((i 0) (acc '()))\n"
-        "            (if (= i 100) acc (loop (+ i 1) (cons i acc))))))\n"
-        "  (map (lambda (x) (* x 2)) xs))");
-    if (!r) { std::println("  FAIL: map workload failed"); ++g_failed; return false; }
+    auto r = cs.eval_ir("(let ((xs (let loop ((i 0) (acc '()))\n"
+                        "            (if (= i 100) acc (loop (+ i 1) (cons i acc))))))\n"
+                        "  (map (lambda (x) (* x 2)) xs))");
+    if (!r) {
+        std::println("  FAIL: map workload failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
-    CHECK_GE(snap.closure_calls_total, 100u,
-             "calls-total >= 100 (one per map iteration)");
+    CHECK_GE(snap.closure_calls_total, 100u, "calls-total >= 100 (one per map iteration)");
     std::uint64_t bridge_pct = snap.closure_calls_total
-        ? (snap.closure_bridge_calls * 100u / snap.closure_calls_total)
-        : 0;
+                                   ? (snap.closure_bridge_calls * 100u / snap.closure_calls_total)
+                                   : 0;
     std::println("       [baseline] calls-total={} tw={} ir={} bridge={} stale={} bridge-pct={}%",
                  snap.closure_calls_total, snap.closure_tw_calls, snap.closure_ir_calls,
                  snap.closure_bridge_calls, snap.closure_stale_returns, bridge_pct);
@@ -124,14 +147,18 @@ bool test_ir_closure_path() {
     std::println("\n--- AC3: IR-produced closure bumps ir-calls ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval_ir("((lambda (n) (+ n 1)) 41)");
-    if (!r) { std::println("  FAIL: simple lambda call failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: simple lambda call failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
     // The lambda body is IR-evaluated; the closure dispatch
     // might land on either the ir or tw path depending on
     // how the runtime_closures_ is set up. We just verify
     // at least one path was exercised.
-    std::uint64_t exercised = snap.closure_ir_calls + snap.closure_tw_calls
-                            + snap.closure_bridge_calls;
+    std::uint64_t exercised =
+        snap.closure_ir_calls + snap.closure_tw_calls + snap.closure_bridge_calls;
     CHECK_GE(exercised, 1u, "at least one closure path was exercised");
     CHECK_EQ(snap.closure_ffi_calls, 0u, "no FFI calls in this workload");
     return true;
@@ -148,27 +175,30 @@ bool test_bridge_fraction_baseline() {
     };
     std::vector<Workload> workloads = {
         {"map", "(let ((xs (let loop ((i 0) (acc '()))"
-                 "  (if (= i 50) acc (loop (+ i 1) (cons i acc))))))"
-                 "  (map (lambda (x) (+ x 1)) xs))"},
+                "  (if (= i 50) acc (loop (+ i 1) (cons i acc))))))"
+                "  (map (lambda (x) (+ x 1)) xs))"},
         {"filter", "(let ((xs (let loop ((i 0) (acc '()))"
-                    "  (if (= i 50) acc (loop (+ i 1) (cons i acc))))))"
-                    "  (filter (lambda (x) (= 0 (mod x 2))) xs))"},
-        {"foldl", "(let ((xs (let loop ((i 0) (acc '()))"
                    "  (if (= i 50) acc (loop (+ i 1) (cons i acc))))))"
-                   "  (foldl + 0 xs))"},
+                   "  (filter (lambda (x) (= 0 (mod x 2))) xs))"},
+        {"foldl", "(let ((xs (let loop ((i 0) (acc '()))"
+                  "  (if (= i 50) acc (loop (+ i 1) (cons i acc))))))"
+                  "  (foldl + 0 xs))"},
     };
     for (const auto& w : workloads) {
         aura::compiler::CompilerService cs;
         auto r = cs.eval_ir(w.source);
-        if (!r) { std::println("  FAIL: {} workload failed", w.name); ++g_failed; continue; }
+        if (!r) {
+            std::println("  FAIL: {} workload failed", w.name);
+            ++g_failed;
+            continue;
+        }
         auto snap = cs.snapshot();
-        std::uint64_t bridge_pct = snap.closure_calls_total
-            ? (snap.closure_bridge_calls * 100u / snap.closure_calls_total)
-            : 0;
-        std::println("       [{} baseline] calls={} bridge={} bridge-pct={}%",
-                     w.name, snap.closure_calls_total, snap.closure_bridge_calls, bridge_pct);
-        CHECK_GE(snap.closure_calls_total, 50u,
-                 std::string(w.name) + " workload: calls >= 50");
+        std::uint64_t bridge_pct =
+            snap.closure_calls_total ? (snap.closure_bridge_calls * 100u / snap.closure_calls_total)
+                                     : 0;
+        std::println("       [{} baseline] calls={} bridge={} bridge-pct={}%", w.name,
+                     snap.closure_calls_total, snap.closure_bridge_calls, bridge_pct);
+        CHECK_GE(snap.closure_calls_total, 50u, std::string(w.name) + " workload: calls >= 50");
     }
     return true;
 }
@@ -182,19 +212,25 @@ bool test_mutation_stress_sanity() {
     aura::compiler::CompilerService cs;
     // Initial setup
     if (!load_source(cs, "(define f (lambda (x) (* x 2)))")) {
-        std::println("  FAIL: initial set-code failed"); ++g_failed; return false;
+        std::println("  FAIL: initial set-code failed");
+        ++g_failed;
+        return false;
     }
     auto snap_before = cs.snapshot();
     std::uint64_t stale_before = snap_before.closure_stale_returns;
     for (int cycle = 0; cycle < 10; ++cycle) {
         // Mutate: redefine f
         if (!load_source(cs, "(define f (lambda (x) (+ x 100)))")) {
-            std::println("  FAIL: cycle {} redefine failed", cycle); ++g_failed; return false;
+            std::println("  FAIL: cycle {} redefine failed", cycle);
+            ++g_failed;
+            return false;
         }
         // Call f
         auto r = cs.eval("(f 5)");
         if (!r) {
-            std::println("  FAIL: cycle {} eval failed", cycle); ++g_failed; return false;
+            std::println("  FAIL: cycle {} eval failed", cycle);
+            ++g_failed;
+            return false;
         }
     }
     auto snap_after = cs.snapshot();
@@ -225,7 +261,11 @@ bool test_aura_primitive_consistency() {
     std::println("\n--- AC6: (closure:stats) primitive matches cs.snapshot() within 5 ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval_ir("((lambda (x) (* x x)) 7)");
-    if (!r) { std::println("  FAIL: eval_ir failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: eval_ir failed");
+        ++g_failed;
+        return false;
+    }
     // Read snapshot
     auto snap = cs.snapshot();
     // Read Aura primitive
@@ -236,11 +276,10 @@ bool test_aura_primitive_consistency() {
         return false;
     }
     auto aura_calls = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rp));
-    auto diff = (aura_calls > snap.closure_calls_total)
-        ? (aura_calls - snap.closure_calls_total)
-        : (snap.closure_calls_total - aura_calls);
-    std::println("       [drift] snap={} aura={} diff={}",
-                 snap.closure_calls_total, aura_calls, diff);
+    auto diff = (aura_calls > snap.closure_calls_total) ? (aura_calls - snap.closure_calls_total)
+                                                        : (snap.closure_calls_total - aura_calls);
+    std::println("       [drift] snap={} aura={} diff={}", snap.closure_calls_total, aura_calls,
+                 diff);
     CHECK(diff <= 5,
           "(closure:stats) and cs.snapshot() agree within 5 (drift from primitive's own overhead)");
     CHECK_GE(aura_calls, snap.closure_calls_total,
@@ -254,10 +293,16 @@ bool test_no_regression() {
     std::println("\n--- AC7: no regression — tree-walker closure dispatch still works ---");
     aura::compiler::CompilerService cs;
     if (!load_source(cs, "(define f (lambda (x) (* x x)))")) {
-        std::println("  FAIL: set-code failed"); ++g_failed; return false;
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
     }
     auto r = cs.eval("(f 9)");
-    if (!r) { std::println("  FAIL: eval failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: eval failed");
+        ++g_failed;
+        return false;
+    }
     CHECK(aura::compiler::types::is_int(*r), "(f 9) returns an int");
     if (aura::compiler::types::is_int(*r)) {
         CHECK_EQ(aura::compiler::types::as_int(*r), 81, "(f 9) == 81");
@@ -265,7 +310,7 @@ bool test_no_regression() {
     return true;
 }
 
-}  // namespace aura_issue_376_detail
+} // namespace aura_issue_376_detail
 
 int aura_issue_376_run() {
     using namespace aura_issue_376_detail;
@@ -283,5 +328,7 @@ int aura_issue_376_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_376_run(); }
+int main() {
+    return aura_issue_376_run();
+}
 #endif

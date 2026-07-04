@@ -29,8 +29,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
@@ -60,10 +60,10 @@ bool test_set_marker_on_single_node() {
 
     // Read the original marker (default User = 0).
     auto m0 = cs.eval("(syntax-marker " + std::to_string(node_id) + ")");
-    if (!m0) return false;
+    if (!m0)
+        return false;
     int64_t orig_marker = aura::compiler::types::as_int(*m0);
-    CHECK(orig_marker == 0,
-          "fresh node has default marker (User = 0)");
+    CHECK(orig_marker == 0, "fresh node has default marker (User = 0)");
 
     // Set to MacroIntroduced (1).
     auto set_r = cs.eval("(syntax:set-marker " + std::to_string(node_id) + " 1)");
@@ -71,10 +71,10 @@ bool test_set_marker_on_single_node() {
 
     // Verify the marker is now MacroIntroduced.
     auto m1 = cs.eval("(syntax-marker " + std::to_string(node_id) + ")");
-    if (!m1) return false;
+    if (!m1)
+        return false;
     int64_t new_marker = aura::compiler::types::as_int(*m1);
-    CHECK(new_marker == 1,
-          "syntax-marker reflects the set value (MacroIntroduced = 1)");
+    CHECK(new_marker == 1, "syntax-marker reflects the set value (MacroIntroduced = 1)");
     return true;
 }
 
@@ -88,19 +88,20 @@ bool test_propagate_marker_subtree() {
     cs.eval("(set-code \"(define (f x) (+ x 1))\")");
     // Find the function f's define id (the top-level binding).
     auto r = cs.eval("(car (query:find \"f\"))");
-    if (!r) return false;
+    if (!r)
+        return false;
     int64_t root_id = aura::compiler::types::as_int(*r);
 
     // Mark the entire subtree (define + lambda + body) as MacroIntroduced.
     auto prop_r = cs.eval("(syntax:propagate-marker " + std::to_string(root_id) + " 1)");
     CHECK(prop_r.has_value(), "syntax:propagate-marker returns success");
     int64_t count = aura::compiler::types::as_int(*prop_r);
-    CHECK(count > 1,
-          "propagate-marker updated > 1 node (define + lambda + body subtree)");
+    CHECK(count > 1, "propagate-marker updated > 1 node (define + lambda + body subtree)");
 
     // Verify the root + at least one child are now MacroIntroduced.
     auto m_root = cs.eval("(syntax-marker " + std::to_string(root_id) + ")");
-    if (!m_root) return false;
+    if (!m_root)
+        return false;
     CHECK(aura::compiler::types::as_int(*m_root) == 1,
           "root node is now MacroIntroduced after propagate");
     return true;
@@ -116,29 +117,31 @@ bool test_marker_consistency_under_mutate() {
     cs.eval("(set-code \"(define y 0)\")");
 
     auto r = cs.eval("(car (query:find \"y\"))");
-    if (!r) return false;
+    if (!r)
+        return false;
     int64_t nid = aura::compiler::types::as_int(*r);
 
     // Set the marker, then verify syntax-marker reflects it.
     cs.eval("(syntax:set-marker " + std::to_string(nid) + " 1)");
     auto m = cs.eval("(syntax-marker " + std::to_string(nid) + ")");
-    if (!m) return false;
+    if (!m)
+        return false;
     CHECK(aura::compiler::types::as_int(*m) == 1,
           "marker set + query round-trip (set: User→Macro, query returns Macro)");
 
     // Reset to BoolLiteral (2).
     cs.eval("(syntax:set-marker " + std::to_string(nid) + " 2)");
     m = cs.eval("(syntax-marker " + std::to_string(nid) + ")");
-    if (!m) return false;
-    CHECK(aura::compiler::types::as_int(*m) == 2,
-          "marker reset: Macro→BoolLiteral");
+    if (!m)
+        return false;
+    CHECK(aura::compiler::types::as_int(*m) == 2, "marker reset: Macro→BoolLiteral");
 
     // Reset back to User (0).
     cs.eval("(syntax:set-marker " + std::to_string(nid) + " 0)");
     m = cs.eval("(syntax-marker " + std::to_string(nid) + ")");
-    if (!m) return false;
-    CHECK(aura::compiler::types::as_int(*m) == 0,
-          "marker reset: BoolLiteral→User");
+    if (!m)
+        return false;
+    CHECK(aura::compiler::types::as_int(*m) == 0, "marker reset: BoolLiteral→User");
     return true;
 }
 
@@ -161,6 +164,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_366_detail
+} // namespace aura_issue_366_detail
 
-int aura_issue_366_run() { return aura_issue_366_detail::run_tests(); }
+int aura_issue_366_run() {
+    return aura_issue_366_detail::run_tests();
+}

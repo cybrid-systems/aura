@@ -41,8 +41,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -98,16 +98,14 @@ void check_local_(bool cond, const char* msg, int line) {
 // expression that registers the interface name into the
 // DefUseIndex by referencing it from another scope. The
 // simplest cross-reference is a 2-module structure:
-static void build_workspace_with_interface_ref(
-    aura::compiler::CompilerService& cs) {
+static void build_workspace_with_interface_ref(aura::compiler::CompilerService& cs) {
     // Build the simplest possible Aura source that mentions
     // `Bus`. The (define ...) targets an unknown binding;
     // we don't care about type-checking here, just the
     // DefUseIndex tracking.
-    cs.set_code(
-        "(begin "
-        "  (define Bus_var 'placeholder) "
-        "  (define data 'placeholder))");
+    cs.set_code("(begin "
+                "  (define Bus_var 'placeholder) "
+                "  (define data 'placeholder))");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -123,20 +121,16 @@ bool test_query_def_use_compiles_for_interface_name() {
     build_workspace_with_interface_ref(cs);
     // Build the index (ensures DefUseIndex is built).
     auto build_r = cs.eval("(query:build-index)");
-    CHECK(build_r.has_value(),
-          "(query:build-index) doesn't error after workspace set");
+    CHECK(build_r.has_value(), "(query:build-index) doesn't error after workspace set");
     // query:def-use should run cleanly for any sym name
     // (Interface or otherwise) — the DefUseIndex returns
     // the uses in the workspace, even if there are none.
     auto r1 = cs.eval("(query:def-use \"Bus\")");
     auto r2 = cs.eval("(query:def-use \"data\")");
     auto r3 = cs.eval("(query:def-use \"nonexistent-sym\")");
-    CHECK(r1.has_value(),
-          "(query:def-use \"Bus\") runs cleanly");
-    CHECK(r2.has_value(),
-          "(query:def-use \"data\") runs cleanly");
-    CHECK(r3.has_value(),
-          "(query:def-use \"nonexistent-sym\") runs cleanly");
+    CHECK(r1.has_value(), "(query:def-use \"Bus\") runs cleanly");
+    CHECK(r2.has_value(), "(query:def-use \"data\") runs cleanly");
+    CHECK(r3.has_value(), "(query:def-use \"nonexistent-sym\") runs cleanly");
     return true;
 }
 
@@ -151,21 +145,17 @@ bool test_index_rebuilds_after_mutation() {
     build_workspace_with_interface_ref(cs);
     cs.eval("(query:build-index)");
     auto stats1_r = cs.eval("(query:index-stats)");
-    CHECK(stats1_r.has_value(),
-          "(query:index-stats) runs after first build");
+    CHECK(stats1_r.has_value(), "(query:index-stats) runs after first build");
     // Mutate: replace the workspace code (this fires a
     // rebuild next time the index is touched).
-    cs.set_code(
-        "(begin "
-        "  (define Bus_var 'v2) "
-        "  (define data 'v2))");
+    cs.set_code("(begin "
+                "  (define Bus_var 'v2) "
+                "  (define data 'v2))");
     auto stats2_r = cs.eval("(query:index-stats)");
-    CHECK(stats2_r.has_value(),
-          "(query:index-stats) runs after second build (rebuild happened)");
+    CHECK(stats2_r.has_value(), "(query:index-stats) runs after second build (rebuild happened)");
     // query:def-use should still be responsive.
     auto def_r = cs.eval("(query:def-use \"Bus_var\")");
-    CHECK(def_r.has_value(),
-          "(query:def-use \"Bus_var\") works after workspace mutation");
+    CHECK(def_r.has_value(), "(query:def-use \"Bus_var\") works after workspace mutation");
     return true;
 }
 
@@ -191,16 +181,13 @@ bool test_interface_creates_scope() {
     // an Interface name registered via standard Aura code
     // + verify the DefUseIndex is buildable + the index
     // reflects the structure.
-    cs.set_code(
-        "(begin "
-        "  (define Bus_var 'interface-mark) "
-        "  (define Bus (the (struct (data valid)) 'placeholder)))");
+    cs.set_code("(begin "
+                "  (define Bus_var 'interface-mark) "
+                "  (define Bus (the (struct (data valid)) 'placeholder)))");
     auto stats_r = cs.eval("(query:index-stats)");
-    CHECK(stats_r.has_value(),
-          "(query:index-stats) runs on workspace with named definitions");
+    CHECK(stats_r.has_value(), "(query:index-stats) runs on workspace with named definitions");
     auto def_r = cs.eval("(query:def-use \"Bus\")");
-    CHECK(def_r.has_value(),
-          "(query:def-use \"Bus\") runs on the Bus symbol");
+    CHECK(def_r.has_value(), "(query:def-use \"Bus\") runs on the Bus symbol");
     // Confirm the Aura primitive flow doesn't error or
     // crash — the DefUseIndex correctly handles the
     // Interface extension (the actual Interface ScopeNode
@@ -209,8 +196,7 @@ bool test_interface_creates_scope() {
     // surface is wired and the DefUseIndex rebuilds without
     // crashing).
     auto rebuild_r = cs.eval("(query:build-index)");
-    CHECK(rebuild_r.has_value(),
-          "(query:build-index) runs again cleanly");
+    CHECK(rebuild_r.has_value(), "(query:build-index) runs again cleanly");
     return true;
 }
 
@@ -224,10 +210,9 @@ bool test_index_build_is_fast() {
     using namespace aura;
     compiler::CompilerService cs;
     // Load a workspace with a reasonable amount of code.
-    cs.set_code(
-        "(begin "
-        "  (define a 1) (define b 2) (define c 3) "
-        "  (define d 4) (define e 5) (define Bus_var 'x))");
+    cs.set_code("(begin "
+                "  (define a 1) (define b 2) (define c 3) "
+                "  (define d 4) (define e 5) (define Bus_var 'x))");
     // Build the index 3 times. The third build should be
     // similar in cost to the first (no O(n^2) behavior).
     auto t0 = std::chrono::steady_clock::now();
@@ -242,13 +227,12 @@ bool test_index_build_is_fast() {
     auto us1 = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     auto us2 = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
     auto us3 = std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count();
-    std::println("    build-index call times: {}, {}, {} µs",
-                 us1, us2, us3);
+    std::println("    build-index call times: {}, {}, {} µs", us1, us2, us3);
     // Heuristic: the latter calls should be ≤ 10x the first
     // (no exponential blowup). The actual numbers depend on
     // the workspace state, but as a smoke check we just
     // confirm 3 calls all return within reasonable time.
-    const auto max_us = 1000000;  // 1 second
+    const auto max_us = 1000000; // 1 second
     CHECK(us1 < max_us && us2 < max_us && us3 < max_us,
           "each (query:build-index) call < 1s (bounded perf)");
     return true;
@@ -265,10 +249,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_317_detail
+} // namespace aura_issue_317_detail
 
-int aura_issue_317_run() { return aura_issue_317_detail::run_tests(); }
+int aura_issue_317_run() {
+    return aura_issue_317_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_317_run(); }
+int main() {
+    return aura_issue_317_run();
+}
 #endif

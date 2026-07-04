@@ -117,8 +117,7 @@ void aura::compiler::Evaluator::ensure_hygiene_violation_detection() const noexc
 }
 
 void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_boundary_yield) {
-    bool had_boundary =
-        any_active_mutation_boundary() || !active_mutation_stack().empty();
+    bool had_boundary = any_active_mutation_boundary() || !active_mutation_stack().empty();
     if (!had_boundary && !at_mutation_boundary_yield)
         return;
     YieldBoundaryCheckpoint cp;
@@ -249,7 +248,9 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
 // g_fiber_yield_mutation_boundary lives in messaging_bridge.h, a
 // non-module header that the module interface cannot include.
 //
-void Evaluator::bind_yield_hook_evaluator() { g_yield_hook_evaluator = this; }
+void Evaluator::bind_yield_hook_evaluator() {
+    g_yield_hook_evaluator = this;
+}
 
 // Issue #456: per-thread query-evaluator accessors.
 void Evaluator::set_query_evaluator(Evaluator* ev) noexcept {
@@ -284,38 +285,35 @@ void Evaluator::yield_mutation_boundary() {
 // `g_yield_hook_evaluator` so Fiber::yield can invoke the flush
 // without needing the module include.
 namespace {
-void flush_mutation_boundary_trampoline() {
-    if (aura::compiler::Evaluator::yield_hook_evaluator())
-        aura::compiler::Evaluator::yield_hook_evaluator()
-            ->flush_mutation_boundary();
-}
+    void flush_mutation_boundary_trampoline() {
+        if (aura::compiler::Evaluator::yield_hook_evaluator())
+            aura::compiler::Evaluator::yield_hook_evaluator()->flush_mutation_boundary();
+    }
 
-// Issue #354: "yield while holding a mutation
-// boundary" check trampoline. Returns true when an
-// outermost MutationBoundaryGuard is currently
-// alive. Used by Fiber::yield to detect a
-// programmer error (yielding inside a mutate:*
-// primitive body).
-bool mutation_boundary_held_trampoline() {
-    auto* ev = aura::compiler::Evaluator::yield_hook_evaluator();
-    return ev ? ev->mutation_boundary_held() : false;
-}
+    // Issue #354: "yield while holding a mutation
+    // boundary" check trampoline. Returns true when an
+    // outermost MutationBoundaryGuard is currently
+    // alive. Used by Fiber::yield to detect a
+    // programmer error (yielding inside a mutate:*
+    // primitive body).
+    bool mutation_boundary_held_trampoline() {
+        auto* ev = aura::compiler::Evaluator::yield_hook_evaluator();
+        return ev ? ev->mutation_boundary_held() : false;
+    }
 } // anonymous namespace
 
 // Static initializer: register the trampoline at module load.
 // Runs once per process; safe under serve-async / standalone.
 namespace {
-struct FlushHookRegistrar {
-    FlushHookRegistrar() {
-        aura::messaging::g_flush_mutation_boundary =
-            &flush_mutation_boundary_trampoline;
-        // Issue #354: register the
-        // mutation-boundary-held check trampoline.
-        aura::messaging::g_mutation_boundary_held =
-            &mutation_boundary_held_trampoline;
-    }
-};
-const FlushHookRegistrar g_flush_hook_registrar{};
+    struct FlushHookRegistrar {
+        FlushHookRegistrar() {
+            aura::messaging::g_flush_mutation_boundary = &flush_mutation_boundary_trampoline;
+            // Issue #354: register the
+            // mutation-boundary-held check trampoline.
+            aura::messaging::g_mutation_boundary_held = &mutation_boundary_held_trampoline;
+        }
+    };
+    const FlushHookRegistrar g_flush_hook_registrar{};
 } // anonymous namespace
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -363,53 +361,55 @@ void Evaluator::flush_mutation_boundary() {
 // registrar wires the function pointer at module load.
 namespace {
 
-// (1) g_pending_panic_checkpoint: true if the active outermost
-// guard captured a checkpoint. Reads thread-local evaluator
-// pointer (set by bind_yield_hook_evaluator). Returns false
-// when no guard is active.
-bool pending_panic_checkpoint_trampoline() {
-    auto* ev = Evaluator::yield_hook_evaluator();
-    return ev ? ev->pending_panic_checkpoint() : false;
-}
-
-// (2) g_transfer_panic_checkpoint: bumps transfer count and
-// re-stamps any per-fiber storage. Called by Fiber::resume()
-// after the swapcontext return. No-op when no pending checkpoint.
-void transfer_panic_checkpoint_trampoline() {
-    auto* ev = Evaluator::yield_hook_evaluator();
-    if (!ev) return;
-    if (!ev->pending_panic_checkpoint()) return;
-    ev->bump_panic_checkpoint_transfer_count();
-    // The actual "re-stamp" is a follow-up to #453: a full
-    // implementation would walk the per-fiber storage and
-    // bump a generation counter so stale observers can detect
-    // the transfer. For the scope-limited P0 ship, the metric
-    // bump is enough to make the transfer observable.
-}
-
-// (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
-// counter. Called by Fiber::yield(MutationBoundary) when a
-// pending checkpoint exists. The actual GC defer is a
-// follow-up (requires scheduler.cpp + gc_coordinator.cpp
-// integration; out of scope for the P0 ship).
-void block_gc_for_pending_checkpoint_trampoline() {
-    auto* ev = Evaluator::yield_hook_evaluator();
-    if (!ev) return;
-    if (!ev->pending_panic_checkpoint()) return;
-    ev->bump_gc_blocked_by_pending_panic();
-}
-
-struct PanicCheckpointRegistrar {
-    PanicCheckpointRegistrar() {
-        aura::messaging::g_pending_panic_checkpoint =
-            &pending_panic_checkpoint_trampoline;
-        aura::messaging::g_transfer_panic_checkpoint =
-            &transfer_panic_checkpoint_trampoline;
-        aura::messaging::g_block_gc_for_pending_checkpoint =
-            &block_gc_for_pending_checkpoint_trampoline;
+    // (1) g_pending_panic_checkpoint: true if the active outermost
+    // guard captured a checkpoint. Reads thread-local evaluator
+    // pointer (set by bind_yield_hook_evaluator). Returns false
+    // when no guard is active.
+    bool pending_panic_checkpoint_trampoline() {
+        auto* ev = Evaluator::yield_hook_evaluator();
+        return ev ? ev->pending_panic_checkpoint() : false;
     }
-};
-const PanicCheckpointRegistrar g_panic_checkpoint_registrar{};
+
+    // (2) g_transfer_panic_checkpoint: bumps transfer count and
+    // re-stamps any per-fiber storage. Called by Fiber::resume()
+    // after the swapcontext return. No-op when no pending checkpoint.
+    void transfer_panic_checkpoint_trampoline() {
+        auto* ev = Evaluator::yield_hook_evaluator();
+        if (!ev)
+            return;
+        if (!ev->pending_panic_checkpoint())
+            return;
+        ev->bump_panic_checkpoint_transfer_count();
+        // The actual "re-stamp" is a follow-up to #453: a full
+        // implementation would walk the per-fiber storage and
+        // bump a generation counter so stale observers can detect
+        // the transfer. For the scope-limited P0 ship, the metric
+        // bump is enough to make the transfer observable.
+    }
+
+    // (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
+    // counter. Called by Fiber::yield(MutationBoundary) when a
+    // pending checkpoint exists. The actual GC defer is a
+    // follow-up (requires scheduler.cpp + gc_coordinator.cpp
+    // integration; out of scope for the P0 ship).
+    void block_gc_for_pending_checkpoint_trampoline() {
+        auto* ev = Evaluator::yield_hook_evaluator();
+        if (!ev)
+            return;
+        if (!ev->pending_panic_checkpoint())
+            return;
+        ev->bump_gc_blocked_by_pending_panic();
+    }
+
+    struct PanicCheckpointRegistrar {
+        PanicCheckpointRegistrar() {
+            aura::messaging::g_pending_panic_checkpoint = &pending_panic_checkpoint_trampoline;
+            aura::messaging::g_transfer_panic_checkpoint = &transfer_panic_checkpoint_trampoline;
+            aura::messaging::g_block_gc_for_pending_checkpoint =
+                &block_gc_for_pending_checkpoint_trampoline;
+        }
+    };
+    const PanicCheckpointRegistrar g_panic_checkpoint_registrar{};
 
 } // anonymous namespace
 
@@ -424,7 +424,8 @@ bool Evaluator::pending_panic_checkpoint() const noexcept {
     // bind_yield_hook_evaluator (called by the guard ctor)
     // and cleared by unbind_yield_hook_evaluator (dtor).
     auto* active = Evaluator::yield_hook_evaluator();
-    if (active != this) return false; // not the active evaluator
+    if (active != this)
+        return false; // not the active evaluator
     // Walk the active mutation stack to find the outermost guard
     // and check its checkpoint state. The stack stores
     // YieldBoundaryCheckpoint records; the guard's
@@ -444,14 +445,12 @@ bool Evaluator::pending_panic_checkpoint() const noexcept {
 // the Evaluator module (fiber.h is a low-level header
 // included by tests that don't have the Evaluator
 // module available).
-extern "C" std::size_t
-aura_evaluator_mutation_boundary_depth() {
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
 }
 
 // Issue #588: depth from a fiber's opaque mutation_stack_storage_.
-extern "C" std::size_t
-aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage) {
+extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage) {
     if (mutation_stack_storage == nullptr)
         return 0;
     using C = Evaluator::MutationCheckpoint;
@@ -490,14 +489,15 @@ extern "C" void aura_evaluator_test_pop_mutation_checkpoint() {
 // pulling in the Evaluator module.
 extern "C" int aura_evaluator_request_gc_safepoint() {
     auto* ev = Evaluator::yield_hook_evaluator();
-    if (!ev) return 0; // no evaluator → no guard
+    if (!ev)
+        return 0; // no evaluator → no guard
     return ev->request_gc_safepoint();
 }
 
-extern "C" void
-aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms) {
+extern "C" void aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms) {
     auto* ev = Evaluator::yield_hook_evaluator();
-    if (!ev) return; // no evaluator → no wait
+    if (!ev)
+        return; // no evaluator → no wait
     ev->wait_for_safepoint(timeout_ms);
 }
 

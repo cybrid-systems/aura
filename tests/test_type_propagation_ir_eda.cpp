@@ -56,8 +56,8 @@ bool test_type_propagation_counters_reachable() {
     const auto total0 = cs.get_type_propagation_total();
     const auto unknown0 = cs.get_type_propagation_unknown();
     const auto int_width0 = cs.get_type_propagation_int_width();
-    std::println("  baseline: runs={} total={} unknown={} int_width={}",
-                 runs0, total0, unknown0, int_width0);
+    std::println("  baseline: runs={} total={} unknown={} int_width={}", runs0, total0, unknown0,
+                 int_width0);
     CHECK(runs0 == 0, "type_propagation_runs starts at 0");
     CHECK(total0 == 0, "type_propagation_total starts at 0");
     CHECK(unknown0 == 0, "type_propagation_unknown starts at 0");
@@ -73,8 +73,7 @@ bool test_query_type_propagation_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:type-propagation-stats)");
     CHECK(r.has_value(), "(query:type-propagation-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:type-propagation-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:type-propagation-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:type-propagation-stats = {}", v);
@@ -97,17 +96,12 @@ bool test_type_propagation_pass_exists() {
     std::ifstream f("/home/dev/code/aura/src/compiler/pass_manager.ixx");
     CHECK(f.good(), "pass_manager.ixx exists");
     if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)),
-                            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
-        const bool has_class =
-            content.find("class TypePropagationPass") != std::string::npos;
-        const bool has_run = content.find("void run(aura::ir::IRModule&")
-            != std::string::npos;
-        const bool has_name = content.find("type-propagation")
-            != std::string::npos;
-        const bool has_propagated_count =
-            content.find("propagated_count()") != std::string::npos;
+        const bool has_class = content.find("class TypePropagationPass") != std::string::npos;
+        const bool has_run = content.find("void run(aura::ir::IRModule&") != std::string::npos;
+        const bool has_name = content.find("type-propagation") != std::string::npos;
+        const bool has_propagated_count = content.find("propagated_count()") != std::string::npos;
         std::println("  TypePropagationPass: class={} run={} name={} "
                      "propagated_count={}",
                      has_class, has_run, has_name, has_propagated_count);
@@ -141,8 +135,7 @@ bool test_bump_helpers() {
     const auto int_width1 = cs.get_type_propagation_int_width();
     std::println("  runs: {} -> {} total: {} -> {} unknown: {} -> {} "
                  "int_width: {} -> {}",
-                 runs0, runs1, total0, total1, unknown0, unknown1,
-                 int_width0, int_width1);
+                 runs0, runs1, total0, total1, unknown0, unknown1, int_width0, int_width1);
     CHECK(runs1 == runs0 + 3, "runs bumped by 3");
     CHECK(total1 == total0 + 50, "total bumped by 50");
     CHECK(unknown1 == unknown0 + 1, "unknown bumped by 1");
@@ -160,10 +153,9 @@ bool test_long_running_cycle() {
     const auto runs0 = cs.get_type_propagation_runs();
     const auto total0 = cs.get_type_propagation_total();
     for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(i) + ") (define " +
-            (i & 1 ? "a" : "b") + " " + std::to_string(i) + "))";
+        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+                           " " + std::to_string(i) + ") (define " + (i & 1 ? "a" : "b") + " " +
+                           std::to_string(i) + "))";
         (void)cs.eval(code);
     }
     const auto runs1 = cs.get_type_propagation_runs();
@@ -187,22 +179,24 @@ bool test_eight_thread_concurrent() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define a " +
-                std::to_string(tid * 1000 + i) +
-                ") (define a " + std::to_string(tid * 1000 + i) + "))";
+            std::string code = "(mutate:replace-value (define a " + std::to_string(tid * 1000 + i) +
+                               ") (define a " + std::to_string(tid * 1000 + i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     const auto runs = cs.get_type_propagation_runs();
-    std::println("  completed: {}/{} type_propagation_runs: {} elapsed: {}ms",
-                 completed.load(), n_threads * n_iters, runs, ms);
+    std::println("  completed: {}/{} type_propagation_runs: {} elapsed: {}ms", completed.load(),
+                 n_threads * n_iters, runs, ms);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 mutates completed (no crash under concurrent load)");
     CHECK(ms < 60000, "completed within 60s wall-clock budget");
@@ -233,30 +227,22 @@ bool test_decision_doc_or_fallback() {
     // ir_pipeline.md. For now, we check the source for the
     // EDA-specific terms (bit-width, hardware optimization,
     // TypePropagation).
-    std::ifstream f1(
-        "/home/dev/code/aura/docs/design/core/typesystem.md");
-    std::ifstream f2(
-        "/home/dev/code/aura/docs/design/compilation/ir_pipeline.md");
-    CHECK(f1.good() || f2.good(),
-          "at least one of typesystem.md / ir_pipeline.md exists");
+    std::ifstream f1("/home/dev/code/aura/docs/design/core/typesystem.md");
+    std::ifstream f2("/home/dev/code/aura/docs/design/compilation/ir_pipeline.md");
+    CHECK(f1.good() || f2.good(), "at least one of typesystem.md / ir_pipeline.md exists");
     bool has_bit_width = false;
     bool has_type_prop = false;
     if (f1.good()) {
-        std::string c1((std::istreambuf_iterator<char>(f1)),
-                       std::istreambuf_iterator<char>());
-        has_bit_width = has_bit_width ||
-            c1.find("bit-width") != std::string::npos ||
-            c1.find("bit width") != std::string::npos;
+        std::string c1((std::istreambuf_iterator<char>(f1)), std::istreambuf_iterator<char>());
+        has_bit_width = has_bit_width || c1.find("bit-width") != std::string::npos ||
+                        c1.find("bit width") != std::string::npos;
         has_type_prop = c1.find("TypePropagation") != std::string::npos;
     }
     if (f2.good()) {
-        std::string c2((std::istreambuf_iterator<char>(f2)),
-                       std::istreambuf_iterator<char>());
-        has_bit_width = has_bit_width ||
-            c2.find("bit-width") != std::string::npos ||
-            c2.find("bit width") != std::string::npos;
-        has_type_prop = has_type_prop ||
-            c2.find("TypePropagation") != std::string::npos;
+        std::string c2((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
+        has_bit_width = has_bit_width || c2.find("bit-width") != std::string::npos ||
+                        c2.find("bit width") != std::string::npos;
+        has_type_prop = has_type_prop || c2.find("TypePropagation") != std::string::npos;
     }
     std::println("  docs: bit_width={} type_prop={}", has_bit_width, has_type_prop);
     CHECK(has_bit_width, "bit-width mentioned in design docs");
@@ -314,8 +300,12 @@ int run_tests() {
 
 } // namespace aura_issue_305_detail
 
-int aura_issue_305_run() { return aura_issue_305_detail::run_tests(); }
+int aura_issue_305_run() {
+    return aura_issue_305_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_305_run(); }
+int main() {
+    return aura_issue_305_run();
+}
 #endif

@@ -21,8 +21,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
@@ -65,11 +65,12 @@ bool test_ac1_invariant() {
     // We didn't call mark_dirty_upward, so calls should be 0.
     // Total should also be 0 (mark_dirty doesn't bump it).
     if (total != 0 || calls != 0) {
-        ++g_failed; std::println("  FAIL: total={} calls={} (expected 0/0)",
-                                 total, calls);
+        ++g_failed;
+        std::println("  FAIL: total={} calls={} (expected 0/0)", total, calls);
         return false;
     }
-    ++g_passed; std::println("  PASS: 100 add_node + 100 mark_dirty, no errors");
+    ++g_passed;
+    std::println("  PASS: 100 add_node + 100 mark_dirty, no errors");
     return true;
 }
 
@@ -100,17 +101,18 @@ bool test_ac2_reserve_dirty() {
     auto total = flat.mark_dirty_total_nodes();
     auto calls = flat.mark_dirty_upward_call_count();
     if (calls != 500) {
-        ++g_failed; std::println("  FAIL: mark_dirty_upward call_count = {} (expected 500)",
-                                 calls);
+        ++g_failed;
+        std::println("  FAIL: mark_dirty_upward call_count = {} (expected 500)", calls);
         return false;
     }
     if (total != 500) {
-        ++g_failed; std::println("  FAIL: mark_dirty_total_nodes = {} (expected 500)",
-                                 total);
+        ++g_failed;
+        std::println("  FAIL: mark_dirty_total_nodes = {} (expected 500)", total);
         return false;
     }
-    ++g_passed; std::println("  PASS: reserve_dirty(500) + 500 add_node + 500 mark_dirty_upward, "
-                             "all 500 calls succeeded");
+    ++g_passed;
+    std::println("  PASS: reserve_dirty(500) + 500 add_node + 500 mark_dirty_upward, "
+                 "all 500 calls succeeded");
     return true;
 }
 
@@ -130,7 +132,8 @@ bool test_ac3_reserve_idempotent() {
         ids.push_back(id);
         flat.mark_dirty(id);
     }
-    ++g_passed; std::println("  PASS: 3 reserve_dirty calls (1000, 500, 100) + 100 add_node, no error");
+    ++g_passed;
+    std::println("  PASS: 3 reserve_dirty calls (1000, 500, 100) + 100 add_node, no error");
     return true;
 }
 
@@ -158,7 +161,8 @@ bool test_ac4_mark_dirty_no_resize() {
     // directly; only mark_dirty_upward does). So we can't
     // count resize events directly. But the test passes by
     // not crashing and not OOB-ing.
-    ++g_passed; std::println("  PASS: 100 mark_dirty on fresh nodes, no OOB / no crash");
+    ++g_passed;
+    std::println("  PASS: 100 mark_dirty on fresh nodes, no OOB / no crash");
     return true;
 }
 
@@ -196,11 +200,13 @@ bool test_ac5_deep_chain() {
     flat.mark_dirty_upward(literal);
     auto total = flat.mark_dirty_total_nodes();
     if (total != 51) {
-        ++g_failed; std::println("  FAIL: mark_dirty_total_nodes = {} (expected 51)", total);
+        ++g_failed;
+        std::println("  FAIL: mark_dirty_total_nodes = {} (expected 51)", total);
         return false;
     }
-    ++g_passed; std::println("  PASS: deep chain (51 nodes) — mark_dirty_upward walked all 51, "
-                             "no OOB / no resize");
+    ++g_passed;
+    std::println("  PASS: deep chain (51 nodes) — mark_dirty_upward walked all 51, "
+                 "no OOB / no resize");
     return true;
 }
 
@@ -223,14 +229,17 @@ bool test_ac6_bulk_growth() {
     auto calls = flat.mark_dirty_upward_call_count();
     auto total = flat.mark_dirty_total_nodes();
     if (calls != 1000) {
-        ++g_failed; std::println("  FAIL: call_count = {} (expected 1000)", calls);
+        ++g_failed;
+        std::println("  FAIL: call_count = {} (expected 1000)", calls);
         return false;
     }
     if (total != 1000) {
-        ++g_failed; std::println("  FAIL: total_nodes = {} (expected 1000)", total);
+        ++g_failed;
+        std::println("  FAIL: total_nodes = {} (expected 1000)", total);
         return false;
     }
-    ++g_passed; std::println("  PASS: 1000 add_node + 1000 mark_dirty_upward, all counters match");
+    ++g_passed;
+    std::println("  PASS: 1000 add_node + 1000 mark_dirty_upward, all counters match");
     return true;
 }
 

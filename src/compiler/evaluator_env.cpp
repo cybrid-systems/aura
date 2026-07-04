@@ -430,8 +430,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     return id;
 }
 
-void Evaluator::ensure_envframe_dual_path_consistency(
-    const EnvFrame& fr) const noexcept {
+void Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept {
     if (fr.bindings_.size() != fr.bindings_symid_.size()) {
         bump_envframe_desync_detected();
     }
@@ -491,8 +490,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // tracked closures participate in linear ownership + EnvFrame version_.
     if (cl.bridge_epoch != 0 && compiler_metrics_) {
         const auto cur_ver = defuse_version_.load(std::memory_order_acquire);
-        const auto ok = validate_linear_ownership_state(
-            1, fr.version_, cur_ver, cl.bridge_epoch, current_bridge_epoch());
+        const auto ok = validate_linear_ownership_state(1, fr.version_, cur_ver, cl.bridge_epoch,
+                                                        current_bridge_epoch());
         auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
         m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
         if (!ok) {
@@ -510,7 +509,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // inconsistent with the post-mutation state — log a
     // warning + bump the frame's version_ so subsequent
     // lookups see it as fresh. We don't refresh the bindings
-        // themselves (that would require re-capturing against a
+    // themselves (that would require re-capturing against a
     // new env, which is out of scope for the P0 ship); the
     // warning + version bump is enough to make the staleness
     // observable and prevent repeated warnings.
@@ -533,8 +532,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // the regular stale warning) and return an empty Env so
         // the closure body sees no captured bindings (it can
         // still find globals via the workspace walk).
-        static const char* verbose_env =
-            std::getenv("AURA_VERBOSE_ENVFRAME");
+        static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
         if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
             std::println(std::cerr,
                          "[#356 warning] materialize_call_env: post-rollback "
@@ -567,8 +565,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // (query:envframe-dualpath-stats) primitive is the
         // canonical source for staleness telemetry; this
         // stderr message is for one-off debugging.
-        static const char* verbose_env =
-            std::getenv("AURA_VERBOSE_ENVFRAME");
+        static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
         if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
             // Logging is best-effort — a fiber thread might not
             // have a tty. We use std::println(std::cerr, ...) so
@@ -647,8 +644,7 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     // distinct [#356 warning], not bump version_ + log a
     // stale-refresh that would imply the frame is safe to use.
     if (fr.version_ == INVALID_VERSION) {
-        static const char* verbose_env =
-            std::getenv("AURA_VERBOSE_ENVFRAME");
+        static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
         if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
             std::println(std::cerr,
                          "[#356 warning] {}: post-rollback EnvFrame id={} "
@@ -672,8 +668,7 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     // Optional stderr warning, gated behind AURA_VERBOSE_ENVFRAME
     // (same env var as materialize_call_env uses, so operators
     // can opt into all staleness diagnostics at once).
-    static const char* verbose_env =
-        std::getenv("AURA_VERBOSE_ENVFRAME");
+    static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
     if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
         std::println(std::cerr,
                      "[#242 warning] {}: stale EnvFrame id={} "
@@ -726,7 +721,8 @@ bool Evaluator::is_env_frame_invalid(EnvId id) const {
 void Evaluator::invalidate_post_rollback_env_frames() {
     const std::size_t checkpoint_size = panic_safe_env_frames_size_;
     const std::size_t current_size = env_frames_.size();
-    if (checkpoint_size >= current_size) return; // nothing to invalidate
+    if (checkpoint_size >= current_size)
+        return; // nothing to invalidate
     // Exclusive lock — many writes, one atomic counter bump
     // at the end. alloc_env_frame cannot run concurrently
     // because the lock excludes it.
@@ -963,8 +959,7 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
     //    keeps lookup behavior consistent with
     //    lookup_by_symid_chain (which already does the check).
     if (owner_ && parent_id_ != NULL_ENV_ID) {
-        const auto version_snap =
-            owner_->get_defuse_version();
+        const auto version_snap = owner_->get_defuse_version();
         EvalValue* result = nullptr;
         // Issue #355: take the shared lock for the duration of
         // the walk so refresh_stale_frame_in_walk can bump the
@@ -1031,8 +1026,7 @@ std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const 
     }
     // 2. SoA walk via env_frames_ when registered
     if (owner_ && parent_id_ != NULL_ENV_ID) {
-        const auto version_snap =
-            owner_->get_defuse_version();
+        const auto version_snap = owner_->get_defuse_version();
         std::optional<std::uint64_t> result;
         // Issue #355: take the shared lock so refresh_stale_frame_in_walk
         // can bump the stale frame's version_ safely (same

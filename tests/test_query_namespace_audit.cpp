@@ -50,29 +50,22 @@ bool test_stdlib_query_file_present() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists on disk");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     const bool has_export = content.find("(export") != std::string::npos;
-    const bool has_list_categories =
-        content.find("(query:list-categories") != std::string::npos;
+    const bool has_list_categories = content.find("(query:list-categories") != std::string::npos;
     const bool has_help = content.find("(query:help") != std::string::npos;
     const bool has_nodes_with_marker =
         content.find("(query:nodes-with-marker") != std::string::npos;
-    const bool has_find_by_name =
-        content.find("(query:find-by-name") != std::string::npos;
+    const bool has_find_by_name = content.find("(query:find-by-name") != std::string::npos;
     const bool has_subtree = content.find("(query:subtree") != std::string::npos;
     std::println("  lib/query.aura: present + 5 funcs defined + export");
     CHECK(has_export, "stdlib/query.aura has (export ...) line");
-    CHECK(has_list_categories,
-          "stdlib/query.aura exports (query:list-categories)");
+    CHECK(has_list_categories, "stdlib/query.aura exports (query:list-categories)");
     CHECK(has_help, "stdlib/query.aura exports (query:help)");
-    CHECK(has_nodes_with_marker,
-          "stdlib/query.aura exports (query:nodes-with-marker)");
-    CHECK(has_find_by_name,
-          "stdlib/query.aura exports (query:find-by-name)");
-    CHECK(has_subtree,
-          "stdlib/query.aura exports (query:subtree)");
+    CHECK(has_nodes_with_marker, "stdlib/query.aura exports (query:nodes-with-marker)");
+    CHECK(has_find_by_name, "stdlib/query.aura exports (query:find-by-name)");
+    CHECK(has_subtree, "stdlib/query.aura exports (query:subtree)");
     std::ifstream ft("/home/dev/code/aura/lib/std/query.aura-type");
     CHECK(ft.good(), "lib/std/query.aura-type exists on disk");
     return true;
@@ -85,8 +78,7 @@ bool test_query_list_categories_count() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // Count the categories listed in (query:list-categories).
     // The function returns a list of category names; we count
@@ -101,8 +93,7 @@ bool test_query_list_categories_count() {
     // Accept >= 20 quotes = 10 categories (2 quotes each) + 4
     // (query:help) entries (2 each) + header/footer quotes.
     std::println("  double-quotes in stdlib/query.aura: {}", quote_count);
-    CHECK(quote_count >= 20,
-          "stdlib/query.aura has >= 20 quotes (10+ categories + help entries)");
+    CHECK(quote_count >= 20, "stdlib/query.aura has >= 20 quotes (10+ categories + help entries)");
     return true;
 }
 
@@ -112,8 +103,7 @@ bool test_query_help_known_key() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // Verify the (query:help) function has help entries for
     // common query:* primitives.
@@ -125,8 +115,7 @@ bool test_query_help_known_key() {
         content.find("Return list of children node-ids.") != std::string::npos;
     const bool has_filter_help =
         content.find("Filter node-ids by a predicate primitive.") != std::string::npos;
-    const bool has_fallback_help =
-        content.find("no help available for:") != std::string::npos;
+    const bool has_fallback_help = content.find("no help available for:") != std::string::npos;
     std::println("  (query:help) entries: 4 known keys + fallback");
     CHECK(has_node_help, "stdlib/query.aura (query:help \"node\") defined");
     CHECK(has_parent_help, "stdlib/query.aura (query:help \"parent\") defined");
@@ -143,23 +132,18 @@ bool test_query_safe_fallback_wrappers() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // (query:nodes-with-marker m) returns empty list for non-string
-    const bool has_nodes_safe =
-        content.find("(if (string? marker)") != std::string::npos &&
-        content.find("(query:by-marker marker)") != std::string::npos;
+    const bool has_nodes_safe = content.find("(if (string? marker)") != std::string::npos &&
+                                content.find("(query:by-marker marker)") != std::string::npos;
     // (query:find-by-name n) returns -1 for non-string
-    const bool has_find_safe =
-        content.find("(if (string? name)") != std::string::npos &&
-        content.find("(query:find name)") != std::string::npos &&
-        content.find("    -1))") != std::string::npos;
+    const bool has_find_safe = content.find("(if (string? name)") != std::string::npos &&
+                               content.find("(query:find name)") != std::string::npos &&
+                               content.find("    -1))") != std::string::npos;
     std::println("  safe fallbacks: nodes-with-marker + find-by-name");
-    CHECK(has_nodes_safe,
-          "stdlib/query.aura (query:nodes-with-marker) safe fallback");
-    CHECK(has_find_safe,
-          "stdlib/query.aura (query:find-by-name) safe fallback (-1)");
+    CHECK(has_nodes_safe, "stdlib/query.aura (query:nodes-with-marker) safe fallback");
+    CHECK(has_find_safe, "stdlib/query.aura (query:find-by-name) safe fallback (-1)");
     return true;
 }
 
@@ -169,21 +153,17 @@ bool test_query_subtree_iterative_walk() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // (query:subtree root-id) does iterative walk using (query:children)
     // to avoid the Infinite-Loop pitfall (§1 of contributing.md).
-    const bool has_subtree =
-        content.find("(define (query:subtree") != std::string::npos;
-    const bool uses_iterative =
-        content.find("(let loop ((queue") != std::string::npos &&
-        content.find("(query:children current)") != std::string::npos;
+    const bool has_subtree = content.find("(define (query:subtree") != std::string::npos;
+    const bool uses_iterative = content.find("(let loop ((queue") != std::string::npos &&
+                                content.find("(query:children current)") != std::string::npos;
     std::println("  (query:subtree) defined + uses iterative walk");
     CHECK(has_subtree, "stdlib/query.aura (query:subtree) defined");
-    CHECK(uses_iterative,
-          "stdlib/query.aura (query:subtree) uses iterative walk "
-          "(avoids infinite loop)");
+    CHECK(uses_iterative, "stdlib/query.aura (query:subtree) uses iterative walk "
+                          "(avoids infinite loop)");
     return true;
 }
 
@@ -191,19 +171,16 @@ bool test_query_subtree_iterative_walk() {
 //         + 12+ demotion candidates documented
 bool test_decision_doc_exists() {
     std::println("\n--- AC7: docs/design/query-namespace-decision.md ---");
-    const std::string doc_path =
-        "/home/dev/code/aura/docs/design/query-namespace-decision.md";
+    const std::string doc_path = "/home/dev/code/aura/docs/design/query-namespace-decision.md";
     std::ifstream f(doc_path);
     CHECK(f.good(), "decision doc exists");
     if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)),
-                            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
         const bool has_tier1 = content.find("Tier 1") != std::string::npos;
         const bool has_tier2 = content.find("Tier 2") != std::string::npos;
         const bool has_tier3 = content.find("Tier 3") != std::string::npos;
-        const bool has_followup =
-            content.find("Future follow-up") != std::string::npos;
+        const bool has_followup = content.find("Future follow-up") != std::string::npos;
         std::println("  decision doc: present + 3 tiers + follow-up section");
         CHECK(has_tier1, "doc has Tier-1 section");
         CHECK(has_tier2, "doc has Tier-2 section");
@@ -214,13 +191,11 @@ bool test_decision_doc_exists() {
         // contains "DEMOTE candidate" at least 4 times.
         int demote_count = 0;
         std::size_t pos = 0;
-        while ((pos = content.find("DEMOTE candidate", pos + 1))
-               != std::string::npos) {
+        while ((pos = content.find("DEMOTE candidate", pos + 1)) != std::string::npos) {
             ++demote_count;
         }
         std::println("  DEMOTE candidate occurrences: {}", demote_count);
-        CHECK(demote_count >= 4,
-              "decision doc has >= 4 DEMOTE candidate occurrences");
+        CHECK(demote_count >= 4, "decision doc has >= 4 DEMOTE candidate occurrences");
     }
     return true;
 }
@@ -275,8 +250,12 @@ int run_tests() {
 
 } // namespace aura_issue_562_detail
 
-int aura_issue_562_run() { return aura_issue_562_detail::run_tests(); }
+int aura_issue_562_run() {
+    return aura_issue_562_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_562_run(); }
+int main() {
+    return aura_issue_562_run();
+}
 #endif

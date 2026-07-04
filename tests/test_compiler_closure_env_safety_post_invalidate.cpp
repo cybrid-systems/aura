@@ -61,8 +61,8 @@ bool test_closure_env_safety_counters_reachable() {
     const auto bh0 = cs.get_bridge_epoch_hit_count();
     const auto lp0 = cs.get_linear_check_pass_count();
     const auto gs0 = cs.get_gc_envframe_stale_skipped();
-    std::println("  baseline: stale_refresh={} bridge_hit={} linear_pass={} gc_skipped={}",
-                 sr0, bh0, lp0, gs0);
+    std::println("  baseline: stale_refresh={} bridge_hit={} linear_pass={} gc_skipped={}", sr0,
+                 bh0, lp0, gs0);
     CHECK(sr0 == 0, "closure_stale_refresh_count starts at 0");
     CHECK(bh0 == 0, "bridge_epoch_hit_count starts at 0");
     CHECK(lp0 == 0, "linear_check_pass_count starts at 0");
@@ -78,13 +78,11 @@ bool test_query_closure_env_safety_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:closure-env-safety-stats)");
     CHECK(r.has_value(), "(query:closure-env-safety-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:closure-env-safety-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:closure-env-safety-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:closure-env-safety-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:closure-env-safety-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(query:closure-env-safety-stats) >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -101,23 +99,20 @@ bool test_closure_stale_refresh_under_mutate() {
     // set-code + eval-current triggers invalidate_function
     // which bumps closure_stale_refresh_count.
     for (int i = 0; i < 5; ++i) {
-        std::string code = std::string("(set-code \"(define a ") +
-            std::to_string(i) + ") (define b " +
-            std::to_string(i + 10) + ")\")";
+        std::string code = std::string("(set-code \"(define a ") + std::to_string(i) +
+                           ") (define b " + std::to_string(i + 10) + ")\")";
         (void)cs.eval(code);
         (void)cs.eval("(eval-current)");
     }
     const auto sr1 = cs.get_closure_stale_refresh_count();
-    std::println("  closure_stale_refresh: {} -> {} (delta {})",
-                 sr0, sr1, sr1 - sr0);
+    std::println("  closure_stale_refresh: {} -> {} (delta {})", sr0, sr1, sr1 - sr0);
     // Note: invalidate_function is only called when a
     // SAME-NAMED function gets redefined. set-code on
     // (define a 1) just adds the binding without
     // invalidating any existing function. The counter is
     // non-decreasing; for an invalidate-triggered bump see
     // AC7 (recursive closure path).
-    CHECK(sr1 >= sr0,
-          "closure_stale_refresh_count non-decreasing under invalidate cycle");
+    CHECK(sr1 >= sr0, "closure_stale_refresh_count non-decreasing under invalidate cycle");
     return true;
 }
 
@@ -164,8 +159,7 @@ bool test_gc_envframe_stale_skipped_accessor() {
     cs.bump_gc_envframe_stale_skipped();
     cs.bump_gc_envframe_stale_skipped();
     const auto gs1 = cs.get_gc_envframe_stale_skipped();
-    std::println("  gc_envframe_stale_skipped: {} -> {} (delta {})",
-                 gs0, gs1, gs1 - gs0);
+    std::println("  gc_envframe_stale_skipped: {} -> {} (delta {})", gs0, gs1, gs1 - gs0);
     CHECK(gs1 == gs0 + 4, "gc_envframe_stale_skipped bumped by 4");
     return true;
 }
@@ -186,8 +180,7 @@ bool test_recursive_closure_invalidate() {
     // Mutate to trigger another invalidate_function.
     (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
     const auto sr = cs.get_closure_stale_refresh_count();
-    std::println("  closure_stale_refresh after closure + invalidate: {}",
-                 sr);
+    std::println("  closure_stale_refresh after closure + invalidate: {}", sr);
     CHECK(sr >= 0, "closure_stale_refresh_count observable post-invalidate");
     return true;
 }
@@ -203,15 +196,13 @@ bool test_long_running_invalidate_cycle() {
     for (int i = 0; i < k_invalidate_iters(); ++i) {
         // set-code + eval-current triggers invalidate_function
         // which bumps closure_stale_refresh_count.
-        std::string code = std::string("(set-code \"(define a ") +
-            std::to_string(i) + ") (define b " +
-            std::to_string(i) + ")\")";
+        std::string code = std::string("(set-code \"(define a ") + std::to_string(i) +
+                           ") (define b " + std::to_string(i) + ")\")";
         (void)cs.eval(code);
         (void)cs.eval("(eval-current)");
     }
     const auto sr1 = cs.get_closure_stale_refresh_count();
-    std::println("  closure_stale_refresh: {} -> {} (delta {})",
-                 sr0, sr1, sr1 - sr0);
+    std::println("  closure_stale_refresh: {} -> {} (delta {})", sr0, sr1, sr1 - sr0);
     // Note: invalidate_function is only called when a
     // SAME-NAMED function gets redefined. set-code on
     // (define a 0) just adds the binding without
@@ -219,8 +210,7 @@ bool test_long_running_invalidate_cycle() {
     // non-decreasing (already verified in AC1 baseline);
     // for an invalidate-triggered test see AC7 (recursive
     // closure path) or use mutate:rebind.
-    CHECK(sr1 >= sr0,
-          "closure_stale_refresh_count non-decreasing under invalidate cycle");
+    CHECK(sr1 >= sr0, "closure_stale_refresh_count non-decreasing under invalidate cycle");
     return true;
 }
 
@@ -289,8 +279,12 @@ int run_tests() {
 
 } // namespace aura_issue_531_detail
 
-int aura_issue_531_run() { return aura_issue_531_detail::run_tests(); }
+int aura_issue_531_run() {
+    return aura_issue_531_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_531_run(); }
+int main() {
+    return aura_issue_531_run();
+}
 #endif

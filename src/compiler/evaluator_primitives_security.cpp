@@ -33,15 +33,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(old);
     });
 
-    add("security:sandbox-mode?", [&ev](const auto&) -> EvalValue {
-        return make_bool(ev.sandbox_mode());
-    });
+    add("security:sandbox-mode?",
+        [&ev](const auto&) -> EvalValue { return make_bool(ev.sandbox_mode()); });
 
     add("security:grant-capability!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                      "security:grant-capability!: requires capability name",
-                                      ev.primitive_error_counter_ptr());
+                                        "security:grant-capability!: requires capability name",
+                                        ev.primitive_error_counter_ptr());
         }
         const auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
@@ -53,7 +52,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:security-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -63,7 +63,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -71,12 +72,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -84,9 +91,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"sandbox-mode", make_bool(ev.sandbox_mode())},
-            {"capability-denials", make_int(static_cast<std::int64_t>(ev.capability_denial_count()))},
-            {"mutation-audit-total", make_int(static_cast<std::int64_t>(ev.mutation_audit_total()))},
-            {"granted-capabilities", make_int(static_cast<std::int64_t>(ev.granted_capability_count()))},
+            {"capability-denials",
+             make_int(static_cast<std::int64_t>(ev.capability_denial_count()))},
+            {"mutation-audit-total",
+             make_int(static_cast<std::int64_t>(ev.mutation_audit_total()))},
+            {"granted-capabilities",
+             make_int(static_cast<std::int64_t>(ev.granted_capability_count()))},
         };
         return build_hash(kv);
     });
@@ -99,7 +109,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const char* runtime_dir = std::getenv("AURA_RUNTIME_DIR");
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -109,7 +120,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -117,12 +129,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -144,7 +162,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:nested-guard-atomic-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -154,7 +173,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -162,24 +182,28 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"nested-depth-max",
-             make_int(static_cast<std::int64_t>(ev.nested_guard_depth_max()))},
+            {"nested-depth-max", make_int(static_cast<std::int64_t>(ev.nested_guard_depth_max()))},
             {"suppressed-misalign-caught",
              make_int(static_cast<std::int64_t>(ev.suppressed_misalign_caught()))},
-            {"macro-rollback-hits",
-             make_int(static_cast<std::int64_t>(ev.macro_rollback_hits()))},
+            {"macro-rollback-hits", make_int(static_cast<std::int64_t>(ev.macro_rollback_hits()))},
         };
         return build_hash(kv);
     });
@@ -188,7 +212,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:compiler-closure-inval-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -198,7 +223,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -206,28 +232,30 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t stale_bridge = m
-            ? m->closure_stale_returns.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t epoch_mismatch = m
-            ? m->compiler_closure_epoch_mismatch_hits.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t safe_fallbacks = m
-            ? m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed)
-            : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t stale_bridge =
+            m ? m->closure_stale_returns.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t epoch_mismatch =
+            m ? m->compiler_closure_epoch_mismatch_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t safe_fallbacks =
+            m ? m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"stale-bridge-caught", make_int(static_cast<std::int64_t>(stale_bridge))},
             {"epoch-mismatch-hits", make_int(static_cast<std::int64_t>(epoch_mismatch))},
@@ -240,7 +268,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:compiler-gc-root-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -250,7 +279,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -258,31 +288,32 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t ir_roots = m
-            ? m->ir_closure_roots_registered.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t root_miss = m
-            ? m->hotswap_root_miss.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t defer_count = m
-            ? m->compiler_gc_safepoint_defer_count.load(std::memory_order_relaxed)
-            : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t ir_roots =
+            m ? m->ir_closure_roots_registered.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t root_miss =
+            m ? m->hotswap_root_miss.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t defer_count =
+            m ? m->compiler_gc_safepoint_defer_count.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ir-closure-roots-registered",
-             make_int(static_cast<std::int64_t>(ir_roots))},
+            {"ir-closure-roots-registered", make_int(static_cast<std::int64_t>(ir_roots))},
             {"hotswap-root-miss", make_int(static_cast<std::int64_t>(root_miss))},
             {"safepoint-defer-count", make_int(static_cast<std::int64_t>(defer_count))},
         };
@@ -293,7 +324,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:linear-ownership-gc-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -303,7 +335,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -311,33 +344,34 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t safepoint_v = m
-            ? m->linear_gc_safepoint_violations.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t steal_enf = m
-            ? m->linear_steal_enforced.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t relower_hits = m
-            ? m->linear_relower_revalidate_hits.load(std::memory_order_relaxed)
-            : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t safepoint_v =
+            m ? m->linear_gc_safepoint_violations.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t steal_enf =
+            m ? m->linear_steal_enforced.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_hits =
+            m ? m->linear_relower_revalidate_hits.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"safepoint-violations", make_int(static_cast<std::int64_t>(safepoint_v))},
             {"steal-enforced", make_int(static_cast<std::int64_t>(steal_enf))},
-            {"relower-revalidate-hits",
-             make_int(static_cast<std::int64_t>(relower_hits))},
+            {"relower-revalidate-hits", make_int(static_cast<std::int64_t>(relower_hits))},
         };
         return build_hash(kv);
     });
@@ -346,7 +380,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:irsoa-incremental-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -356,7 +391,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -364,31 +400,35 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t wired = m
-            ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t cascade = m
-            ? m->irsoa_dirty_cascade_savings.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t cache_red = m
-            ? m->irsoa_cache_miss_reduction.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t skip = m
-            ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t full = m
-            ? m->relower_full_called_count.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t per_fn = m
-            ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t wired = m ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cascade =
+            m ? m->irsoa_dirty_cascade_savings.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cache_red =
+            m ? m->irsoa_cache_miss_reduction.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t full =
+            m ? m->relower_full_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
         const std::uint64_t denom = skip + full + per_fn;
         const std::uint64_t partial_ratio = denom > 0 ? (100 * skip / denom) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -404,7 +444,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:occurrence-typing-mutate-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -414,7 +455,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -422,29 +464,34 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t deep = m
-            ? m->deep_narrow_refreshes_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t blame = m
-            ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t stale = m
-            ? m->narrow_stale_caught_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t complete = m
-            ? m->provenance_completeness_hits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t refreshes = m
-            ? m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t deep =
+            m ? m->deep_narrow_refreshes_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t blame =
+            m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stale =
+            m ? m->narrow_stale_caught_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t complete =
+            m ? m->provenance_completeness_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t refreshes =
+            m ? m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t completeness_pct =
             refreshes > 0 ? (100 * complete / refreshes) : (complete > 0 ? 100 : 0);
         std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -460,7 +507,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:primitives-extension-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -470,7 +518,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -478,29 +527,33 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t skeletons = m
-            ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t skeletons =
+            m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t eda_cat = ev.primitives_.category_meta_count("eda");
         const std::uint64_t sva_cat = ev.primitives_.category_meta_count("sva");
         const std::uint64_t ver_cat = ev.primitives_.category_meta_count("verification");
-        const std::uint64_t backfill_counter = m
-            ? m->primitive_eda_meta_backfill_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t backfill = backfill_counter > 0
-            ? backfill_counter
-            : (eda_cat + sva_cat + ver_cat);
+        const std::uint64_t backfill_counter =
+            m ? m->primitive_eda_meta_backfill_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t backfill =
+            backfill_counter > 0 ? backfill_counter : (eda_cat + sva_cat + ver_cat);
         const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
         const std::uint64_t describes = ev.get_primitive_describe_count();
         const std::uint64_t slots = ev.primitives_.slot_count();
@@ -523,7 +576,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:eda-sv-closedloop-stress-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -533,7 +587,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -541,31 +596,36 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t cycles = m
-            ? m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t converged = m
-            ? m->eda_sv_verification_convergence_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t feedback_ok = m
-            ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t ref_inval = m
-            ? m->eda_sv_stable_ref_invalidation_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t stub_latency = m
-            ? m->eda_sv_commercial_stub_latency_us_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t corruption = m
-            ? m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t cycles =
+            m ? m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t converged =
+            m ? m->eda_sv_verification_convergence_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback_ok =
+            m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ref_inval =
+            m ? m->eda_sv_stable_ref_invalidation_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stub_latency =
+            m ? m->eda_sv_commercial_stub_latency_us_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t corruption =
+            m ? m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed) : 0;
         std::uint64_t dirty_cost = 0;
         if (auto* ws = ev.workspace_flat()) {
             const auto calls = ws->mark_dirty_upward_call_count();
@@ -576,8 +636,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             cycles > 0 ? (100 * converged / cycles) : (converged > 0 ? 100 : 0);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"evolution-cycles", make_int(static_cast<std::int64_t>(cycles))},
-            {"verification-convergence-rate",
-             make_int(static_cast<std::int64_t>(convergence_pct))},
+            {"verification-convergence-rate", make_int(static_cast<std::int64_t>(convergence_pct))},
             {"feedback-mutate-success", make_int(static_cast<std::int64_t>(feedback_ok))},
             {"stable-ref-invalidation-sv", make_int(static_cast<std::int64_t>(ref_inval))},
             {"dirty-traversal-cost", make_int(static_cast<std::int64_t>(dirty_cost))},
@@ -591,7 +650,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:sv-sva-structure-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -601,7 +661,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -609,12 +670,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -629,25 +696,35 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         if (auto* ws = ev.workspace_flat()) {
             for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
                 switch (ws->get(id).tag) {
-                    case aura::ast::NodeTag::Property: ++property_count; break;
-                    case aura::ast::NodeTag::Sequence: ++sequence_count; break;
-                    case aura::ast::NodeTag::Assert: ++assert_count; break;
-                    case aura::ast::NodeTag::Covergroup: ++covergroup_count; break;
-                    case aura::ast::NodeTag::Coverpoint: ++coverpoint_count; break;
-                    default: break;
+                    case aura::ast::NodeTag::Property:
+                        ++property_count;
+                        break;
+                    case aura::ast::NodeTag::Sequence:
+                        ++sequence_count;
+                        break;
+                    case aura::ast::NodeTag::Assert:
+                        ++assert_count;
+                        break;
+                    case aura::ast::NodeTag::Covergroup:
+                        ++covergroup_count;
+                        break;
+                    case aura::ast::NodeTag::Coverpoint:
+                        ++coverpoint_count;
+                        break;
+                    default:
+                        break;
                 }
                 if ((ws->verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0)
                     ++sva_dirty;
             }
         }
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t mutate_hits = m
-            ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t sv_attempts = ev.workspace_flat()
-            ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
-        const std::uint64_t sv_success = ev.workspace_flat()
-            ? ev.workspace_flat()->sv_mutate_success_total() : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t mutate_hits =
+            m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sv_attempts =
+            ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
+        const std::uint64_t sv_success =
+            ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_success_total() : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"property-count", make_int(static_cast<std::int64_t>(property_count))},
             {"sequence-count", make_int(static_cast<std::int64_t>(sequence_count))},
@@ -666,7 +743,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:hardware-backend-commercial-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -676,7 +754,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -684,41 +763,45 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t hook_calls = m
-            ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t reemits = m
-            ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t feedback_hits = m
-            ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t parse_ok = m
-            ? m->sv_emit_parse_success_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t parse_fail = m
-            ? m->sv_emit_parse_fail_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t ppa_savings = m
-            ? m->ppa_savings_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t loop_success = m
-            ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t sim_runs = m
-            ? m->commercial_simulator_runs_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t diff_emits = m
-            ? m->sv_diff_emits_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t hook_calls =
+            m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t reemits =
+            m ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback_hits =
+            m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t parse_ok =
+            m ? m->sv_emit_parse_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t parse_fail =
+            m ? m->sv_emit_parse_fail_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ppa_savings =
+            m ? m->ppa_savings_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t loop_success =
+            m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sim_runs =
+            m ? m->commercial_simulator_runs_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t diff_emits =
+            m ? m->sv_diff_emits_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t convergence_pct =
-            (loop_success + parse_fail) > 0
-                ? (100 * loop_success / (loop_success + parse_fail))
-                : (loop_success > 0 ? 100 : 0);
+            (loop_success + parse_fail) > 0 ? (100 * loop_success / (loop_success + parse_fail))
+                                            : (loop_success > 0 ? 100 : 0);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"hook-calls", make_int(static_cast<std::int64_t>(hook_calls))},
             {"commercial-reemits", make_int(static_cast<std::int64_t>(reemits))},
@@ -726,8 +809,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {"emit-parse-success", make_int(static_cast<std::int64_t>(parse_ok))},
             {"emit-parse-fail", make_int(static_cast<std::int64_t>(parse_fail))},
             {"ppa-savings", make_int(static_cast<std::int64_t>(ppa_savings))},
-            {"verification-loop-convergence",
-             make_int(static_cast<std::int64_t>(convergence_pct))},
+            {"verification-loop-convergence", make_int(static_cast<std::int64_t>(convergence_pct))},
             {"commercial-simulator-runs", make_int(static_cast<std::int64_t>(sim_runs))},
             {"sv-diff-emits", make_int(static_cast<std::int64_t>(diff_emits))},
         };
@@ -738,7 +820,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:hardware-backend-sv-closedloop-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -748,7 +831,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -756,36 +840,40 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t hook_calls = m
-            ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t reemits = m
-            ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t feedback_hits = m
-            ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t ppa_savings = m
-            ? m->ppa_savings_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t loop_success = m
-            ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t hook_calls =
+            m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t reemits =
+            m ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback_hits =
+            m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ppa_savings =
+            m ? m->ppa_savings_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t loop_success =
+            m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"hook-calls", make_int(static_cast<std::int64_t>(hook_calls))},
             {"commercial-reemits", make_int(static_cast<std::int64_t>(reemits))},
             {"feedback-mutate-hits", make_int(static_cast<std::int64_t>(feedback_hits))},
             {"ppa-savings", make_int(static_cast<std::int64_t>(ppa_savings))},
-            {"verification-loop-success",
-             make_int(static_cast<std::int64_t>(loop_success))},
+            {"verification-loop-success", make_int(static_cast<std::int64_t>(loop_success))},
         };
         return build_hash(kv);
     });
@@ -794,7 +882,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:adt-exhaustiveness-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -804,7 +893,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -812,30 +902,34 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t rechecks = m
-            ? m->adt_exhaust_rechecks_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t non_exhaust = m
-            ? m->adt_non_exhaustive_caught_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t pattern_refreshes = m
-            ? m->adt_pattern_narrow_refreshes_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t complete = m
-            ? m->adt_pattern_provenance_complete_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t rechecks =
+            m ? m->adt_exhaust_rechecks_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t non_exhaust =
+            m ? m->adt_non_exhaustive_caught_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t pattern_refreshes =
+            m ? m->adt_pattern_narrow_refreshes_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t complete =
+            m ? m->adt_pattern_provenance_complete_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t completeness_pct =
-            pattern_refreshes > 0 ? (100 * complete / pattern_refreshes)
-                                  : (complete > 0 ? 100 : 0);
+            pattern_refreshes > 0 ? (100 * complete / pattern_refreshes) : (complete > 0 ? 100 : 0);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"post-mutate-rechecks", make_int(static_cast<std::int64_t>(rechecks))},
             {"non-exhaustive-caught", make_int(static_cast<std::int64_t>(non_exhaust))},
@@ -849,7 +943,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:coercion-narrowing-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -859,7 +954,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -867,28 +963,33 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t opportunities = m
-            ? m->coercion_post_narrow_elim_opportunities_total.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t blame = m
-            ? m->coercion_narrow_blame_chain_hits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t elim = m
-            ? m->coercion_cast_elim_from_narrow_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t narrow_hits = m
-            ? m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t opportunities =
+            m ? m->coercion_post_narrow_elim_opportunities_total.load(std::memory_order_relaxed)
+              : 0;
+        const std::uint64_t blame =
+            m ? m->coercion_narrow_blame_chain_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t elim =
+            m ? m->coercion_cast_elim_from_narrow_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t narrow_hits =
+            m ? m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t completeness_pct =
             opportunities > 0 ? (100 * blame / opportunities) : (blame > 0 ? 100 : 0);
         std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -904,7 +1005,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:constraint-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -914,7 +1016,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -922,31 +1025,35 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t reverify_scans = m
-            ? m->delta_conflict_reverify_total.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t reverify_scans =
+            m ? m->delta_conflict_reverify_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t conflicts = ev.get_cross_delta_conflicts_caught();
-        const std::uint64_t blame_complete = m
-            ? m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t truncated = m
-            ? m->reverify_truncated_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t detected = m
-            ? m->delta_conflict_detected_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t blame_complete =
+            m ? m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t truncated =
+            m ? m->reverify_truncated_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t detected =
+            m ? m->delta_conflict_detected_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t completeness_pct =
-            detected > 0 ? (100 * blame_complete / detected)
-                         : (blame_complete > 0 ? 100 : 0);
+            detected > 0 ? (100 * blame_complete / detected) : (blame_complete > 0 ? 100 : 0);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"reverify-scans", make_int(static_cast<std::int64_t>(reverify_scans))},
             {"cross-delta-conflicts-caught", make_int(static_cast<std::int64_t>(conflicts))},
@@ -960,7 +1067,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:linear-ownership-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -970,7 +1078,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -978,31 +1087,36 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t revalidates = m
-            ? m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed) +
-              m->linear_dirty_revalidate_count.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t violations = m
-            ? m->linear_violations_caught_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t enforcements = m
-            ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t safe_fallbacks = m
-            ? m->linear_typed_mutate_safe_fallbacks.load(std::memory_order_relaxed) +
-              m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed)
-            : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t revalidates =
+            m ? m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed) +
+                    m->linear_dirty_revalidate_count.load(std::memory_order_relaxed)
+              : 0;
+        const std::uint64_t violations =
+            m ? m->linear_violations_caught_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t enforcements =
+            m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t safe_fallbacks =
+            m ? m->linear_typed_mutate_safe_fallbacks.load(std::memory_order_relaxed) +
+                    m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed)
+              : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"post-mutate-revalidates", make_int(static_cast<std::int64_t>(revalidates))},
             {"violations-caught", make_int(static_cast<std::int64_t>(violations))},
@@ -1017,7 +1131,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:shape-value-pass-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1027,7 +1142,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -1035,12 +1151,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -1056,16 +1178,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             types::value_classify_call_count.load(std::memory_order_relaxed) +
             shape::inline_shape_ref_dispatch_count.load(std::memory_order_relaxed);
         const std::uint64_t dirty_skip = ev.get_passes_skipped_type_dirty();
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t shape_sync = m
-            ? m->shape_ids_sync_hits.load(std::memory_order_relaxed) : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t shape_sync =
+            m ? m->shape_ids_sync_hits.load(std::memory_order_relaxed) : 0;
         (void)shape_sync;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"history-jitter-reduction", make_int(static_cast<std::int64_t>(jitter))},
             {"dispatch-stats", make_int(static_cast<std::int64_t>(dispatch))},
-            {"dirty-shortcircuit-savings",
-             make_int(static_cast<std::int64_t>(dirty_skip))},
+            {"dirty-shortcircuit-savings", make_int(static_cast<std::int64_t>(dirty_skip))},
             {"consteval-hits",
              make_int(static_cast<std::int64_t>(shape::k_shape_value_consteval_hits))},
         };
@@ -1076,7 +1196,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:define-mutate-ir-invalidation-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1086,7 +1207,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -1094,25 +1216,28 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t stale_bridge = m
-            ? m->closure_stale_returns.load(std::memory_order_relaxed)
-            : 0;
-        const std::uint64_t recompile_savings = m
-            ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed)
-            : 0;
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t stale_bridge =
+            m ? m->closure_stale_returns.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t recompile_savings =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"precise-inval-hits",
              make_int(static_cast<std::int64_t>(ev.precise_define_inval_hits()))},
@@ -1125,7 +1250,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:span-lifetime-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1135,7 +1261,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -1143,12 +1270,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -1157,8 +1290,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_void();
-        const std::uint64_t unsafe_access =
-            ws->children_call_count() + ws->parent_of_call_count();
+        const std::uint64_t unsafe_access = ws->children_call_count() + ws->parent_of_call_count();
         const std::uint64_t safe_hits =
             ws->children_safe_view_count() + ws->parent_safe_view_count();
         const std::uint64_t cow_inv = ws->bump_generation_count();
@@ -1200,4 +1332,4 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
-}  // namespace aura::compiler::primitives_detail
+} // namespace aura::compiler::primitives_detail

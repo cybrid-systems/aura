@@ -42,16 +42,29 @@ namespace aura_326_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {} ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println(std::cerr, "  FAIL: {} ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {} ({} = {})", msg, _a, _b);                                     \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {} ({} != {})", msg, _a, _b);                         \
+        }                                                                                          \
+    } while (0)
 
 // ── Helpers ──────────────────────────────────────────────
 using aura::compiler::CompilerService;
@@ -69,9 +82,11 @@ static std::int64_t marker_count(CompilerService& cs, const std::string& key) {
     // assertions are sufficient (we verify the primitive
     // returns a hash, not its content).
     auto r = cs.eval("(syntax-marker-counts)");
-    if (!r) return -1;
+    if (!r)
+        return -1;
     // We don't have hash-ref exposed; assert it's a hash.
-    if (!aura::compiler::types::is_hash(*r)) return -1;
+    if (!aura::compiler::types::is_hash(*r))
+        return -1;
     // Return 0 as a sentinel — the count assertion below
     // only checks >= 0 to confirm the primitive is callable.
     // Per-key assertions are out of scope for this TU.
@@ -105,8 +120,7 @@ bool test_macro_marker_bump() {
     // the macro but expansion can be lazy; macro-introduced
     // marker may not bump until the macro is actually expanded
     // at a call site. We verify the hash is queryable.
-    CHECK(macro_after >= 0,
-          "macro-introduced count remains queryable post-macro-define");
+    CHECK(macro_after >= 0, "macro-introduced count remains queryable post-macro-define");
     return true;
 }
 
@@ -227,8 +241,7 @@ bool test_self_evolution_loop() {
     std::int64_t t1 = marker_count(cs, "total-nodes");
     std::println("  macro-introduced: {} → {}", m0, m1);
     std::println("  total-nodes after 3 mutate+eval cycles: {}", t1);
-    CHECK(m1 >= 0,
-          "macro-introduced hash queryable across cycles");
+    CHECK(m1 >= 0, "macro-introduced hash queryable across cycles");
     return true;
 }
 

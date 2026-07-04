@@ -33,11 +33,11 @@ import aura.compiler.service;
 namespace aura_issue_605_detail {
 
 using aura::compiler::CompilerService;
-using aura::compiler::shape::SHAPE_INT;
-using aura::compiler::shape::ShapeProfiler;
 using aura::compiler::shape::jit_shape_miss_count;
 using aura::compiler::shape::make_fn_key;
+using aura::compiler::shape::SHAPE_INT;
 using aura::compiler::shape::shape_version_bump_count;
+using aura::compiler::shape::ShapeProfiler;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::serve::Fiber;
@@ -58,7 +58,8 @@ static int k_concurrent_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !is_int(*r)) return -1;
+    if (!r || !is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(as_int(*r));
 }
 
@@ -122,8 +123,7 @@ bool test_mutate_version_bump_jit_reeval() {
     const auto bumps0 = shape_version_bump_count.load();
     const auto mr = cs.typed_mutate("(mutate:rebind \"base\" \"99\")");
     CHECK(mr.success, "typed_mutate rebind succeeds");
-    CHECK(shape_version_bump_count.load() > bumps0,
-          "version_bump_count grew after mutate");
+    CHECK(shape_version_bump_count.load() > bumps0, "version_bump_count grew after mutate");
     CHECK(jit_eval(cs), "re-JIT after mutate succeeds");
     const auto v = eval_int(cs, "(add1 5)");
     CHECK(v == 6, "semantic correctness after re-JIT (add1 5 == 6)");
@@ -173,17 +173,14 @@ bool test_multi_round_mutate_jit_semantics() {
     CHECK(setup_jit_shape_workspace(cs), "workspace ready");
     CHECK(jit_eval(cs), "initial JIT");
     for (int round = 0; round < 10; ++round) {
-        (void)cs.typed_mutate("(mutate:rebind \"base\" \"" +
-            std::to_string(100 + round) + "\")");
+        (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(100 + round) + "\")");
         CHECK(jit_eval(cs), "JIT eval succeeds each round");
         const int arg = 10 + round;
         const auto expected = 2 * arg;
         const auto v = eval_int(cs, "(dbl " + std::to_string(arg) + ")");
-        CHECK(v == expected,
-              "dbl semantic match after mutate round");
+        CHECK(v == expected, "dbl semantic match after mutate round");
     }
-    CHECK(prompt6_violations(cs) == 0,
-          "zero Prompt6 violations under mutate+JIT rounds");
+    CHECK(prompt6_violations(cs) == 0, "zero Prompt6 violations under mutate+JIT rounds");
     return true;
 }
 
@@ -197,8 +194,8 @@ bool test_eight_thread_concurrent_jit_mutate() {
     std::mutex eval_mu;
     const int iters = k_concurrent_iters();
     auto worker = [&]() {
-        std::mt19937 rng(static_cast<unsigned>(
-            std::hash<std::thread::id>{}(std::this_thread::get_id())));
+        std::mt19937 rng(
+            static_cast<unsigned>(std::hash<std::thread::id>{}(std::this_thread::get_id())));
         std::uniform_int_distribution<int> val_dist(0, 50);
         for (int i = 0; i < iters; ++i) {
             const int v = val_dist(rng);
@@ -206,21 +203,22 @@ bool test_eight_thread_concurrent_jit_mutate() {
                 std::lock_guard lock(eval_mu);
                 (void)cs.eval("(wrap " + std::to_string(v & 7) + ")");
                 if ((i & 3) == 0) {
-                    (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" +
-                        std::to_string(v) + "\")");
+                    (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
                 }
-                if ((i & 7) == 0) (void)jit_eval(cs);
+                if ((i & 7) == 0)
+                    (void)jit_eval(cs);
             }
         }
         done.fetch_add(1, std::memory_order_relaxed);
     };
     std::vector<std::thread> threads;
     threads.reserve(8);
-    for (int t = 0; t < 8; ++t) threads.emplace_back(worker);
-    for (auto& th : threads) th.join();
+    for (int t = 0; t < 8; ++t)
+        threads.emplace_back(worker);
+    for (auto& th : threads)
+        th.join();
     CHECK(done.load() == 8, "all 8 threads completed");
-    CHECK(prompt6_violations(cs) == 0,
-          "zero Prompt6 violations under concurrent JIT+mutate");
+    CHECK(prompt6_violations(cs) == 0, "zero Prompt6 violations under concurrent JIT+mutate");
     return true;
 }
 
@@ -242,10 +240,11 @@ bool test_fiber_yield_jit_mutate() {
                     std::lock_guard lock(eval_mu);
                     (void)cs.eval("(add1 " + std::to_string(f + i) + ")");
                     if ((i & 1) == 0) {
-                        (void)cs.typed_mutate("(mutate:rebind \"base\" \"" +
-                            std::to_string(f + i) + "\")");
+                        (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(f + i) +
+                                              "\")");
                     }
-                    if ((i & 3) == 0) (void)jit_eval(cs);
+                    if ((i & 3) == 0)
+                        (void)jit_eval(cs);
                 }
                 Fiber::yield(YieldReason::MutationBoundary);
             }
@@ -253,17 +252,14 @@ bool test_fiber_yield_jit_mutate() {
         });
     }
     std::thread io_thread([&sched]() { sched.run(); });
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::seconds(30);
-    while (done.load() < k_fibers &&
-           std::chrono::steady_clock::now() < deadline) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (done.load() < k_fibers && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     sched.stop();
     io_thread.join();
     CHECK(done.load() == k_fibers, "all fibers completed");
-    CHECK(prompt6_violations(cs) == 0,
-          "zero Prompt6 violations under fiber JIT+mutate");
+    CHECK(prompt6_violations(cs) == 0, "zero Prompt6 violations under fiber JIT+mutate");
     return true;
 }
 
@@ -281,23 +277,20 @@ bool test_long_stress_mutate_jit_cycles() {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 31) + ")");
         if ((i & 1) == 0) {
-            (void)cs.typed_mutate("(mutate:rebind \"base\" \"" +
-                std::to_string(v) + "\")");
+            (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(v) + "\")");
         } else {
-            (void)cs.typed_mutate("(mutate:replace-value (define acc " +
-                std::to_string(v) + ") (define acc " +
-                std::to_string(v) + "))");
+            (void)cs.typed_mutate("(mutate:replace-value (define acc " + std::to_string(v) +
+                                  ") (define acc " + std::to_string(v) + "))");
         }
-        if ((i & 15) == 0) CHECK(jit_eval(cs), "periodic JIT eval in stress");
+        if ((i & 15) == 0)
+            CHECK(jit_eval(cs), "periodic JIT eval in stress");
     }
     const auto stats1 = eval_int(cs, "(query:shape-stability-stats)");
     const auto miss1 = jit_shape_miss_count.load();
-    std::println("  stats: {} -> {} jit_miss: {} -> {}",
-                 stats0, stats1, miss0, miss1);
+    std::println("  stats: {} -> {} jit_miss: {} -> {}", stats0, stats1, miss0, miss1);
     CHECK(stats1 >= stats0, "shape-stability-stats monotonic under stress");
     CHECK(miss1 >= miss0, "jit_shape_miss monotonic under stress");
-    CHECK(prompt6_violations(cs) == 0,
-          "zero Prompt6 violations under stress");
+    CHECK(prompt6_violations(cs) == 0, "zero Prompt6 violations under stress");
     return true;
 }
 
@@ -306,14 +299,11 @@ bool test_regression_related_primitives() {
     std::println("\n--- AC10: regression primitives ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:shape-stability-stats)");
-    CHECK(r1.has_value() && is_int(*r1),
-          "(query:shape-stability-stats) regression for #570");
+    CHECK(r1.has_value() && is_int(*r1), "(query:shape-stability-stats) regression for #570");
     auto r2 = cs.eval("(query:prompt6-safety-score)");
-    CHECK(r2.has_value() && is_int(*r2),
-          "(query:prompt6-safety-score) regression for #602");
+    CHECK(r2.has_value() && is_int(*r2), "(query:prompt6-safety-score) regression for #602");
     auto r3 = cs.eval("(query:task4-hotpath-safety-score)");
-    CHECK(r3.has_value() && is_int(*r3),
-          "(query:task4-hotpath-safety-score) regression for #607");
+    CHECK(r3.has_value() && is_int(*r3), "(query:task4-hotpath-safety-score) regression for #607");
     return true;
 }
 
@@ -336,10 +326,14 @@ int run_tests() {
     return RUN_ALL_TESTS();
 }
 
-}  // namespace aura_issue_605_detail
+} // namespace aura_issue_605_detail
 
-int aura_issue_605_run() { return aura_issue_605_detail::run_tests(); }
+int aura_issue_605_run() {
+    return aura_issue_605_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_605_run(); }
+int main() {
+    return aura_issue_605_run();
+}
 #endif

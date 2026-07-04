@@ -18,7 +18,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.matcher;
 import aura.parser.parser;
-import aura.core.mutators;  // Phase 4 follow-up #3: migrate mutate:* primitives to strategy dispatch
+import aura.core.mutators; // Phase 4 follow-up #3: migrate mutate:* primitives to strategy dispatch
 import aura.diag;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
@@ -33,255 +33,251 @@ using namespace types;
 
 namespace {
 
-using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
+    using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
 
-// Issue #270: verify a node is still attached under its parent.
-std::optional<std::uint32_t> parent_child_index_if_attached(
-    const aura::ast::FlatAST& flat, aura::ast::NodeId match_id) {
-    if (match_id == aura::ast::NULL_NODE || match_id >= flat.size())
+    // Issue #270: verify a node is still attached under its parent.
+    std::optional<std::uint32_t> parent_child_index_if_attached(const aura::ast::FlatAST& flat,
+                                                                aura::ast::NodeId match_id) {
+        if (match_id == aura::ast::NULL_NODE || match_id >= flat.size())
+            return std::nullopt;
+        auto parent_id = flat.parent_of(match_id);
+        if (parent_id == aura::ast::NULL_NODE || parent_id >= flat.size())
+            return std::nullopt;
+        auto pv = flat.get(parent_id);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == match_id)
+                return ci;
+        }
         return std::nullopt;
-    auto parent_id = flat.parent_of(match_id);
-    if (parent_id == aura::ast::NULL_NODE || parent_id >= flat.size())
-        return std::nullopt;
-    auto pv = flat.get(parent_id);
-    for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
-        if (pv.child(ci) == match_id)
-            return ci;
     }
-    return std::nullopt;
-}
 
-bool stable_match_still_attached(const aura::ast::FlatAST& flat,
-                                 const StableNodeRef& match_ref) {
-    if (!match_ref.is_valid_in(flat))
-        return false;
-    return parent_child_index_if_attached(flat, match_ref.id).has_value();
-}
-
-// Issue #680: detect Lambda/closure descendants for precise invalidation.
-bool subtree_has_closure(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
-    if (root == aura::ast::NULL_NODE || root >= flat.size())
-        return false;
-    auto walk = [&](auto self, aura::ast::NodeId id) -> bool {
-        if (id == aura::ast::NULL_NODE || id >= flat.size())
+    bool stable_match_still_attached(const aura::ast::FlatAST& flat,
+                                     const StableNodeRef& match_ref) {
+        if (!match_ref.is_valid_in(flat))
             return false;
-        auto v = flat.get(id);
-        if (v.tag == aura::ast::NodeTag::Lambda)
-            return true;
-        for (auto c : v.children) {
-            if (c != aura::ast::NULL_NODE && self(self, c))
+        return parent_child_index_if_attached(flat, match_ref.id).has_value();
+    }
+
+    // Issue #680: detect Lambda/closure descendants for precise invalidation.
+    bool subtree_has_closure(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return false;
+        auto walk = [&](auto self, aura::ast::NodeId id) -> bool {
+            if (id == aura::ast::NULL_NODE || id >= flat.size())
+                return false;
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Lambda)
                 return true;
-        }
-        return false;
-    };
-    return walk(walk, root);
-}
+            for (auto c : v.children) {
+                if (c != aura::ast::NULL_NODE && self(self, c))
+                    return true;
+            }
+            return false;
+        };
+        return walk(walk, root);
+    }
 
-void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
-    auto* ws = ev.workspace_flat();
-    if (!ws || node >= ws->size())
-        return;
-    if (!aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, node))
-        return;
-    const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, node);
-    const auto ppa_reasons = ws->ppa_dirty_reasons(node);
-    aura::compiler::hardware::on_structural_mutation(
-        node,
-        static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
-        ppa_reasons);
-    const auto* pool = ev.workspace_pool();
-    if (pool) {
-        const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, node);
-        const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
-        const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
-            if (!diff.empty())
-                m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
-            if (validation.ok)
-                m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
-            else
-                m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
-            if (reemit.ppa_savings > 0) {
-                m->ppa_savings_total.fetch_add(
-                    static_cast<std::uint64_t>(reemit.ppa_savings),
-                    std::memory_order_relaxed);
+    void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
+        auto* ws = ev.workspace_flat();
+        if (!ws || node >= ws->size())
+            return;
+        if (!aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, node))
+            return;
+        const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, node);
+        const auto ppa_reasons = ws->ppa_dirty_reasons(node);
+        aura::compiler::hardware::on_structural_mutation(
+            node, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+            ppa_reasons);
+        const auto* pool = ev.workspace_pool();
+        if (pool) {
+            const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, node);
+            const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+            const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+                if (!diff.empty())
+                    m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
+                if (validation.ok)
+                    m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+                else
+                    m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
+                if (reemit.ppa_savings > 0) {
+                    m->ppa_savings_total.fetch_add(static_cast<std::uint64_t>(reemit.ppa_savings),
+                                                   std::memory_order_relaxed);
+                }
             }
         }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
     }
-    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-        m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
-}
 
-bool define_needs_precise_invalidation(const aura::ast::FlatAST& flat,
-                                       aura::ast::NodeId define_id) {
-    if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
-        return false;
-    auto v = flat.get(define_id);
-    if (v.tag != aura::ast::NodeTag::Define)
-        return subtree_has_closure(flat, define_id);
-    if (v.children.empty())
-        return false;
-    const auto body = v.child(0);
-    const auto bv = flat.get(body);
-    if (bv.tag == aura::ast::NodeTag::Lambda)
-        return true;
-    return subtree_has_closure(flat, body);
-}
+    bool define_needs_precise_invalidation(const aura::ast::FlatAST& flat,
+                                           aura::ast::NodeId define_id) {
+        if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
+            return false;
+        auto v = flat.get(define_id);
+        if (v.tag != aura::ast::NodeTag::Define)
+            return subtree_has_closure(flat, define_id);
+        if (v.children.empty())
+            return false;
+        const auto body = v.child(0);
+        const auto bv = flat.get(body);
+        if (bv.tag == aura::ast::NodeTag::Lambda)
+            return true;
+        return subtree_has_closure(flat, body);
+    }
 
-// Issue #373: MacroIntroduced hygiene guard helper.
-//
-// mutate:* primitives call this before any structural
-// change. If the target node(s) are MacroIntroduced (set
-// by clone_macro_body from a hygienic macro expansion)
-// AND the global `allow_macro_mutate_` flag is false AND
-// the call did NOT pass `:allow-macro? #t`, the helper
-// returns a tagged ("hygiene-protected" "...") error pair
-// via the supplied mev callable. The caller sets ok=false
-// (so MutationBoundaryGuard rolls back if anything else
-// was done before the guard) and propagates the error.
-//
-// Args:
-//   flat — workspace flat (must be non-null; we don't
-//          check here, caller already validated)
-//   target_ids — NodeIds to check (the actual mutate
-//                target; e.g. the Define node for
-//                mutate:rebind, the child node for
-//                mutate:tweak-literal, etc.)
-//   allow_macro_mutate — the Evaluator's global flag.
-//   per_call_opt_out — the caller-parsed `:allow-macro?`
-//                      boolean. #t bypasses the guard
-//                      without changing the global flag.
-//   mev — the error constructor.
-//
-// Returns:
-//   nullopt if the mutation is allowed (no hygiene guard
-//   triggered). A populated EvalValue (the error pair)
-//   if the mutation should be rejected.
-static std::optional<EvalValue> hygiene_protected_error(
-    Evaluator& ev,
-    const aura::ast::FlatAST& flat,
-    std::span<const aura::ast::NodeId> target_ids,
-    bool allow_macro_mutate,
-    bool per_call_opt_out,
-    const MakeErrorVal& mev) {
-    if (allow_macro_mutate || per_call_opt_out)
+    // Issue #373: MacroIntroduced hygiene guard helper.
+    //
+    // mutate:* primitives call this before any structural
+    // change. If the target node(s) are MacroIntroduced (set
+    // by clone_macro_body from a hygienic macro expansion)
+    // AND the global `allow_macro_mutate_` flag is false AND
+    // the call did NOT pass `:allow-macro? #t`, the helper
+    // returns a tagged ("hygiene-protected" "...") error pair
+    // via the supplied mev callable. The caller sets ok=false
+    // (so MutationBoundaryGuard rolls back if anything else
+    // was done before the guard) and propagates the error.
+    //
+    // Args:
+    //   flat — workspace flat (must be non-null; we don't
+    //          check here, caller already validated)
+    //   target_ids — NodeIds to check (the actual mutate
+    //                target; e.g. the Define node for
+    //                mutate:rebind, the child node for
+    //                mutate:tweak-literal, etc.)
+    //   allow_macro_mutate — the Evaluator's global flag.
+    //   per_call_opt_out — the caller-parsed `:allow-macro?`
+    //                      boolean. #t bypasses the guard
+    //                      without changing the global flag.
+    //   mev — the error constructor.
+    //
+    // Returns:
+    //   nullopt if the mutation is allowed (no hygiene guard
+    //   triggered). A populated EvalValue (the error pair)
+    //   if the mutation should be rejected.
+    static std::optional<EvalValue>
+    hygiene_protected_error(Evaluator& ev, const aura::ast::FlatAST& flat,
+                            std::span<const aura::ast::NodeId> target_ids, bool allow_macro_mutate,
+                            bool per_call_opt_out, const MakeErrorVal& mev) {
+        if (allow_macro_mutate || per_call_opt_out)
+            return std::nullopt;
+        for (auto id : target_ids) {
+            if (id == aura::ast::NULL_NODE || id >= flat.size())
+                continue;
+            if (flat.is_macro_introduced(id)) {
+                ev.record_hygiene_violation_attempt();
+                return mev("hygiene-protected",
+                           "target node " + std::to_string(id) +
+                               " was produced by a hygienic macro expansion; "
+                               "pass :allow-macro? #t or call "
+                               "(hygiene:set-allow-macro-mutate! #t) to opt out");
+            }
+        }
         return std::nullopt;
-    for (auto id : target_ids) {
-        if (id == aura::ast::NULL_NODE || id >= flat.size())
-            continue;
-        if (flat.is_macro_introduced(id)) {
-            ev.record_hygiene_violation_attempt();
-            return mev("hygiene-protected",
-                       "target node " + std::to_string(id) +
-                           " was produced by a hygienic macro expansion; "
-                           "pass :allow-macro? #t or call "
-                           "(hygiene:set-allow-macro-mutate! #t) to opt out");
-        }
     }
-    return std::nullopt;
-}
 
-// Issue #373: parse `:allow-macro? #t` from a mutate:*
-// primitive's argument span. Returns the boolean value
-// if the kwarg is present (default #f if absent or the
-// value is not a bool). The kwarg may appear anywhere
-// in the arg list. Looks up the keyword name via the
-// Evaluator's keyword_table_ so callers don't have to
-// pre-intern the keyword index themselves.
-//
-// Format: `:allow-macro? <bool>`. If `<bool>` is
-// missing or not a boolean, the kwarg is treated as
-// absent (conservative — #f).
-static bool parse_allow_macro_opt_out(Evaluator& ev, std::span<const EvalValue> args) {
-    const auto& kt = ev.keyword_table();
-    // Find the index of ":allow-macro?" in the keyword table.
-    // Linear scan is fine — the table has ~10-30 entries and
-    // this runs once per mutate call (not on the hot path).
-    std::size_t target_idx = std::string::npos;
-    for (std::size_t i = 0; i < kt.size(); ++i) {
-        if (kt[i] == ":allow-macro?") {
-            target_idx = i;
-            break;
+    // Issue #373: parse `:allow-macro? #t` from a mutate:*
+    // primitive's argument span. Returns the boolean value
+    // if the kwarg is present (default #f if absent or the
+    // value is not a bool). The kwarg may appear anywhere
+    // in the arg list. Looks up the keyword name via the
+    // Evaluator's keyword_table_ so callers don't have to
+    // pre-intern the keyword index themselves.
+    //
+    // Format: `:allow-macro? <bool>`. If `<bool>` is
+    // missing or not a boolean, the kwarg is treated as
+    // absent (conservative — #f).
+    static bool parse_allow_macro_opt_out(Evaluator& ev, std::span<const EvalValue> args) {
+        const auto& kt = ev.keyword_table();
+        // Find the index of ":allow-macro?" in the keyword table.
+        // Linear scan is fine — the table has ~10-30 entries and
+        // this runs once per mutate call (not on the hot path).
+        std::size_t target_idx = std::string::npos;
+        for (std::size_t i = 0; i < kt.size(); ++i) {
+            if (kt[i] == ":allow-macro?") {
+                target_idx = i;
+                break;
+            }
         }
-    }
-    if (target_idx == std::string::npos)
-        return false;
-    for (std::size_t i = 0; i + 1 < args.size(); ++i) {
-        if (!is_keyword(args[i]))
-            continue;
-        if (as_keyword_idx(args[i]) != target_idx)
-            continue;
-        if (is_bool(args[i + 1]))
-            return as_bool(args[i + 1]);
+        if (target_idx == std::string::npos)
+            return false;
+        for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+            if (!is_keyword(args[i]))
+                continue;
+            if (as_keyword_idx(args[i]) != target_idx)
+                continue;
+            if (is_bool(args[i + 1]))
+                return as_bool(args[i + 1]);
+            return false;
+        }
         return false;
     }
-    return false;
-}
 
-// Issue #348: walk a subtree, collect all
-//
-// The walk is bounded: we visit each node at most
-// once (the visited set is the new_value's subtree
-// + the old_value's subtree combined). For a
-// typical rebind (a small expression body), the
-// total cost is O(subtree_size) and the count of
-// marked if-nodes is typically 0-3.
-//
-// The caller passes the new value's root; the
-// walker visits the new value's subtree (the new
-// function body) and marks every if-node there.
-// The old value's subtree is also visited (the
-// conservative path: if the old body had an
-// if-context, the rebind may have invalidated it).
-static void auto_wire_k_occurrence_dirty_for_subtree(
-    aura::ast::FlatAST& flat,
-    const std::function<bool(aura::ast::NodeId, bool)>& set_occurrence_dirty_fn,
-    aura::ast::NodeId root) {
-    if (!set_occurrence_dirty_fn || root == aura::ast::NULL_NODE
-        || root >= flat.size()) return;
-    // Iterative DFS to avoid stack overflow on deep ASTs.
-    // We use a small vector as the work stack; a typical
-    // subtree fits in a few dozen entries.
-    std::vector<aura::ast::NodeId> stack;
-    stack.push_back(root);
-    while (!stack.empty()) {
-        const auto id = stack.back();
-        stack.pop_back();
-        if (id == aura::ast::NULL_NODE || id >= flat.size()) continue;
-        const auto v = flat.get(id);
-        // Mark the if-node if it's an IfExpr. The
-        // hook signature is (node_id, set) where set
-        // = true marks the bit and returns the prior
-        // state. We always pass true (set the bit);
-        // the return value is the prior state (we
-        // don't use it here).
-        if (v.tag == aura::ast::NodeTag::IfExpr) {
-            set_occurrence_dirty_fn(id, true);
-        }
-        // Push children (in reverse order so the
-        // first child is processed first; this
-        // matches the natural left-to-right
-        // traversal).
-        if (!v.children.empty()) {
-            for (std::size_t i = v.children.size(); i-- > 0; ) {
-                const auto c = v.children[i];
-                if (c != aura::ast::NULL_NODE) stack.push_back(c);
+    // Issue #348: walk a subtree, collect all
+    //
+    // The walk is bounded: we visit each node at most
+    // once (the visited set is the new_value's subtree
+    // + the old_value's subtree combined). For a
+    // typical rebind (a small expression body), the
+    // total cost is O(subtree_size) and the count of
+    // marked if-nodes is typically 0-3.
+    //
+    // The caller passes the new value's root; the
+    // walker visits the new value's subtree (the new
+    // function body) and marks every if-node there.
+    // The old value's subtree is also visited (the
+    // conservative path: if the old body had an
+    // if-context, the rebind may have invalidated it).
+    static void auto_wire_k_occurrence_dirty_for_subtree(
+        aura::ast::FlatAST& flat,
+        const std::function<bool(aura::ast::NodeId, bool)>& set_occurrence_dirty_fn,
+        aura::ast::NodeId root) {
+        if (!set_occurrence_dirty_fn || root == aura::ast::NULL_NODE || root >= flat.size())
+            return;
+        // Iterative DFS to avoid stack overflow on deep ASTs.
+        // We use a small vector as the work stack; a typical
+        // subtree fits in a few dozen entries.
+        std::vector<aura::ast::NodeId> stack;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            if (id == aura::ast::NULL_NODE || id >= flat.size())
+                continue;
+            const auto v = flat.get(id);
+            // Mark the if-node if it's an IfExpr. The
+            // hook signature is (node_id, set) where set
+            // = true marks the bit and returns the prior
+            // state. We always pass true (set the bit);
+            // the return value is the prior state (we
+            // don't use it here).
+            if (v.tag == aura::ast::NodeTag::IfExpr) {
+                set_occurrence_dirty_fn(id, true);
+            }
+            // Push children (in reverse order so the
+            // first child is processed first; this
+            // matches the natural left-to-right
+            // traversal).
+            if (!v.children.empty()) {
+                for (std::size_t i = v.children.size(); i-- > 0;) {
+                    const auto c = v.children[i];
+                    if (c != aura::ast::NULL_NODE)
+                        stack.push_back(c);
+                }
             }
         }
     }
-}
 
-}  // namespace
+} // namespace
 
-void register_mutate_primitives(
-    PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
-    std::function<void()> destroy_defuse_index) {
+void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
+                                std::function<void()> destroy_defuse_index) {
 
     auto add_mutate = [&](std::string name, auto fn) {
         add(std::move(name), [&ev, mev, fn](std::span<const EvalValue> a) -> EvalValue {
-            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate)
-                && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate) &&
+                !ev.has_capability(aura::compiler::security::kCapWildcard)) {
                 ev.bump_capability_denial();
                 return mev("capability-denied", "mutate capability required in sandbox mode");
             }
@@ -323,8 +319,8 @@ void register_mutate_primitives(
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                                 std::to_string(flat.size()));
+            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         auto old_tid = flat.type_id(node);
@@ -349,8 +345,9 @@ void register_mutate_primitives(
             new_tid = 0; // unknown → Dyn
 
         auto mid = flat.add_mutation_with_rollback(
-            node, "replace-type", old_type_str, ev.string_heap_[type_idx], "replace type annotation",
-            aura::ast::MutationStatus::Committed, 1, old_val, new_tid, true);
+            node, "replace-type", old_type_str, ev.string_heap_[type_idx],
+            "replace type annotation", aura::ast::MutationStatus::Committed, 1, old_val, new_tid,
+            true);
         // Actually apply the type change
         flat.set_type(node, new_tid);
         ev.workspace_flat_->mark_dirty_upward(node);
@@ -381,8 +378,8 @@ void register_mutate_primitives(
             : (void)0; // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2])) {
             ok = false;
-            return ev.make_merr("bad-arg",
-                                 "usage: (mutate:replace-value node-id new-value summary [ppa-hint])");
+            return ev.make_merr(
+                "bad-arg", "usage: (mutate:replace-value node-id new-value summary [ppa-hint])");
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         std::uint8_t ppa_hint = 0;
@@ -400,8 +397,8 @@ void register_mutate_primitives(
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                                 std::to_string(flat.size()));
+            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         auto nv = flat.get(node);
@@ -456,7 +453,7 @@ void register_mutate_primitives(
                 if (!is_string(a[1])) {
                     ok = false;
                     return ev.make_merr("type-error",
-                                     "Variable/LiteralString node requires a string value");
+                                        "Variable/LiteralString node requires a string value");
                 }
                 auto new_sym_idx = as_string_idx(a[1]);
                 if (new_sym_idx >= ev.string_heap_.size()) {
@@ -482,7 +479,7 @@ void register_mutate_primitives(
             default:
                 ok = false;
                 return ev.make_merr("type-error", "node tag does not support value replacement: " +
-                                                   std::to_string(static_cast<int>(nv.tag)));
+                                                      std::to_string(static_cast<int>(nv.tag)));
         }
     });
 
@@ -517,8 +514,8 @@ void register_mutate_primitives(
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                                 std::to_string(flat.size()));
+            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         auto mid = flat.add_mutation(node, ev.string_heap_[op_idx], "<runtime>", "<runtime>",
@@ -529,8 +526,8 @@ void register_mutate_primitives(
     // predicates with replacement. Query phase snapshots flat.size() and
     // captures StableNodeRef; apply phase uses is_valid_in() + parent-slot
     // checks inside an atomic batch so multiple set_child calls share one bump.
-    add(
-        "mutate:query-and-replace", [&ev, mev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+    add("mutate:query-and-replace",
+        [&ev, mev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
             std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
             if (ev.workspace_read_only_)
                 return mev("read-only", "workspace is read-only");
@@ -856,13 +853,13 @@ void register_mutate_primitives(
 
             // Issue #262: precise dirty + incremental defuse refresh
             // instead of destroying the index and marking all defines.
-            const auto structural_reasons = aura::ast::FlatAST::kGeneralDirty |
-                                            aura::ast::FlatAST::kStructDirty;
+            const auto structural_reasons =
+                aura::ast::FlatAST::kGeneralDirty | aura::ast::FlatAST::kStructDirty;
             flat.mark_dirty_defuse_entries(replaced_roots, structural_reasons, ppa_hint);
             if (ppa_hint != 0) {
                 for (auto root : replaced_roots)
                     aura::compiler::hardware::on_structural_mutation(root, structural_reasons,
-                                                                   ppa_hint);
+                                                                     ppa_hint);
             }
 
             std::unordered_set<std::string> affected_names;
@@ -977,18 +974,15 @@ void register_mutate_primitives(
             return make_bool(false);
         const auto& s = ev.string_heap_[idx];
         if (s == "disabled" || s == "off" || s == "false") {
-            ev.set_stale_ref_policy(
-                aura::compiler::Evaluator::StaleRefPolicy::Disabled);
+            ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Disabled);
             return make_bool(true);
         }
         if (s == "strict" || s == "hard") {
-            ev.set_stale_ref_policy(
-                aura::compiler::Evaluator::StaleRefPolicy::Strict);
+            ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Strict);
             return make_bool(true);
         }
         if (s == "warn" || s == "observe" || s == "soft") {
-            ev.set_stale_ref_policy(
-                aura::compiler::Evaluator::StaleRefPolicy::Warn);
+            ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Warn);
             return make_bool(true);
         }
         return make_bool(false);
@@ -1003,11 +997,14 @@ void register_mutate_primitives(
         const char* name = "warn";
         switch (ev.get_stale_ref_policy()) {
             case aura::compiler::Evaluator::StaleRefPolicy::Disabled:
-                name = "disabled"; break;
+                name = "disabled";
+                break;
             case aura::compiler::Evaluator::StaleRefPolicy::Warn:
-                name = "warn"; break;
+                name = "warn";
+                break;
             case aura::compiler::Evaluator::StaleRefPolicy::Strict:
-                name = "strict"; break;
+                name = "strict";
+                break;
         }
         auto idx = ev.string_heap_.size();
         ev.string_heap_.push_back(name);
@@ -1022,9 +1019,8 @@ void register_mutate_primitives(
     // Warn-mode observations.
     add("query:stale-ref-stats", [&ev](const auto& a) -> EvalValue {
         (void)a;
-        return make_int(static_cast<std::int64_t>(
-            ev.get_stale_ref_blocked_count() +
-            ev.get_stale_ref_warned_count()));
+        return make_int(static_cast<std::int64_t>(ev.get_stale_ref_blocked_count() +
+                                                  ev.get_stale_ref_warned_count()));
     });
 
     // Issue #439: (mutate:request-gc-safepoint
@@ -1043,8 +1039,7 @@ void register_mutate_primitives(
     add_mutate("mutate:request-gc-safepoint", [&ev](const auto& a) -> EvalValue {
         const int result = ev.request_gc_safepoint();
         if (a.size() >= 1 && is_int(a[0])) {
-            const auto timeout_ms =
-                static_cast<std::uint64_t>(as_int(a[0]));
+            const auto timeout_ms = static_cast<std::uint64_t>(as_int(a[0]));
             ev.wait_for_safepoint(timeout_ms);
         }
         return make_int(static_cast<std::int64_t>(result));
@@ -1092,7 +1087,9 @@ void register_mutate_primitives(
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary] [validate: type-name])");
+            return mev(
+                "bad-arg",
+                "usage: (mutate:rebind name new-code-string [summary] [validate: type-name])");
         }
         // Issue #288: optional `validate: <type-name>` 4th arg.
         // When present, run the best-effort schema shape check on
@@ -1121,7 +1118,8 @@ void register_mutate_primitives(
                 }
                 if (is_bool(vresult) && !as_bool(vresult)) {
                     ok = false;
-                    return mev("schema-violation", "schema check returned #f (no schema registered)");
+                    return mev("schema-violation",
+                               "schema check returned #f (no schema registered)");
                 }
                 // is_bool(vresult) == true → proceed
             }
@@ -1152,8 +1150,9 @@ void register_mutate_primitives(
         auto sym = ev.canonical_pool()->intern(name);
 
         // ── 安全点：panic checkpoint 现在由 MutationBoundaryGuard 自动管理 ────
-        // Issue #241: Guard 在 ctor 调 ev.save_panic_checkpoint()，dtor 根据 ok + ev.panic_auto_rollback_
-        // 决定 commit 或 restore。Body 不再需要手动 save / commit / restore。
+        // Issue #241: Guard 在 ctor 调 ev.save_panic_checkpoint()，dtor 根据 ok +
+        // ev.panic_auto_rollback_ 决定 commit 或 restore。Body 不再需要手动 save / commit /
+        // restore。
         //   ok == true  → Guard dtor commit（清除 checkpoint）
         //   ok == false + ev.panic_auto_rollback_ → Guard dtor restore
         //   ok == false + !ev.panic_auto_rollback_ → Guard dtor leave alone（caller 可 retry）
@@ -1163,8 +1162,8 @@ void register_mutate_primitives(
         // DefUseIndex 的 O(k) 依赖图查询（k = 调用者数量）。
         // 在 ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel)
         // 之前调用，因为索引在失效前有效。
-        auto dep_callers =
-            ev.dep_caller_fn_ ? ev.dep_caller_fn_(ev.defuse_index_, sym) : std::vector<aura::ast::NodeId>{};
+        auto dep_callers = ev.dep_caller_fn_ ? ev.dep_caller_fn_(ev.defuse_index_, sym)
+                                             : std::vector<aura::ast::NodeId>{};
         ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
         ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
 
@@ -1185,10 +1184,8 @@ void register_mutate_primitives(
         // (hygiene:set-allow-macro-mutate! #t) flag.
         if (old_define != aura::ast::NULL_NODE) {
             aura::ast::NodeId probe_arr[1] = {old_define};
-            if (auto err = hygiene_protected_error(ev, flat, probe_arr,
-                                                   ev.get_allow_macro_mutate(),
-                                                   parse_allow_macro_opt_out(ev, a),
-                                                   mev)) {
+            if (auto err = hygiene_protected_error(ev, flat, probe_arr, ev.get_allow_macro_mutate(),
+                                                   parse_allow_macro_opt_out(ev, a), mev)) {
                 ok = false;
                 return *err;
             }
@@ -1278,8 +1275,9 @@ void register_mutate_primitives(
         }
 
         // Record mutation on the old define node
-        std::string summary = (a.size() > 2 && is_string(a[2])) ? ev.string_heap_[as_string_idx(a[2])]
-                                                                : "rebind " + name;
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? ev.string_heap_[as_string_idx(a[2])]
+                                  : "rebind " + name;
         flat.add_mutation(old_define, "rebind", name, summary, summary);
 
         // Redirect old Define's value child to the new nodes
@@ -1304,8 +1302,7 @@ void register_mutate_primitives(
         // conservative note, which is the right
         // behavior.
         if (ev.set_occurrence_dirty_fn_) {
-            auto_wire_k_occurrence_dirty_for_subtree(
-                flat, ev.set_occurrence_dirty_fn_, new_value);
+            auto_wire_k_occurrence_dirty_for_subtree(flat, ev.set_occurrence_dirty_fn_, new_value);
         }
 
         // ── 依赖图驱动：dirty 所有调用者 ────────────────────────
@@ -1344,7 +1341,8 @@ void register_mutate_primitives(
                 if (dep_callers[ui] < flat.size()) {
                     auto caller_v = flat.get(dep_callers[ui]);
                     if (caller_v.sym_id != aura::ast::INVALID_SYM) {
-                        auto caller_name = std::string(ev.workspace_pool_->resolve(caller_v.sym_id));
+                        auto caller_name =
+                            std::string(ev.workspace_pool_->resolve(caller_v.sym_id));
                         if (!caller_name.empty())
                             affected.insert(caller_name);
                     }
@@ -1353,8 +1351,8 @@ void register_mutate_primitives(
             std::vector<aura::compiler::OwnershipNote> onotes;
             bool opass = aura::compiler::OwnershipEnv::validate_ownership(
                 flat, *ev.workspace_pool_, flat.root, affected, onotes);
-            aura::compiler::record_linear_ownership_mutation_metrics(
-                ev.compiler_metrics(), true, onotes, opass);
+            aura::compiler::record_linear_ownership_mutation_metrics(ev.compiler_metrics(), true,
+                                                                     onotes, opass);
             if (!opass) {
                 std::string err = "ownership validation after mutate:rebind failed:";
                 for (auto& n : onotes)
@@ -1374,9 +1372,9 @@ void register_mutate_primitives(
                        std::string(typeid(ev).name()) +
                            ": mutation rejected — auto-rolled back: " + ev.last_mutate_error_);
         }
-        // 失败但 !ev.panic_auto_rollback_：保持 ok=true（保留 pre-#241 行为 — silently return true）
-        // Guard dtor 会 ev.commit_panic_checkpoint()（行为变化：以前 leave alone，现在 clear）。
-        // 这是 #241 scope-limited close 的已知小变化 — 详见 commit message。
+        // 失败但 !ev.panic_auto_rollback_：保持 ok=true（保留 pre-#241 行为 — silently return
+        // true） Guard dtor 会 ev.commit_panic_checkpoint()（行为变化：以前 leave alone，现在
+        // clear）。 这是 #241 scope-limited close 的已知小变化 — 详见 commit message。
 
         return make_bool(true);
     });
@@ -1420,8 +1418,8 @@ void register_mutate_primitives(
         // No manual save/commit/restore needed here.
 
         // ── 依赖图查询：通过 ev.dep_caller_fn_ 获取调用者节点 ────
-        auto dep_callers =
-            ev.dep_caller_fn_ ? ev.dep_caller_fn_(ev.defuse_index_, sym) : std::vector<aura::ast::NodeId>{};
+        auto dep_callers = ev.dep_caller_fn_ ? ev.dep_caller_fn_(ev.defuse_index_, sym)
+                                             : std::vector<aura::ast::NodeId>{};
         ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
         ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
 
@@ -1445,8 +1443,8 @@ void register_mutate_primitives(
                 }
 
                 // Parse new body INTO workspace flat (all IDs stay valid)
-                auto pr =
-                    aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
+                auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat,
+                                                      *ev.workspace_pool_);
                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                     std::string parse_err;
                     if (!pr.errors.empty()) {
@@ -1469,11 +1467,9 @@ void register_mutate_primitives(
                 // rollback (children_ column restore). The set-body
                 // op replaces child_idx=1 (the body slot of a
                 // Define) with pr.root.
-                aura::ast::NodeId old_body = (flat.children(id).size() > 1)
-                                      ? flat.children(id)[1]
-                                      : aura::ast::NULL_NODE;
-                flat.add_structural_mutation_log_entry(
-                    id, 1, old_body, pr.root, "set-body");
+                aura::ast::NodeId old_body =
+                    (flat.children(id).size() > 1) ? flat.children(id)[1] : aura::ast::NULL_NODE;
+                flat.add_structural_mutation_log_entry(id, 1, old_body, pr.root, "set-body");
 
                 // Issue #230 / #166 semantics: branch on the
                 // shape of the new code.
@@ -1547,8 +1543,8 @@ void register_mutate_primitives(
                     std::vector<aura::compiler::OwnershipNote> onotes;
                     bool opass = aura::compiler::OwnershipEnv::validate_ownership(
                         flat, *ev.workspace_pool_, flat.root, affected, onotes);
-                    aura::compiler::record_linear_ownership_mutation_metrics(
-                        ev.compiler_metrics(), true, onotes, opass);
+                    aura::compiler::record_linear_ownership_mutation_metrics(ev.compiler_metrics(),
+                                                                             true, onotes, opass);
                     if (!opass) {
                         std::string err = "ownership validation after mutate:set-body failed:";
                         for (auto& n : onotes)
@@ -1569,8 +1565,7 @@ void register_mutate_primitives(
                 // Guard's responsibility, not this primitive's.
                 if (!ev.last_mutate_error_.empty()) {
                     ok = false;
-                    return mev("mutation-failed",
-                               "mutation rejected: " + ev.last_mutate_error_);
+                    return mev("mutation-failed", "mutation rejected: " + ev.last_mutate_error_);
                 }
 
                 return make_bool(true);
@@ -1639,24 +1634,22 @@ void register_mutate_primitives(
                 // Route the structural mutation through RemoveChildMutator.
                 auto result = aura::ast::mutators::apply_mutation(
                     flat, id,
-                    aura::ast::mutators::RemoveChildMutator{
-                        static_cast<std::uint32_t>(ci)});
+                    aura::ast::mutators::RemoveChildMutator{static_cast<std::uint32_t>(ci)});
                 if (!result) {
                     ok = false;
                     return mev("mutation-error", std::string(result.error().message));
                 }
-                flat.add_structural_mutation_log_entry(
-                    id, static_cast<std::uint32_t>(ci), target,
-                    aura::ast::NULL_NODE, "remove-node");
+                flat.add_structural_mutation_log_entry(id, static_cast<std::uint32_t>(ci), target,
+                                                       aura::ast::NULL_NODE, "remove-node");
                 removed = true;
                 break;
             }
-            if (removed) break;
+            if (removed)
+                break;
         }
         if (!removed) {
             ok = false;
-            return mev("not-found",
-                       "node " + std::to_string(target) + " has no parent in the AST");
+            return mev("not-found", "node " + std::to_string(target) + " has no parent in the AST");
         }
         return make_bool(true);
     });
@@ -1723,8 +1716,7 @@ void register_mutate_primitives(
         // target id (gen-aware), calls flat.insert_child, and
         // marks dirty upward. AuraResult carries errors uniformly.
         auto result = aura::ast::mutators::apply_mutation(
-            flat, parent,
-            aura::ast::mutators::InsertChildMutator{pos, pr.root});
+            flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
         if (!result) {
             ok = false;
             // Map AuraErrorKind -> Aura error tag for backward compat.
@@ -1741,8 +1733,8 @@ void register_mutate_primitives(
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? ev.string_heap_[as_string_idx(a[3])]
                                   : "insert child at " + std::to_string(pos);
-        flat.add_structural_mutation_log_entry(
-            parent, pos, aura::ast::NULL_NODE, pr.root, "insert-child");
+        flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE, pr.root,
+                                               "insert-child");
 
         return make_int(static_cast<std::int64_t>(pr.root));
     });
@@ -1786,10 +1778,8 @@ void register_mutate_primitives(
         // path as mutate:rebind.
         {
             aura::ast::NodeId probe_arr[1] = {node};
-            if (auto err = hygiene_protected_error(ev, flat, probe_arr,
-                                                   ev.get_allow_macro_mutate(),
-                                                   parse_allow_macro_opt_out(ev, a),
-                                                   mev)) {
+            if (auto err = hygiene_protected_error(ev, flat, probe_arr, ev.get_allow_macro_mutate(),
+                                                   parse_allow_macro_opt_out(ev, a), mev)) {
                 ok = false;
                 return *err;
             }
@@ -1899,9 +1889,8 @@ void register_mutate_primitives(
                 summary = ev.string_heap_[as_string_idx(a[ai])];
             } else {
                 ok = false;
-                return mev("bad-arg",
-                           "usage: (mutate:replace-pattern pattern replacement"
-                           " [:nested-arity [#t]] [summary-string])");
+                return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
+                                      " [:nested-arity [#t]] [summary-string])");
             }
         }
 
@@ -2034,9 +2023,8 @@ void register_mutate_primitives(
             std::vector<StableNodeRef> capture_refs;
         };
 
-        aura::compiler::QueryMatcher matcher(
-            &flat, ev.workspace_pool_, pat_flat, pat_pool,
-            wildcard_sym, nested_arity);
+        aura::compiler::QueryMatcher matcher(&flat, ev.workspace_pool_, pat_flat, pat_pool,
+                                             wildcard_sym, nested_arity);
 
         // Find all matching nodes in workspace. Snapshot end_id (#111)
         // and capture StableNodeRef per match (#270).
@@ -2089,8 +2077,7 @@ void register_mutate_primitives(
             // children), so we don't enforce strict equality —
             // excess captures are ignored, missing captures leave
             // `...` placeholders in the substitution.
-            if (!nested_arity &&
-                static_cast<int>(match.capture_refs.size()) != expected_captures)
+            if (!nested_arity && static_cast<int>(match.capture_refs.size()) != expected_captures)
                 continue;
             bool captures_ok = true;
             for (auto& cap_ref : match.capture_refs) {
@@ -2234,8 +2221,9 @@ void register_mutate_primitives(
         }
 
         auto new_code = ev.string_heap_[code_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2])) ? ev.string_heap_[as_string_idx(a[2])]
-                                                                : "replace-subtree";
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? ev.string_heap_[as_string_idx(a[2])]
+                                  : "replace-subtree";
 
         // ── Locate parent + child_idx (the slot we're replacing) ──
         auto parent_id = flat.parent_of(target);
@@ -2531,7 +2519,8 @@ void register_mutate_primitives(
         // serve mode (scheduler active); combined with the fact
         // that we're inside a fiber call site, this is a good
         // proxy for "ran under concurrent fiber pressure".
-        const bool in_fiber = (aura::messaging::g_fiber_set_yield_reason_mutation_boundary != nullptr);
+        const bool in_fiber =
+            (aura::messaging::g_fiber_set_yield_reason_mutation_boundary != nullptr);
         if (in_fiber) {
             aura::messaging::g_fiber_set_yield_reason_mutation_boundary();
         }
@@ -2625,11 +2614,12 @@ void register_mutate_primitives(
                 ev.workspace_flat_->rollback_atomic_batch();
                 ev.atomic_batch_rollbacks_++;
                 guard_ok = false;
-                return ev.make_merr("batch-unsupported-op",
-                                 ("mutate:atomic-batch does not yet support '" + op_name +
-                                  "' (only :rebind / :replace-value / :tweak-literal; the others "
-                                  "need lockless helper extraction)")
-                                     .c_str());
+                return ev.make_merr(
+                    "batch-unsupported-op",
+                    ("mutate:atomic-batch does not yet support '" + op_name +
+                     "' (only :rebind / :replace-value / :tweak-literal; the others "
+                     "need lockless helper extraction)")
+                        .c_str());
             }
             if (!sub_result) {
                 ok = false;
@@ -2694,8 +2684,8 @@ void register_mutate_primitives(
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr("bad-arg",
-                             "usage: (mutate:splice parent-id position code-strings... [summary])");
+            return ev.make_merr(
+                "bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
         }
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
@@ -2703,7 +2693,7 @@ void register_mutate_primitives(
         if (parent >= flat.size()) {
             ok = false;
             return ev.make_merr("out-of-range", "parent node ID " + std::to_string(parent) +
-                                                 " >= flat size " + std::to_string(flat.size()));
+                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         // Collect all code strings (variadic) before the optional summary
@@ -2796,7 +2786,8 @@ void register_mutate_primitives(
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
+            return ev.make_merr("bad-arg",
+                                "usage: (mutate:wrap node-id wrapper-template [summary])");
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto tmpl_idx = as_string_idx(a[1]);
@@ -2807,8 +2798,8 @@ void register_mutate_primitives(
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                                 std::to_string(flat.size()));
+            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -2836,7 +2827,7 @@ void register_mutate_primitives(
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
             ok = false;
             return ev.make_merr("no-parent",
-                             "node " + std::to_string(node) + " has no parent in the AST");
+                                "node " + std::to_string(node) + " has no parent in the AST");
         }
 
         // Replace `_` in the template with a unique variable
@@ -2895,7 +2886,7 @@ void register_mutate_primitives(
         if (sentinel_id == aura::ast::NULL_NODE || sentinel_parent == aura::ast::NULL_NODE ||
             sentinel_child_idx < 0)
             return ev.make_merr("internal",
-                             "sentinel placeholder not found in parsed wrapper template");
+                                "sentinel placeholder not found in parsed wrapper template");
 
         // Replace the sentinel variable in the wrapper with the target node
         flat.set_child(sentinel_parent, static_cast<std::uint32_t>(sentinel_child_idx), node);
@@ -2929,7 +2920,7 @@ void register_mutate_primitives(
             !ev.workspace_pool_) {
             ok = false;
             return ev.make_merr("bad-arg",
-                             "usage: (mutate:refactor/extract node-id new-name [summary])");
+                                "usage: (mutate:refactor/extract node-id new-name [summary])");
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
@@ -2940,13 +2931,14 @@ void register_mutate_primitives(
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                                 std::to_string(flat.size()));
+            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         auto new_name = ev.string_heap_[name_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2])) ? ev.string_heap_[as_string_idx(a[2])]
-                                                                : "extract " + new_name;
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? ev.string_heap_[as_string_idx(a[2])]
+                                  : "extract " + new_name;
 
         // Get the source code of the target node (for parsing)
         auto src_fn = ev.primitives_.lookup("current-source");
@@ -2996,7 +2988,7 @@ void register_mutate_primitives(
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
             ok = false;
             return ev.make_merr("no-parent",
-                             "node " + std::to_string(node) + " has no parent in the AST");
+                                "node " + std::to_string(node) + " has no parent in the AST");
         }
 
         // Create the new function definition string
@@ -3046,7 +3038,7 @@ void register_mutate_primitives(
         // Return (define-node-id . call-to-restore)
         auto result_pid = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)),
-                          make_int(static_cast<std::int64_t>(parent_of_target))});
+                             make_int(static_cast<std::int64_t>(parent_of_target))});
         return make_pair(result_pid);
     });
 
@@ -3234,7 +3226,7 @@ void register_mutate_primitives(
         if (count == 0) {
             ok = false;
             return ev.make_merr("not-found",
-                             std::string("symbol \"") + old_name + "\" not found in AST");
+                                std::string("symbol \"") + old_name + "\" not found in AST");
         }
 
         flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
@@ -3261,7 +3253,8 @@ void register_mutate_primitives(
             ok = false;
             return ev.make_merr("read-only", "workspace is read-only");
         }
-        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !ev.workspace_flat_) {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
+            !ev.workspace_flat_) {
             ok = false;
             return ev.make_merr("bad-arg", "usage: (mutate:move-node node parent pos)");
         }
@@ -3337,119 +3330,117 @@ void register_mutate_primitives(
     //   Extracts a subtree into a new top-level function definition.
     //   Analyzes free variables in the subtree and makes them parameters.
     //   Replaces the original node with a call to the new function.
-    add(
-        "mutate:extract-function", [&ev, collect_free_vars](const auto& a) -> EvalValue {
-            using namespace aura::ast;
-            // last local merr definition removed; all calls use centralized make_merr
-            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-            ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
-            if (ev.workspace_read_only_)
-                return ev.make_merr("read-only", "workspace is read-only");
-            if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
-                !ev.workspace_pool_)
-                return ev.make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
-            auto node = static_cast<NodeId>(as_int(a[0]));
-            auto name_idx = as_string_idx(a[1]);
-            if (name_idx >= ev.string_heap_.size())
-                return ev.make_merr("bad-arg", "name string index out of range");
-            auto& flat = *ev.workspace_flat_;
-            if (node >= flat.size())
-                return ev.make_merr("out-of-range", std::to_string(node) + " >= flat size " +
-                                                     std::to_string(flat.size()));
+    add("mutate:extract-function", [&ev, collect_free_vars](const auto& a) -> EvalValue {
+        using namespace aura::ast;
+        // last local merr definition removed; all calls use centralized make_merr
+        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        if (ev.workspace_read_only_)
+            return ev.make_merr("read-only", "workspace is read-only");
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
+            !ev.workspace_pool_)
+            return ev.make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
+        auto node = static_cast<NodeId>(as_int(a[0]));
+        auto name_idx = as_string_idx(a[1]);
+        if (name_idx >= ev.string_heap_.size())
+            return ev.make_merr("bad-arg", "name string index out of range");
+        auto& flat = *ev.workspace_flat_;
+        if (node >= flat.size())
+            return ev.make_merr("out-of-range", std::to_string(node) + " >= flat size " +
+                                                    std::to_string(flat.size()));
 
-            auto new_name = ev.string_heap_[name_idx];
-            std::string summary = (a.size() > 2 && is_string(a[2]))
-                                      ? ev.string_heap_[as_string_idx(a[2])]
-                                      : "extract " + new_name;
+        auto new_name = ev.string_heap_[name_idx];
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? ev.string_heap_[as_string_idx(a[2])]
+                                  : "extract " + new_name;
 
-            // Find parent of target node using parent_ vector
-            auto parent_of_target = flat.parent_of(node);
-            if (parent_of_target == NULL_NODE)
-                return ev.make_merr("no-parent", "extracted node has no parent");
+        // Find parent of target node using parent_ vector
+        auto parent_of_target = flat.parent_of(node);
+        if (parent_of_target == NULL_NODE)
+            return ev.make_merr("no-parent", "extracted node has no parent");
 
-            // Find child index in parent
-            int child_idx_in_parent = -1;
-            auto pv = flat.get(parent_of_target);
-            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                if (pv.child(ci) == node) {
-                    child_idx_in_parent = static_cast<int>(ci);
-                    break;
-                }
+        // Find child index in parent
+        int child_idx_in_parent = -1;
+        auto pv = flat.get(parent_of_target);
+        for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == node) {
+                child_idx_in_parent = static_cast<int>(ci);
+                break;
             }
-            if (child_idx_in_parent < 0)
-                return ev.make_merr("inconsistency", "node not found in parent's children list");
+        }
+        if (child_idx_in_parent < 0)
+            return ev.make_merr("inconsistency", "node not found in parent's children list");
 
-            // Collect free variables in the extracted subtree
-            // Filter out common built-in symbols
-            auto raw_free_vars = collect_free_vars(flat, node, *ev.workspace_pool_);
-            std::vector<SymId> free_vars;
-            {
-                static const char* builtins[] = {
-                    "+",          "-",      "*",         "/",       "%",       "=",       "<",
-                    ">",          "<=",     ">=",        "display", "newline", "print",   "read",
-                    "car",        "cdr",    "cons",      "pair?",   "null?",   "list",    "eq?",
-                    "eqv?",       "equal?", "not",       "and",     "or",      "if",      "cond",
-                    "lambda",     "define", "let",       "letrec",  "begin",   "set!",    "apply",
-                    "map",        "filter", "foldl",     "foldr",   "string?", "number?", "symbol?",
-                    "procedure?", "void",   "make-void", "error",   "assert",
-                };
-                std::unordered_set<SymId> builtin_syms;
-                for (auto b : builtins)
-                    builtin_syms.insert(ev.workspace_pool_->intern(b));
-                for (auto fv : raw_free_vars) {
-                    if (builtin_syms.find(fv) == builtin_syms.end())
-                        free_vars.push_back(fv);
-                }
+        // Collect free variables in the extracted subtree
+        // Filter out common built-in symbols
+        auto raw_free_vars = collect_free_vars(flat, node, *ev.workspace_pool_);
+        std::vector<SymId> free_vars;
+        {
+            static const char* builtins[] = {
+                "+",          "-",      "*",         "/",       "%",       "=",       "<",
+                ">",          "<=",     ">=",        "display", "newline", "print",   "read",
+                "car",        "cdr",    "cons",      "pair?",   "null?",   "list",    "eq?",
+                "eqv?",       "equal?", "not",       "and",     "or",      "if",      "cond",
+                "lambda",     "define", "let",       "letrec",  "begin",   "set!",    "apply",
+                "map",        "filter", "foldl",     "foldr",   "string?", "number?", "symbol?",
+                "procedure?", "void",   "make-void", "error",   "assert",
+            };
+            std::unordered_set<SymId> builtin_syms;
+            for (auto b : builtins)
+                builtin_syms.insert(ev.workspace_pool_->intern(b));
+            for (auto fv : raw_free_vars) {
+                if (builtin_syms.find(fv) == builtin_syms.end())
+                    free_vars.push_back(fv);
             }
+        }
 
-            // Step 1: Create lambda with free vars as params, body = extracted node
-            auto lambda_id = flat.add_lambda(free_vars, node);
+        // Step 1: Create lambda with free vars as params, body = extracted node
+        auto lambda_id = flat.add_lambda(free_vars, node);
 
-            // Step 2: Create (define new-name lambda)
-            auto new_sym = ev.workspace_pool_->intern(new_name);
-            auto define_id = flat.add_define(new_sym, lambda_id);
-            flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
-            flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
+        // Step 2: Create (define new-name lambda)
+        auto new_sym = ev.workspace_pool_->intern(new_name);
+        auto define_id = flat.add_define(new_sym, lambda_id);
+        flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
+        flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
 
-            // Step 3: Create call site (new-name free-var-1 ...)
-            auto var_id = flat.add_variable(new_sym);
-            flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
-            std::vector<NodeId> call_args;
-            call_args.reserve(free_vars.size());
-            for (auto fv : free_vars) {
-                auto arg_var = flat.add_variable(fv);
-                call_args.push_back(arg_var);
-            }
-            auto call_id = flat.add_call(var_id, call_args);
-            flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
+        // Step 3: Create call site (new-name free-var-1 ...)
+        auto var_id = flat.add_variable(new_sym);
+        flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
+        std::vector<NodeId> call_args;
+        call_args.reserve(free_vars.size());
+        for (auto fv : free_vars) {
+            auto arg_var = flat.add_variable(fv);
+            call_args.push_back(arg_var);
+        }
+        auto call_id = flat.add_call(var_id, call_args);
+        flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
 
-            // Step 5: Replace original node slot with the call
-            flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
-                           call_id);
+        // Step 5: Replace original node slot with the call
+        flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), call_id);
 
-            // Step 6: Insert new define as a child of the workspace root
-            // Insert at position 0 (before other defs) to avoid forward-reference issues
-            auto ws_root = flat.root;
-            if (ws_root != NULL_NODE && ws_root < flat.size()) {
-                flat.insert_child(ws_root, 0, define_id);
-            }
+        // Step 6: Insert new define as a child of the workspace root
+        // Insert at position 0 (before other defs) to avoid forward-reference issues
+        auto ws_root = flat.root;
+        if (ws_root != NULL_NODE && ws_root < flat.size()) {
+            flat.insert_child(ws_root, 0, define_id);
+        }
 
-            ev.workspace_flat_->mark_dirty_upward(define_id);
-            if (ws_root != aura::ast::NULL_NODE)
-                ev.workspace_flat_->mark_dirty_upward(ws_root);
+        ev.workspace_flat_->mark_dirty_upward(define_id);
+        if (ws_root != aura::ast::NULL_NODE)
+            ev.workspace_flat_->mark_dirty_upward(ws_root);
 
-            flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
-            flat.restamp_all_node_generations();
+        flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+        flat.restamp_all_node_generations();
 
-            // Return (define-node-id . call-node-id)
-            auto result_pid = ev.pairs_.size();
-            {
-                auto car_val = make_int(static_cast<std::int64_t>(define_id));
-                auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
-                ev.pairs_.push_back(Pair{car_val, cdr_val});
-            }
-            return make_pair(result_pid);
-        });
+        // Return (define-node-id . call-node-id)
+        auto result_pid = ev.pairs_.size();
+        {
+            auto car_val = make_int(static_cast<std::int64_t>(define_id));
+            auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
+            ev.pairs_.push_back(Pair{car_val, cdr_val});
+        }
+        return make_pair(result_pid);
+    });
 
     // ── mutate:inline-call ──────────────────────────────────────
     // (mutate:inline-call call-node-id "summary")
@@ -3478,7 +3469,7 @@ void register_mutate_primitives(
         auto cv = flat.get(call_id);
         if (cv.tag != NodeTag::Call || cv.children.empty())
             return ev.make_merr("type-error",
-                             "node " + std::to_string(call_id) + " is not a call node");
+                                "node " + std::to_string(call_id) + " is not a call node");
 
         std::string summary = (a.size() > 1 && is_string(a[1]))
                                   ? ev.string_heap_[as_string_idx(a[1])]
@@ -3727,18 +3718,17 @@ void register_mutate_primitives(
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_bool(false);
+        if (!ws)
+            return make_bool(false);
         auto cg_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (cg_id >= ws->size())
             return make_bool(false);
         ws->bump_sv_mutate_attempt();
         // Add a mutation record (so the change is visible
         // in the workspace log + trigger mark_dirty_upward).
-        ws->add_mutation(cg_id, "sv-add-coverpoint",
-                         "covergroup", "covergroup+coverpoint",
+        ws->add_mutation(cg_id, "sv-add-coverpoint", "covergroup", "covergroup+coverpoint",
                          "added coverpoint via #469 closed-loop");
-        ws->apply_verification_dirty_bits(
-            cg_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
+        ws->apply_verification_dirty_bits(cg_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
         ws->apply_verify_dirty_bits(cg_id, aura::ast::FlatAST::kSvaDirty);
         ws->mark_ppa_dirty(cg_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
         ws->mark_dirty_upward(cg_id, aura::ast::FlatAST::kGeneralDirty,
@@ -3761,16 +3751,15 @@ void register_mutate_primitives(
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
-        if (!ws) return make_bool(false);
+        if (!ws)
+            return make_bool(false);
         auto pid = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (pid >= ws->size())
             return make_bool(false);
         ws->bump_sv_mutate_attempt();
-        ws->add_mutation(pid, "sv-weaken-property",
-                         "property", "property+disable-iff",
+        ws->add_mutation(pid, "sv-weaken-property", "property", "property+disable-iff",
                          "weakened property via #469 closed-loop");
-        ws->apply_verification_dirty_bits(
-            pid, aura::ast::FlatAST::kAssertFailureDirty);
+        ws->apply_verification_dirty_bits(pid, aura::ast::FlatAST::kAssertFailureDirty);
         ws->apply_verify_dirty_bits(pid, aura::ast::FlatAST::kSvaDirty);
         ws->mark_ppa_dirty(pid, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
@@ -3851,10 +3840,9 @@ void register_mutate_primitives(
         const auto& bin_name = ev.string_heap_[bin_idx];
         ws->append_param(cp_id, pool->intern(bin_name));
         ws->bump_sv_mutate_attempt();
-        ws->add_mutation(cp_id, "eda-add-coverpoint-bin", "coverpoint",
-                         "coverpoint+bin", "added coverpoint bin via #694");
-        ws->apply_verification_dirty_bits(
-            cp_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
+        ws->add_mutation(cp_id, "eda-add-coverpoint-bin", "coverpoint", "coverpoint+bin",
+                         "added coverpoint bin via #694");
+        ws->apply_verification_dirty_bits(cp_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
         ws->apply_verify_dirty_bits(cp_id, aura::ast::FlatAST::kSvaDirty);
         ws->mark_ppa_dirty(cp_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
         ws->mark_dirty_upward(cp_id, aura::ast::FlatAST::kGeneralDirty,
@@ -3865,7 +3853,6 @@ void register_mutate_primitives(
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail
@@ -3873,41 +3860,41 @@ void register_mutate_primitives(
 namespace aura::compiler {
 namespace {
 
-bool subtree_has_closure_for_inval(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
-    if (root == aura::ast::NULL_NODE || root >= flat.size())
-        return false;
-    auto walk = [&](auto self, aura::ast::NodeId id) -> bool {
-        if (id == aura::ast::NULL_NODE || id >= flat.size())
+    bool subtree_has_closure_for_inval(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
-        auto v = flat.get(id);
-        if (v.tag == aura::ast::NodeTag::Lambda)
-            return true;
-        for (auto c : v.children) {
-            if (c != aura::ast::NULL_NODE && self(self, c))
+        auto walk = [&](auto self, aura::ast::NodeId id) -> bool {
+            if (id == aura::ast::NULL_NODE || id >= flat.size())
+                return false;
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Lambda)
                 return true;
-        }
-        return false;
-    };
-    return walk(walk, root);
-}
+            for (auto c : v.children) {
+                if (c != aura::ast::NULL_NODE && self(self, c))
+                    return true;
+            }
+            return false;
+        };
+        return walk(walk, root);
+    }
 
-bool define_needs_precise_invalidation_for_inval(const aura::ast::FlatAST& flat,
-                                                 aura::ast::NodeId define_id) {
-    if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
-        return false;
-    auto v = flat.get(define_id);
-    if (v.tag != aura::ast::NodeTag::Define)
-        return subtree_has_closure_for_inval(flat, define_id);
-    if (v.children.empty())
-        return false;
-    const auto body = v.child(0);
-    const auto bv = flat.get(body);
-    if (bv.tag == aura::ast::NodeTag::Lambda)
-        return true;
-    return subtree_has_closure_for_inval(flat, body);
-}
+    bool define_needs_precise_invalidation_for_inval(const aura::ast::FlatAST& flat,
+                                                     aura::ast::NodeId define_id) {
+        if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
+            return false;
+        auto v = flat.get(define_id);
+        if (v.tag != aura::ast::NodeTag::Define)
+            return subtree_has_closure_for_inval(flat, define_id);
+        if (v.children.empty())
+            return false;
+        const auto body = v.child(0);
+        const auto bv = flat.get(body);
+        if (bv.tag == aura::ast::NodeTag::Lambda)
+            return true;
+        return subtree_has_closure_for_inval(flat, body);
+    }
 
-}  // namespace
+} // namespace
 
 void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& flat,
                                                     const std::string& name,
@@ -3927,4 +3914,4 @@ void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& fl
     }
 }
 
-}  // namespace aura::compiler
+} // namespace aura::compiler

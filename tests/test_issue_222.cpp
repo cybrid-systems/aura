@@ -58,13 +58,12 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 using PCV = aura::ast::PersistentChildVector<std::uint32_t>;
 using NodeId = std::uint32_t;
 static constexpr NodeId NULL_NODE = ~0u;
-
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -74,7 +73,7 @@ static constexpr NodeId NULL_NODE = ~0u;
 // Mirrors the production API in src/core/ast.ixx closely
 // enough to validate the design without needing the module.
 struct TestFlatAST {
-    std::vector<PCV> children_;  // per-node children
+    std::vector<PCV> children_; // per-node children
     std::vector<NodeId> parent_;
     std::vector<std::uint8_t> dirty_;
     std::uint16_t generation_ = 1;
@@ -89,7 +88,8 @@ struct TestFlatAST {
     void bump_generation() noexcept {
         ++generation_;
         // Skip 0 (reserved as "no node"); wraps at 65535
-        if (generation_ == 0) generation_ = 1;
+        if (generation_ == 0)
+            generation_ = 1;
     }
 
     void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
@@ -100,9 +100,7 @@ struct TestFlatAST {
         dirty_[id] |= reasons;
     }
 
-    bool is_dirty(NodeId id) const {
-        return id < dirty_.size() && dirty_[id] != 0;
-    }
+    bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id] != 0; }
 
     NodeId add_node() {
         NodeId id = static_cast<NodeId>(children_.size());
@@ -117,17 +115,24 @@ struct TestFlatAST {
     public:
         StructuralMutationGuard() = default;
         explicit StructuralMutationGuard(TestFlatAST* ast)
-            : ast_(ast), lock_() {
-            if (ast_) lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.mtx);
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.mtx);
         }
-        ~StructuralMutationGuard() { if (ast_) ast_->bump_generation(); }
+        ~StructuralMutationGuard() {
+            if (ast_)
+                ast_->bump_generation();
+        }
         StructuralMutationGuard(const StructuralMutationGuard&) = delete;
         StructuralMutationGuard& operator=(const StructuralMutationGuard&) = delete;
         StructuralMutationGuard(StructuralMutationGuard&& o) noexcept
-            : ast_(o.ast_), lock_(std::move(o.lock_)) { o.ast_ = nullptr; }
-        explicit operator bool() const noexcept {
-            return ast_ != nullptr && lock_.owns_lock();
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
         }
+        explicit operator bool() const noexcept { return ast_ != nullptr && lock_.owns_lock(); }
+
     private:
         TestFlatAST* ast_ = nullptr;
         std::unique_lock<std::shared_mutex> lock_;
@@ -140,7 +145,8 @@ struct TestFlatAST {
     public:
         ReaderLockGuard() = default;
         explicit ReaderLockGuard(const TestFlatAST* ast)
-            : ast_(ast), lock_() {
+            : ast_(ast)
+            , lock_() {
             if (ast_) {
                 // shared_lock needs a non-const mutex ref to acquire;
                 // const_cast is safe (acquiring the lock doesn't modify
@@ -153,7 +159,10 @@ struct TestFlatAST {
         ReaderLockGuard(const ReaderLockGuard&) = delete;
         ReaderLockGuard& operator=(const ReaderLockGuard&) = delete;
         ReaderLockGuard(ReaderLockGuard&& o) noexcept
-            : ast_(o.ast_), lock_(std::move(o.lock_)) { o.ast_ = nullptr; }
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
         ReaderLockGuard& operator=(ReaderLockGuard&& o) noexcept {
             if (this != &o) {
                 ast_ = o.ast_;
@@ -162,16 +171,13 @@ struct TestFlatAST {
             }
             return *this;
         }
-        explicit operator bool() const noexcept {
-            return ast_ != nullptr && lock_.owns_lock();
-        }
+        explicit operator bool() const noexcept { return ast_ != nullptr && lock_.owns_lock(); }
+
     private:
         const TestFlatAST* ast_ = nullptr;
         std::shared_lock<std::shared_mutex> lock_;
     };
-    [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const {
-        return ReaderLockGuard(this);
-    }
+    [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const { return ReaderLockGuard(this); }
 
     // ── Mutators (routed through guard + mark_dirty + mutation_log_) ──
     // Issue #222 slice 2/3: structural mutates also append a
@@ -196,7 +202,8 @@ struct TestFlatAST {
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
         StructuralMutationGuard guard(this);
         const auto& list = children_[id];
-        if (idx >= list.size()) return;
+        if (idx >= list.size())
+            return;
         auto old_cid = list[idx];
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
@@ -237,10 +244,12 @@ void test_1_single_thread() {
 
     // Build a small AST: 5 nodes, each with 2 children
     std::vector<NodeId> ids;
-    for (int i = 0; i < 5; ++i) ids.push_back(ast.add_node());
+    for (int i = 0; i < 5; ++i)
+        ids.push_back(ast.add_node());
     // Add 10 more "leaf" nodes (one per child slot, no sharing).
     std::vector<NodeId> leaves;
-    for (int i = 0; i < 10; ++i) leaves.push_back(ast.add_node());
+    for (int i = 0; i < 10; ++i)
+        leaves.push_back(ast.add_node());
 
     // Wire up: node[i].children = [leaves[2i], leaves[2i+1]]
     std::uint16_t gen_before = ast.generation_;
@@ -312,7 +321,7 @@ void test_2_reader_lock() {
     // Write lock would block — but we don't test that here
     // (would require a separate thread to avoid deadlock).
     {
-        TestFlatAST::ReaderLockGuard tmp;  // release first lock
+        TestFlatAST::ReaderLockGuard tmp; // release first lock
         guard = std::move(tmp);
     }
     CHECK(!static_cast<bool>(guard), "default-constructed guard is invalid");
@@ -328,7 +337,8 @@ void test_3_two_thread_smoke() {
     TestFlatAST ast;
     constexpr int N_NODES = 100;
     std::vector<NodeId> ids;
-    for (int i = 0; i < N_NODES; ++i) ids.push_back(ast.add_node());
+    for (int i = 0; i < N_NODES; ++i)
+        ids.push_back(ast.add_node());
 
     std::atomic<bool> reader_ready{false};
     std::atomic<bool> writer_done{false};
@@ -348,9 +358,11 @@ void test_3_two_thread_smoke() {
                 std::uint16_t g = ast.generation_;
                 // Track max/min observed gen
                 std::uint16_t cur_max = reader_max_gen.load();
-                while (g > cur_max && !reader_max_gen.compare_exchange_weak(cur_max, g)) {}
+                while (g > cur_max && !reader_max_gen.compare_exchange_weak(cur_max, g)) {
+                }
                 std::uint16_t cur_min = reader_min_gen.load();
-                while (g < cur_min && !reader_min_gen.compare_exchange_weak(cur_min, g)) {}
+                while (g < cur_min && !reader_min_gen.compare_exchange_weak(cur_min, g)) {
+                }
                 NodeId n = ids[count % N_NODES];
                 auto sz = ast.children_[n].size();
                 (void)sz;
@@ -396,11 +408,13 @@ void test_4_multi_thread_stress() {
     TestFlatAST ast;
     constexpr int N_NODES = 100;
     constexpr int N_THREADS = 4;
-    constexpr int MUTATES_PER_THREAD = 250;  // 1000 total
+    constexpr int MUTATES_PER_THREAD = 250; // 1000 total
     std::vector<NodeId> ids;
-    for (int i = 0; i < N_NODES; ++i) ids.push_back(ast.add_node());
+    for (int i = 0; i < N_NODES; ++i)
+        ids.push_back(ast.add_node());
     // Each node starts with 1 self-reference as child (so set_child has something to overwrite)
-    for (auto id : ids) ast.insert_child(id, 0, id);
+    for (auto id : ids)
+        ast.insert_child(id, 0, id);
 
     std::uint16_t gen_before = ast.generation_;
     std::atomic<int> errors{0};
@@ -424,7 +438,8 @@ void test_4_multi_thread_stress() {
             }
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
 
     // Post-mutation invariant check (acquires a single reader lock
     // so the reads are TSan-clean):
@@ -440,17 +455,18 @@ void test_4_multi_thread_stress() {
 
     CHECK(errors.load() == 0, "no torn reads detected");
     // Each mutate triggers exactly one generation bump (in guard's dtor)
-    // 1000 mutates total → generation increased by at least 1000 (might be more if some ops were no-ops)
+    // 1000 mutates total → generation increased by at least 1000 (might be more if some ops were
+    // no-ops)
     std::uint16_t gen_after = ast.generation_;
-    int gen_delta = (gen_after >= gen_before)
-        ? (gen_after - gen_before)
-        : (65535 - gen_before + gen_after);  // wraparound
-    CHECK(gen_delta >= N_THREADS * MUTATES_PER_THREAD,
-          "generation bumped at least N*M times");
+    int gen_delta = (gen_after >= gen_before) ? (gen_after - gen_before)
+                                              : (65535 - gen_before + gen_after); // wraparound
+    CHECK(gen_delta >= N_THREADS * MUTATES_PER_THREAD, "generation bumped at least N*M times");
 
     // All nodes should be dirty
     int dirty_count = 0;
-    for (auto id : ids) if (ast.is_dirty(id)) ++dirty_count;
+    for (auto id : ids)
+        if (ast.is_dirty(id))
+            ++dirty_count;
     CHECK(dirty_count >= N_NODES / 2,
           "majority of nodes are dirty (concurrent mutates touched them)");
 }
@@ -461,7 +477,8 @@ void test_5_explicit_guard() {
     TestFlatAST ast;
     constexpr int N = 10;
     std::vector<NodeId> ids;
-    for (int i = 0; i < N; ++i) ids.push_back(ast.add_node());
+    for (int i = 0; i < N; ++i)
+        ids.push_back(ast.add_node());
 
     std::uint16_t gen_before = ast.generation_;
     {
@@ -480,8 +497,8 @@ void test_5_explicit_guard() {
         // 4 raw mutates under one guard → only ONE generation bump on guard exit
     }
     std::uint16_t gen_after = ast.generation_;
-    int gen_delta = (gen_after >= gen_before)
-        ? (gen_after - gen_before) : (65535 - gen_before + gen_after);
+    int gen_delta =
+        (gen_after >= gen_before) ? (gen_after - gen_before) : (65535 - gen_before + gen_after);
     CHECK(gen_delta == 1, "multi-step mutate bumps generation exactly once");
 
     // Verify the swap happened
@@ -489,18 +506,23 @@ void test_5_explicit_guard() {
     CHECK(ast.children_[ids[5]].size() >= 1, "ids[5] has at least 1 child");
 }
 
-#define SAFE_TEST(name, fn) do { \
-    try { \
-        fn(); \
-        std::fprintf(stdout, "  ✓ " #fn " done\n"); std::fflush(stdout); \
-    } catch (const std::system_error& e) { \
-        std::fprintf(stderr, "✗ " #fn " system_error: %s (code=%d)\n", e.what(), e.code().value()); \
-        std::fflush(stderr); ++g_failed; \
-    } catch (const std::exception& e) { \
-        std::fprintf(stderr, "✗ " #fn " exception: %s\n", e.what()); \
-        std::fflush(stderr); ++g_failed; \
-    } \
-} while(0)
+#define SAFE_TEST(name, fn)                                                                        \
+    do {                                                                                           \
+        try {                                                                                      \
+            fn();                                                                                  \
+            std::fprintf(stdout, "  ✓ " #fn " done\n");                                            \
+            std::fflush(stdout);                                                                   \
+        } catch (const std::system_error& e) {                                                     \
+            std::fprintf(stderr, "✗ " #fn " system_error: %s (code=%d)\n", e.what(),               \
+                         e.code().value());                                                        \
+            std::fflush(stderr);                                                                   \
+            ++g_failed;                                                                            \
+        } catch (const std::exception& e) {                                                        \
+            std::fprintf(stderr, "✗ " #fn " exception: %s\n", e.what());                           \
+            std::fflush(stderr);                                                                   \
+            ++g_failed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── Test 6: Mutation log + mark_dirty_upward (slice 2/3) ───
 void test_6_mutation_log() {
@@ -544,8 +566,8 @@ void test_6_mutation_log() {
 
     // No-ops (out-of-range) don't append
     std::size_t before = ast.mutation_log_.size();
-    ast.set_child(a, 999, NULL_NODE);  // out of range
-    ast.remove_child(a, 999);          // out of range
+    ast.set_child(a, 999, NULL_NODE); // out of range
+    ast.remove_child(a, 999);         // out of range
     CHECK(ast.mutation_log_.size() == before, "out-of-range ops don't append to log");
 }
 
@@ -558,16 +580,18 @@ void test_7_high_iteration_stress() {
     TestFlatAST ast;
     constexpr int N_NODES = 200;
     constexpr int N_WRITER_THREADS = 8;
-    constexpr int MUTATES_PER_THREAD = 5000;  // 40000 total
+    constexpr int MUTATES_PER_THREAD = 5000; // 40000 total
     constexpr int READER_ITERATIONS = 20000;
     std::vector<NodeId> ids;
-    for (int i = 0; i < N_NODES; ++i) ids.push_back(ast.add_node());
+    for (int i = 0; i < N_NODES; ++i)
+        ids.push_back(ast.add_node());
     // Seed: each node has 1 self-child so set_child has work to do.
-    for (auto id : ids) ast.insert_child(id, 0, id);
+    for (auto id : ids)
+        ast.insert_child(id, 0, id);
 
     std::atomic<bool> writers_done{false};
     std::atomic<int> read_iterations{0};
-    std::atomic<int> read_failures{0};  // reader observed torn generation
+    std::atomic<int> read_failures{0}; // reader observed torn generation
 
     // Writers
     std::uint16_t gen_before = ast.generation_;
@@ -598,18 +622,21 @@ void test_7_high_iteration_stress() {
             auto rg = ast.try_acquire_reader_lock();
             if (rg) {
                 std::uint16_t g = ast.generation_;
-                if (g < last_gen) ++read_failures;  // should never happen
+                if (g < last_gen)
+                    ++read_failures; // should never happen
                 last_gen = g;
                 NodeId n = ids[count % N_NODES];
                 (void)ast.children_[n].size();
                 ++count;
             }
-            if (count >= READER_ITERATIONS) break;
+            if (count >= READER_ITERATIONS)
+                break;
         }
         read_iterations = count;
     });
 
-    for (auto& th : writers) th.join();
+    for (auto& th : writers)
+        th.join();
     writers_done = true;
     reader.join();
 
@@ -618,12 +645,11 @@ void test_7_high_iteration_stress() {
           "reader iterated at least half the target (lock contention OK)");
 
     std::uint16_t gen_after = ast.generation_;
-    int gen_delta = (gen_after >= gen_before)
-        ? (gen_after - gen_before)
-        : (65535 - gen_before + gen_after);  // u16 wraparound
-    int expected_min = N_WRITER_THREADS * MUTATES_PER_THREAD * 2 / 3;  // ~2/3 actually mutate (1/3 are remove on size 2)
-    CHECK(gen_delta >= expected_min,
-          "generation bumped at least the expected mutate count");
+    int gen_delta = (gen_after >= gen_before) ? (gen_after - gen_before)
+                                              : (65535 - gen_before + gen_after); // u16 wraparound
+    int expected_min = N_WRITER_THREADS * MUTATES_PER_THREAD * 2 /
+                       3; // ~2/3 actually mutate (1/3 are remove on size 2)
+    CHECK(gen_delta >= expected_min, "generation bumped at least the expected mutate count");
 
     // Post-stress invariants (acquire reader lock for TSan-clean reads)
     {

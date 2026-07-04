@@ -53,28 +53,38 @@ namespace aura_390_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → schema_cache_* = 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: schema_cache_* counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.schema_cache_lookups_total, 0u,
-             "schema_cache_lookups_total == 0");
-    CHECK_EQ(snap.schema_cache_hits_total, 0u,
-             "schema_cache_hits_total == 0");
-    CHECK_EQ(snap.schema_cache_hit_rate_bp, 0u,
-             "schema_cache_hit_rate_bp == 0");
+    CHECK_EQ(snap.schema_cache_lookups_total, 0u, "schema_cache_lookups_total == 0");
+    CHECK_EQ(snap.schema_cache_hits_total, 0u, "schema_cache_hits_total == 0");
+    CHECK_EQ(snap.schema_cache_hit_rate_bp, 0u, "schema_cache_hit_rate_bp == 0");
     return true;
 }
 
@@ -121,8 +131,7 @@ bool test_schema_cache_lookup_after_typecheck() {
     auto r = cs.typecheck("(let ((x 5)) x)");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  schema_cache_lookups_total: {}",
-                 snap.schema_cache_lookups_total);
+    std::println("  schema_cache_lookups_total: {}", snap.schema_cache_lookups_total);
     // The counter is plumbed end-to-end. It may be 0
     // if the path doesn't hit a node with a populated
     // schema_cache (the schema_cache column is
@@ -153,13 +162,14 @@ bool test_flatast_accessor_roundtrip() {
     // writeable + readable at the FlatAST level.
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() is non-null after eval");
-    if (!ws) return false;
+    if (!ws)
+        return false;
     // Find a node (the binding form for accessor-test).
     // The accessor must return 0 for unset, the set
     // value for set.
     bool found_unset = false;
     bool found_set = false;
-    std::uint32_t set_value = 42;  // any non-zero test value
+    std::uint32_t set_value = 42; // any non-zero test value
     for (std::uint32_t id = 0; id < ws->size(); ++id) {
         auto v = ws->get(id);
         // Skip invalid node ids (size out-of-range).
@@ -167,7 +177,8 @@ bool test_flatast_accessor_roundtrip() {
         // for every node at creation time, so all
         // valid nodes have a schema_cache value (0 or
         // a set value).
-        if (id >= ws->size()) continue;
+        if (id >= ws->size())
+            continue;
         // Find one node where schema_cache is 0
         // (unset) and set its value.
         if (ws->schema_cache(id) == 0 && !found_unset) {
@@ -177,13 +188,14 @@ bool test_flatast_accessor_roundtrip() {
             if (readback == set_value) {
                 found_set = true;
             } else {
-                std::println("  FAIL: readback mismatch (expected {}, got {})",
-                             set_value, readback);
+                std::println("  FAIL: readback mismatch (expected {}, got {})", set_value,
+                             readback);
                 ++g_failed;
             }
             found_unset = true;
         }
-        if (found_unset && found_set) break;
+        if (found_unset && found_set)
+            break;
     }
     CHECK(found_unset, "found a node with unset schema_cache (column initialized to 0)");
     CHECK(found_set, "schema_cache set + readback works (set returns set value)");
@@ -206,14 +218,11 @@ bool test_type_checker_consults_schema_cache() {
     // typechecker will re-infer the cloned body; if
     // the body has schema_cache populated, the lookup
     // counter will fire.
-    auto r = cs.typecheck(
-        "(define-hygienic-macro (incr x) (+ x 1)) (incr 5)");
+    auto r = cs.typecheck("(define-hygienic-macro (incr x) (+ x 1)) (incr 5)");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  schema_cache_lookups_total: {}",
-                 snap.schema_cache_lookups_total);
-    std::println("  schema_cache_hits_total: {}",
-                 snap.schema_cache_hits_total);
+    std::println("  schema_cache_lookups_total: {}", snap.schema_cache_lookups_total);
+    std::println("  schema_cache_hits_total: {}", snap.schema_cache_hits_total);
     // The lookup counter may be 0 (macro body not
     // re-inferred in this path) or > 0 (if the
     // path triggered a re-infer). We just confirm
@@ -229,13 +238,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define reg-test 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define reg-test 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_390_detail
+} // namespace aura_390_detail
 
 int main() {
     using namespace aura_390_detail;
@@ -247,7 +255,7 @@ int main() {
     test_flatast_accessor_roundtrip();
     test_type_checker_consults_schema_cache();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

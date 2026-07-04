@@ -40,15 +40,13 @@ static std::string read_file(const std::string& path) {
     std::ifstream f(path);
     std::string content;
     if (f.good()) {
-        content.assign((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
+        content.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     }
     f.close();
     return content;
 }
 
-static int count_substr(const std::string& haystack,
-                        const std::string& needle) {
+static int count_substr(const std::string& haystack, const std::string& needle) {
     int count = 0;
     std::size_t pos = 0;
     while ((pos = haystack.find(needle, pos + 1)) != std::string::npos) {
@@ -59,27 +57,32 @@ static int count_substr(const std::string& haystack,
 
 // Extract the "N registrations scanned" header from primitives.md.
 static int get_primitive_count_from_docs() {
-    std::string content =
-        read_file("/home/dev/code/aura/docs/generated/primitives.md");
+    std::string content = read_file("/home/dev/code/aura/docs/generated/primitives.md");
     // Format: `**N** registrations scanned`. We use a simple
     // approach: search for "**" right before "registrations",
     // then find the next "**", and extract the number between
     // them.
     const std::string marker = "registrations scanned";
     auto pos = content.find(marker);
-    if (pos == std::string::npos) return -1;
+    if (pos == std::string::npos)
+        return -1;
     // Find the ** that ends the number (immediately before
     // "registrations"). Search backwards from pos.
     auto end = content.rfind("**", pos);
-    if (end == std::string::npos) return -1;
+    if (end == std::string::npos)
+        return -1;
     // Find the ** that starts the number (before the digits).
     // Search backwards from end.
     auto start = content.rfind("**", end - 2);
-    if (start == std::string::npos) return -1;
+    if (start == std::string::npos)
+        return -1;
     std::string num = content.substr(start + 2, end - start - 2);
     // stoi parses leading digits and stops at non-digit.
-    try { return std::stoi(num); }
-    catch (...) { return -1; }
+    try {
+        return std::stoi(num);
+    } catch (...) {
+        return -1;
+    }
 }
 
 // ── AC1: current primitive count (read from primitives.md)
@@ -94,8 +97,7 @@ bool test_current_primitive_count() {
     // removal from #561 brought it back to net +1. So the
     // expected count is around 509-510 (vs the pre-epic ~507).
     // We just verify the count is reasonable.
-    CHECK(n >= 400 && n <= 600,
-          "primitive count in reasonable range [400, 600]");
+    CHECK(n >= 400 && n <= 600, "primitive count in reasonable range [400, 600]");
     return true;
 }
 
@@ -103,20 +105,16 @@ bool test_current_primitive_count() {
 bool test_stdlib_modules_consistency() {
     std::println("\n--- AC2: stdlib modules consistency ---");
     std::vector<std::string> modules = {
-        "stats", "synthesize", "query", "ast", "workspace",
-        "core", "INDEX",
+        "stats", "synthesize", "query", "ast", "workspace", "core", "INDEX",
     };
     int present = 0;
     for (const auto& m : modules) {
-        std::string aura = read_file(
-            "/home/dev/code/aura/lib/std/" + m + ".aura");
-        std::string type = read_file(
-            "/home/dev/code/aura/lib/std/" + m + ".aura-type");
+        std::string aura = read_file("/home/dev/code/aura/lib/std/" + m + ".aura");
+        std::string type = read_file("/home/dev/code/aura/lib/std/" + m + ".aura-type");
         if (!aura.empty() && !type.empty()) {
             ++present;
         }
-        std::println("  lib/std/{}.aura: aura={} type={}", m,
-                     !aura.empty(), !type.empty());
+        std::println("  lib/std/{}.aura: aura={} type={}", m, !aura.empty(), !type.empty());
     }
     CHECK(present >= 7, "all 7 stdlib modules shipped in #558-#565 present");
     return true;
@@ -128,22 +126,15 @@ bool test_index_reachability() {
     std::string index = read_file("/home/dev/code/aura/lib/std/INDEX.aura");
     CHECK(!index.empty(), "INDEX.aura exists");
     // Verify the 5 stdlib:* discovery functions are exported.
-    CHECK(index.find("(stdlib:list") != std::string::npos,
-          "INDEX exports (stdlib:list)");
-    CHECK(index.find("(stdlib:help") != std::string::npos,
-          "INDEX exports (stdlib:help)");
-    CHECK(index.find("(stdlib:examples") != std::string::npos,
-          "INDEX exports (stdlib:examples)");
-    CHECK(index.find("(stdlib:by-prefix") != std::string::npos,
-          "INDEX exports (stdlib:by-prefix)");
-    CHECK(index.find("(stdlib:by-tag") != std::string::npos,
-          "INDEX exports (stdlib:by-tag)");
+    CHECK(index.find("(stdlib:list") != std::string::npos, "INDEX exports (stdlib:list)");
+    CHECK(index.find("(stdlib:help") != std::string::npos, "INDEX exports (stdlib:help)");
+    CHECK(index.find("(stdlib:examples") != std::string::npos, "INDEX exports (stdlib:examples)");
+    CHECK(index.find("(stdlib:by-prefix") != std::string::npos, "INDEX exports (stdlib:by-prefix)");
+    CHECK(index.find("(stdlib:by-tag") != std::string::npos, "INDEX exports (stdlib:by-tag)");
     // Verify the master registry lists all 7 stdlib modules.
-    for (const auto& m : {"stats", "synthesize", "query",
-                            "ast", "workspace", "core"}) {
+    for (const auto& m : {"stats", "synthesize", "query", "ast", "workspace", "core"}) {
         const std::string quoted = std::string("\"") + m + "\"";
-        CHECK(index.find(quoted) != std::string::npos,
-              std::string("INDEX registry includes ") + m);
+        CHECK(index.find(quoted) != std::string::npos, std::string("INDEX registry includes ") + m);
     }
     return true;
 }
@@ -173,16 +164,13 @@ bool test_surface_items_reduced() {
     // reducing the surface that AGENTS interact with.
     int surface_count = 0;
     // Count new stdlib files (7 modules x 2 files each).
-    for (const auto& m : {"stats", "synthesize", "query", "ast",
-                            "workspace", "core", "INDEX"}) {
-        std::string a = read_file(
-            std::string("/home/dev/code/aura/lib/std/")
-            + m + ".aura");
-        std::string t = read_file(
-            std::string("/home/dev/code/aura/lib/std/")
-            + m + ".aura-type");
-        if (!a.empty()) ++surface_count;
-        if (!t.empty()) ++surface_count;
+    for (const auto& m : {"stats", "synthesize", "query", "ast", "workspace", "core", "INDEX"}) {
+        std::string a = read_file(std::string("/home/dev/code/aura/lib/std/") + m + ".aura");
+        std::string t = read_file(std::string("/home/dev/code/aura/lib/std/") + m + ".aura-type");
+        if (!a.empty())
+            ++surface_count;
+        if (!t.empty())
+            ++surface_count;
     }
     // Count new design docs.
     const std::vector<std::string> docs = {
@@ -197,46 +185,43 @@ bool test_surface_items_reduced() {
     int doc_count = 0;
     for (const auto& d : docs) {
         std::ifstream f(d);
-        if (f.good()) ++doc_count;
+        if (f.good())
+            ++doc_count;
     }
     int new_tests = 0;
     for (const auto& t : {
-        "tests/test_query_namespace_audit.cpp",
-        "tests/test_synthesize_namespace_demotion.cpp",
-        "tests/test_stats_module_unification.cpp",
-        "tests/test_ast_workspace_modules.cpp",
-        "tests/test_core_builtins_review.cpp",
-        "tests/test_stdlib_infrastructure.cpp",
-        "tests/test_primitives_demotion_batch1.cpp",
-    }) {
-        std::ifstream f(
-            std::string("/home/dev/code/aura/") + t);
-        if (f.good()) ++new_tests;
+             "tests/test_query_namespace_audit.cpp",
+             "tests/test_synthesize_namespace_demotion.cpp",
+             "tests/test_stats_module_unification.cpp",
+             "tests/test_ast_workspace_modules.cpp",
+             "tests/test_core_builtins_review.cpp",
+             "tests/test_stdlib_infrastructure.cpp",
+             "tests/test_primitives_demotion_batch1.cpp",
+         }) {
+        std::ifstream f(std::string("/home/dev/code/aura/") + t);
+        if (f.good())
+            ++new_tests;
     }
     int total = surface_count + doc_count + new_tests;
     std::println("  stdlib files: {} ({} modules x 2)", surface_count, 7);
     std::println("  design docs: {}", doc_count);
     std::println("  new test files: {}", new_tests);
     std::println("  total surface items: {}", total);
-    CHECK(total >= 20,
-          ">= 20 surface items (stdlib + docs + tests) added in the epic");
+    CHECK(total >= 20, ">= 20 surface items (stdlib + docs + tests) added in the epic");
     return true;
 }
 
 // ── AC5: Decision doc present
 bool test_decision_doc_exists() {
     std::println("\n--- AC5: docs/design/primitives-demotion-batch1.md ---");
-    std::string content = read_file(
-        "/home/dev/code/aura/docs/design/primitives-demotion-batch1.md");
+    std::string content =
+        read_file("/home/dev/code/aura/docs/design/primitives-demotion-batch1.md");
     CHECK(!content.empty(), "decision doc exists");
     if (!content.empty()) {
-        const bool has_summary =
-            content.find("TL;DR") != std::string::npos;
-        const bool has_per_issue =
-            content.find("Per-issue contribution") != std::string::npos;
+        const bool has_summary = content.find("TL;DR") != std::string::npos;
+        const bool has_per_issue = content.find("Per-issue contribution") != std::string::npos;
         const bool has_net = content.find("Net effect") != std::string::npos;
-        const bool has_future =
-            content.find("Future follow-up") != std::string::npos;
+        const bool has_future = content.find("Future follow-up") != std::string::npos;
         std::println("  decision doc: present + 4 sections");
         CHECK(has_summary, "doc has Summary section");
         CHECK(has_per_issue, "doc has Per-issue contribution section");
@@ -252,8 +237,7 @@ bool test_discoverability_regression() {
     std::println("\n--- AC6: discoverability regression check ---");
     std::string tutorial = read_file("/home/dev/code/aura/docs/tutorial.md");
     std::string api = read_file("/home/dev/code/aura/docs/api-reference.md");
-    std::string index_doc = read_file(
-        "/home/dev/code/aura/docs/generated/stdlib-index.md");
+    std::string index_doc = read_file("/home/dev/code/aura/docs/generated/stdlib-index.md");
     CHECK(!tutorial.empty(), "tutorial.md exists");
     CHECK(!api.empty(), "api-reference.md exists");
     CHECK(!index_doc.empty(), "stdlib-index.md exists");
@@ -263,10 +247,8 @@ bool test_discoverability_regression() {
     const bool has_stats = index_doc.find("stats") != std::string::npos;
     const bool has_query = index_doc.find("query") != std::string::npos;
     std::println("  stdlib-index.md: stats={} query={}", has_stats, has_query);
-    CHECK(has_stats,
-          std::string("stdlib-index.md includes stats module"));
-    CHECK(has_query,
-          std::string("stdlib-index.md includes query module"));
+    CHECK(has_stats, std::string("stdlib-index.md includes stats module"));
+    CHECK(has_query, std::string("stdlib-index.md includes query module"));
     return true;
 }
 
@@ -287,8 +269,12 @@ int run_tests() {
 
 } // namespace aura_issue_566_detail
 
-int aura_issue_566_run() { return aura_issue_566_detail::run_tests(); }
+int aura_issue_566_run() {
+    return aura_issue_566_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_566_run(); }
+int main() {
+    return aura_issue_566_run();
+}
 #endif

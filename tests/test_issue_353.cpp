@@ -34,10 +34,16 @@ namespace aura_353_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
@@ -54,7 +60,7 @@ using aura::compiler::Evaluator;
 // Helper: trigger one mutation boundary cycle via the public
 // API. Returns the success flag value.
 static bool run_boundary_cycle(Evaluator& ev, bool fail_outcome) {
-    bool ok = !fail_outcome;  // optimistic
+    bool ok = !fail_outcome; // optimistic
     // We can't construct the Guard directly. Instead we
     // observe the panic-checkpoint side effects via:
     //   - save_panic_checkpoint (call explicitly)
@@ -80,8 +86,7 @@ bool test_ctor_saves_checkpoint() {
     std::println("  pre={} saved={} post={}", pre, saved, post);
     CHECK(post || !post, "checkpoint state observable pre/post");
     cs.evaluator().commit_panic_checkpoint();
-    CHECK(!cs.evaluator().has_panic_checkpoint(),
-          "checkpoint cleared after commit");
+    CHECK(!cs.evaluator().has_panic_checkpoint(), "checkpoint cleared after commit");
     return true;
 }
 
@@ -92,11 +97,9 @@ bool test_ok_true_commits() {
     (void)cs.eval("(set-code \"(define f 1)\")");
     (void)cs.eval("(eval-current)");
     cs.evaluator().save_panic_checkpoint();
-    CHECK(cs.evaluator().has_panic_checkpoint(),
-          "checkpoint set before commit");
+    CHECK(cs.evaluator().has_panic_checkpoint(), "checkpoint set before commit");
     cs.evaluator().commit_panic_checkpoint();
-    CHECK(!cs.evaluator().has_panic_checkpoint(),
-          "checkpoint cleared after commit (ok=true path)");
+    CHECK(!cs.evaluator().has_panic_checkpoint(), "checkpoint cleared after commit (ok=true path)");
     return true;
 }
 
@@ -108,8 +111,7 @@ bool test_ok_false_rollback_restores() {
     (void)cs.eval("(eval-current)");
     cs.evaluator().set_auto_rollback_on_panic(true);
     cs.evaluator().save_panic_checkpoint();
-    CHECK(cs.evaluator().has_panic_checkpoint(),
-          "checkpoint saved with auto-rollback enabled");
+    CHECK(cs.evaluator().has_panic_checkpoint(), "checkpoint saved with auto-rollback enabled");
     // Simulate a failed mutation that triggers restore.
     bool restored = cs.evaluator().restore_panic_checkpoint();
     std::println("  restore_panic_checkpoint returned: {}", restored);
@@ -175,15 +177,15 @@ bool test_multi_fiber_stress() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < K_THREADS; ++i) threads.emplace_back(worker);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < K_THREADS; ++i)
+        threads.emplace_back(worker);
+    for (auto& t : threads)
+        t.join();
     auto t1 = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     int total = K_THREADS * K_ITERS;
-    std::println("  {} threads × {} iters = {} cycles in {}ms",
-                 K_THREADS, K_ITERS, total, ms);
-    CHECK(cycles_completed.load() == total,
-          "all cycles completed (no thread crashes)");
+    std::println("  {} threads × {} iters = {} cycles in {}ms", K_THREADS, K_ITERS, total, ms);
+    CHECK(cycles_completed.load() == total, "all cycles completed (no thread crashes)");
     CHECK(ms < 5000, "completed within 5s wall-clock budget");
     return true;
 }

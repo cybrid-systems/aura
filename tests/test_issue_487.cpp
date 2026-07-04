@@ -41,28 +41,38 @@ namespace aura_487_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → all 3 fields == 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: dirty-impact counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.should_relower_total, 0u,
-             "should_relower_total == 0");
-    CHECK_EQ(snap.affected_subtree_total, 0u,
-             "affected_subtree_total == 0");
-    CHECK_EQ(snap.dirty_trigger_rate_bp, 0u,
-             "dirty_trigger_rate_bp == 0");
+    CHECK_EQ(snap.should_relower_total, 0u, "should_relower_total == 0");
+    CHECK_EQ(snap.affected_subtree_total, 0u, "affected_subtree_total == 0");
+    CHECK_EQ(snap.dirty_trigger_rate_bp, 0u, "dirty_trigger_rate_bp == 0");
     return true;
 }
 
@@ -83,9 +93,7 @@ bool test_dirty_impact_stats_primitive() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define dis (compile:dirty-impact-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"should-relower-total",
-                            "affected-subtree-total",
-                            "trigger-rate-bp"}) {
+    for (const char* key : {"should-relower-total", "affected-subtree-total", "trigger-rate-bp"}) {
         std::string check = std::string("(hash-ref dis \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -109,19 +117,19 @@ bool test_dirty_impact_stats_primitive() {
 bool test_mutation_bumps_affected() {
     std::println("\n--- AC4: mutation + re-eval may bump affected_subtree ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define di 1)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(mutate:rebind \"di\" \"2\" \"dirty-test\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
-    std::println("  should_relower_total: {}",
-                 snap.should_relower_total);
-    std::println("  affected_subtree_total: {}",
-                 snap.affected_subtree_total);
-    std::println("  dirty_trigger_rate_bp: {}",
-                 snap.dirty_trigger_rate_bp);
+    std::println("  should_relower_total: {}", snap.should_relower_total);
+    std::println("  affected_subtree_total: {}", snap.affected_subtree_total);
+    std::println("  dirty_trigger_rate_bp: {}", snap.dirty_trigger_rate_bp);
     CHECK(true, "dirty impact counters plumbed end-to-end");
     return true;
 }
@@ -133,13 +141,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define die 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define die 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_487_detail
+} // namespace aura_487_detail
 
 int main() {
     using namespace aura_487_detail;
@@ -149,7 +156,7 @@ int main() {
     test_dirty_impact_stats_primitive();
     test_mutation_bumps_affected();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

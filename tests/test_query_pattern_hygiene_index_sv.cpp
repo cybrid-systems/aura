@@ -62,25 +62,22 @@ bool test_tag_arity_index_counters_reachable() {
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() reachable");
-    if (!ws) return false;
+    if (!ws)
+        return false;
     const auto h0 = ws->tag_arity_index_hits();
     const auto m0 = ws->tag_arity_index_misses();
     const auto r0 = ws->tag_arity_index_rebuilds();
     const auto d0 = ws->tag_arity_index_dirty_marks();
-    std::println("  baseline: hits={} misses={} rebuilds={} dirty_marks={}",
-                 h0, m0, r0, d0);
-    CHECK(d0 == 0,
-          "tag_arity_index_dirty_marks starts at 0 (fresh workspace)");
+    std::println("  baseline: hits={} misses={} rebuilds={} dirty_marks={}", h0, m0, r0, d0);
+    CHECK(d0 == 0, "tag_arity_index_dirty_marks starts at 0 (fresh workspace)");
     // Trigger a (query:tag-arity-count) to bump hits/misses.
     auto r1 = cs.eval("(query:tag-arity-count 32 0)");
     CHECK(r1.has_value(), "(query:tag-arity-count) returns");
     const auto h1 = ws->tag_arity_index_hits();
     const auto m1 = ws->tag_arity_index_misses();
     const auto r1b = ws->tag_arity_index_rebuilds();
-    std::println("  after query: hits={} misses={} rebuilds={}",
-                 h1, m1, r1b);
-    CHECK(h1 + m1 > h0 + m0,
-          "hits+misses bumped after (query:tag-arity-count)");
+    std::println("  after query: hits={} misses={} rebuilds={}", h1, m1, r1b);
+    CHECK(h1 + m1 > h0 + m0, "hits+misses bumped after (query:tag-arity-count)");
     return true;
 }
 
@@ -92,7 +89,10 @@ bool test_mark_dirty_upward_flips_dirty_flag() {
     (void)cs.eval("(set-code \"(define x 1) (define y 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     // First build the index (otherwise find_by_tag_arity
     // might trigger a lazy rebuild that clears the dirty
     // flag we'd be setting next).
@@ -105,12 +105,9 @@ bool test_mark_dirty_upward_flips_dirty_flag() {
     }
     const auto d1 = ws->tag_arity_index_dirty_marks();
     const auto dirty = ws->tag_arity_index_dirty();
-    std::println("  dirty_marks: {} -> {} dirty_flag: {}",
-                 d0, d1, dirty);
-    CHECK(d1 > d0,
-          "tag_arity_index_dirty_marks bumped after mark_dirty_upward() call");
-    CHECK(dirty,
-          "tag_arity_index dirty flag set after mark_dirty_upward()");
+    std::println("  dirty_marks: {} -> {} dirty_flag: {}", d0, d1, dirty);
+    CHECK(d1 > d0, "tag_arity_index_dirty_marks bumped after mark_dirty_upward() call");
+    CHECK(dirty, "tag_arity_index dirty flag set after mark_dirty_upward()");
     return true;
 }
 
@@ -121,18 +118,19 @@ bool test_rebuild_clears_dirty_flag() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     ws->rebuild_tag_arity_index();
     // Force a dirty mark directly.
     if (ws->size() > 0) {
         ws->mark_dirty_upward(0);
     }
-    CHECK(ws->tag_arity_index_dirty(),
-          "tag_arity_index is dirty after mark_dirty_upward");
+    CHECK(ws->tag_arity_index_dirty(), "tag_arity_index is dirty after mark_dirty_upward");
     // Rebuild.
     ws->rebuild_tag_arity_index();
-    CHECK(!ws->tag_arity_index_dirty(),
-          "tag_arity_index is clean after rebuild_tag_arity_index()");
+    CHECK(!ws->tag_arity_index_dirty(), "tag_arity_index is clean after rebuild_tag_arity_index()");
     return true;
 }
 
@@ -144,20 +142,17 @@ bool test_query_pattern_index_stats() {
     (void)cs.eval("(eval-current)");
     // Trigger a few mutates + queries to bump counters.
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+                      std::to_string(i) + "))");
         (void)cs.eval("(query:tag-arity-count 32 0)");
     }
     auto r = cs.eval("(query:pattern-index-stats)");
     CHECK(r.has_value(), "(query:pattern-index-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:pattern-index-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:pattern-index-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-index-stats = {}", v);
-        CHECK(v > 0,
-              "(query:pattern-index-stats) > 0 after mutates + queries");
+        CHECK(v > 0, "(query:pattern-index-stats) > 0 after mutates + queries");
     }
     return true;
 }
@@ -170,8 +165,7 @@ bool test_query_pattern_hygiene_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:pattern-hygiene-stats)");
     CHECK(r.has_value(), "(query:pattern-hygiene-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:pattern-hygiene-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:pattern-hygiene-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-hygiene-stats = {}", v);
@@ -191,12 +185,10 @@ bool test_respect_hygiene_keyword() {
     // If recognized, the call returns a value (or pair); if
     // unknown, it returns a bad-arg error.
     auto r = cs.eval("(query:pattern \"x\" :respect-hygiene #f)");
-    CHECK(r.has_value(),
-          "(query:pattern :respect-hygiene #f) returns (keyword recognized)");
+    CHECK(r.has_value(), "(query:pattern :respect-hygiene #f) returns (keyword recognized)");
     // Verify the default is still skip (hygiene-safe).
     auto r2 = cs.eval("(query:pattern \"x\")");
-    CHECK(r2.has_value(),
-          "(query:pattern) without :respect-hygiene returns (default = skip)");
+    CHECK(r2.has_value(), "(query:pattern) without :respect-hygiene returns (default = skip)");
     return true;
 }
 
@@ -212,38 +204,37 @@ bool test_default_filters_macro_introduced() {
         ++aura::test::g_failed;
         return false;
     }
-    const auto baseline =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
     // Run a pattern query — the default skip-if-MacroIntroduced
     // path bumps macro_introduced_skipped_in_query_ when the
     // workspace has any MacroIntroduced nodes. The exact count
     // depends on workspace contents; we just check monotonicity.
     auto r2 = cs.eval("(query:pattern \"x\")");
     CHECK(r2.has_value(), "(query:pattern \"x\") returns");
-    const auto after =
-        cs.evaluator().get_macro_introduced_skipped_in_query();
-    std::println("  macro_introduced_skipped_in_query: {} (baseline hygiene stats: {})",
-                 after, baseline);
-    CHECK(after >= 0,
-          "macro_introduced_skipped_in_query observable + non-negative");
+    const auto after = cs.evaluator().get_macro_introduced_skipped_in_query();
+    std::println("  macro_introduced_skipped_in_query: {} (baseline hygiene stats: {})", after,
+                 baseline);
+    CHECK(after >= 0, "macro_introduced_skipped_in_query observable + non-negative");
     return true;
 }
 
 // ── AC8: Stress — 200 iters mutate under load ─────────────
 bool test_stress_mutate_dirty_marks() {
-    std::println("\n--- AC8: {} iters mark_dirty_upward stress ---",
-                 k_stress_iters());
+    std::println("\n--- AC8: {} iters mark_dirty_upward stress ---", k_stress_iters());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     ws->rebuild_tag_arity_index();
     const auto d0 = ws->tag_arity_index_dirty_marks();
     const auto r0 = ws->tag_arity_index_rebuilds();
     std::mt19937 rng(547u);
-    std::uniform_int_distribution<int> node_dist(0,
-        static_cast<int>(ws->size() > 0 ? ws->size() - 1 : 0));
+    std::uniform_int_distribution<int> node_dist(
+        0, static_cast<int>(ws->size() > 0 ? ws->size() - 1 : 0));
     for (int i = 0; i < k_stress_iters(); ++i) {
         // Call mark_dirty_upward directly (bypasses Aura
         // eval cost for the stress).
@@ -253,12 +244,10 @@ bool test_stress_mutate_dirty_marks() {
     }
     const auto d1 = ws->tag_arity_index_dirty_marks();
     const auto r1 = ws->tag_arity_index_rebuilds();
-    std::println("  dirty_marks: {} -> {} (delta {}) rebuilds: {} -> {}",
-                 d0, d1, d1 - d0, r0, r1);
+    std::println("  dirty_marks: {} -> {} (delta {}) rebuilds: {} -> {}", d0, d1, d1 - d0, r0, r1);
     CHECK(d1 - d0 >= static_cast<std::uint64_t>(k_stress_iters() - 5),
           "dirty_marks bumped >= ~iter count under mark_dirty_upward stress");
-    CHECK(d1 - d0 >= r1 - r0,
-          "dirty_marks >= rebuilds delta (rebuilds clear dirty flag)");
+    CHECK(d1 - d0 >= r1 - r0, "dirty_marks >= rebuilds delta (rebuilds clear dirty flag)");
     return true;
 }
 
@@ -312,8 +301,12 @@ int run_tests() {
 
 } // namespace aura_issue_547_detail
 
-int aura_issue_547_run() { return aura_issue_547_detail::run_tests(); }
+int aura_issue_547_run() {
+    return aura_issue_547_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_547_run(); }
+int main() {
+    return aura_issue_547_run();
+}
 #endif

@@ -14,8 +14,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 namespace test_294_detail {
 
@@ -25,7 +25,8 @@ namespace test_294_detail {
 static std::string run_aura(const std::string& src) {
     char tmpl[] = "/tmp/test_294_aura_XXXXXX.aura";
     int fd = mkstemps(tmpl, 5);
-    if (fd < 0) return "<mkstemps-fail>";
+    if (fd < 0)
+        return "<mkstemps-fail>";
     write(fd, src.data(), src.size());
     close(fd);
     // Path resolution: tests are launched from build/ so a
@@ -47,7 +48,8 @@ static std::string run_aura(const std::string& src) {
     // marker so the test works from either cwd. AURA_SRC_ROOT
     // env var overrides (used by CI).
     static const std::string aura_bin = []() -> std::string {
-        if (auto* env = std::getenv("AURA_BIN")) return env;
+        if (auto* env = std::getenv("AURA_BIN"))
+            return env;
         // Default: the aura binary lives in build/aura relative
         // to the repo root. Use readlink("/proc/self/exe") for
         // an absolute path so the (cd repo_root && ./build/aura)
@@ -63,7 +65,8 @@ static std::string run_aura(const std::string& src) {
         return "./build/aura";
     }();
     static const std::string repo_root = []() -> std::string {
-        if (auto* env = std::getenv("AURA_SRC_ROOT")) return env;
+        if (auto* env = std::getenv("AURA_SRC_ROOT"))
+            return env;
         // Walk up from cwd looking for lib/std/eda.aura marker.
         // This works whether the bundle was launched from
         // build/ (.. = repo root) or directly from the repo
@@ -73,14 +76,16 @@ static std::string run_aura(const std::string& src) {
         namespace fs = std::filesystem;
         fs::path p = fs::current_path();
         while (!p.empty()) {
-            if (fs::exists(p / "lib/std/eda.aura")) return p.string();
-            if (p == p.root_path()) break;
+            if (fs::exists(p / "lib/std/eda.aura"))
+                return p.string();
+            if (p == p.root_path())
+                break;
             p = p.parent_path();
         }
         return "..";
     }();
-    std::string cmd = std::string("(cd ") + repo_root + " && timeout 10 " +
-                      aura_bin + " < " + tmpl + " 2>&1)";
+    std::string cmd =
+        std::string("(cd ") + repo_root + " && timeout 10 " + aura_bin + " < " + tmpl + " 2>&1)";
     FILE* p = popen(cmd.c_str(), "r");
     if (!p) {
         unlink(tmpl);
@@ -88,7 +93,8 @@ static std::string run_aura(const std::string& src) {
     }
     char buf[4096];
     std::string out;
-    while (std::fgets(buf, sizeof(buf), p)) out += buf;
+    while (std::fgets(buf, sizeof(buf), p))
+        out += buf;
     int rc = pclose(p);
     unlink(tmpl);
     if (rc != 0 && out.find("error:") == std::string::npos) {
@@ -120,9 +126,7 @@ bool test_always_ff_with_clock() {
     auto out = run_aura(src);
     // First line of output is the count
     auto first_line = out.substr(0, out.find('\n'));
-    CHECK(first_line == "1",
-          "matches exactly 1 always_ff with clk_i (got \"" +
-          first_line + "\")");
+    CHECK(first_line == "1", "matches exactly 1 always_ff with clk_i (got \"" + first_line + "\")");
     return true;
 }
 
@@ -147,8 +151,7 @@ bool test_assertions_involving() {
     auto out = run_aura(src);
     auto first_line = out.substr(0, out.find('\n'));
     CHECK(first_line == "1",
-          "matches exactly 1 assertion mentioning x (got \"" +
-          first_line + "\")");
+          "matches exactly 1 assertion mentioning x (got \"" + first_line + "\")");
     return true;
 }
 
@@ -173,8 +176,7 @@ bool test_reset_condition() {
 )AU";
     auto out = run_aura(src);
     auto first_line = out.substr(0, out.find('\n'));
-    CHECK(first_line == "rst_ni",
-          "reset signal is rst_ni (got \"" + first_line + "\")");
+    CHECK(first_line == "rst_ni", "reset signal is rst_ni (got \"" + first_line + "\")");
     return true;
 }
 
@@ -222,9 +224,7 @@ bool test_always_ff_mismatch() {
 )AU";
     auto out = run_aura(src);
     auto first_line = out.substr(0, out.find('\n'));
-    CHECK(first_line == "0",
-          "no always_ff with non-existent clk (got \"" +
-          first_line + "\")");
+    CHECK(first_line == "0", "no always_ff with non-existent clk (got \"" + first_line + "\")");
     return true;
 }
 
@@ -235,14 +235,19 @@ int run_tests() {
     test_reset_condition();
     test_reset_no_match();
     test_always_ff_mismatch();
-    std::println("\n═══ Results: {}{}{} passed, {}{}{} failed ═══\n", g_passed, '/', (g_passed + g_failed), g_failed, '/', (g_passed + g_failed));
+    std::println("\n═══ Results: {}{}{} passed, {}{}{} failed ═══\n", g_passed, '/',
+                 (g_passed + g_failed), g_failed, '/', (g_passed + g_failed));
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_294_detail
+
+int aura_issue_294_run() {
+    return test_294_detail::run_tests();
 }
 
-int aura_issue_294_run() { return test_294_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_294_run(); }
+int main() {
+    return aura_issue_294_run();
+}
 #endif

@@ -2,7 +2,7 @@
 // Routes compilation requests to the LLVM-based emit backend in aura_jit.cpp.
 
 #include "aura_jit.h"
-#include "aot_mangle.h" // mangle_aot_name (Issue #136)
+#include "aot_mangle.h"            // mangle_aot_name (Issue #136)
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 
 #include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
@@ -156,8 +156,7 @@ typedef bool (*aura_is_define_dirty_fn_t)(void* userdata, const char* name);
 static aura_is_define_dirty_fn_t g_is_define_dirty_fn = nullptr;
 static void* g_is_define_dirty_userdata = nullptr;
 
-extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn,
-                                              void* userdata) {
+extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn, void* userdata) {
     g_is_define_dirty_fn = fn;
     g_is_define_dirty_userdata = userdata;
 }
@@ -172,13 +171,13 @@ extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn,
 // array (the caller owns it). Reads g_is_define_dirty_fn under
 // a relaxed atomic load — the host is expected to register
 // the callback once at startup and never change it.
-extern "C" int aura_filter_dirty_flat_functions(
-    const void* functions,
-    unsigned int num_functions,
-    unsigned int* out_dirty_indices,
-    unsigned int max_out) {
-    if (!functions || !out_dirty_indices) return -1;
-    if (max_out < num_functions) return -1; // caller buffer too small
+extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned int num_functions,
+                                                unsigned int* out_dirty_indices,
+                                                unsigned int max_out) {
+    if (!functions || !out_dirty_indices)
+        return -1;
+    if (max_out < num_functions)
+        return -1; // caller buffer too small
     if (!g_is_define_dirty_fn) {
         // Host hasn't wired dirty-tracking into the AOT bridge.
         // Return -1 so the caller knows to fall back to full
@@ -189,7 +188,8 @@ extern "C" int aura_filter_dirty_flat_functions(
     unsigned int dirty_count = 0;
     for (unsigned int i = 0; i < num_functions; ++i) {
         const char* name = flat_fns[i].name;
-        if (!name) continue;
+        if (!name)
+            continue;
         if (g_is_define_dirty_fn(g_is_define_dirty_userdata, name)) {
             out_dirty_indices[dirty_count++] = i;
         }
@@ -230,16 +230,15 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     }
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
-        std::fprintf(stderr, "aura_reload_aot_module: dlopen failed for %s: %s\n",
-                     path, ::dlerror());
+        std::fprintf(stderr, "aura_reload_aot_module: dlopen failed for %s: %s\n", path,
+                     ::dlerror());
         return false;
     }
     // Staleness check: compare the new binary's aot_emit_version
     // against the host's known version. If the host specified
     // `version != 0`, it must match. If `version == 0`, we trust
     // the binary's own aot_emit_version.
-    auto* binary_version = static_cast<std::uint64_t*>(
-        ::dlsym(handle, "aot_emit_version"));
+    auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
     if (binary_version) {
         if (version != 0 && *binary_version != version) {
             std::fprintf(stderr,
@@ -571,10 +570,8 @@ static std::string find_runtime_c() {
     //     /usr/share/aura/. This lets `make install` produce
     //     a working AOT path without requiring AURA_RUNTIME_DIR
     //     or a source-tree layout.
-    for (const char* rel : {
-            "/usr/local/share/aura/runtime.c",
-            "/usr/share/aura/runtime.c",
-            "/opt/aura/share/runtime.c"}) {
+    for (const char* rel : {"/usr/local/share/aura/runtime.c", "/usr/share/aura/runtime.c",
+                            "/opt/aura/share/runtime.c"}) {
         if (FILE* f = std::fopen(rel, "r")) {
             std::fclose(f);
             return rel;

@@ -25,8 +25,8 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using namespace types;
 
 namespace {
-std::vector<std::pair<std::string, std::string>> g_template_patterns;
-std::vector<std::vector<std::string>> g_template_params;
+    std::vector<std::pair<std::string, std::string>> g_template_patterns;
+    std::vector<std::vector<std::string>> g_template_params;
 } // namespace
 
 void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -92,7 +92,7 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     add("auto-evolve-running?",
-                    [&ev](const auto&) -> EvalValue { return make_bool(ev.auto_evolve_running_); });
+        [&ev](const auto&) -> EvalValue { return make_bool(ev.auto_evolve_running_); });
 
     add("auto-evolve-tick", [&ev](const auto&) -> EvalValue {
         if (!ev.auto_evolve_running_)
@@ -100,8 +100,8 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
         if (ev.auto_evolve_detect_closure_ == 0 || ev.auto_evolve_fix_closure_ == 0)
             return make_bool(false);
         ++ev.auto_evolve_cycle_count_;
-        std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n", (size_t)ev.auto_evolve_detect_closure_,
-                     (size_t)ev.auto_evolve_fix_closure_);
+        std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n",
+                     (size_t)ev.auto_evolve_detect_closure_, (size_t)ev.auto_evolve_fix_closure_);
         auto detect_result = ev.apply_closure(ev.auto_evolve_detect_closure_, {});
         if (!detect_result) {
             std::fprintf(stderr, "  no detect result\n");
@@ -162,9 +162,7 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_void();
         const std::string& name = ev.string_heap_[idx];
-        if (name != "coverage-greedy" &&
-            name != "bug-fix-priority" &&
-            name != "minimal-mutation") {
+        if (name != "coverage-greedy" && name != "bug-fix-priority" && name != "minimal-mutation") {
             return make_void();
         }
         ev.active_strategy_ = name;
@@ -302,7 +300,6 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         return build_hash(kv);
     });
-
 }
 
 void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
@@ -313,49 +310,48 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
     // ═══════════════════════════════════════════════════════════════
 
     // (synthesize:register-template name pattern param-names...)
-    add("synthesize:register-template",
-                    [&ev](std::span<const EvalValue> a) -> EvalValue {
-                        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]))
-                            return make_bool(false);
-                        auto name_idx = as_string_idx(a[0]);
-                        auto pat_idx = as_string_idx(a[1]);
-                        if (name_idx >= ev.string_heap_.size() || pat_idx >= ev.string_heap_.size())
-                            return make_bool(false);
+    add("synthesize:register-template", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        auto pat_idx = as_string_idx(a[1]);
+        if (name_idx >= ev.string_heap_.size() || pat_idx >= ev.string_heap_.size())
+            return make_bool(false);
 
-                        std::string name = ev.string_heap_[name_idx];
-                        std::string pattern = ev.string_heap_[pat_idx];
-                        std::vector<std::string> params;
-                        for (std::size_t i = 2; i < a.size(); ++i) {
-                            if (is_string(a[i])) {
-                                auto pidx = as_string_idx(a[i]);
-                                if (pidx < ev.string_heap_.size())
-                                    params.push_back(ev.string_heap_[pidx]);
-                            }
-                        }
+        std::string name = ev.string_heap_[name_idx];
+        std::string pattern = ev.string_heap_[pat_idx];
+        std::vector<std::string> params;
+        for (std::size_t i = 2; i < a.size(); ++i) {
+            if (is_string(a[i])) {
+                auto pidx = as_string_idx(a[i]);
+                if (pidx < ev.string_heap_.size())
+                    params.push_back(ev.string_heap_[pidx]);
+            }
+        }
 
-                        // Replace or append
-                        bool found = false;
-                        for (auto& t : g_template_patterns) {
-                            if (t.first == name) {
-                                t.second = pattern;
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            g_template_patterns.push_back({name, pattern});
-                            g_template_params.push_back(params);
-                        } else {
-                            // Find the params index
-                            for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
-                                if (g_template_patterns[i].first == name) {
-                                    g_template_params[i] = params;
-                                    break;
-                                }
-                            }
-                        }
-                        return make_bool(true);
-                    });
+        // Replace or append
+        bool found = false;
+        for (auto& t : g_template_patterns) {
+            if (t.first == name) {
+                t.second = pattern;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            g_template_patterns.push_back({name, pattern});
+            g_template_params.push_back(params);
+        } else {
+            // Find the params index
+            for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
+                if (g_template_patterns[i].first == name) {
+                    g_template_params[i] = params;
+                    break;
+                }
+            }
+        }
+        return make_bool(true);
+    });
 
     // (synthesize:fill template-name arg-values...)
     add("synthesize:fill", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -660,451 +656,457 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
     //   Default fitness: runs function with synthetic test inputs
     //   (correctness = 90% weight, code length = 10% tiebreaker).
     //   Creates variants, evaluates fitness, returns best.
-    add("synthesize:optimize", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto name_idx = as_string_idx(a[0]);
-        if (name_idx >= ev.string_heap_.size())
-            return make_void();
-        std::string fn_name = ev.string_heap_[name_idx];
-        int pop_size = 8;
-        int generations = 3;
-        double mutation_rate = 0.3;
-        std::string fitness_expr; // optional user-provided fitness expr
+    add("synthesize:optimize",
+        [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_void();
+            auto name_idx = as_string_idx(a[0]);
+            if (name_idx >= ev.string_heap_.size())
+                return make_void();
+            std::string fn_name = ev.string_heap_[name_idx];
+            int pop_size = 8;
+            int generations = 3;
+            double mutation_rate = 0.3;
+            std::string fitness_expr; // optional user-provided fitness expr
 
-        for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-            if (!is_string(a[i]))
-                continue;
-            auto k_idx = as_string_idx(a[i]);
-            if (k_idx >= ev.string_heap_.size())
-                continue;
-            std::string key = ev.string_heap_[k_idx];
-            if (key == ":population" && is_int(a[i + 1]))
-                pop_size = static_cast<int>(as_int(a[i + 1]));
-            else if (key == ":generations" && is_int(a[i + 1]))
-                generations = static_cast<int>(as_int(a[i + 1]));
-            else if (key == ":mutation-rate" && is_float(a[i + 1]))
-                mutation_rate = as_float(a[i + 1]);
-            else if ((key == ":fitness" || key == ":benchmark") && is_string(a[i + 1])) {
-                auto fi = as_string_idx(a[i + 1]);
-                if (fi < ev.string_heap_.size())
-                    fitness_expr = ev.string_heap_[fi];
-            }
-        }
-        if (pop_size < 2)
-            pop_size = 2;
-        if (pop_size > 50)
-            pop_size = 50;
-        if (generations < 1)
-            generations = 1;
-
-        // Get baseline source — use :workspace to read the user's set-code'd
-        // script (the function to optimize), NOT the per-eval source (which
-        // would be the surrounding synthesize:optimize call itself, causing
-        // mutations to recursive-call this primitive → stack overflow).
-        // Same root cause as colony-no-fns (commit 6d88544).
-        auto src_fn = ev.primitives_.lookup("current-source");
-        if (!src_fn)
-            return make_void();
-        // Intern :workspace keyword (lookup or add to ev.keyword_table_).
-        std::uint64_t ws_kw = 0;
-        bool ws_found = false;
-        for (; ws_kw < ev.keyword_table_.size(); ++ws_kw) {
-            if (ev.keyword_table_[ws_kw] == ":workspace") {
-                ws_found = true;
-                break;
-            }
-        }
-        if (!ws_found) {
-            ws_kw = ev.keyword_table_.size();
-            ev.keyword_table_.push_back(":workspace");
-        }
-        auto cs_result = (*src_fn)({types::make_keyword(ws_kw)});
-        if (!is_string(cs_result))
-            return make_void();
-        auto cs_idx = as_string_idx(cs_result);
-        if (cs_idx >= ev.string_heap_.size())
-            return make_void();
-        std::string baseline = ev.string_heap_[cs_idx];
-
-        // Fitness: generate synthetic test inputs and eval the function
-        // to measure correctness + performance.
-        //
-        // Strategy:
-        // 1. Parse variant source, count function args by scanning for fn_name
-        // 2. Generate probe inputs (ints, pairs, etc.) based on arg count
-        // 3. Eval each probe: (fn_name arg...), score = fraction of probes that
-        //    return a valid value without error
-        // 4. Code length is a tiebreaker only — correctness dominates
-        //
-        // If :fitness keyword is provided, use that expression instead.
-        auto compute_fitness = [&](const std::string& src) -> double {
-            if (!fitness_expr.empty()) {
-                // User-provided fitness: eval the expression
-                auto sv = ev.string_heap_.size();
-                ev.string_heap_.push_back(src);
-                auto eval_fn = ev.primitives_.lookup("eval");
-                if (eval_fn) {
-                    auto r = (*eval_fn)({make_string(sv)});
-                    if (is_float(r))
-                        return as_float(r);
-                    if (is_int(r))
-                        return static_cast<double>(as_int(r));
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                if (!is_string(a[i]))
+                    continue;
+                auto k_idx = as_string_idx(a[i]);
+                if (k_idx >= ev.string_heap_.size())
+                    continue;
+                std::string key = ev.string_heap_[k_idx];
+                if (key == ":population" && is_int(a[i + 1]))
+                    pop_size = static_cast<int>(as_int(a[i + 1]));
+                else if (key == ":generations" && is_int(a[i + 1]))
+                    generations = static_cast<int>(as_int(a[i + 1]));
+                else if (key == ":mutation-rate" && is_float(a[i + 1]))
+                    mutation_rate = as_float(a[i + 1]);
+                else if ((key == ":fitness" || key == ":benchmark") && is_string(a[i + 1])) {
+                    auto fi = as_string_idx(a[i + 1]);
+                    if (fi < ev.string_heap_.size())
+                        fitness_expr = ev.string_heap_[fi];
                 }
-                return 0.0;
             }
+            if (pop_size < 2)
+                pop_size = 2;
+            if (pop_size > 50)
+                pop_size = 50;
+            if (generations < 1)
+                generations = 1;
 
-            // Default fitness: eval the current workspace (which contains
-            // the variant code) to bind the function in top_, then probe
-            // via the eval primitive.
+            // Get baseline source — use :workspace to read the user's set-code'd
+            // script (the function to optimize), NOT the per-eval source (which
+            // would be the surrounding synthesize:optimize call itself, causing
+            // mutations to recursive-call this primitive → stack overflow).
+            // Same root cause as colony-no-fns (commit 6d88544).
+            auto src_fn = ev.primitives_.lookup("current-source");
+            if (!src_fn)
+                return make_void();
+            // Intern :workspace keyword (lookup or add to ev.keyword_table_).
+            std::uint64_t ws_kw = 0;
+            bool ws_found = false;
+            for (; ws_kw < ev.keyword_table_.size(); ++ws_kw) {
+                if (ev.keyword_table_[ws_kw] == ":workspace") {
+                    ws_found = true;
+                    break;
+                }
+            }
+            if (!ws_found) {
+                ws_kw = ev.keyword_table_.size();
+                ev.keyword_table_.push_back(":workspace");
+            }
+            auto cs_result = (*src_fn)({types::make_keyword(ws_kw)});
+            if (!is_string(cs_result))
+                return make_void();
+            auto cs_idx = as_string_idx(cs_result);
+            if (cs_idx >= ev.string_heap_.size())
+                return make_void();
+            std::string baseline = ev.string_heap_[cs_idx];
+
+            // Fitness: generate synthetic test inputs and eval the function
+            // to measure correctness + performance.
             //
-            // The calling code has already set up the workspace via
-            // set-code + typecheck-current before we're called, so
-            // eval-current binds the function using workspace flats
-            // (safe — no dangling closure pointers).
+            // Strategy:
+            // 1. Parse variant source, count function args by scanning for fn_name
+            // 2. Generate probe inputs (ints, pairs, etc.) based on arg count
+            // 3. Eval each probe: (fn_name arg...), score = fraction of probes that
+            //    return a valid value without error
+            // 4. Code length is a tiebreaker only — correctness dominates
             //
-            // Detect argument count by scanning for (define (fn_name ...))
-            int arg_count = 0;
-            {
-                auto def_pos = src.find("(define (" + fn_name);
-                if (def_pos != std::string::npos) {
-                    auto after_fn = src.find(' ', def_pos);
-                    if (after_fn != std::string::npos) {
-                        auto param_start = src.find(' ', after_fn + 1);
-                        if (param_start != std::string::npos) {
-                            auto close_pos = src.find(')', param_start);
-                            if (close_pos != std::string::npos) {
-                                auto params =
-                                    src.substr(param_start + 1, close_pos - param_start - 1);
-                                if (!params.empty()) {
-                                    arg_count = 1;
-                                    for (auto c : params) {
-                                        if (c == ' ')
-                                            ++arg_count;
+            // If :fitness keyword is provided, use that expression instead.
+            auto compute_fitness = [&](const std::string& src) -> double {
+                if (!fitness_expr.empty()) {
+                    // User-provided fitness: eval the expression
+                    auto sv = ev.string_heap_.size();
+                    ev.string_heap_.push_back(src);
+                    auto eval_fn = ev.primitives_.lookup("eval");
+                    if (eval_fn) {
+                        auto r = (*eval_fn)({make_string(sv)});
+                        if (is_float(r))
+                            return as_float(r);
+                        if (is_int(r))
+                            return static_cast<double>(as_int(r));
+                    }
+                    return 0.0;
+                }
+
+                // Default fitness: eval the current workspace (which contains
+                // the variant code) to bind the function in top_, then probe
+                // via the eval primitive.
+                //
+                // The calling code has already set up the workspace via
+                // set-code + typecheck-current before we're called, so
+                // eval-current binds the function using workspace flats
+                // (safe — no dangling closure pointers).
+                //
+                // Detect argument count by scanning for (define (fn_name ...))
+                int arg_count = 0;
+                {
+                    auto def_pos = src.find("(define (" + fn_name);
+                    if (def_pos != std::string::npos) {
+                        auto after_fn = src.find(' ', def_pos);
+                        if (after_fn != std::string::npos) {
+                            auto param_start = src.find(' ', after_fn + 1);
+                            if (param_start != std::string::npos) {
+                                auto close_pos = src.find(')', param_start);
+                                if (close_pos != std::string::npos) {
+                                    auto params =
+                                        src.substr(param_start + 1, close_pos - param_start - 1);
+                                    if (!params.empty()) {
+                                        arg_count = 1;
+                                        for (auto c : params) {
+                                            if (c == ' ')
+                                                ++arg_count;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Eval-current to bind functions in top_ (uses workspace flats, safe)
-            auto ec_fn = ev.primitives_.lookup("eval-current");
-            if (ec_fn) {
-                (*ec_fn)({});
-            }
-
-            // Probe via eval (function is now bound in top_ from workspace eval)
-            // Temporary flats in eval are OK for call expressions — they don't
-            // create closures, just look up and apply.
-            static const std::int64_t probe_ints[] = {0, 1, -1, 2};
-            int successes = 0;
-            int total_tests = 0;
-            auto eval_fn = ev.primitives_.lookup("eval");
-
-            auto try_probe = [&](const std::string& call_src) {
-                ++total_tests;
-                auto ci = ev.string_heap_.size();
-                ev.string_heap_.push_back(call_src);
-                if (eval_fn) {
-                    auto r = (*eval_fn)({make_string(ci)});
-                    if (!types::is_error(r))
-                        ++successes;
+                // Eval-current to bind functions in top_ (uses workspace flats, safe)
+                auto ec_fn = ev.primitives_.lookup("eval-current");
+                if (ec_fn) {
+                    (*ec_fn)({});
                 }
+
+                // Probe via eval (function is now bound in top_ from workspace eval)
+                // Temporary flats in eval are OK for call expressions — they don't
+                // create closures, just look up and apply.
+                static const std::int64_t probe_ints[] = {0, 1, -1, 2};
+                int successes = 0;
+                int total_tests = 0;
+                auto eval_fn = ev.primitives_.lookup("eval");
+
+                auto try_probe = [&](const std::string& call_src) {
+                    ++total_tests;
+                    auto ci = ev.string_heap_.size();
+                    ev.string_heap_.push_back(call_src);
+                    if (eval_fn) {
+                        auto r = (*eval_fn)({make_string(ci)});
+                        if (!types::is_error(r))
+                            ++successes;
+                    }
+                };
+
+                if (arg_count <= 0) {
+                    try_probe("(" + fn_name + ")");
+                } else if (arg_count == 1) {
+                    for (auto v : probe_ints) {
+                        if (total_tests >= 4)
+                            break;
+                        try_probe("(" + fn_name + " " + std::to_string(v) + ")");
+                    }
+                } else if (arg_count == 2) {
+                    for (int i = 0; i < 4 && i + 1 < 4; ++i) {
+                        try_probe("(" + fn_name + " " + std::to_string(probe_ints[i]) + " " +
+                                  std::to_string(probe_ints[i + 1]) + ")");
+                    }
+                } else {
+                    std::string call_src = "(" + fn_name;
+                    for (int i = 0; i < arg_count; ++i)
+                        call_src += " 0";
+                    call_src += ")";
+                    try_probe(call_src);
+                }
+
+                // Score: correctness dominates (up to 1000), then small length bonus
+                double correctness = total_tests > 0 ? (1000.0 * static_cast<double>(successes) /
+                                                        static_cast<double>(total_tests))
+                                                     : 0.0;
+                double length_bonus = 1.0 / static_cast<double>(src.size() + 1);
+                return correctness + length_bonus;
             };
 
-            if (arg_count <= 0) {
-                try_probe("(" + fn_name + ")");
-            } else if (arg_count == 1) {
-                for (auto v : probe_ints) {
-                    if (total_tests >= 4)
-                        break;
-                    try_probe("(" + fn_name + " " + std::to_string(v) + ")");
-                }
-            } else if (arg_count == 2) {
-                for (int i = 0; i < 4 && i + 1 < 4; ++i) {
-                    try_probe("(" + fn_name + " " + std::to_string(probe_ints[i]) + " " +
-                              std::to_string(probe_ints[i + 1]) + ")");
-                }
-            } else {
-                std::string call_src = "(" + fn_name;
-                for (int i = 0; i < arg_count; ++i)
-                    call_src += " 0";
-                call_src += ")";
-                try_probe(call_src);
-            }
+            std::string best_code = baseline;
+            double best_fitness = compute_fitness(baseline);
+            int best_gen = 0;
 
-            // Score: correctness dominates (up to 1000), then small length bonus
-            double correctness =
-                total_tests > 0
-                    ? (1000.0 * static_cast<double>(successes) / static_cast<double>(total_tests))
-                    : 0.0;
-            double length_bonus = 1.0 / static_cast<double>(src.size() + 1);
-            return correctness + length_bonus;
-        };
+            // Store multiple candidates for crossover (elitism)
+            std::vector<std::pair<std::string, double>> elite;
 
-        std::string best_code = baseline;
-        double best_fitness = compute_fitness(baseline);
-        int best_gen = 0;
+            for (int gen = 0; gen < generations; ++gen) {
+                for (int p = 0; p < pop_size; ++p) {
+                    std::string variant = best_code;
 
-        // Store multiple candidates for crossover (elitism)
-        std::vector<std::pair<std::string, double>> elite;
-
-        for (int gen = 0; gen < generations; ++gen) {
-            for (int p = 0; p < pop_size; ++p) {
-                std::string variant = best_code;
-
-                // Apply mutations
-                for (int m = 0; m < 5; ++m) {
-                    if (static_cast<double>(std::rand()) / RAND_MAX >= mutation_rate)
-                        continue;
-                    // Operator swap
-                    for (const char* op = "+-*/"; *op; ++op) {
-                        auto opos = variant.find(*op);
-                        if (opos != std::string::npos && opos > 0) {
-                            variant[opos] = "+-*/"[std::rand() % 4];
+                    // Apply mutations
+                    for (int m = 0; m < 5; ++m) {
+                        if (static_cast<double>(std::rand()) / RAND_MAX >= mutation_rate)
+                            continue;
+                        // Operator swap
+                        for (const char* op = "+-*/"; *op; ++op) {
+                            auto opos = variant.find(*op);
+                            if (opos != std::string::npos && opos > 0) {
+                                variant[opos] = "+-*/"[std::rand() % 4];
+                                break;
+                            }
+                        }
+                        // Numeric mutation
+                        auto npos = variant.find_first_of("0123456789");
+                        if (npos == std::string::npos)
                             break;
+                        auto nend = variant.find_first_not_of("0123456789", npos);
+                        if (nend == std::string::npos)
+                            nend = variant.size();
+                        std::string old_n = variant.substr(npos, nend - npos);
+                        if (old_n.empty())
+                            continue;
+                        int val = std::stoi(old_n);
+                        val += (std::rand() % 21) - 10;
+                        if (val < 0)
+                            val = 0;
+                        variant.replace(npos, nend - npos, std::to_string(val));
+                    }
+
+                    // Crossover: text-level or AST-level
+                    if (!elite.empty() && std::rand() % 3 == 0) {
+                        auto& other = elite[std::rand() % elite.size()].first;
+                        // Try AST expression-level crossover via node swapping
+                        // Use a child workspace and mutate:replace-value
+                        if (ev.workspace_tree_ && std::rand() % 2 == 0) {
+                            auto* tree =
+                                static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
+                            // Create a temporary workspace, set-code the variant,
+                            // find a LiteralInt node, replace it with one from other
+                            auto ws_id = tree->create_child("xover", tree->active_idx(),
+                                                            ev.workspace_flat_, ev.workspace_pool_);
+                            if (ws_id > 0) {
+                                tree->ensure_local_flat(ws_id);
+                                auto& ws = tree->nodes_[ws_id];
+                                auto saved_f = ev.workspace_flat_;
+                                auto saved_p = ev.workspace_pool_;
+                                ev.workspace_flat_ = ws.flat;
+                                ev.workspace_pool_ = ws.pool;
+
+                                // Set variant as current code
+                                auto vi = ev.string_heap_.size();
+                                ev.string_heap_.push_back(variant);
+                                auto sc_fn = ev.primitives_.lookup("set-code");
+                                if (sc_fn) {
+                                    auto sr = (*sc_fn)({make_string(vi)});
+                                    if (is_bool(sr) && as_bool(sr)) {
+                                        // Find LiteralInt nodes and swap value with other variant
+                                        for (aura::ast::NodeId nid = 0;
+                                             nid <
+                                             (ev.workspace_flat_ ? ev.workspace_flat_->size() : 0);
+                                             ++nid) {
+                                            if (std::rand() % 5 != 0)
+                                                continue; // 20% chance per node
+                                            auto v = ev.workspace_flat_->get(nid);
+                                            if (v.tag == aura::ast::NodeTag::LiteralInt) {
+                                                // Extract a random int from "other"
+                                                auto nums = other;
+                                                auto npos = nums.find_first_of("0123456789");
+                                                if (npos != std::string::npos) {
+                                                    auto nend =
+                                                        nums.find_first_not_of("0123456789", npos);
+                                                    if (nend == std::string::npos)
+                                                        nend = nums.size();
+                                                    int new_val =
+                                                        std::stoi(nums.substr(npos, nend - npos));
+                                                    if (new_val >= 0) {
+                                                        auto rv_fn = ev.primitives_.lookup(
+                                                            "mutate:replace-value");
+                                                        if (rv_fn) {
+                                                            (*rv_fn)({make_int(nid),
+                                                                      make_int(new_val),
+                                                                      make_string(vi)});
+                                                        }
+                                                    }
+                                                }
+                                                break; // Mutate one node
+                                            }
+                                        }
+
+                                        // Typecheck after crossover (Issue #107 part 4: inline)
+                                        if (true) {
+                                            auto tc_r = ev.run_typecheck_no_lock_bool();
+                                            if (tc_r) {
+                                                // Successful crossover: get the new source
+                                                // (use :workspace to read user's set-code'd script,
+                                                // not the per-eval source = the surrounding call)
+                                                auto src_fn =
+                                                    ev.primitives_.lookup("current-source");
+                                                if (src_fn) {
+                                                    std::uint64_t ws_kw = 0;
+                                                    bool ws_found = false;
+                                                    for (; ws_kw < ev.keyword_table_.size();
+                                                         ++ws_kw) {
+                                                        if (ev.keyword_table_[ws_kw] ==
+                                                            ":workspace") {
+                                                            ws_found = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                    if (!ws_found) {
+                                                        ws_kw = ev.keyword_table_.size();
+                                                        ev.keyword_table_.push_back(":workspace");
+                                                    }
+                                                    auto src =
+                                                        (*src_fn)({types::make_keyword(ws_kw)});
+                                                    if (is_string(src)) {
+                                                        auto si = as_string_idx(src);
+                                                        if (si < ev.string_heap_.size())
+                                                            variant = ev.string_heap_[si];
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ev.workspace_flat_ = saved_f;
+                                ev.workspace_pool_ = saved_p;
+                                tree->delete_child(ws_id);
+                            }
+                        } else {
+                            // Text-level crossover (fallback)
+                            auto b1 = variant.find("(lambda");
+                            auto b2 = other.find("(lambda");
+                            if (b1 != std::string::npos && b2 != std::string::npos) {
+                                auto e1 = variant.find(')', b1);
+                                auto e2 = other.find(')', b2);
+                                if (e1 != std::string::npos && e2 != std::string::npos && e1 > b1 &&
+                                    e2 > b2) {
+                                    auto body1_end = variant.find_last_of(')');
+                                    auto body2_end = other.find_last_of(')');
+                                    if (body1_end > b1 && body2_end > b2) {
+                                        std::string body1 = variant.substr(b1, body1_end - b1 + 1);
+                                        std::string body2 = other.substr(b2, body2_end - b2 + 1);
+                                        if (body1 != body2) {
+                                            variant = variant.substr(0, b1) + body2 +
+                                                      variant.substr(body1_end + 1);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                    // Numeric mutation
-                    auto npos = variant.find_first_of("0123456789");
-                    if (npos == std::string::npos)
-                        break;
-                    auto nend = variant.find_first_not_of("0123456789", npos);
-                    if (nend == std::string::npos)
-                        nend = variant.size();
-                    std::string old_n = variant.substr(npos, nend - npos);
-                    if (old_n.empty())
-                        continue;
-                    int val = std::stoi(old_n);
-                    val += (std::rand() % 21) - 10;
-                    if (val < 0)
-                        val = 0;
-                    variant.replace(npos, nend - npos, std::to_string(val));
-                }
 
-                // Crossover: text-level or AST-level
-                if (!elite.empty() && std::rand() % 3 == 0) {
-                    auto& other = elite[std::rand() % elite.size()].first;
-                    // Try AST expression-level crossover via node swapping
-                    // Use a child workspace and mutate:replace-value
-                    if (ev.workspace_tree_ && std::rand() % 2 == 0) {
-                        auto* tree = static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
-                        // Create a temporary workspace, set-code the variant,
-                        // find a LiteralInt node, replace it with one from other
-                        auto ws_id = tree->create_child("xover", tree->active_idx(), ev.workspace_flat_,
-                                                        ev.workspace_pool_);
+                    if (variant == best_code)
+                        continue;
+
+                    // Evaluate in a child workspace (isolation)
+                    // Use workspace tree if available, otherwise fall back to set-code
+                    bool evaluated = false;
+                    double f = 0.0;
+                    auto sc_fn = ev.primitives_.lookup("set-code");
+                    if (!sc_fn)
+                        continue;
+
+                    if (ev.workspace_tree_) {
+                        // Use child workspace for isolation
+                        auto* tree =
+                            static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
+                        auto ws_id = tree->create_child("evolve-variant", tree->active_idx(),
+                                                        ev.workspace_flat_, ev.workspace_pool_);
+                        // Switch to child and try the variant
                         if (ws_id > 0) {
                             tree->ensure_local_flat(ws_id);
                             auto& ws = tree->nodes_[ws_id];
-                            auto saved_f = ev.workspace_flat_;
-                            auto saved_p = ev.workspace_pool_;
+                            auto saved_flat = ev.workspace_flat_;
+                            auto saved_pool = ev.workspace_pool_;
                             ev.workspace_flat_ = ws.flat;
                             ev.workspace_pool_ = ws.pool;
 
-                            // Set variant as current code
                             auto vi = ev.string_heap_.size();
                             ev.string_heap_.push_back(variant);
-                            auto sc_fn = ev.primitives_.lookup("set-code");
-                            if (sc_fn) {
-                                auto sr = (*sc_fn)({make_string(vi)});
-                                if (is_bool(sr) && as_bool(sr)) {
-                                    // Find LiteralInt nodes and swap value with other variant
-                                    for (aura::ast::NodeId nid = 0;
-                                         nid < (ev.workspace_flat_ ? ev.workspace_flat_->size() : 0);
-                                         ++nid) {
-                                        if (std::rand() % 5 != 0)
-                                            continue; // 20% chance per node
-                                        auto v = ev.workspace_flat_->get(nid);
-                                        if (v.tag == aura::ast::NodeTag::LiteralInt) {
-                                            // Extract a random int from "other"
-                                            auto nums = other;
-                                            auto npos = nums.find_first_of("0123456789");
-                                            if (npos != std::string::npos) {
-                                                auto nend =
-                                                    nums.find_first_not_of("0123456789", npos);
-                                                if (nend == std::string::npos)
-                                                    nend = nums.size();
-                                                int new_val =
-                                                    std::stoi(nums.substr(npos, nend - npos));
-                                                if (new_val >= 0) {
-                                                    auto rv_fn =
-                                                        ev.primitives_.lookup("mutate:replace-value");
-                                                    if (rv_fn) {
-                                                        (*rv_fn)({make_int(nid), make_int(new_val),
-                                                                  make_string(vi)});
-                                                    }
-                                                }
-                                            }
-                                            break; // Mutate one node
-                                        }
-                                    }
+                            auto sc_r = (*sc_fn)({make_string(vi)});
 
-                                    // Typecheck after crossover (Issue #107 part 4: inline)
-                                    if (true) {
-                                        auto tc_r = ev.run_typecheck_no_lock_bool();
-                                        if (tc_r) {
-                                            // Successful crossover: get the new source
-                                            // (use :workspace to read user's set-code'd script,
-                                            // not the per-eval source = the surrounding call)
-                                            auto src_fn = ev.primitives_.lookup("current-source");
-                                            if (src_fn) {
-                                                std::uint64_t ws_kw = 0;
-                                                bool ws_found = false;
-                                                for (; ws_kw < ev.keyword_table_.size(); ++ws_kw) {
-                                                    if (ev.keyword_table_[ws_kw] == ":workspace") {
-                                                        ws_found = true;
-                                                        break;
-                                                    }
-                                                }
-                                                if (!ws_found) {
-                                                    ws_kw = ev.keyword_table_.size();
-                                                    ev.keyword_table_.push_back(":workspace");
-                                                }
-                                                auto src = (*src_fn)({types::make_keyword(ws_kw)});
-                                                if (is_string(src)) {
-                                                    auto si = as_string_idx(src);
-                                                    if (si < ev.string_heap_.size())
-                                                        variant = ev.string_heap_[si];
-                                                }
-                                            }
-                                        }
-                                    }
+                            if (is_bool(sc_r) && as_bool(sc_r)) {
+                                // Issue #107 part 4: inline typecheck (no lock).
+                                // Going through the primitive would re-enter
+                                // workspace_mtx_ and deadlock.
+                                bool valid = ev.run_typecheck_no_lock_bool();
+                                if (valid) {
+                                    f = compute_fitness(variant);
+                                    evaluated = true;
                                 }
                             }
 
-                            ev.workspace_flat_ = saved_f;
-                            ev.workspace_pool_ = saved_p;
+                            ev.workspace_flat_ = saved_flat;
+                            ev.workspace_pool_ = saved_pool;
                             tree->delete_child(ws_id);
                         }
-                    } else {
-                        // Text-level crossover (fallback)
-                        auto b1 = variant.find("(lambda");
-                        auto b2 = other.find("(lambda");
-                        if (b1 != std::string::npos && b2 != std::string::npos) {
-                            auto e1 = variant.find(')', b1);
-                            auto e2 = other.find(')', b2);
-                            if (e1 != std::string::npos && e2 != std::string::npos && e1 > b1 &&
-                                e2 > b2) {
-                                auto body1_end = variant.find_last_of(')');
-                                auto body2_end = other.find_last_of(')');
-                                if (body1_end > b1 && body2_end > b2) {
-                                    std::string body1 = variant.substr(b1, body1_end - b1 + 1);
-                                    std::string body2 = other.substr(b2, body2_end - b2 + 1);
-                                    if (body1 != body2) {
-                                        variant = variant.substr(0, b1) + body2 +
-                                                  variant.substr(body1_end + 1);
-                                    }
-                                }
-                            }
-                        }
                     }
-                }
 
-                if (variant == best_code)
-                    continue;
-
-                // Evaluate in a child workspace (isolation)
-                // Use workspace tree if available, otherwise fall back to set-code
-                bool evaluated = false;
-                double f = 0.0;
-                auto sc_fn = ev.primitives_.lookup("set-code");
-                if (!sc_fn)
-                    continue;
-
-                if (ev.workspace_tree_) {
-                    // Use child workspace for isolation
-                    auto* tree = static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
-                    auto ws_id =
-                        tree->create_child("evolve-variant", tree->active_idx(), ev.workspace_flat_,
-                                           ev.workspace_pool_);
-                    // Switch to child and try the variant
-                    if (ws_id > 0) {
-                        tree->ensure_local_flat(ws_id);
-                        auto& ws = tree->nodes_[ws_id];
-                        auto saved_flat = ev.workspace_flat_;
-                        auto saved_pool = ev.workspace_pool_;
-                        ev.workspace_flat_ = ws.flat;
-                        ev.workspace_pool_ = ws.pool;
-
+                    if (!evaluated) {
+                        // Fallback: direct set-code
                         auto vi = ev.string_heap_.size();
                         ev.string_heap_.push_back(variant);
                         auto sc_r = (*sc_fn)({make_string(vi)});
+                        if (!is_bool(sc_r) || !as_bool(sc_r))
+                            continue;
 
-                        if (is_bool(sc_r) && as_bool(sc_r)) {
-                            // Issue #107 part 4: inline typecheck (no lock).
-                            // Going through the primitive would re-enter
-                            // workspace_mtx_ and deadlock.
-                            bool valid = ev.run_typecheck_no_lock_bool();
-                            if (valid) {
-                                f = compute_fitness(variant);
-                                evaluated = true;
-                            }
-                        }
+                        // Issue #107 part 4: inline typecheck (no lock).
+                        // Going through the primitive would re-enter
+                        // workspace_mtx_ and deadlock.
+                        bool valid = ev.run_typecheck_no_lock_bool();
+                        if (!valid)
+                            continue;
+                        f = compute_fitness(variant);
+                        // Restore
+                        auto bi = ev.string_heap_.size();
+                        ev.string_heap_.push_back(baseline);
+                        (*sc_fn)({make_string(bi)});
+                    }
 
-                        ev.workspace_flat_ = saved_flat;
-                        ev.workspace_pool_ = saved_pool;
-                        tree->delete_child(ws_id);
+                    if (f > best_fitness) {
+                        best_fitness = f;
+                        best_code = variant;
+                        best_gen = gen + 1;
                     }
                 }
 
-                if (!evaluated) {
-                    // Fallback: direct set-code
-                    auto vi = ev.string_heap_.size();
-                    ev.string_heap_.push_back(variant);
-                    auto sc_r = (*sc_fn)({make_string(vi)});
-                    if (!is_bool(sc_r) || !as_bool(sc_r))
-                        continue;
-
-                    // Issue #107 part 4: inline typecheck (no lock).
-                    // Going through the primitive would re-enter
-                    // workspace_mtx_ and deadlock.
-                    bool valid = ev.run_typecheck_no_lock_bool();
-                    if (!valid)
-                        continue;
-                    f = compute_fitness(variant);
-                    // Restore
-                    auto bi = ev.string_heap_.size();
-                    ev.string_heap_.push_back(baseline);
-                    (*sc_fn)({make_string(bi)});
-                }
-
-                if (f > best_fitness) {
-                    best_fitness = f;
-                    best_code = variant;
-                    best_gen = gen + 1;
-                }
+                // Update elite from this generation
+                elite.clear();
+                elite.push_back({best_code, best_fitness});
             }
 
-            // Update elite from this generation
-            elite.clear();
-            elite.push_back({best_code, best_fitness});
-        }
+            // Apply best to workspace
+            auto bi = ev.string_heap_.size();
+            ev.string_heap_.push_back(best_code);
+            auto sc_fn = ev.primitives_.lookup("set-code");
+            if (sc_fn)
+                (*sc_fn)({make_string(bi)});
+            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+            ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            // (ASAN fix #107 leak) delete the old index.
+            destroy_defuse_index();
 
-        // Apply best to workspace
-        auto bi = ev.string_heap_.size();
-        ev.string_heap_.push_back(best_code);
-        auto sc_fn = ev.primitives_.lookup("set-code");
-        if (sc_fn)
-            (*sc_fn)({make_string(bi)});
-        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        // (ASAN fix #107 leak) delete the old index.
-        destroy_defuse_index();
+            auto gs = std::to_string(best_gen);
+            auto gi = ev.string_heap_.size();
+            ev.string_heap_.push_back(gs);
+            auto fs = std::to_string(best_fitness);
+            auto fi = ev.string_heap_.size();
+            ev.string_heap_.push_back(fs);
 
-        auto gs = std::to_string(best_gen);
-        auto gi = ev.string_heap_.size();
-        ev.string_heap_.push_back(gs);
-        auto fs = std::to_string(best_fitness);
-        auto fi = ev.string_heap_.size();
-        ev.string_heap_.push_back(fs);
-
-        auto p1 = ev.pairs_.size();
-        ev.pairs_.push_back({make_string(gi), make_string(fi)});
-        return make_pair(p1);
-    });
-
+            auto p1 = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(gi), make_string(fi)});
+            return make_pair(p1);
+        });
 }
 
 void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -1248,7 +1250,7 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
                 llm_call_count++;
                 if (code_str.empty()) {
                     ev.timeline_.push_back("attempt_" + std::to_string(attempt) +
-                                        ":empty from generator");
+                                           ":empty from generator");
                     errors.push_back("empty from generator");
                     error_types.push_back("empty");
                     continue;
@@ -1256,7 +1258,7 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
             } else {
                 if (!has_fixer) {
                     ev.timeline_.push_back("attempt_" + std::to_string(attempt) +
-                                        ":no fixer, stopping");
+                                           ":no fixer, stopping");
                     break;
                 }
                 auto cs = ev.string_heap_.size();
@@ -1269,7 +1271,8 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
                                              types::make_string(gs)});
                 llm_call_count++;
                 if (code_str.empty()) {
-                    ev.timeline_.push_back("attempt_" + std::to_string(attempt) + ":empty from fixer");
+                    ev.timeline_.push_back("attempt_" + std::to_string(attempt) +
+                                           ":empty from fixer");
                     errors.push_back("empty from fixer");
                     error_types.push_back("empty");
                     continue;
@@ -1825,7 +1828,8 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
         if (reason.empty())
             reason = "no heuristics matched; clone unchanged";
 
-        ev.timeline_.push_back("evolve:" + evolved.name + " from " + src->name + " (" + reason + ")");
+        ev.timeline_.push_back("evolve:" + evolved.name + " from " + src->name + " (" + reason +
+                               ")");
 
         // Insert into ev.strategies_ (avoid name collision: bump suffix)
         std::string final_name = evolved.name;
@@ -1848,7 +1852,6 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.string_heap_.push_back(evolved.name);
         return types::make_string(sid);
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail
