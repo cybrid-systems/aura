@@ -1811,6 +1811,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:constraint-delta-blame-stats",
             // Issue #691 — CoercionMap + NarrowingRecord provenance
             "query:coercion-narrowing-stats",
+            // Issue #692 — ADT exhaustiveness + pattern provenance typed-mutation
+            "query:adt-exhaustiveness-typed-mutate-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1828,9 +1830,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 72 entries as of #691 ship (71 from #690 + 1 new
-        // query:coercion-narrowing-stats).
-        return make_int(72);
+        // 73 entries as of #692 ship (72 from #691 + 1 new
+        // query:adt-exhaustiveness-typed-mutate-stats).
+        return make_int(73);
     });
 
 }

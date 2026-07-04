@@ -273,6 +273,10 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t adt_variant_mutate_impacts_total = 0;
     std::uint64_t adt_stale_exhaust_prevented_total = 0;
     std::uint64_t adt_occurrence_narrow_in_match_total = 0;
+    // Issue #692: ADT/match typed-mutation pattern provenance refresh.
+    std::uint64_t adt_pattern_narrow_refreshes_total = 0;
+    std::uint64_t adt_non_exhaustive_caught_total = 0;
+    std::uint64_t adt_pattern_provenance_complete_total = 0;
     // Issue #342: narrowing blame/provenance
     // observability. Mirrors the lifetime counter
     // in CompilerMetrics. The provenance fields

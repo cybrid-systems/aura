@@ -1346,6 +1346,13 @@ export void refresh_adt_constructors_for_dirty_define_types(
     aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
     const std::vector<aura::ast::NodeId>& dirty_nodes, void* metrics = nullptr);
 
+// Issue #692: incremental ADT exhaustiveness + pattern provenance refresh
+// for infer_flat_partial structural typed mutation.
+export void revalidate_adt_typed_mutation_scope(
+    aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
+    const std::vector<aura::ast::NodeId>& subtree_roots, const aura::ast::MutationRecord& rec,
+    std::uint64_t cache_epoch, void* metrics = nullptr);
+
 // Issue #260: ADT match exhaustiveness for a single __match_tmp let node.
 // Returns missing constructor names (empty if complete, wildcard, or N/A).
 export std::vector<std::string>

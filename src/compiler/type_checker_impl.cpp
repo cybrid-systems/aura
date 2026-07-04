@@ -5038,6 +5038,21 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
     }
 
+    // Issue #692: ADT DefineType + match exhaustiveness incremental
+    // re-validation + pattern NarrowingRecord provenance refresh.
+    {
+        std::vector<NodeId> adt_roots;
+        adt_roots.reserve(affected.size() + 2);
+        for (auto id : affected)
+            adt_roots.push_back(id);
+        if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
+            adt_roots.push_back(rec.target_node);
+        if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
+            adt_roots.push_back(rec.parent_id);
+        revalidate_adt_typed_mutation_scope(flat, pool, types, adt_roots, rec, cache_epoch_,
+                                            metrics_);
+    }
+
     return re_inferred;
 }
 
@@ -5643,6 +5658,79 @@ namespace {
         }
     }
 
+    static void collect_adt_nodes_in_subtrees(const FlatAST& flat, const StringPool& pool,
+                                              const std::vector<NodeId>& roots,
+                                              std::vector<NodeId>& define_types,
+                                              std::vector<NodeId>& match_lets) {
+        std::unordered_set<NodeId> seen_dt;
+        std::unordered_set<NodeId> seen_match;
+        for (auto root : roots) {
+            if (root == NULL_NODE || root >= flat.size())
+                continue;
+            std::vector<NodeId> stack = {root};
+            std::unordered_set<NodeId> walk_seen;
+            while (!stack.empty()) {
+                auto id = stack.back();
+                stack.pop_back();
+                if (id == NULL_NODE || id >= flat.size() || !walk_seen.insert(id).second)
+                    continue;
+                auto v = flat.get(id);
+                if (v.tag == NodeTag::DefineType && seen_dt.insert(id).second)
+                    define_types.push_back(id);
+                if (v.tag == NodeTag::Let &&
+                    std::string(pool.resolve(v.sym_id)) == "__match_tmp" &&
+                    seen_match.insert(id).second) {
+                    match_lets.push_back(id);
+                }
+                for (auto c : v.children)
+                    stack.push_back(c);
+            }
+        }
+    }
+
+    static void record_match_pattern_narrowing_provenance(
+        FlatAST& flat, const StringPool& pool, TypeRegistry& reg, NodeId match_let,
+        std::uint64_t mutation_id, std::uint64_t cache_epoch, void* metrics) {
+        if (match_let == NULL_NODE || match_let >= flat.size() || !flat.has_match_info(match_let))
+            return;
+        auto v = flat.get(match_let);
+        if (v.tag != NodeTag::Let || std::string(pool.resolve(v.sym_id)) != "__match_tmp")
+            return;
+        const auto* mi = flat.get_match_info(match_let);
+        if (!mi)
+            return;
+        std::uint32_t tid_raw = mi->subject_type_id;
+        if ((tid_raw == 0 || tid_raw >= reg.size()) && !v.children.empty())
+            tid_raw = flat.type_id(v.child(0));
+        std::string refined_str;
+        if (tid_raw > 0 && tid_raw < reg.size()) {
+            auto name = reg.name_of(TypeId{tid_raw, 1});
+            if (!name.empty())
+                refined_str = std::string(name);
+        }
+        std::string pred_src = "match:";
+        for (const auto& ctor : mi->used_constructors)
+            pred_src += ctor + ",";
+        if (mi->has_wildcard)
+            pred_src.push_back('_');
+        NarrowingRecord rec;
+        rec.var_name = "__match_tmp";
+        rec.predicate_src = pred_src;
+        rec.refined_type_str = refined_str;
+        rec.if_node = match_let;
+        rec.cond_node = match_let;
+        rec.narrow_evidence = static_cast<std::uint32_t>(mi->used_constructors.size());
+        rec.capture_epoch = cache_epoch;
+        rec.source_mutation_id = mutation_id;
+        flat.record_narrowing(std::move(rec));
+        if (!metrics)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(metrics);
+        m->adt_pattern_narrow_refreshes_total.fetch_add(1, std::memory_order_relaxed);
+        if (mutation_id != 0 && !refined_str.empty() && !mi->used_constructors.empty())
+            m->adt_pattern_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     static void refresh_adt_constructors_for_dirty_define_types_impl(
         FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
         const std::vector<NodeId>& dirty_nodes, void* metrics) {
@@ -5675,6 +5763,51 @@ void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const String
                                                       const std::vector<NodeId>& dirty_nodes,
                                                       void* metrics) {
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
+}
+
+void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool,
+                                         TypeRegistry& reg, const std::vector<NodeId>& subtree_roots,
+                                         const MutationRecord& rec, std::uint64_t cache_epoch,
+                                         void* metrics) {
+    std::vector<NodeId> define_types;
+    std::vector<NodeId> match_lets;
+    collect_adt_nodes_in_subtrees(flat, pool, subtree_roots, define_types, match_lets);
+    if (define_types.empty() && match_lets.empty())
+        return;
+    refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, define_types, metrics);
+    for (auto id : match_lets) {
+        if (!flat.has_match_info(id))
+            continue;
+        if (metrics) {
+            static_cast<CompilerMetrics*>(metrics)->adt_exhaust_rechecks_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        auto let_v = flat.get(id);
+        if (let_v.tag == NodeTag::Let && !let_v.children.empty()) {
+            const auto tid_raw = flat.type_id(let_v.child(0));
+            if (auto* mi = flat.get_match_info(id)) {
+                if (mi->subject_type_id > 0 && mi->subject_type_id != tid_raw && metrics) {
+                    static_cast<CompilerMetrics*>(metrics)
+                        ->adt_occurrence_narrow_in_match_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+            }
+        }
+        const auto missing = analyze_match_exhaustiveness(flat, pool, reg, id);
+        if (!missing.empty() && metrics) {
+            static_cast<CompilerMetrics*>(metrics)->adt_non_exhaustive_caught_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        if (auto* mi = flat.get_match_info(id)) {
+            MatchClauseInfo updated = *mi;
+            updated.exhaustiveness_checked = true;
+            if (let_v.tag == NodeTag::Let && !let_v.children.empty())
+                updated.subject_type_id = flat.type_id(let_v.child(0));
+            flat.set_match_info(id, std::move(updated));
+        }
+        record_match_pattern_narrowing_provenance(flat, pool, reg, id, rec.mutation_id,
+                                                  cache_epoch, metrics);
+    }
 }
 
 void record_linear_ownership_mutation_metrics(void* metrics, bool revalidated,
