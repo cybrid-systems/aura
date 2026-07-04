@@ -72,11 +72,11 @@ namespace {
             // some systems returns null even when symbols exist, so we
             // still probe individual names afterwards.
             static constexpr const char* kSonames[] = {
-                "libcurl.so.4",     // Linux + glibc
-                "libcurl.so",       // Linux generic
-                "libcurl.4.dylib",  // macOS Sonoma+ (and Homebrew)
-                "libcurl.dylib",    // macOS legacy
-                "libcurl.so.5",     // future-proofing (libcurl 8+)
+                "libcurl.so.4",    // Linux + glibc
+                "libcurl.so",      // Linux generic
+                "libcurl.4.dylib", // macOS Sonoma+ (and Homebrew)
+                "libcurl.dylib",   // macOS legacy
+                "libcurl.so.5",    // future-proofing (libcurl 8+)
             };
             // Build a small list of probe candidates — start with the
             // global handle, then the named sonames. We attempt each in
@@ -93,8 +93,8 @@ namespace {
                 auto* es = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(h, "curl_easy_setopt");
                 auto* ep = (CURLcode (*)(CURL*))::dlsym(h, "curl_easy_perform");
                 auto* ec = (void (*)(CURL*))::dlsym(h, "curl_easy_cleanup");
-                auto* sa = (struct curl_slist * (*)(struct curl_slist*, const char*))::dlsym(
-                    h, "curl_slist_append");
+                auto* sa = (struct curl_slist *
+                            (*)(struct curl_slist*, const char*))::dlsym(h, "curl_slist_append");
                 auto* sf = (void (*)(struct curl_slist*))::dlsym(h, "curl_slist_free_all");
                 if (ei && es && ep && ec && sa && sf) {
                     handle = h;

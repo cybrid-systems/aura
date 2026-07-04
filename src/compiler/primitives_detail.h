@@ -61,8 +61,8 @@ namespace primitives_detail {
             return 0;
         m->primitive_fastpath_hits_total.fetch_add(1, std::memory_order_relaxed);
         try {
-            return m->primitive_fastpath_hits_for_slot(slot).fetch_add(
-                1, std::memory_order_relaxed) +
+            return m->primitive_fastpath_hits_for_slot(slot).fetch_add(1,
+                                                                       std::memory_order_relaxed) +
                    1;
         } catch (...) {
             // OOM in lazy-grow — swallow; aggregate counter is

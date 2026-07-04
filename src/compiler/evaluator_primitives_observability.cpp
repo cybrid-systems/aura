@@ -267,8 +267,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             const std::size_t limit = std::min(slot_count, cap);
             rows.reserve(limit);
             for (std::size_t slot = 0; slot < limit; ++slot) {
-                auto cnt = m->primitive_fastpath_hits_per_prim_[slot].load(
-                    std::memory_order_relaxed);
+                auto cnt =
+                    m->primitive_fastpath_hits_per_prim_[slot].load(std::memory_order_relaxed);
                 if (cnt > 0) {
                     ++distinct;
                     rows.emplace_back(ev.primitives_.name_for_slot(slot), cnt);
@@ -276,12 +276,11 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         }
         // Sort desc by count, ties broken by name asc for stability.
-        std::sort(rows.begin(), rows.end(),
-                  [](const auto& a, const auto& b) {
-                      if (a.second != b.second)
-                          return a.second > b.second;
-                      return a.first < b.first;
-                  });
+        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+            if (a.second != b.second)
+                return a.second > b.second;
+            return a.first < b.first;
+        });
         if (rows.size() > top_n)
             rows.resize(top_n);
 
