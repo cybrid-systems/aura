@@ -2818,7 +2818,7 @@ bool test_gc_multiple_cycles() {
         gc->record_alloc();
         gc->request();
         gc->collect();
-        if (gc->metrics().gc_count.load() > (uint64_t)i)
+        if (gc->metrics().gc_count.load() > static_cast<long>(i))
             ++ran;
     }
 
