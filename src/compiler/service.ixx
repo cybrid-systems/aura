@@ -535,6 +535,10 @@ public:
         // counters, so the snapshot and closure:stats read
         // a consistent value.
         evaluator_.set_compiler_metrics(&metrics_);
+        // Issue #708: wire AOT bridge counters at construction so
+        // aura_reload_aot_module / checkpoint probes bump metrics_
+        // before the first JIT eval (register_jit_primitives is lazy).
+        aura_set_aot_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
         // Issue #681: wire mutation_epoch / bridge_epoch for
         // apply_closure + IRClosure lifetime checks.

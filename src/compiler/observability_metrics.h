@@ -906,6 +906,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_stale_reject_count_{0};
     std::atomic<std::uint64_t> aot_region_mismatch_{0};
     std::atomic<std::uint64_t> aot_hot_update_success_{0};
+    // Issue #708: AOT hot-reload refcount swap + checkpoint version drift.
+    std::atomic<std::uint64_t> aot_reload_attempts_{0};
+    std::atomic<std::uint64_t> aot_refcount_swaps_{0};
+    std::atomic<std::uint64_t> aot_deopt_on_steal_{0};
+    std::atomic<std::uint64_t> aot_concurrent_safe_reloads_{0};
+    std::atomic<std::uint64_t> aot_checkpoint_version_drifts_{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

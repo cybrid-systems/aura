@@ -1978,6 +1978,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:scheduler-stealbudget-adaptive-stats",
             // Issue #707 — Per-fiber stack/checkpoint pool
             "query:per-fiber-stack-pool-stats",
+            // Issue #708 — AOT hot-reload refcount + checkpoint version
+            "query:aot-reload-stats",
+            "query:aot-checkpoint-version-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1995,9 +1998,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 80 entries as of #707 ship (79 from #706 + 1 new
-        // query:per-fiber-stack-pool-stats).
-        return make_int(80);
+        // 82 entries as of #708 ship (80 from #707 + 2 new
+        // query:aot-reload-stats + query:aot-checkpoint-version-stats).
+        return make_int(82);
     });
 }
 

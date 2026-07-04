@@ -341,12 +341,16 @@ typedef struct {
 // Set up by AOT registration code before main() runs.
 static ScalarFn s_func_table[MAX_FUNCTIONS] = {NULL};
 
+// Issue #708: tracked registration for refcount-safe hot-reload swap.
+extern void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
+
 // Register a function pointer for a given func_id.
 // Called by AOT registration code (generated .c file) before main().
 void aura_register_fn(int64_t func_id, int64_t fn_ptr) {
     uint64_t id = (uint64_t)func_id;
     if (id < MAX_FUNCTIONS) {
         s_func_table[id] = (ScalarFn)(intptr_t)fn_ptr;
+        aura_register_fn_tracked(func_id, fn_ptr);
     }
 }
 
