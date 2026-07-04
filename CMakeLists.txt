@@ -2805,6 +2805,10 @@ add_dependencies(all_test_issue_targets test_issue_708)
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)
 add_dependencies(all_test_issue_targets test_issue_709)
+# Issue #473 Tier 1: serve-async security hardening (JSON escape + stdin cap + auth/curl/platform).
+aura_add_issue_test(test_issue_473)
+target_compile_definitions(test_issue_473 PRIVATE AURA_TEST_SRC_DIR="${CMAKE_SOURCE_DIR}/src")
+add_dependencies(all_test_issue_targets test_issue_473)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)
