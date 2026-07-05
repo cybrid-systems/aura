@@ -52,8 +52,8 @@ static int g_failed = 0;
         }                                                                                          \
     } while (0)
 
-static std::int64_t hash_int(aura::compiler::CompilerService& cs,
-                             std::string_view hash_eval, std::string_view key) {
+static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view hash_eval,
+                             std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_eval, key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
@@ -73,8 +73,7 @@ int main() {
     {
         std::println("\n--- AC1: (query:pattern-index-stats-hash) shape ---");
         auto h = cs.eval("(query:pattern-index-stats-hash)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "pattern-index-stats-hash returns a hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "pattern-index-stats-hash returns a hash");
         const std::string eval_str = "(query:pattern-index-stats-hash)";
         const auto hits = hash_int(cs, eval_str, "hits");
         const auto misses = hash_int(cs, eval_str, "misses");
@@ -87,30 +86,22 @@ int main() {
         const auto delta_hit_rate = hash_int(cs, eval_str, "delta-hit-rate");
         const auto recommendation = hash_int(cs, eval_str, "recommendation");
         const auto schema = hash_int(cs, eval_str, "schema");
-        CHECK(hits >= 0,
-              std::format("hits >= 0 (got {})", hits));
-        CHECK(misses >= 0,
-              std::format("misses >= 0 (got {})", misses));
-        CHECK(rebuilds >= 0,
-              std::format("rebuilds >= 0 (got {})", rebuilds));
-        CHECK(dirty_marks >= 0,
-              std::format("dirty-marks >= 0 (got {})", dirty_marks));
-        CHECK(rebuild_time_us >= 0,
-              std::format("rebuild-time-us >= 0 (got {})", rebuild_time_us));
-        CHECK(delta_hits >= 0,
-              std::format("delta-hits >= 0 (got {})", delta_hits));
+        CHECK(hits >= 0, std::format("hits >= 0 (got {})", hits));
+        CHECK(misses >= 0, std::format("misses >= 0 (got {})", misses));
+        CHECK(rebuilds >= 0, std::format("rebuilds >= 0 (got {})", rebuilds));
+        CHECK(dirty_marks >= 0, std::format("dirty-marks >= 0 (got {})", dirty_marks));
+        CHECK(rebuild_time_us >= 0, std::format("rebuild-time-us >= 0 (got {})", rebuild_time_us));
+        CHECK(delta_hits >= 0, std::format("delta-hits >= 0 (got {})", delta_hits));
         // Derived metrics invariants
         CHECK(linear_fallbacks == misses,
-              std::format("linear-fallbacks == misses ({} == {})",
-                          linear_fallbacks, misses));
+              std::format("linear-fallbacks == misses ({} == {})", linear_fallbacks, misses));
         CHECK(arity_accuracy >= 0 && arity_accuracy <= 100,
               std::format("arity-accuracy in [0,100] (got {})", arity_accuracy));
         CHECK(delta_hit_rate >= 0 && delta_hit_rate <= 100,
               std::format("delta-hit-rate in [0,100] (got {})", delta_hit_rate));
         CHECK(recommendation >= 0 && recommendation <= 2,
               std::format("recommendation in {{0,1,2}} (got {})", recommendation));
-        CHECK(schema == 621,
-              std::format("schema == 621 (got {})", schema));
+        CHECK(schema == 621, std::format("schema == 621 (got {})", schema));
     }
 
     // AC2: (query:pattern-index-stats) legacy int primitive
@@ -140,14 +131,11 @@ int main() {
         if (hits == 0 && misses == 0) {
             // No workload: accuracy should be 0 (denominator 0 -> 0).
             CHECK(arity_accuracy == 0,
-                  std::format("fresh-service arity-accuracy == 0 (got {})",
-                              arity_accuracy));
+                  std::format("fresh-service arity-accuracy == 0 (got {})", arity_accuracy));
             // recommendation = 0 since the high-miss-rate branch
             // requires total > 0.
-            const auto rec =
-                hash_int(cs, "(query:pattern-index-stats-hash)", "recommendation");
-            CHECK(rec == 0,
-                  std::format("fresh-service recommendation == 0 (got {})", rec));
+            const auto rec = hash_int(cs, "(query:pattern-index-stats-hash)", "recommendation");
+            CHECK(rec == 0, std::format("fresh-service recommendation == 0 (got {})", rec));
         } else {
             std::println("  (workload present, skipping zero-state invariant)");
         }
@@ -193,8 +181,8 @@ int main() {
         // AC3; here we only assert that 8 concurrent calls
         // produced 8 values without crashing.
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned a value",
-                          ok_count.load(), k_iters * 2));
+              std::format("concurrent: {} / {} calls returned a value", ok_count.load(),
+                          k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

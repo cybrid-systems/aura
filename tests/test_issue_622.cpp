@@ -77,20 +77,15 @@ int main() {
     {
         std::println("\n--- AC1: (query:atomic-batch-stats-hash) shape ---");
         auto h = cs.eval("(query:atomic-batch-stats-hash)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "atomic-batch-stats-hash returns a hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "atomic-batch-stats-hash returns a hash");
         const auto active = batch_hash_int(cs, "active");
         const auto commits_total = batch_hash_int(cs, "commits-total");
         const auto bumps_saved = batch_hash_int(cs, "bumps-saved-last-batch");
         const auto schema = batch_hash_int(cs, "schema");
-        CHECK(active == 0 || active == 1,
-              std::format("active in {{0,1}} (got {})", active));
-        CHECK(commits_total >= 0,
-              std::format("commits-total >= 0 (got {})", commits_total));
-        CHECK(bumps_saved >= 0,
-              std::format("bumps-saved-last-batch >= 0 (got {})", bumps_saved));
-        CHECK(schema == 622,
-              std::format("schema == 622 (got {})", schema));
+        CHECK(active == 0 || active == 1, std::format("active in {{0,1}} (got {})", active));
+        CHECK(commits_total >= 0, std::format("commits-total >= 0 (got {})", commits_total));
+        CHECK(bumps_saved >= 0, std::format("bumps-saved-last-batch >= 0 (got {})", bumps_saved));
+        CHECK(schema == 622, std::format("schema == 622 (got {})", schema));
     }
 
     // AC2: existing (atomic-batch:stats) (#192) + (query:atomic-
@@ -100,14 +95,12 @@ int main() {
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
         auto s192 = cs.eval("(atomic-batch:stats)");
-        CHECK(s192.has_value(),
-              "(atomic-batch:stats) reachable (#192 back-compat)");
+        CHECK(s192.has_value(), "(atomic-batch:stats) reachable (#192 back-compat)");
         auto s437 = cs.eval("(query:atomic-batch-stats)");
         CHECK(s437 && aura::compiler::types::is_int(*s437),
               "(query:atomic-batch-stats) returns an int (#437 back-compat)");
         auto s529 = cs.eval("(query:atomic-batch-rollback-stats)");
-        CHECK(s529.has_value(),
-              "(query:atomic-batch-rollback-stats) reachable (#529 back-compat)");
+        CHECK(s529.has_value(), "(query:atomic-batch-rollback-stats) reachable (#529 back-compat)");
     }
 
     // AC3: concurrent reads of (query:atomic-batch-stats-hash)
@@ -129,9 +122,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

@@ -76,8 +76,7 @@ int main() {
     {
         std::println("\n--- AC1: (arena:auto-compact-threshold) read ---");
         auto r = cs.eval("(arena:auto-compact-threshold)");
-        CHECK(r && aura::compiler::types::is_int(*r),
-              "auto-compact-threshold returns an int");
+        CHECK(r && aura::compiler::types::is_int(*r), "auto-compact-threshold returns an int");
         const auto val = aura::compiler::types::as_int(*r);
         // Default is 50; could also be -1 if no arena group is
         // loaded in the test service. Accept either.
@@ -91,8 +90,8 @@ int main() {
     {
         std::println("\n--- AC2: (arena:set-auto-compact-threshold ratio) set + clamping ---");
         // Get baseline value first.
-        const auto baseline = aura::compiler::types::as_int(
-            *cs.eval("(arena:auto-compact-threshold)"));
+        const auto baseline =
+            aura::compiler::types::as_int(*cs.eval("(arena:auto-compact-threshold)"));
         // Set to 75, expect baseline (or -1) back as previous.
         auto r_set = cs.eval("(arena:set-auto-compact-threshold 75)");
         CHECK(r_set && aura::compiler::types::is_int(*r_set),
@@ -101,32 +100,29 @@ int main() {
         // When baseline is -1 (no arena group), prev should also
         // be -1; when baseline is 50, prev should be 50.
         if (baseline == -1) {
-            CHECK(prev == -1,
-                  std::format("baseline -1 case: prev == -1 (got {})", prev));
+            CHECK(prev == -1, std::format("baseline -1 case: prev == -1 (got {})", prev));
         } else {
-            CHECK(prev == baseline,
-                  std::format("prev == baseline ({} == {})", prev, baseline));
+            CHECK(prev == baseline, std::format("prev == baseline ({} == {})", prev, baseline));
         }
         // Readback should be 75.
         auto r_now = cs.eval("(arena:auto-compact-threshold)");
         const auto now = aura::compiler::types::as_int(*r_now);
         if (baseline != -1) {
-            CHECK(now == 75,
-                  std::format("readback after set == 75 (got {})", now));
+            CHECK(now == 75, std::format("readback after set == 75 (got {})", now));
         }
         // Clamping: -5 -> 0.
         (void)cs.eval("(arena:set-auto-compact-threshold -5)");
         if (baseline != -1) {
-            const auto after_clamp_low = aura::compiler::types::as_int(
-                *cs.eval("(arena:auto-compact-threshold)"));
+            const auto after_clamp_low =
+                aura::compiler::types::as_int(*cs.eval("(arena:auto-compact-threshold)"));
             CHECK(after_clamp_low == 0,
                   std::format("negative arg clamped to 0 (got {})", after_clamp_low));
         }
         // Clamping: 200 -> 95.
         (void)cs.eval("(arena:set-auto-compact-threshold 200)");
         if (baseline != -1) {
-            const auto after_clamp_high = aura::compiler::types::as_int(
-                *cs.eval("(arena:auto-compact-threshold)"));
+            const auto after_clamp_high =
+                aura::compiler::types::as_int(*cs.eval("(arena:auto-compact-threshold)"));
             CHECK(after_clamp_high == 95,
                   std::format("arg > 95 clamped to 95 (got {})", after_clamp_high));
         }
@@ -139,13 +135,12 @@ int main() {
     {
         std::println("\n--- AC3: bad-arg no-op ---");
         (void)cs.eval("(arena:set-auto-compact-threshold 25)");
-        const auto before = aura::compiler::types::as_int(
-            *cs.eval("(arena:auto-compact-threshold)"));
+        const auto before =
+            aura::compiler::types::as_int(*cs.eval("(arena:auto-compact-threshold)"));
         auto r = cs.eval("(arena:set-auto-compact-threshold \"not-a-number\")");
-        CHECK(r && aura::compiler::types::is_int(*r),
-              "non-int arg returns an int (current value)");
-        const auto after = aura::compiler::types::as_int(
-            *cs.eval("(arena:auto-compact-threshold)"));
+        CHECK(r && aura::compiler::types::is_int(*r), "non-int arg returns an int (current value)");
+        const auto after =
+            aura::compiler::types::as_int(*cs.eval("(arena:auto-compact-threshold)"));
         CHECK(after == before,
               std::format("non-int arg left threshold unchanged ({} -> {})", before, after));
         // Restore.
@@ -157,20 +152,15 @@ int main() {
     {
         std::println("\n--- AC4: existing arena primitives back-compat ---");
         auto s_json = cs.eval("(arena:stats-json)");
-        CHECK(s_json.has_value(),
-              "(arena:stats-json) reachable (#187 back-compat)");
+        CHECK(s_json.has_value(), "(arena:stats-json) reachable (#187 back-compat)");
         auto s_def = cs.eval("(arena:defrag)");
-        CHECK(s_def.has_value(),
-              "(arena:defrag) reachable (#300 back-compat)");
+        CHECK(s_def.has_value(), "(arena:defrag) reachable (#300 back-compat)");
         auto s_pol = cs.eval("(arena:compact-with-policy)");
-        CHECK(s_pol.has_value(),
-              "(arena:compact-with-policy) reachable (#430 back-compat)");
+        CHECK(s_pol.has_value(), "(arena:compact-with-policy) reachable (#430 back-compat)");
         auto s_probe = cs.eval("(arena:should-auto-compact?)");
-        CHECK(s_probe.has_value(),
-              "(arena:should-auto-compact?) reachable (#335 back-compat)");
+        CHECK(s_probe.has_value(), "(arena:should-auto-compact?) reachable (#335 back-compat)");
         auto s_auto = cs.eval("(query:arena-auto-stats)");
-        CHECK(s_auto.has_value(),
-              "(query:arena-auto-stats) reachable (#464 back-compat)");
+        CHECK(s_auto.has_value(), "(query:arena-auto-stats) reachable (#464 back-compat)");
         auto s_compact = cs.eval("(query:arena-auto-compact-stats)");
         CHECK(s_compact.has_value(),
               "(query:arena-auto-compact-stats) reachable (#685 back-compat)");
@@ -200,8 +190,7 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} reads returned int",
-                          ok_count.load(), k_iters * 2));
+              std::format("concurrent: {} / {} reads returned int", ok_count.load(), k_iters * 2));
         // Restore default.
         (void)cs.eval("(arena:set-auto-compact-threshold 50)");
     }
