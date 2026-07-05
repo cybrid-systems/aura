@@ -1070,6 +1070,117 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #621: query:pattern-index-stats-hash — Agent-discoverable
+    // structured form of (query:pattern-index-stats). The legacy
+    // primitive (#547) returns an int = sum of 6 counters; this
+    // version returns the full 10-field hash so the AI Agent can
+    // react to each category independently.
+    //
+    // Fields (10):
+    //   - hits               lifetime find_by_tag_arity hits
+    //   - misses             lifetime find_by_tag_arity misses
+    //   - rebuilds           lifetime full rebuilds (#547)
+    //   - dirty-marks        lifetime mark_dirty_upward() calls
+    //                        that flipped the dirty flag (#554)
+    //   - rebuild-time-us    cumulative rebuild wall time (#554)
+    //   - delta-hits         incremental-patch hits (#554)
+    //   - linear-fallbacks   == misses (count of queries that
+    //                        fell through to a linear scan)
+    //   - arity-accuracy     hits / (hits + misses) * 100
+    //                        (0 if both are 0; rounded to int)
+    //   - delta-hit-rate     delta_hits / (delta_hits +
+    //                        rebuilds) * 100; measures how often
+    //                        incremental patches satisfy lookups
+    //                        vs requiring a full rebuild
+    //   - recommendation     int 0=healthy, 1=high-miss-rate,
+    //                        2=rebuild-bound (rebuild_time_us
+    //                        dominates delta_hits)
+    //   - schema == 621 sentinel
+    //
+    // P0 ships the structured form with derived metrics
+    // computed inline (no new C++ atomics). The actual
+    // tag_arity_index rebuild/patch + query:pattern hot-path
+    // wiring are follow-ups (hot-path changes that need
+    // benchmarking + perf regression coverage first).
+    add("query:pattern-index-stats-hash",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            std::uint64_t hits = 0;
+            std::uint64_t misses = 0;
+            std::uint64_t rebuilds = 0;
+            std::uint64_t dirty_marks = 0;
+            std::uint64_t rebuild_time_us = 0;
+            std::uint64_t delta_hits = 0;
+            if (auto* ws = ev->workspace_flat()) {
+                hits = ws->tag_arity_index_hits();
+                misses = ws->tag_arity_index_misses();
+                rebuilds = ws->tag_arity_index_rebuilds();
+                dirty_marks = ws->tag_arity_index_dirty_marks();
+                rebuild_time_us = ws->tag_arity_index_rebuild_time_us();
+                delta_hits = ws->tag_arity_index_delta_hits();
+            }
+            const std::uint64_t total = hits + misses;
+            const std::int64_t arity_accuracy =
+                total == 0
+                    ? 0
+                    : static_cast<std::int64_t>((hits * 100) / total);
+            const std::uint64_t delta_denom = delta_hits + rebuilds;
+            const std::int64_t delta_hit_rate =
+                delta_denom == 0
+                    ? 0
+                    : static_cast<std::int64_t>((delta_hits * 100) / delta_denom);
+            std::int64_t recommendation = 0;
+            if (total > 0 && arity_accuracy < 50)
+                recommendation = 1;
+            else if (rebuilds > 0 &&
+                     rebuild_time_us > static_cast<std::uint64_t>(delta_hits + 1) * 100)
+                recommendation = 2;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("hits", static_cast<std::int64_t>(hits));
+            insert_kv("misses", static_cast<std::int64_t>(misses));
+            insert_kv("rebuilds", static_cast<std::int64_t>(rebuilds));
+            insert_kv("dirty-marks", static_cast<std::int64_t>(dirty_marks));
+            insert_kv("rebuild-time-us", static_cast<std::int64_t>(rebuild_time_us));
+            insert_kv("delta-hits", static_cast<std::int64_t>(delta_hits));
+            insert_kv("linear-fallbacks", static_cast<std::int64_t>(misses));
+            insert_kv("arity-accuracy", arity_accuracy);
+            insert_kv("delta-hit-rate", delta_hit_rate);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 621);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #547: query:pattern-hygiene-stats. Returns
     // the sum of the 2 query:pattern hygiene observability
     // counters:
