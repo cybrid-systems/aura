@@ -84,8 +84,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:sv-verification-closedloop-stats-hash) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:sv-verification-closedloop-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -95,7 +95,8 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 int main() {
     using namespace aura_issue_630_detail;
-    std::println("=== Issue #630: query:sv-verification-closedloop-stats-hash structured companion ===");
+    std::println(
+        "=== Issue #630: query:sv-verification-closedloop-stats-hash structured companion ===");
 
     aura::compiler::CompilerService cs;
 
@@ -112,20 +113,13 @@ int main() {
         const auto rollback = hash_int(cs, "rollback-on-partial");
         const auto ppa = hash_int(cs, "ppa-savings-total");
         const auto schema = hash_int(cs, "schema");
-        CHECK(feedback >= 0,
-              std::format("feedback-to-mutate-cycles >= 0 (got {})", feedback));
-        CHECK(stable_ref >= 0,
-              std::format("stable-ref-captures-in-sv >= 0 (got {})", stable_ref));
-        CHECK(dirty >= 0,
-              std::format("verification-dirty-propagations >= 0 (got {})", dirty));
-        CHECK(reverify >= 0,
-              std::format("reverify-success >= 0 (got {})", reverify));
-        CHECK(rollback >= 0,
-              std::format("rollback-on-partial >= 0 (got {})", rollback));
-        CHECK(ppa >= 0,
-              std::format("ppa-savings-total >= 0 (got {})", ppa));
-        CHECK(schema == 630,
-              std::format("schema == 630 (got {})", schema));
+        CHECK(feedback >= 0, std::format("feedback-to-mutate-cycles >= 0 (got {})", feedback));
+        CHECK(stable_ref >= 0, std::format("stable-ref-captures-in-sv >= 0 (got {})", stable_ref));
+        CHECK(dirty >= 0, std::format("verification-dirty-propagations >= 0 (got {})", dirty));
+        CHECK(reverify >= 0, std::format("reverify-success >= 0 (got {})", reverify));
+        CHECK(rollback >= 0, std::format("rollback-on-partial >= 0 (got {})", rollback));
+        CHECK(ppa >= 0, std::format("ppa-savings-total >= 0 (got {})", ppa));
+        CHECK(schema == 630, std::format("schema == 630 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -133,20 +127,15 @@ int main() {
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
         auto s_run = cs.eval("(eda:run-verification-feedback)");
-        CHECK(s_run.has_value(),
-              "(eda:run-verification-feedback) reachable (#579 back-compat)");
+        CHECK(s_run.has_value(), "(eda:run-verification-feedback) reachable (#579 back-compat)");
         auto s_parse = cs.eval("(eda:parse-netlist)");
-        CHECK(s_parse.has_value(),
-              "(eda:parse-netlist) reachable (#499 back-compat)");
+        CHECK(s_parse.has_value(), "(eda:parse-netlist) reachable (#499 back-compat)");
         auto s_demo = cs.eval("(eda:demo-sv-self-evolution)");
-        CHECK(s_demo.has_value(),
-              "(eda:demo-sv-self-evolution) reachable (#579 back-compat)");
+        CHECK(s_demo.has_value(), "(eda:demo-sv-self-evolution) reachable (#579 back-compat)");
         auto s_sv = cs.eval("(eda:load-sv)");
-        CHECK(s_sv.has_value(),
-              "(eda:load-sv) reachable (#616 back-compat)");
+        CHECK(s_sv.has_value(), "(eda:load-sv) reachable (#616 back-compat)");
         auto s_vr = cs.eval("(eda:parse-verification-result)");
-        CHECK(s_vr.has_value(),
-              "(eda:parse-verification-result) reachable (#616 back-compat)");
+        CHECK(s_vr.has_value(), "(eda:parse-verification-result) reachable (#616 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -160,29 +149,22 @@ int main() {
         const auto rollback = hash_int(cs, "rollback-on-partial");
         const auto ppa = hash_int(cs, "ppa-savings-total");
         CHECK(feedback == 0,
-              std::format("fresh-service feedback-to-mutate-cycles == 0 (got {})",
-                          feedback));
+              std::format("fresh-service feedback-to-mutate-cycles == 0 (got {})", feedback));
         CHECK(stable_ref == 0,
-              std::format("fresh-service stable-ref-captures-in-sv == 0 (got {})",
-                          stable_ref));
+              std::format("fresh-service stable-ref-captures-in-sv == 0 (got {})", stable_ref));
         CHECK(dirty == 0,
-              std::format("fresh-service verification-dirty-propagations == 0 (got {})",
-                          dirty));
-        CHECK(reverify == 0,
-              std::format("fresh-service reverify-success == 0 (got {})", reverify));
+              std::format("fresh-service verification-dirty-propagations == 0 (got {})", dirty));
+        CHECK(reverify == 0, std::format("fresh-service reverify-success == 0 (got {})", reverify));
         CHECK(rollback == 0,
-              std::format("fresh-service rollback-on-partial == 0 (got {})",
-                          rollback));
-        CHECK(ppa == 0,
-              std::format("fresh-service ppa-savings-total == 0 (got {})", ppa));
+              std::format("fresh-service rollback-on-partial == 0 (got {})", rollback));
+        CHECK(ppa == 0, std::format("fresh-service ppa-savings-total == 0 (got {})", ppa));
     }
 
     // AC4: schema sentinel is exactly 630 (not 622/623/624/625/626).
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 630,
-              std::format("schema == 630 (got {})", schema));
+        CHECK(schema == 630, std::format("schema == 630 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -205,9 +187,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
