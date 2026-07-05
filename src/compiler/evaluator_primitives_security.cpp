@@ -1003,6 +1003,96 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #587: AI-native primitives development support observability hash.
+    // Synthesizes registry metadata coverage, skeleton generation, and
+    // introspection activity (#498/#617/#697) for Agent-friendly extension.
+    add("query:primitives-ai-native-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics()))
+            m->ai_native_primitive_hits_total.fetch_add(1, std::memory_order_relaxed);
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t slots = ev.primitives_.slot_count();
+        const std::uint64_t documented = ev.primitives_.documented_meta_count();
+        const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
+        const std::uint64_t skeletons =
+            m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t describes = ev.get_primitive_describe_count();
+        const std::uint64_t list_meta = ev.get_primitive_list_meta_count();
+        const std::uint64_t introspection_hits =
+            m ? (m->primitives_by_category_query_total.load(std::memory_order_relaxed) +
+                 m->schema_of_primitive_query_total.load(std::memory_order_relaxed) +
+                 m->primitives_meta_catalog_query_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::uint64_t ai_native_hits =
+            m ? m->ai_native_primitive_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::int64_t meta_coverage_pct =
+            slots > 0 ? static_cast<std::int64_t>((documented * 100) / slots) : 100;
+        const std::uint64_t total =
+            slots + schema_doc + skeletons + introspection_hits + describes + list_meta;
+        std::int64_t recommendation = 0;
+        if (meta_coverage_pct < 50)
+            recommendation = 3;
+        else if (schema_doc < documented / 2)
+            recommendation = 2;
+        else if (skeletons > 0 || introspection_hits > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
+            {"schema-documented", make_int(static_cast<std::int64_t>(schema_doc))},
+            {"documented-meta", make_int(static_cast<std::int64_t>(documented))},
+            {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
+            {"introspection-hits", make_int(static_cast<std::int64_t>(introspection_hits))},
+            {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
+            {"list-meta-calls", make_int(static_cast<std::int64_t>(list_meta))},
+            {"meta-coverage-pct", make_int(meta_coverage_pct)},
+            {"ai-native-hits", make_int(static_cast<std::int64_t>(ai_native_hits))},
+            {"extension-kit-version",
+             make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
+            {"ai-native-schema", make_int(587)},
+            {"primitives-ai-native-total", make_int(static_cast<std::int64_t>(total))},
+            {"primitives-ai-native-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #710: verify_tool/diagnostic Guard + StableRef + dirty propagation stats.
     add("query:verify-tool-guard-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
