@@ -1333,6 +1333,102 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #569: Task4-review closing hash for tiered SmallObjectPool +
+    // dtor tracking + auto-compaction + live defrag + fiber safepoint coordination.
+    add("query:arena-auto-compact-defrag-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto& group = ev.arena_group();
+        const auto stats = group.total_stats();
+        const auto policy = group.auto_compact_policy_stats();
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t live_dtors = ev.arena_ ? ev.arena_->live_count() : 0;
+        const std::int64_t frag_pct =
+            static_cast<std::int64_t>(stats.fragmentation_ratio() * 100.0);
+        const std::uint64_t auto_compact_count =
+            group.auto_compact_trigger_count() + policy.auto_triggers;
+        const std::uint64_t auto_compact_skips = group.auto_compact_skip_count();
+        const std::uint64_t guard_calls = group.auto_compact_guard_call_count();
+        const std::uint64_t defrag_saved =
+            policy.defrag_savings + stats.defrag_savings_alloc + stats.last_defrag_saved;
+        const std::uint64_t defrag_attempted = stats.defrag_attempted_count;
+        const std::uint64_t yield_checks = group.compaction_yield_checks_group() +
+                                           policy.yield_checks_hit + stats.compaction_yield_checks;
+        const std::uint64_t paused = ev.compaction_paused_by_boundary();
+        const std::uint64_t gc_waits = ev.get_gc_safepoint_waits_total();
+        const std::uint64_t gc_deferred = ev.get_gc_safepoint_deferred_total();
+        const std::uint64_t safepoint_coord = yield_checks + paused + gc_waits + gc_deferred;
+        const std::uint64_t mutation_volume = ev.total_mutations();
+        const std::uint64_t threshold_config =
+            m ? m->arena_auto_compact_threshold_set_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t total =
+            live_dtors + stats.peak_used + auto_compact_count + auto_compact_skips + guard_calls +
+            defrag_saved + defrag_attempted + safepoint_coord + mutation_volume + threshold_config;
+        std::int64_t recommendation = 0;
+        if (frag_pct > 30 && auto_compact_count == 0)
+            recommendation = 3;
+        else if (paused > yield_checks && paused > 0)
+            recommendation = 2;
+        else if (auto_compact_count > 0 || defrag_saved > 0 || safepoint_coord > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"fragmentation-ratio-pct", make_int(frag_pct)},
+            {"peak-used-bytes", make_int(static_cast<std::int64_t>(stats.peak_used))},
+            {"live-dtor-count", make_int(static_cast<std::int64_t>(live_dtors))},
+            {"auto-compact-count", make_int(static_cast<std::int64_t>(auto_compact_count))},
+            {"auto-compact-skips", make_int(static_cast<std::int64_t>(auto_compact_skips))},
+            {"auto-compact-guard-calls", make_int(static_cast<std::int64_t>(guard_calls))},
+            {"defrag-saved-bytes", make_int(static_cast<std::int64_t>(defrag_saved))},
+            {"defrag-attempted-count", make_int(static_cast<std::int64_t>(defrag_attempted))},
+            {"safepoint-coordination-count", make_int(static_cast<std::int64_t>(safepoint_coord))},
+            {"mutation-volume-trigger", make_int(static_cast<std::int64_t>(mutation_volume))},
+            {"threshold-config-count", make_int(static_cast<std::int64_t>(threshold_config))},
+            {"compaction-yield-checks", make_int(static_cast<std::int64_t>(yield_checks))},
+            {"paused-by-boundary", make_int(static_cast<std::int64_t>(paused))},
+            {"task4-review-schema", make_int(569)},
+            {"arena-auto-compact-defrag-total", make_int(static_cast<std::int64_t>(total))},
+            {"arena-auto-compact-defrag-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #604: (query:arena-fragmentation-snapshot) — a *live*
     // snapshot of the auto-compaction / defrag / fiber-yield
     // subsystem. Unlike (query:arena-auto-compact-stats) which
@@ -3093,6 +3189,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitives-governance-stats",
             // Issue #568 — FlatAST children_ columnar SoA migration completion
             "query:soa-children-columnar-migration-stats",
+            // Issue #569 — Arena auto-compact + defrag + fiber safepoint completion
+            "query:arena-auto-compact-defrag-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3133,10 +3231,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 137 entries as of #568 ship (136 from #567 + 1 soa-children-columnar-
-        // migration observability hash primitive from #568:
-        // query:soa-children-columnar-migration-stats).
-        return make_int(137);
+        // 138 entries as of #569 ship (137 from #568 + 1 arena-auto-compact-
+        // defrag observability hash primitive from #569:
+        // query:arena-auto-compact-defrag-stats).
+        return make_int(138);
     });
 }
 
