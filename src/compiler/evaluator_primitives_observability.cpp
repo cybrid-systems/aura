@@ -224,7 +224,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         PrimMeta{.arity = 1,
                  .pure = true,
-                 .doc = "Return the PrimMeta.schema string for a named primitive, or #f if unknown / undocumented.",
+                 .doc = "Return the PrimMeta.schema string for a named primitive, or #f if unknown "
+                        "/ undocumented.",
                  .category = "general",
                  .schema = "(string) -> string | bool"});
 
@@ -316,11 +317,11 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             const auto total = ev.primitives_.slot_count();
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            const std::uint64_t introspect_hits = m
-                ? (m->primitives_by_category_query_total.load(std::memory_order_relaxed) +
-                   m->schema_of_primitive_query_total.load(std::memory_order_relaxed) +
-                   m->primitives_meta_catalog_query_total.load(std::memory_order_relaxed))
-                : 0;
+            const std::uint64_t introspect_hits =
+                m ? (m->primitives_by_category_query_total.load(std::memory_order_relaxed) +
+                     m->schema_of_primitive_query_total.load(std::memory_order_relaxed) +
+                     m->primitives_meta_catalog_query_total.load(std::memory_order_relaxed))
+                  : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"total-registered", make_int(static_cast<std::int64_t>(total))},
                 {"schema-documented", make_int(static_cast<std::int64_t>(schema_doc))},
@@ -335,7 +336,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         PrimMeta{.arity = 0,
                  .pure = true,
-                 .doc = "One-call AI Agent discovery: meta layer breakdown by category + introspection hit counter.",
+                 .doc = "One-call AI Agent discovery: meta layer breakdown by category + "
+                        "introspection hit counter.",
                  .category = "general",
                  .schema = "() -> hash"});
 

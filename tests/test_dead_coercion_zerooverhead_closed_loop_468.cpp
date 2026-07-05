@@ -32,17 +32,16 @@ using aura::compiler::CompilerService;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::TypeSpecializationWrap;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::ir::IRFunction;
 using aura::ir::IRInstruction;
 using aura::ir::IRModule;
 using aura::ir::IROpcode;
 
-static std::int64_t zerooverhead_stats(CompilerService& cs) {
+static bool zerooverhead_stats_hash(CompilerService& cs) {
     auto r = cs.eval("(query:dead-coercion-zerooverhead-stats)");
-    if (!r || !is_int(*r))
-        return 0;
-    return as_int(*r);
+    return r && is_hash(*r);
 }
 
 static std::size_t count_cast_ops(const IRModule& mod) {
@@ -82,9 +81,9 @@ static IRModule make_gradual_workload_468() {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:dead-coercion-zerooverhead-stats ---");
-    const auto s0 = zerooverhead_stats(cs);
-    std::println("  dead-coercion-zerooverhead-stats = {}", s0);
-    CHECK(s0 >= 0, "zerooverhead-stats non-negative");
+    CHECK(zerooverhead_stats_hash(cs), "dead-coercion-zerooverhead-stats returns hash");
+    const auto s0 = cs.snapshot().dead_coercion_eliminated_total;
+    std::println("  dead_coercion_eliminated_total = {}", s0);
 
     std::println("\n--- AC2: gradual workload >60% CastOp reduction ---");
     auto mod = make_gradual_workload_468();
@@ -118,7 +117,6 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: typed mutate loop + stats monotonic ---");
     cs.eval("(set-code \"(define acc 0) (define (bump) (set! acc (+ acc 1)))\")");
     CHECK(cs.eval("(eval-current)").has_value(), "baseline eval");
-    const auto stats4a = zerooverhead_stats(cs);
     const auto elim4a = cs.snapshot().dead_coercion_eliminated_total;
 
     for (int i = 0; i < 4; ++i) {
@@ -130,11 +128,9 @@ static void run_matrix(CompilerService& cs) {
     }
     CHECK(cs.eval("(+ acc 0)").has_value(), "eval semantics preserved");
 
-    const auto stats4b = zerooverhead_stats(cs);
     const auto elim4b = cs.snapshot().dead_coercion_eliminated_total;
-    std::println("  zerooverhead-stats: {} -> {}", stats4a, stats4b);
     std::println("  dead_coercion_eliminated: {} -> {}", elim4a, elim4b);
-    CHECK(stats4b >= stats4a, "zerooverhead-stats monotonic");
+    CHECK(zerooverhead_stats_hash(cs), "zerooverhead-stats hash after mutate loop");
     CHECK(elim4b >= elim4a, "dead_coercion_eliminated monotonic");
 
     std::println("\n--- AC5: compile:dead-coercion-stats regression ---");

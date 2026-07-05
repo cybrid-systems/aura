@@ -26,6 +26,7 @@
     "test_issue_503",
     "test_issue_504",
     "test_issue_505",
-    "test_issue_507"
+    "test_issue_507",
+    "test_issue_508_observability"
   ]
 }
