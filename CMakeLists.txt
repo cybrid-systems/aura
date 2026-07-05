@@ -2864,6 +2864,10 @@ add_dependencies(all_test_issue_targets test_issue_496)
 aura_add_issue_test(test_issue_497)
 aura_issue_test_link_llvm_jit(test_issue_497)
 add_dependencies(all_test_issue_targets test_issue_497)
+# Issue #498: AI-native primitive metadata + skeleton ergonomics.
+aura_add_issue_test(test_issue_498)
+aura_issue_test_link_llvm_jit(test_issue_498)
+add_dependencies(all_test_issue_targets test_issue_498)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

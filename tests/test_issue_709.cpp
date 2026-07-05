@@ -62,7 +62,7 @@ int main() {
         CHECK(reg_stat(cs, "consistency-rate") >= 0, "consistency-rate present");
         CHECK(reg_stat(cs, "registry-slots") > 0, "registry-slots > 0");
         CHECK(reg_stat(cs, "capture-contract-version") == 1, "capture-contract-version == 1");
-        CHECK(reg_stat(cs, "extension-kit-version") == 2, "extension-kit-version == 2");
+        CHECK(reg_stat(cs, "extension-kit-version") == 3, "extension-kit-version == 3");
     }
 
     const auto fastpath_before = reg_stat(cs, "fastpath-hits");
@@ -96,7 +96,7 @@ int main() {
     // AC4: EDA extension kit + registry consistency
     {
         std::println("\n--- AC4: EDA registry consistency ---");
-        CHECK(ext_stat(cs, "extension-kit-version") == 2, "extension-stats kit version == 2");
+        CHECK(ext_stat(cs, "extension-kit-version") == 3, "extension-stats kit version == 3");
         CHECK(reg_stat(cs, "eda-registered") >= ext_stat(cs, "category-eda"),
               "registry eda-registered covers category-eda");
         CHECK(reg_stat(cs, "consistency-rate") > 0, "consistency-rate > 0");
