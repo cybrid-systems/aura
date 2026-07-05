@@ -50,6 +50,8 @@
     "query:contracts-production-hotpath-stats"
     ; ── Issue #539 — SV verification feedback → structured mutate closed loop ──
     "query:sv-production-verification-stats"
+    ; ── Issue #540 — StableNodeRef + generation/mutation_log EDA stability ──
+    "query:eda-stability-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

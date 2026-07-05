@@ -785,24 +785,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             (void)a;
             const std::uint64_t cross_fiber =
                 ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->cross_fiber_violations_total.load(
-                              std::memory_order_relaxed)
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->cross_fiber_violations_total.load(std::memory_order_relaxed)
                     : 0;
             const std::uint64_t safe_resolves =
                 ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->safe_resolves_total.load(
-                              std::memory_order_relaxed)
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->safe_resolves_total.load(std::memory_order_relaxed)
                     : 0;
             const std::uint64_t mismatches =
                 ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->stable_ref_invalidations.load(
-                              std::memory_order_relaxed)
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->stable_ref_invalidations.load(std::memory_order_relaxed)
                     : 0;
             auto* ht = FlatHashTable::create(8);
             if (!ht)
@@ -831,14 +825,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
-            insert_kv("cross-fiber-violations",
-                      static_cast<std::int64_t>(cross_fiber));
-            insert_kv("provenance-mismatches-on-sv",
-                      static_cast<std::int64_t>(mismatches));
-            insert_kv("safe-resolves",
-                      static_cast<std::int64_t>(safe_resolves));
-            insert_kv("total-stable-ref-invalidations",
-                      static_cast<std::int64_t>(mismatches));
+            insert_kv("cross-fiber-violations", static_cast<std::int64_t>(cross_fiber));
+            insert_kv("provenance-mismatches-on-sv", static_cast<std::int64_t>(mismatches));
+            insert_kv("safe-resolves", static_cast<std::int64_t>(safe_resolves));
+            insert_kv("total-stable-ref-invalidations", static_cast<std::int64_t>(mismatches));
             insert_kv("schema", 631);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -2811,6 +2801,95 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #540: query:eda-stability-stats. Commercial P0 hash view of
+    // StableNodeRef + generation_ + mutation_log provenance hardening for
+    // long-running concurrent AI EDA verification sessions — non-duplicative
+    // synthesis of #527 stable-ref-cow-fiber-stats, #552 edsl-stability-stats,
+    // #497 stable-ref-lifecycle-stats, #457 stable-ref-stats, and #631
+    // provenance SV scaffolding; avoids repeating int-sum surfaces verbatim:
+    //   P1 COW/fiber staleness: cross-cow-invalidations, fiber-stale-ref-count,
+    //      provenance-mismatch, mutation-log-rollback-count
+    //   P2 Generation/mutation_log: generation-wrap-events,
+    //      stable-ref-invalidations, node-gen-stale-accesses,
+    //      stale-ref-auto-refresh-count
+    //   P3 SV provenance scaffolding: cross-fiber-violations, safe-resolves,
+    //      stale-ref-blocked-count
+    //   - eda-stability-total / eda-stability-recommendation
+    add("query:eda-stability-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ws = ev->workspace_flat();
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+        const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+        const std::uint64_t provenance = ev->get_provenance_mismatch();
+        const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
+        const std::uint64_t gen_wrap = ws ? ws->generation_wrap_count() : 0;
+        const std::uint64_t invalidations = ws ? ws->stable_ref_invalidations() : 0;
+        const std::uint64_t stale_access = ws ? ws->node_gen_stale_access_count() : 0;
+        const std::uint64_t auto_refresh = ws ? ws->stale_ref_auto_refresh_count() : 0;
+        const std::uint64_t cross_fiber =
+            m ? m->cross_fiber_violations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t safe_resolves =
+            m ? m->safe_resolves_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stale_blocked = ev->get_stale_ref_blocked_count();
+        const std::uint64_t total = cross_cow + fiber_stale + provenance + rollback + gen_wrap +
+                                    invalidations + stale_access + auto_refresh + cross_fiber +
+                                    safe_resolves + stale_blocked;
+        std::int64_t recommendation = 0;
+        if (fiber_stale > 0 || cross_fiber > 0)
+            recommendation = 3;
+        else if (gen_wrap > 0 || rollback > 0)
+            recommendation = 2;
+        else if (cross_cow > 0 || provenance > 0 || invalidations > 0)
+            recommendation = 1;
+        insert_kv("cross-cow-invalidations", static_cast<std::int64_t>(cross_cow));
+        insert_kv("fiber-stale-ref-count", static_cast<std::int64_t>(fiber_stale));
+        insert_kv("provenance-mismatch", static_cast<std::int64_t>(provenance));
+        insert_kv("mutation-log-rollback-count", static_cast<std::int64_t>(rollback));
+        insert_kv("generation-wrap-events", static_cast<std::int64_t>(gen_wrap));
+        insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
+        insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale_access));
+        insert_kv("stale-ref-auto-refresh-count", static_cast<std::int64_t>(auto_refresh));
+        insert_kv("cross-fiber-violations", static_cast<std::int64_t>(cross_fiber));
+        insert_kv("safe-resolves", static_cast<std::int64_t>(safe_resolves));
+        insert_kv("stale-ref-blocked-count", static_cast<std::int64_t>(stale_blocked));
+        insert_kv("eda-stability-total", static_cast<std::int64_t>(total));
+        insert_kv("eda-stability-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
