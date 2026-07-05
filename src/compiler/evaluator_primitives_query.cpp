@@ -3018,6 +3018,150 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #557: query:top5-commercial-coverage-stats. Commercial P0 hash
+    // view of the Top 5 test-coverage cluster (#531 closure-env, #530
+    // incremental relower, #532 JIT consistency, #556 EDSL concurrency,
+    // #553 atomic batch/rollback) for Prompt6+Incremental+JIT production
+    // review — non-duplicative synthesis of per-issue hash/int primitives;
+    // avoids repeating their per-field surfaces verbatim:
+    //   P1 #531 Prompt6: closure-stale-refresh, bridge-epoch-hits,
+    //      linear-check-pass, env-stale-refresh
+    //   P2 #530 Prompt2: blocks-saved, partial-relowers,
+    //      invalidate-function-calls, min-scope-hit-rate-pct
+    //   P3 #532 Prompt3: unhandled-opcode-count, deopt-count,
+    //      hotswap-invalidate-count, opcode-coverage-pct
+    //   P4 #556 concurrency: steal-attempts, boundary-violations,
+    //      unsafe-boundary-attempts, lock-contention-us
+    //   P5 #553 atomicity: batch-commits, batch-rollbacks,
+    //      bumps-saved, steal-violations-during-batch
+    //   - top5-commercial-coverage-total / top5-commercial-coverage-recommendation
+    add("query:top5-commercial-coverage-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t stale_refresh =
+                m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t bridge_hits =
+                m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t linear_pass =
+                m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t blocks_saved =
+                m ? m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t partial = ev->get_partial_relower_count();
+            const std::uint64_t invalidate_fn =
+                m ? m->invalidate_function_calls.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_full =
+                m ? m->relower_full_called_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_per_fn =
+                m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_work = relower_full + relower_per_fn + 1;
+            const std::int64_t min_scope_hit_pct =
+                static_cast<std::int64_t>((blocks_saved * 100) / relower_work);
+            std::uint64_t unhandled = 0;
+            std::uint64_t compiles = 0;
+            std::uint64_t fallback = aura_jit_fallback_count_v_read();
+            if (ev->get_jit_stats_fn_) {
+                const char* s = ev->get_jit_stats_fn_();
+                if (s) {
+                    auto parse_u64 = [&](const char* key) -> std::uint64_t {
+                        const char* p = std::strstr(s, key);
+                        if (!p)
+                            return 0;
+                        p += std::strlen(key);
+                        return std::strtoull(p, nullptr, 10);
+                    };
+                    compiles = parse_u64("compiles=");
+                    unhandled = parse_u64("unhandled_opcode=");
+                    fallback = parse_u64("fallback_count=");
+                }
+            }
+            const std::uint64_t deopt = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hotswap_invalidate =
+                m ? m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed) : 0;
+            const std::int64_t opcode_coverage_pct =
+                unhandled == 0 && fallback == 0
+                    ? 100
+                    : std::max<std::int64_t>(
+                          0, 100 - static_cast<std::int64_t>((unhandled + fallback) * 100 /
+                                                             std::max<std::uint64_t>(1, compiles)));
+            const std::uint64_t steals = ev->get_mutation_steal_attempts();
+            const std::uint64_t violations = ev->get_boundary_violation_count();
+            const std::uint64_t unsafe_attempts = ev->get_unsafe_boundary_attempts();
+            const std::uint64_t contention_us = ev->get_lock_contention_us();
+            const std::uint64_t batch_commits = ev->atomic_batch_count();
+            const std::uint64_t batch_rollbacks = ev->atomic_batch_rollbacks();
+            const std::uint64_t bumps_saved = ev->atomic_batch_bumps_saved_total();
+            const std::uint64_t steal_violations = ev->get_atomic_batch_steal_violation();
+            const std::uint64_t total = stale_refresh + bridge_hits + linear_pass + env_refresh +
+                                        blocks_saved + partial + invalidate_fn + unhandled + deopt +
+                                        hotswap_invalidate + steals + violations + unsafe_attempts +
+                                        contention_us + batch_commits + batch_rollbacks +
+                                        bumps_saved + steal_violations;
+            std::int64_t recommendation = 0;
+            if (unhandled > 0 || steal_violations > 0 || unsafe_attempts > 0)
+                recommendation = 3;
+            else if (batch_rollbacks > batch_commits && batch_rollbacks > 0)
+                recommendation = 2;
+            else if (hotswap_invalidate > 0 || partial > 0 || invalidate_fn > 0)
+                recommendation = 1;
+            insert_kv("closure-stale-refresh", static_cast<std::int64_t>(stale_refresh));
+            insert_kv("bridge-epoch-hits", static_cast<std::int64_t>(bridge_hits));
+            insert_kv("linear-check-pass", static_cast<std::int64_t>(linear_pass));
+            insert_kv("env-stale-refresh", static_cast<std::int64_t>(env_refresh));
+            insert_kv("blocks-saved", static_cast<std::int64_t>(blocks_saved));
+            insert_kv("partial-relowers", static_cast<std::int64_t>(partial));
+            insert_kv("invalidate-function-calls", static_cast<std::int64_t>(invalidate_fn));
+            insert_kv("min-scope-hit-rate-pct", min_scope_hit_pct);
+            insert_kv("unhandled-opcode-count", static_cast<std::int64_t>(unhandled));
+            insert_kv("deopt-count", static_cast<std::int64_t>(deopt));
+            insert_kv("hotswap-invalidate-count", static_cast<std::int64_t>(hotswap_invalidate));
+            insert_kv("opcode-coverage-pct", opcode_coverage_pct);
+            insert_kv("steal-attempts", static_cast<std::int64_t>(steals));
+            insert_kv("boundary-violations", static_cast<std::int64_t>(violations));
+            insert_kv("unsafe-boundary-attempts", static_cast<std::int64_t>(unsafe_attempts));
+            insert_kv("lock-contention-us", static_cast<std::int64_t>(contention_us));
+            insert_kv("batch-commits", static_cast<std::int64_t>(batch_commits));
+            insert_kv("batch-rollbacks", static_cast<std::int64_t>(batch_rollbacks));
+            insert_kv("bumps-saved", static_cast<std::int64_t>(bumps_saved));
+            insert_kv("steal-violations-during-batch", static_cast<std::int64_t>(steal_violations));
+            insert_kv("top5-commercial-coverage-total", static_cast<std::int64_t>(total));
+            insert_kv("top5-commercial-coverage-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
