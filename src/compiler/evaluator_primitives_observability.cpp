@@ -3061,6 +3061,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:runtime-orchestration-stats",
             // Issue #513 — AOT hot-reload consolidated observability
             "query:aot-hot-reload-stats",
+            // Issue #522 — AOT production hot-reload deployment tracker
+            "query:aot-production-reload-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3101,10 +3103,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 117 entries as of #521 ship (116 from #519 + 1 multi-fiber-
-        // orchestration observability hash primitive from #521:
-        // query:multi-fiber-orchestration-stats).
-        return make_int(117);
+        // 118 entries as of #522 ship (117 from #521 + 1 aot-production-
+        // reload observability hash primitive from #522:
+        // query:aot-production-reload-stats).
+        return make_int(118);
     });
 }
 

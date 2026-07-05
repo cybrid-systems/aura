@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**704** registrations scanned from `src/**/*.cpp`.
+**705** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (18%)
 - **core**: 203 primitives (29%)
-- **internal-observable**: 230 primitives (33%)
+- **internal-observable**: 231 primitives (33%)
 - **convenience**: 147 primitives (21%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,13 +21,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (230)
+## Query: (231)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-checkpoint-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-hot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-production-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1164,13 +1165,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (230)
+### Internal observable (stats/counters) (231)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-checkpoint-version-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-hot-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-production-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_observability.cpp`

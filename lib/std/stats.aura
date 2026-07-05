@@ -117,6 +117,8 @@
     "query:runtime-orchestration-stats"
     ; ── Issue #513 — AOT hot-reload consolidated observability ──
     "query:aot-hot-reload-stats"
+    ; ── Issue #522 — AOT production hot-reload deployment tracker ──
+    "query:aot-production-reload-stats"
     ; ── Issue #515 — Consolidated Top 5 P0 production-readiness tracker ──
     "query:consolidated-p0-production-stats"
     ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
