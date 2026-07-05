@@ -2473,6 +2473,114 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #535: query:contracts-production-hotpath-stats. Commercial P1 hash
+    // view of C++26 Contracts + consteval invariants in Arena create,
+    // inline_shape_of, Pass run_one/Wraps, and evaluator/lowering hot paths —
+    // non-duplicative synthesis of #507 task4-hotpath-contracts inventory hash,
+    // #406 pass-contracts-stats int-sum, #626 contracts-hotpath-stats-hash,
+    // #465/#431 C++26 density themes; avoids repeating the static per-site
+    // #507 surface verbatim:
+    //   P1 Contract inventory: contract-site-count, shape-dispatch-table-size,
+    //      consteval-hits
+    //   P2 Runtime health: contract-violations, dispatch-hits, dispatch-misses
+    //   P3 Zero-overhead: zerooverhead-wins, zerooverhead-rate-pct
+    //   P4 Pass pipeline: passes-skipped-dirty, pass-pipeline-runs, relower-skipped
+    //   P5 Dirty/mark paths: mark-dirty-upward-calls, dirty-propagation
+    //   - contracts-coverage-pct / contracts-production-hotpath-total / recommendation
+    add("query:contracts-production-hotpath-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ws = ev->workspace_flat();
+            constexpr std::int64_t k_contract_sites = 6;
+            const std::int64_t table_size =
+                static_cast<std::int64_t>(shape::k_task4_shape_dispatch_table_size);
+            const std::int64_t consteval_hits =
+                static_cast<std::int64_t>(shape::k_shape_value_consteval_hits);
+            const std::uint64_t violations =
+                types::value_contract_violation_count.load(std::memory_order_relaxed);
+            const std::uint64_t dispatch_hits =
+                types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+            const std::uint64_t dispatch_miss =
+                types::value_dispatch_miss_count.load(std::memory_order_relaxed);
+            const std::uint64_t zero_wins =
+                m ? m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
+            const std::uint64_t pipeline_runs =
+                aura::compiler::pass_pipeline_runs_total.load(std::memory_order_relaxed);
+            const std::uint64_t relower_skip =
+                m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t dirty_up = ws ? ws->mark_dirty_upward_call_count() : 0;
+            const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
+            const std::uint64_t dispatch_denom = dispatch_hits + dispatch_miss + 1;
+            const std::int64_t coverage_pct =
+                static_cast<std::int64_t>((dispatch_hits * 100) / dispatch_denom);
+            const std::uint64_t zero_denom = zero_wins + dispatch_miss + 1;
+            const std::int64_t zerooverhead_pct =
+                static_cast<std::int64_t>((zero_wins * 100) / zero_denom);
+            const std::uint64_t total = static_cast<std::uint64_t>(k_contract_sites) +
+                                        static_cast<std::uint64_t>(table_size) +
+                                        static_cast<std::uint64_t>(consteval_hits) + violations +
+                                        dispatch_hits + dispatch_miss + zero_wins + passes_skip +
+                                        pipeline_runs + relower_skip + dirty_up + dirty_prop;
+            std::int64_t recommendation = 0;
+            if (violations > 0)
+                recommendation = 3;
+            else if (dispatch_miss > dispatch_hits && dispatch_miss > 0)
+                recommendation = 2;
+            else if (zero_wins > 0 || passes_skip > 0 || pipeline_runs > 0)
+                recommendation = 1;
+            insert_kv("contract-site-count", k_contract_sites);
+            insert_kv("shape-dispatch-table-size", table_size);
+            insert_kv("consteval-hits", consteval_hits);
+            insert_kv("contract-violations", static_cast<std::int64_t>(violations));
+            insert_kv("dispatch-hits", static_cast<std::int64_t>(dispatch_hits));
+            insert_kv("dispatch-misses", static_cast<std::int64_t>(dispatch_miss));
+            insert_kv("zerooverhead-wins", static_cast<std::int64_t>(zero_wins));
+            insert_kv("zerooverhead-rate-pct", zerooverhead_pct);
+            insert_kv("passes-skipped-dirty", static_cast<std::int64_t>(passes_skip));
+            insert_kv("pass-pipeline-runs", static_cast<std::int64_t>(pipeline_runs));
+            insert_kv("relower-skipped", static_cast<std::int64_t>(relower_skip));
+            insert_kv("mark-dirty-upward-calls", static_cast<std::int64_t>(dirty_up));
+            insert_kv("dirty-propagation", static_cast<std::int64_t>(dirty_prop));
+            insert_kv("contracts-coverage-pct", coverage_pct);
+            insert_kv("contracts-production-hotpath-total", static_cast<std::int64_t>(total));
+            insert_kv("contracts-production-hotpath-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6

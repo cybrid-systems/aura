@@ -3079,6 +3079,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:soa-production-columnar-stats",
             // Issue #534 — Arena auto-compaction + defrag safepoint coordination
             "query:arena-production-compaction-stats",
+            // Issue #535 — C++26 Contracts + consteval hot-path production tracker
+            "query:contracts-production-hotpath-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3119,10 +3121,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 129 entries as of #534 ship (128 from #533 + 1 arena-production-
-        // compaction observability hash primitive from #534:
-        // query:arena-production-compaction-stats).
-        return make_int(129);
+        // 130 entries as of #535 ship (129 from #534 + 1 contracts-production-
+        // hotpath observability hash primitive from #535:
+        // query:contracts-production-hotpath-stats).
+        return make_int(130);
     });
 }
 
