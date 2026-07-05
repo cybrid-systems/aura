@@ -442,6 +442,129 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // Issue #632: query:atomic-batch-sv-stats-hash — Agent-
+    // discoverable structured SV-specific observability dashboard
+    // for the atomic batch layer. Companion / extension of the
+    // existing query:atomic-batch-stats-hash (#622, 4-field
+    // generic) + query:atomic-batch-rollback-stats (#529) +
+    // atomic-batch:stats (#192, 5-field). Specifically covers
+    // AC4 from the issue body.
+    //
+    // Fields (5):
+    //   - active-sv-batches          synthetic: same as
+    //                                (query:atomic-batch-stats-hash
+    //                                active) today — 0/1. Marked
+    //                                -sv- to signal the Agent that
+    //                                once AC2+AC3 wire-up lands
+    //                                this field will track SV-
+    //                                tagged batches independently
+    //                                of generic batches.
+    //   - suppressed-bumps-on-sv    synthetic: bumps-saved-last-
+    //                                batch from existing #622
+    //                                counter (the per-batch bump
+    //                                count). Marked -sv- similarly
+    //                                with future split pending.
+    //   - rollback-success-sv       new atomic_batch_sv_rollback_
+    //                                total counter (foundation for
+    //                                AC2 — Guard aggregates a
+    //                                single rollback entry per SV
+    //                                batch abort).
+    //   - batch-impact-sv-nodes      new atomic_batch_sv_impact_
+    //                                nodes_total counter (foundation
+    //                                for AC3 — per-batch SV
+    //                                node-count aggregator).
+    //   - schema == 632              sentinel for Agent drift
+    //                                detection (mirrors #618+
+    //                                #620+#621+#622+#623+#624+
+    //                                #625+#626+#630+#631 sentinels).
+    //
+    // Discovery before this PR (no duplication): the atomic batch
+    // infrastructure exists in flat via
+    // begin_atomic_batch / commit_atomic_batch /
+    // rollback_atomic_batch + atomic_batch_commits +
+    // atomic_batch_active + atomic_batch_bumps_saved (added by
+    // #250/#255/#622); observability primitives `atomic-batch:stats`
+    // (#192, 5-field) + `query:atomic-batch-stats` (#437, int) +
+    // `query:atomic-batch-stats-hash` (#622, 4-field structured) +
+    // `query:atomic-batch-rollback-stats` (#529, int-sum). What
+    // AC4 specifies by **exact name + fields** —
+    // `query:atomic-batch-sv-stats` with
+    // {active_sv_batches, suppressed_bumps_on_sv,
+    // rollback_success_sv, batch_impact_sv_nodes} — was not
+    // shipped. So #632 ships ONE new Aura primitive + 2 new
+    // atomics that are foundation scaffolding for the future AC2
+    // + AC3 enforcement work.
+    //
+    // The remaining #632 AC1 + AC2 + AC3 work (high-level
+    // atomic-batch SV mutate primitive, Guard nesting-depth +
+    // suppressed-bump-count tracking inside, StableNodeRef
+    // auto-refresh on capture with suppressed-gen awareness for
+    // SV nodes) is invasive C++ + hot-path EDA + Guard-internal
+    // work that needs benchmarking + perf regression coverage —
+    // separate follow-ups.
+    add("query:atomic-batch-sv-stats-hash", [&ev](const auto&) -> EvalValue {
+        std::uint64_t commits = 0;
+        std::uint64_t bumps_saved = 0;
+        bool active = false;
+        if (ev.workspace_flat_) {
+            commits = ev.workspace_flat_->atomic_batch_commits();
+            bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
+            active = ev.workspace_flat_->atomic_batch_active();
+        }
+        const std::uint64_t rollback_sv =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(
+                      ev.compiler_metrics())
+                      ->atomic_batch_sv_rollback_total.load(
+                          std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t impact_sv =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(
+                      ev.compiler_metrics())
+                      ->atomic_batch_sv_impact_nodes_total.load(
+                          std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("active-sv-batches", active ? 1 : 0);
+        insert_kv("suppressed-bumps-on-sv",
+                  static_cast<std::int64_t>(bumps_saved));
+        insert_kv("rollback-success-sv",
+                  static_cast<std::int64_t>(rollback_sv));
+        insert_kv("batch-impact-sv-nodes",
+                  static_cast<std::int64_t>(impact_sv));
+        insert_kv("schema", 632);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

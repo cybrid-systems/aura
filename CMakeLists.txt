@@ -3172,6 +3172,18 @@ add_dependencies(all_test_issue_targets test_issue_630)
 aura_add_issue_test(test_issue_631)
 aura_issue_test_link_llvm_jit(test_issue_631)
 add_dependencies(all_test_issue_targets test_issue_631)
+# Issue #632: atomic-batch SV observability foundation — 1 new Aura
+# primitive (query:atomic-batch-sv-stats-hash) + 2 new atomics
+# (atomic_batch_sv_rollback_total + atomic_batch_sv_impact_nodes_total).
+# Primitive has 5 fields: 2 verbatim (active-sv-batches +
+# suppressed-bumps-on-sv, both syntactically from existing #622
+# batch surface) + 2 from the new atomics (rollback-success-sv +
+# batch-impact-sv-nodes, foundation for AC2+AC3 enforcement work,
+# currently 0) + schema sentinel. Builds on #192 / #437 / #529 /
+# #622 existing primitives + counters.
+aura_add_issue_test(test_issue_632)
+aura_issue_test_link_llvm_jit(test_issue_632)
+add_dependencies(all_test_issue_targets test_issue_632)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
