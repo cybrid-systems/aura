@@ -1237,6 +1237,9 @@ aura_issue_test_link_llvm_jit(test_issue_540_observability)
 # Issue #541 slice: pattern-sv-verification-stats hash observability.
 aura_add_issue_test(test_issue_541_observability)
 aura_issue_test_link_llvm_jit(test_issue_541_observability)
+# Issue #557 slice: top5-commercial-coverage-stats hash observability.
+aura_add_issue_test(test_issue_557_observability)
+aura_issue_test_link_llvm_jit(test_issue_557_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +
@@ -2999,6 +3002,7 @@ add_dependencies(all_test_issue_targets test_issue_535_observability)
 add_dependencies(all_test_issue_targets test_issue_539_observability)
 add_dependencies(all_test_issue_targets test_issue_540_observability)
 add_dependencies(all_test_issue_targets test_issue_541_observability)
+add_dependencies(all_test_issue_targets test_issue_557_observability)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

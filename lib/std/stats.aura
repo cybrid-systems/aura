@@ -54,6 +54,8 @@
     "query:eda-stability-stats"
     ; ── Issue #541 — query:pattern + DefUseIndex + hygiene SV verification ──
     "query:pattern-sv-verification-stats"
+    ; ── Issue #557 — Top 5 commercial test-coverage cluster tracker ──
+    "query:top5-commercial-coverage-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
