@@ -4762,6 +4762,131 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_hash(hidx);
     });
 
+    // Issue #626: query:contracts-hotpath-stats-hash — Agent-
+// discoverable structured companion to the existing
+// query:task4-hotpath-contracts (10-field hash with the per-
+// site constants) + query:pass-pipeline-incremental-stats-hash
+// (6-field hash with contracts-checked + zero-overhead stats from
+// #625) + query:pass-contracts-stats (#406, int-sum-of-7) +
+// query:dead-coercion-zerooverhead-stats (#508, zerooverhead-wins).
+// This primitive specifically covers AC5 from the issue body
+// — the Contracts + consteval + hot-path zero-overhead dashboard
+// the Agent reads to confirm production hot paths are wired.
+// 8 fields:
+//   - contracts-checked        derived (same synthetic as in
+//                              #625: zerooverhead_wins /
+//                              (zerooverhead_wins + dispatch_miss
+//                              + 1) * 100)
+//   - violations-in-debug      shape::value_contract_violation_count
+//                              (existing #406 counter)
+//   - consteval-hits           k_shape_value_consteval_hits
+//                              (existing task4-hotpath-contracts
+//                              inventory)
+//   - zero-overhead-savings     aura::coercion_zerooverhead_win_total
+//                              sum (existing #508/#574 counter)
+//   - pass-pipeline-runs        pass_pipeline_runs_total (existing
+//                              #625 counter)
+//   - arena-auto-triggers       auto_alloc_trigger_count (existing
+//                              #604 counter)
+//   - dirty-blocks-skipped      aura::compiler::passes_skipped_
+//                              dirty_pipeline (existing #494)
+//   - schema == 626             sentinel for Agent drift
+//                              detection (mirrors #618+#620+
+//                              #621+#622+#623+#624+#625)
+//
+// Discovery before this PR (preserved, not duplicated): the C++
+// side already exposes the full Contracts + consteval + zero-
+// overhead + dirty short-circuit counter surface via
+// value_contract_violation_count + zerooverhead_win_total +
+// shape::k_shape_value_consteval_hits + pipeline_yield_count +
+// passes_skipped_dirty_pipeline + auto_alloc_trigger_count
+// counters (added by #406 / #508 / #605 / #686 / #494 / #606).
+// The single NEW contribution is the structured primitive the
+// issue body AC5 lists by name.
+//
+// The remaining #626 AC work (post/requires on Arena allocate_raw,
+// ShapeProfiler record_shape, mark_dirty_*, IRInstructionView
+// accessors; consteval on shape tag dispatch + Value v2 bias
+// ranges; wire to Pass short-circuit) is invasive C++ + hot-
+// path C++26-Contracts additions that need benchmarking + perf
+// regression coverage alongside the JIT/hot-swap work in
+// #601/#491. Separate follow-ups.
+add("query:contracts-hotpath-stats-hash",
+    [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const std::uint64_t zero_wins =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(
+                      ev.compiler_metrics())
+                      ->coercion_zerooverhead_win_total.load(
+                          std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t dispatch_miss =
+            types::value_dispatch_miss_count.load(std::memory_order_relaxed);
+        const std::uint64_t contracts_denom = zero_wins + dispatch_miss + 1;
+        const std::int64_t contracts_checked =
+            static_cast<std::int64_t>(
+                (zero_wins * 100) / contracts_denom);
+        const std::uint64_t violations =
+            types::value_contract_violation_count.load(
+                std::memory_order_relaxed);
+        const std::uint64_t consteval_hits =
+            shape::k_shape_value_consteval_hits;
+        const std::uint64_t pipeline_runs =
+            pass_pipeline_runs_total.load(std::memory_order_relaxed);
+        const std::uint64_t arena_triggers =
+            ev.arena_group().auto_compact_trigger_count();
+        const std::uint64_t dirty_skipped =
+            aura::compiler::passes_skipped_dirty_pipeline.load(
+                std::memory_order_relaxed);
+        const std::uint64_t zero_overhead_savings =
+            zero_wins + dispatch_miss;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("contracts-checked", contracts_checked);
+        insert_kv("violations-in-debug",
+                  static_cast<std::int64_t>(violations));
+        insert_kv("consteval-hits",
+                  static_cast<std::int64_t>(consteval_hits));
+        insert_kv("zero-overhead-savings",
+                  static_cast<std::int64_t>(zero_overhead_savings));
+        insert_kv("pass-pipeline-runs",
+                  static_cast<std::int64_t>(pipeline_runs));
+        insert_kv("arena-auto-triggers",
+                  static_cast<std::int64_t>(arena_triggers));
+        insert_kv("dirty-blocks-skipped",
+                  static_cast<std::int64_t>(dirty_skipped));
+        insert_kv("schema", 626);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
     // from across the workspace + Evaluator:

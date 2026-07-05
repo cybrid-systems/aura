@@ -3086,6 +3086,16 @@ add_dependencies(all_test_issue_targets test_issue_624)
 aura_add_issue_test(test_issue_625)
 aura_issue_test_link_llvm_jit(test_issue_625)
 add_dependencies(all_test_issue_targets test_issue_625)
+# Issue #626: C++26 Contracts + consteval + hot-path observability —
+# 1 new Aura primitive (query:contracts-hotpath-stats-hash) that
+# the issue body AC5 specifies by name. 8-field hash with 4 verbatim
+# fields (violations-in-debug / consteval-hits / pass-pipeline-runs /
+# arena-auto-triggers) + 3 derived fields (contracts-checked /
+# zero-overhead-savings / dirty-blocks-skipped) + schema sentinel.
+# Builds on #406 / #508 / #605 / #686 / #494 / #625 existing counters.
+aura_add_issue_test(test_issue_626)
+aura_issue_test_link_llvm_jit(test_issue_626)
+add_dependencies(all_test_issue_targets test_issue_626)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
