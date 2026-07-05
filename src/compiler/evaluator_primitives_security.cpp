@@ -1083,6 +1083,95 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #579: verification feedback → structured mutate closed-loop
+    // observability (coverage/assert/cex → mutate + dirty wiring).
+    add("query:verification-feedback-loop-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        auto* ws = ev.workspace_flat();
+        const std::uint64_t feedback_cycles =
+            m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t eda_feedback_ok =
+            m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t tool_feedback_ok = ev.get_verify_tool_feedback_mutate_success_total();
+        const std::uint64_t mutate_success_on_feedback = eda_feedback_ok + tool_feedback_ok;
+        const std::uint64_t coverage_feedback = ws ? ws->verification_coverage_feedback_total() : 0;
+        const std::uint64_t assert_failures = ws ? ws->verification_assert_failure_total() : 0;
+        const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+        const std::uint64_t cex_dirty = ws ? ws->verify_formal_cex_dirty_total() : 0;
+        const std::uint64_t reverify =
+            m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t dirty_props = ev.get_verify_tool_dirty_propagations_total();
+        const std::uint64_t coverage_improvement_delta =
+            coverage_feedback < sv_success ? coverage_feedback : sv_success;
+        const std::uint64_t assert_fail_resolved = assert_failures < mutate_success_on_feedback
+                                                       ? assert_failures
+                                                       : mutate_success_on_feedback;
+        const std::uint64_t cex_addressed =
+            cex_dirty < mutate_success_on_feedback ? cex_dirty : mutate_success_on_feedback;
+        const std::uint64_t total = feedback_cycles + mutate_success_on_feedback +
+                                    coverage_improvement_delta + assert_fail_resolved +
+                                    cex_addressed + reverify + dirty_props;
+        std::int64_t recommendation = 0;
+        if (feedback_cycles > 0 && mutate_success_on_feedback == 0)
+            recommendation = 3;
+        else if (assert_failures > coverage_feedback && assert_failures > 0)
+            recommendation = 2;
+        else if (mutate_success_on_feedback > 0 || coverage_improvement_delta > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"feedback-cycles", make_int(static_cast<std::int64_t>(feedback_cycles))},
+            {"mutate-success-on-feedback",
+             make_int(static_cast<std::int64_t>(mutate_success_on_feedback))},
+            {"coverage-improvement-delta",
+             make_int(static_cast<std::int64_t>(coverage_improvement_delta))},
+            {"assert-fail-resolved", make_int(static_cast<std::int64_t>(assert_fail_resolved))},
+            {"cex-addressed", make_int(static_cast<std::int64_t>(cex_addressed))},
+            {"verification-feedback-schema", make_int(579)},
+            {"verification-feedback-loop-total", make_int(static_cast<std::int64_t>(total))},
+            {"verification-feedback-loop-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #496: query:sv-node-stats — native SV NodeTag census +
     // mutate counters for verification closed-loop tuning.
     add("query:sv-node-stats", [&ev](const auto&) -> EvalValue {
