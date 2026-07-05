@@ -2949,6 +2949,116 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   gc_waits));
     });
 
+    // Issue #516: query:prompt6-memory-safety-stats. Hash view of Prompt6
+    // memory/ownership/GC production-readiness pillars (non-duplicative
+    // synthesis of #602 prompt6-violation-count + prompt6-safety-score int
+    // sums and #505 closure-env-safety-stats hash; avoids #515 consolidated
+    // P0 tracker and #517 3-pillar int-sum):
+    //   P1 Closure/EnvFrame/bridge_epoch: bridge-epoch-hits, closure-stale-refresh,
+    //      envframe-stale-refresh, linear-check-passes
+    //   P2 invalidate + GC sync: gc-envframe-skipped, gc-walk-safe-skips,
+    //      gc-safepoint-waits
+    //   P3 Incremental dirty: passes-skipped-dirty, module-dirty-skips
+    //   P4 Violation alert surface: boundary/steal/envframe-desync/
+    //      provenance-mismatch/fiber-stale-refs
+    //   P5 JIT/deopt: deopt-count
+    //   - safety-score / violation-count: per-pillar subtotals
+    //   - prompt6-memory-safety-total / prompt6-memory-safety-recommendation
+    add("query:prompt6-memory-safety-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t bridge_hit =
+                m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t linear_pass =
+                m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t closure_refresh =
+                m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t gc_skipped =
+                m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t gc_walk_skips = ev->get_envframe_gc_walk_safe_skips();
+            const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
+            const std::uint64_t passes_skipped = ev->get_passes_skipped_type_dirty();
+            const std::uint64_t module_dirty =
+                m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t boundary = ev->get_boundary_violation_count();
+            const std::uint64_t steal_viol = ev->get_mutation_steal_violation_count();
+            const std::uint64_t desync = ev->get_envframe_desync_detected();
+            const std::uint64_t unsafe = ev->get_unsafe_boundary_attempts();
+            const std::uint64_t batch_steal = ev->get_atomic_batch_steal_violation();
+            const std::uint64_t provenance = ev->get_provenance_mismatch();
+            const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+            const std::uint64_t deopt = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t safety_score = bridge_hit + linear_pass + closure_refresh +
+                                               env_refresh + gc_skipped + gc_walk_skips + gc_waits;
+            const std::uint64_t violation_count =
+                boundary + steal_viol + desync + unsafe + batch_steal + provenance + fiber_stale;
+            const std::uint64_t total =
+                safety_score + violation_count + passes_skipped + module_dirty + deopt;
+            std::int64_t recommendation = 0;
+            if (violation_count > 0)
+                recommendation = 3;
+            else if (deopt > closure_refresh && deopt > 0)
+                recommendation = 2;
+            else if (env_refresh > bridge_hit && env_refresh > 0)
+                recommendation = 1;
+            insert_kv("bridge-epoch-hits", static_cast<std::int64_t>(bridge_hit));
+            insert_kv("linear-check-passes", static_cast<std::int64_t>(linear_pass));
+            insert_kv("closure-stale-refresh", static_cast<std::int64_t>(closure_refresh));
+            insert_kv("envframe-stale-refresh", static_cast<std::int64_t>(env_refresh));
+            insert_kv("gc-envframe-skipped", static_cast<std::int64_t>(gc_skipped));
+            insert_kv("gc-walk-safe-skips", static_cast<std::int64_t>(gc_walk_skips));
+            insert_kv("gc-safepoint-waits", static_cast<std::int64_t>(gc_waits));
+            insert_kv("passes-skipped-dirty", static_cast<std::int64_t>(passes_skipped));
+            insert_kv("module-dirty-skips", static_cast<std::int64_t>(module_dirty));
+            insert_kv("boundary-violations", static_cast<std::int64_t>(boundary));
+            insert_kv("steal-violations", static_cast<std::int64_t>(steal_viol));
+            insert_kv("envframe-desync", static_cast<std::int64_t>(desync));
+            insert_kv("unsafe-boundary-attempts", static_cast<std::int64_t>(unsafe));
+            insert_kv("atomic-batch-steal-violations", static_cast<std::int64_t>(batch_steal));
+            insert_kv("provenance-mismatch", static_cast<std::int64_t>(provenance));
+            insert_kv("fiber-stale-refs", static_cast<std::int64_t>(fiber_stale));
+            insert_kv("deopt-count", static_cast<std::int64_t>(deopt));
+            insert_kv("safety-score", static_cast<std::int64_t>(safety_score));
+            insert_kv("violation-count", static_cast<std::int64_t>(violation_count));
+            insert_kv("prompt6-memory-safety-total", static_cast<std::int64_t>(total));
+            insert_kv("prompt6-memory-safety-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #506: query:soa-hotpath-adoption-stats. Returns the sum
     // of 8 IR SoA + dirty-aware Pass Pipeline adoption counters
     // spanning evaluator/lowering hot paths (#463 scaffold →
@@ -3808,22 +3918,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 shape::shape_deopt_storm_count.load(std::memory_order_relaxed);
             const std::uint64_t shape_changes_observed =
                 ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->shape_changes_observed.load(std::memory_order_relaxed)
                     : 0;
             const std::uint64_t churn_total = shape_churn + shape_changes_observed;
-            const std::int64_t post_mutate_ratio = churn_total == 0
-                ? 0
-                : static_cast<std::int64_t>(
-                      (shape_churn * 100) / churn_total);
-            const std::uint64_t deopt_denom =
-                jit_shape_miss + version_bumps;
+            const std::int64_t post_mutate_ratio =
+                churn_total == 0 ? 0 : static_cast<std::int64_t>((shape_churn * 100) / churn_total);
+            const std::uint64_t deopt_denom = jit_shape_miss + version_bumps;
             const std::int64_t deopt_on_instability =
-                deopt_denom == 0
-                    ? 0
-                    : static_cast<std::int64_t>(
-                          (jit_shape_miss * 100) / deopt_denom);
+                deopt_denom == 0 ? 0
+                                 : static_cast<std::int64_t>((jit_shape_miss * 100) / deopt_denom);
             auto* ht = FlatHashTable::create(8);
             if (!ht)
                 return make_void();
@@ -3853,12 +3957,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
             insert_kv("stability-ratio-post-mutate", post_mutate_ratio);
             insert_kv("deopt-on-instability", deopt_on_instability);
-            insert_kv("version-bumps",
-                      static_cast<std::int64_t>(version_bumps));
-            insert_kv("jit-shape-miss",
-                      static_cast<std::int64_t>(jit_shape_miss));
-            insert_kv("wrong-opt-prevented",
-                      static_cast<std::int64_t>(deopt_storms));
+            insert_kv("version-bumps", static_cast<std::int64_t>(version_bumps));
+            insert_kv("jit-shape-miss", static_cast<std::int64_t>(jit_shape_miss));
+            insert_kv("wrong-opt-prevented", static_cast<std::int64_t>(deopt_storms));
             insert_kv("schema", 624);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

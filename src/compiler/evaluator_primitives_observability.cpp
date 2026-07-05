@@ -3063,6 +3063,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:aot-hot-reload-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
+            // Issue #516 — Prompt6 memory/ownership/GC safety tracker
+            "query:prompt6-memory-safety-stats",
             // Issue #697 — Declarative primitives extension kit
             "query:primitives-extension-stats",
             // Issue #709 — Registry fast dispatch + capture discipline
@@ -3095,10 +3097,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 114 entries as of #624 ship (113 from #515 + 1 shape-
-        // stability-jit-stats hash primitive from #624:
-        // query:shape-stability-jit-stats-hash).
-        return make_int(114);
+        // 115 entries as of #516 ship (114 from #624 + 1 prompt6-memory-
+        // safety observability hash primitive from #516:
+        // query:prompt6-memory-safety-stats).
+        return make_int(115);
     });
 }
 
