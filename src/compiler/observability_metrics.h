@@ -574,6 +574,13 @@ struct CompilerMetrics {
     // Issue #697: Declarative primitives extension kit observability.
     std::atomic<std::uint64_t> primitive_skeleton_generations_total{0};
     std::atomic<std::uint64_t> primitive_eda_meta_backfill_total{0};
+    // Issue #617: AI-Native primitive introspection query counters.
+    // Each new query primitive bumps its own counter so
+    // (query:primitives-meta-catalog) can surface a hit-rate
+    // signal per Agent discovery entry point.
+    std::atomic<std::uint64_t> primitives_by_category_query_total{0};
+    std::atomic<std::uint64_t> schema_of_primitive_query_total{0};
+    std::atomic<std::uint64_t> primitives_meta_catalog_query_total{0};
     // Issue #499: EDA foundation primitives module observability.
     std::atomic<std::uint64_t> eda_foundation_parse_total{0};
     std::atomic<std::uint64_t> eda_foundation_query_total{0};
