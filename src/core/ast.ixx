@@ -2822,8 +2822,7 @@ public:
 
     // Issue #496: SV class builder. Optional base class stored as the first
     // param_data_ entry when base_sym != INVALID_SYM; body items are children_.
-    [[nodiscard]] NodeId add_class(SymId name, SymId base_sym,
-                                   std::span<const NodeId> body) {
+    [[nodiscard]] NodeId add_class(SymId name, SymId base_sym, std::span<const NodeId> body) {
         auto id = add_node(NodeTag::Class);
         sym_id_[id] = name;
         if (base_sym != INVALID_SYM) {
@@ -5194,9 +5193,7 @@ public:
         [[nodiscard]] Provenance get_provenance() const noexcept;
 
         // Issue #489: ergonomics for EDSL primitive validation paths.
-        [[nodiscard]] explicit operator bool() const noexcept {
-            return id != NULL_NODE;
-        }
+        [[nodiscard]] explicit operator bool() const noexcept { return id != NULL_NODE; }
         [[nodiscard]] NodeId value_or(NodeId fallback) const noexcept {
             return id != NULL_NODE ? id : fallback;
         }

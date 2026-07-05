@@ -126,8 +126,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         // Issue #614: surface the cdr-walk cost so AI agents can
         // see list-depth vs pair_alloc in production.
-        ev.bump_linear_traverse_count(static_cast<std::uint64_t>(n),
-                                       static_cast<std::uint64_t>(n));
+        ev.bump_linear_traverse_count(static_cast<std::uint64_t>(n), static_cast<std::uint64_t>(n));
         return make_int(n);
     });
     add("list-ref", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {

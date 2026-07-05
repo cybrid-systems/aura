@@ -121,8 +121,7 @@ int main() {
         CHECK(guard_stat(cs, "stable-ref-hits") > ref4_before,
               "stable-ref-hits grew after check-preconditions");
         auto bad = cs.eval("(check-preconditions 999999 0)");
-        CHECK(bad && aura::compiler::types::is_bool(*bad) &&
-                  !aura::compiler::types::as_bool(*bad),
+        CHECK(bad && aura::compiler::types::is_bool(*bad) && !aura::compiler::types::as_bool(*bad),
               "check-preconditions rejects invalid node id");
     }
 

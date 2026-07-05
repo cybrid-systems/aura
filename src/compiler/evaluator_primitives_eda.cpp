@@ -85,15 +85,14 @@ inline std::vector<std::string_view> split_colon(std::string_view line) {
     return parts;
 }
 
-inline std::vector<aura::ast::SymId>
-split_ports(aura::ast::StringPool& pool, std::string_view ports_csv) {
+inline std::vector<aura::ast::SymId> split_ports(aura::ast::StringPool& pool,
+                                                 std::string_view ports_csv) {
     std::vector<aura::ast::SymId> out;
     std::size_t start = 0;
     while (start <= ports_csv.size()) {
         auto pos = ports_csv.find(',', start);
-        const auto slice = trim(ports_csv.substr(start, pos == std::string_view::npos
-                                                           ? std::string_view::npos
-                                                           : pos - start));
+        const auto slice = trim(ports_csv.substr(
+            start, pos == std::string_view::npos ? std::string_view::npos : pos - start));
         if (!slice.empty())
             out.push_back(pool.intern(std::string(slice)));
         if (pos == std::string_view::npos)
@@ -162,7 +161,8 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                         const auto name = trim(parts[1]);
                         last_iface = ws->add_interface(pool->intern(std::string(name)), {});
                         ++parsed;
-                    } else if (kind == "modport" && parts.size() >= 3 && last_iface != aura::ast::NULL_NODE) {
+                    } else if (kind == "modport" && parts.size() >= 3 &&
+                               last_iface != aura::ast::NULL_NODE) {
                         const auto name = trim(parts[1]);
                         const auto ports = split_ports(*pool, trim(parts[2]));
                         const auto mp = ws->add_modport(pool->intern(std::string(name)), ports);
@@ -171,9 +171,9 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                     } else if (kind == "constraint" && parts.size() >= 3) {
                         const auto name = trim(parts[1]);
                         const auto expr = trim(parts[2]);
-                        (void)ws->add_constraint(pool->intern(std::string(name)),
-                                                 std::span<const aura::ast::SymId>{
-                                                     pool->intern(std::string(expr))});
+                        (void)ws->add_constraint(
+                            pool->intern(std::string(name)),
+                            std::span<const aura::ast::SymId>{pool->intern(std::string(expr))});
                         ++parsed;
                     } else if (kind == "property" && parts.size() >= 3) {
                         const auto name = trim(parts[1]);
@@ -251,7 +251,8 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                          "added modport instance via #499");
         ws->apply_verification_dirty_bits(parent, aura::ast::FlatAST::kCoverageFeedbackDirty);
         ws->apply_verify_dirty_bits(parent, aura::ast::FlatAST::kSvaDirty);
-        ws->mark_dirty_upward(parent, aura::ast::FlatAST::kGeneralDirty, ws->ppa_dirty_reasons(parent));
+        ws->mark_dirty_upward(parent, aura::ast::FlatAST::kGeneralDirty,
+                              ws->ppa_dirty_reasons(parent));
         maybe_hardware_feedback(ev, parent);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->eda_foundation_mutate_total.fetch_add(1, std::memory_order_relaxed);
@@ -411,11 +412,10 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                 m->eda_load_sv_failure_total.fetch_add(1, std::memory_order_relaxed);
             auto reason_idx = ev.string_heap_.size();
             ev.string_heap_.emplace_back("missing-or-not-regular-file");
-            return build_hash_eda(
-                {{"path", path_ev},
-                 {"node-count", make_int(0)},
-                 {"status-ok", make_int(0)},
-                 {"reason", make_string(reason_idx)}});
+            return build_hash_eda({{"path", path_ev},
+                                   {"node-count", make_int(0)},
+                                   {"status-ok", make_int(0)},
+                                   {"reason", make_string(reason_idx)}});
         }
         std::ifstream f(path);
         if (!f) {
@@ -423,11 +423,10 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                 m->eda_load_sv_failure_total.fetch_add(1, std::memory_order_relaxed);
             auto reason_idx = ev.string_heap_.size();
             ev.string_heap_.emplace_back("open-failed");
-            return build_hash_eda(
-                {{"path", path_ev},
-                 {"node-count", make_int(0)},
-                 {"status-ok", make_int(0)},
-                 {"reason", make_string(reason_idx)}});
+            return build_hash_eda({{"path", path_ev},
+                                   {"node-count", make_int(0)},
+                                   {"status-ok", make_int(0)},
+                                   {"reason", make_string(reason_idx)}});
         }
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         // Parse using the same line-based pattern as (eda:parse-netlist).
@@ -451,25 +450,25 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                     // Always count parseable directives (so node-count
                     // is meaningful even when no workspace is loaded);
                     // only mutate the workspace when one is available.
-                    const bool recognised =
-                        (kind == "interface" && parts.size() >= 2) ||
-                        (kind == "modport" && parts.size() >= 3) ||
-                        (kind == "constraint" && parts.size() >= 3) ||
-                        (kind == "property" && parts.size() >= 3) ||
-                        (kind == "coverpoint" && parts.size() >= 3);
+                    const bool recognised = (kind == "interface" && parts.size() >= 2) ||
+                                            (kind == "modport" && parts.size() >= 3) ||
+                                            (kind == "constraint" && parts.size() >= 3) ||
+                                            (kind == "property" && parts.size() >= 3) ||
+                                            (kind == "coverpoint" && parts.size() >= 3);
                     if (recognised) {
                         ++parsed;
                         if (ws && pool) {
                             if (kind == "interface" && parts.size() >= 2) {
                                 const auto name = trim(parts[1]);
-                                last_iface =
-                                    ws->add_interface(pool->intern(std::string(name)), {});
+                                last_iface = ws->add_interface(pool->intern(std::string(name)), {});
                             } else if (kind == "modport" && parts.size() >= 3 &&
                                        last_iface != aura::ast::NULL_NODE) {
                                 const auto name = trim(parts[1]);
                                 const auto ports = split_ports(*pool, trim(parts[2]));
-                                const auto mp = ws->add_modport(pool->intern(std::string(name)), ports);
-                                ws->insert_child(last_iface, ws->get(last_iface).children.size(), mp);
+                                const auto mp =
+                                    ws->add_modport(pool->intern(std::string(name)), ports);
+                                ws->insert_child(last_iface, ws->get(last_iface).children.size(),
+                                                 mp);
                             } else if (kind == "constraint" && parts.size() >= 3) {
                                 const auto name = trim(parts[1]);
                                 const auto expr = trim(parts[2]);
@@ -500,11 +499,10 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
         }
         auto reason_idx = ev.string_heap_.size();
         ev.string_heap_.emplace_back("");
-        return build_hash_eda(
-            {{"path", path_ev},
-             {"node-count", make_int(static_cast<std::int64_t>(parsed))},
-             {"status-ok", make_int(1)},
-             {"reason", make_string(reason_idx)}});
+        return build_hash_eda({{"path", path_ev},
+                               {"node-count", make_int(static_cast<std::int64_t>(parsed))},
+                               {"status-ok", make_int(1)},
+                               {"reason", make_string(reason_idx)}});
     });
 
     // (eda:parse-verification-result path) — Read a simulator
@@ -535,104 +533,106 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
     // we care about are flat-key/int-value documents, so the
     // substring scan is enough and avoids the cost of building a
     // general hash for every file read.
-    add("eda:parse-verification-result", [&ev, build_hash_eda](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0])) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
-            return build_hash_eda({{"path", make_string(0)},
-                                   {"coverage-pct", make_int(0)},
-                                   {"assertion-pass", make_int(0)},
-                                   {"assertion-fail", make_int(0)},
-                                   {"success", make_int(0)}});
-        }
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size()) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
-            return build_hash_eda({{"path", make_string(0)},
-                                   {"coverage-pct", make_int(0)},
-                                   {"assertion-pass", make_int(0)},
-                                   {"assertion-fail", make_int(0)},
-                                   {"success", make_int(0)}});
-        }
-        const auto& path = ev.string_heap_[idx];
-        auto path_ev = make_string(idx);
-        struct stat st;
-        if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
-            return build_hash_eda({{"path", path_ev},
-                                   {"coverage-pct", make_int(0)},
-                                   {"assertion-pass", make_int(0)},
-                                   {"assertion-fail", make_int(0)},
-                                   {"success", make_int(0)}});
-        }
-        std::ifstream f(path);
-        if (!f) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
-            return build_hash_eda({{"path", path_ev},
-                                   {"coverage-pct", make_int(0)},
-                                   {"assertion-pass", make_int(0)},
-                                   {"assertion-fail", make_int(0)},
-                                   {"success", make_int(0)}});
-        }
-        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        // Substring scan for canonical keys. For each recognized key,
-        // find the next ':' then parse a contiguous integer. This is
-        // intentionally minimal — the schema is flat and we only need
-        // integer values. If the file is malformed (no recognisable
-        // keys), we still bump _failure_total and report success=0.
-        auto extract_int = [&](const std::string& text, std::string_view key) -> std::int64_t {
-            auto pos = text.find(std::string(key));
-            while (pos != std::string::npos) {
-                auto colon = text.find(':', pos);
-                if (colon == std::string::npos)
-                    return 0;
-                auto start = colon + 1;
-                while (start < text.size() &&
-                       std::isspace(static_cast<unsigned char>(text[start])))
-                    ++start;
-                bool neg = false;
-                if (start < text.size() && text[start] == '-') {
-                    neg = true;
-                    ++start;
-                }
-                if (start >= text.size() || !std::isdigit(static_cast<unsigned char>(text[start])))
-                    return 0;
-                std::int64_t v = 0;
-                while (start < text.size() &&
-                       std::isdigit(static_cast<unsigned char>(text[start]))) {
-                    v = v * 10 + (text[start] - '0');
-                    ++start;
-                }
-                return neg ? -v : v;
+    add("eda:parse-verification-result",
+        [&ev, build_hash_eda](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0])) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+                return build_hash_eda({{"path", make_string(0)},
+                                       {"coverage-pct", make_int(0)},
+                                       {"assertion-pass", make_int(0)},
+                                       {"assertion-fail", make_int(0)},
+                                       {"success", make_int(0)}});
             }
-            return 0;
-        };
-        const auto cov = extract_int(text, "coverage-percent");
-        const auto cov2 = extract_int(text, "coverage_pct");
-        const auto pass = extract_int(text, "assertions-pass");
-        const auto pass2 = extract_int(text, "passed");
-        const auto fail = extract_int(text, "assertions-fail");
-        const auto fail2 = extract_int(text, "failed");
-        const auto coverage_pct = cov != 0 ? cov : cov2;
-        const auto assertion_pass = pass != 0 ? pass : pass2;
-        const auto assertion_fail = fail != 0 ? fail : fail2;
-        const int success =
-            (coverage_pct != 0 || assertion_pass != 0 || assertion_fail != 0) ? 1 : 0;
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            if (success)
-                m->eda_parse_verification_result_total.fetch_add(1, std::memory_order_relaxed);
-            else
-                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return build_hash_eda({{"path", path_ev},
-                               {"coverage-pct", make_int(coverage_pct)},
-                               {"assertion-pass", make_int(assertion_pass)},
-                               {"assertion-fail", make_int(assertion_fail)},
-                               {"success", make_int(success)}});
-    });
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size()) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+                return build_hash_eda({{"path", make_string(0)},
+                                       {"coverage-pct", make_int(0)},
+                                       {"assertion-pass", make_int(0)},
+                                       {"assertion-fail", make_int(0)},
+                                       {"success", make_int(0)}});
+            }
+            const auto& path = ev.string_heap_[idx];
+            auto path_ev = make_string(idx);
+            struct stat st;
+            if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+                return build_hash_eda({{"path", path_ev},
+                                       {"coverage-pct", make_int(0)},
+                                       {"assertion-pass", make_int(0)},
+                                       {"assertion-fail", make_int(0)},
+                                       {"success", make_int(0)}});
+            }
+            std::ifstream f(path);
+            if (!f) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+                return build_hash_eda({{"path", path_ev},
+                                       {"coverage-pct", make_int(0)},
+                                       {"assertion-pass", make_int(0)},
+                                       {"assertion-fail", make_int(0)},
+                                       {"success", make_int(0)}});
+            }
+            std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            // Substring scan for canonical keys. For each recognized key,
+            // find the next ':' then parse a contiguous integer. This is
+            // intentionally minimal — the schema is flat and we only need
+            // integer values. If the file is malformed (no recognisable
+            // keys), we still bump _failure_total and report success=0.
+            auto extract_int = [&](const std::string& text, std::string_view key) -> std::int64_t {
+                auto pos = text.find(std::string(key));
+                while (pos != std::string::npos) {
+                    auto colon = text.find(':', pos);
+                    if (colon == std::string::npos)
+                        return 0;
+                    auto start = colon + 1;
+                    while (start < text.size() &&
+                           std::isspace(static_cast<unsigned char>(text[start])))
+                        ++start;
+                    bool neg = false;
+                    if (start < text.size() && text[start] == '-') {
+                        neg = true;
+                        ++start;
+                    }
+                    if (start >= text.size() ||
+                        !std::isdigit(static_cast<unsigned char>(text[start])))
+                        return 0;
+                    std::int64_t v = 0;
+                    while (start < text.size() &&
+                           std::isdigit(static_cast<unsigned char>(text[start]))) {
+                        v = v * 10 + (text[start] - '0');
+                        ++start;
+                    }
+                    return neg ? -v : v;
+                }
+                return 0;
+            };
+            const auto cov = extract_int(text, "coverage-percent");
+            const auto cov2 = extract_int(text, "coverage_pct");
+            const auto pass = extract_int(text, "assertions-pass");
+            const auto pass2 = extract_int(text, "passed");
+            const auto fail = extract_int(text, "assertions-fail");
+            const auto fail2 = extract_int(text, "failed");
+            const auto coverage_pct = cov != 0 ? cov : cov2;
+            const auto assertion_pass = pass != 0 ? pass : pass2;
+            const auto assertion_fail = fail != 0 ? fail : fail2;
+            const int success =
+                (coverage_pct != 0 || assertion_pass != 0 || assertion_fail != 0) ? 1 : 0;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                if (success)
+                    m->eda_parse_verification_result_total.fetch_add(1, std::memory_order_relaxed);
+                else
+                    m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return build_hash_eda({{"path", path_ev},
+                                   {"coverage-pct", make_int(coverage_pct)},
+                                   {"assertion-pass", make_int(assertion_pass)},
+                                   {"assertion-fail", make_int(assertion_fail)},
+                                   {"success", make_int(success)}});
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

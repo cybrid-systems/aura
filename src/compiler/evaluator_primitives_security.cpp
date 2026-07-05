@@ -688,8 +688,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(ev.get_verify_tool_dirty_propagations_total()))},
             {"stable-ref-hits",
              make_int(static_cast<std::int64_t>(ev.get_verify_tool_stable_ref_hits_total()))},
-            {"feedback-mutate-success",
-             make_int(static_cast<std::int64_t>(ev.get_verify_tool_feedback_mutate_success_total()))},
+            {"feedback-mutate-success", make_int(static_cast<std::int64_t>(
+                                            ev.get_verify_tool_feedback_mutate_success_total()))},
         };
         return build_hash(kv);
     });

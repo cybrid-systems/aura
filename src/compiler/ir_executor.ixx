@@ -228,8 +228,7 @@ public:
     // supported targets; the closure object mutation is best-effort
     // with respect to concurrent apply_closure — same as the
     // existing list_closures path).
-    template <typename F>
-    std::size_t walk_runtime_closures(F&& cb) {
+    template <typename F> std::size_t walk_runtime_closures(F&& cb) {
         std::size_t visited = 0;
         for (auto& entry : runtime_closures_) {
             cb(entry.first, entry.second);

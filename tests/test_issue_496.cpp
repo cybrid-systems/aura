@@ -44,9 +44,9 @@ static void seed_sv_workspace(aura::compiler::CompilerService& cs, aura::ast::No
     auto* pool = cs.evaluator().workspace_pool();
     if (!ws || !pool)
         return;
-    const auto mp = ws->add_modport(pool->intern("master"),
-                                    std::span<const aura::ast::SymId>{
-                                        pool->intern("clk"), pool->intern("data")});
+    const auto mp = ws->add_modport(
+        pool->intern("master"),
+        std::span<const aura::ast::SymId>{pool->intern("clk"), pool->intern("data")});
     const std::vector<aura::ast::NodeId> body{mp};
     iface_id = ws->add_interface(pool->intern("Bus"), body);
     constraint_id = ws->add_constraint(
@@ -119,8 +119,7 @@ int main() {
         std::println("\n--- AC3: eda:update-constraint ---");
         auto upd = cs.eval(std::format("(eda:update-constraint {} \"val < 128;\")",
                                        static_cast<int>(constraint_id)));
-        CHECK(upd && aura::compiler::types::is_bool(*upd) &&
-                  aura::compiler::types::as_bool(*upd),
+        CHECK(upd && aura::compiler::types::is_bool(*upd) && aura::compiler::types::as_bool(*upd),
               "eda:update-constraint succeeds");
         auto* ws = cs.workspace_flat();
         auto* pool = cs.evaluator().workspace_pool();

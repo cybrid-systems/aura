@@ -83,9 +83,9 @@ int main() {
         CHECK(fail_after == fail_before,
               std::format("schema_validation_fail unchanged on healthy mutate ({} -> {})",
                           fail_before, fail_after));
-        CHECK(dirty_after >= dirty_before,
-              std::format("dirty_nodes_in_snapshot monotonic ({} -> {})", dirty_before,
-                          dirty_after));
+        CHECK(
+            dirty_after >= dirty_before,
+            std::format("dirty_nodes_in_snapshot monotonic ({} -> {})", dirty_before, dirty_after));
     }
 
     const auto impact_before = cs.evaluator().get_mutation_impact_count();
@@ -134,7 +134,8 @@ int main() {
         auto mrs = cs.eval("(query:macro-reflect-self-evo-stats)");
         CHECK(rps && aura::compiler::types::is_hash(*rps), "reflect-postmutate-stats regression");
         CHECK(mi && aura::compiler::types::is_int(*mi), "mutation-impact regression");
-        CHECK(mrs && aura::compiler::types::is_int(*mrs), "macro-reflect-self-evo-stats regression");
+        CHECK(mrs && aura::compiler::types::is_int(*mrs),
+              "macro-reflect-self-evo-stats regression");
     }
 
     // AC6: stats:count

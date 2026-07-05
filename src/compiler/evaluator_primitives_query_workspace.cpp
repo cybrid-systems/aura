@@ -1455,10 +1455,9 @@ void register_workspace_query_primitives(
                     return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
                 }
             } else {
-                return mev("bad-arg",
-                           "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                           " [:allow-macro-introduced [#t]] [:nested-arity [#t|#f]]"
-                           " [:strict-arity [#t]] [:with-markers [#t]])");
+                return mev("bad-arg", "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                                      " [:allow-macro-introduced [#t]] [:nested-arity [#t|#f]]"
+                                      " [:strict-arity [#t]] [:with-markers [#t]])");
             }
         }
         if (!have_pattern)

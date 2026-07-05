@@ -72,8 +72,7 @@ int main() {
 
     const auto root_before = stat_int(cs, "root-skips");
     const auto default_cnt = result_count(cs, "(query:pattern \"*\")");
-    const auto include_cnt =
-        result_count(cs, "(query:pattern \"*\" :include-macro-introduced #t)");
+    const auto include_cnt = result_count(cs, "(query:pattern \"*\" :include-macro-introduced #t)");
     const auto allow_cnt = result_count(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
     const auto deny_cnt = result_count(cs, "(query:pattern \"*\" :allow-macro-introduced #f)");
 
@@ -88,17 +87,16 @@ int main() {
         CHECK(deny_cnt == default_cnt,
               std::format(":allow-macro-introduced #f == default hygiene ({} vs {})", deny_cnt,
                           default_cnt));
-        CHECK(allow_cnt >= default_cnt,
-              "allow/include yields >= default hygiene-filtered matches");
+        CHECK(allow_cnt >= default_cnt, "allow/include yields >= default hygiene-filtered matches");
     }
 
     // AC3: default hygiene skips MacroIntroduced roots
     {
         std::println("\n--- AC3: default query:pattern hygiene filter ---");
         const auto root_after = stat_int(cs, "root-skips");
-        CHECK(root_after > root_before,
-              std::format("root-skips grew after query:pattern ({} -> {})", root_before,
-                          root_after));
+        CHECK(
+            root_after > root_before,
+            std::format("root-skips grew after query:pattern ({} -> {})", root_before, root_after));
     }
 
     // AC4: mutate-then-query self-evolution cycle
@@ -129,7 +127,8 @@ int main() {
         CHECK(hys && aura::compiler::types::is_int(*hys), "hygiene-stats regression");
         if (macro_n && by_marker && aura::compiler::types::is_int(*macro_n) &&
             aura::compiler::types::is_int(*by_marker)) {
-            CHECK(aura::compiler::types::as_int(*macro_n) == aura::compiler::types::as_int(*by_marker),
+            CHECK(aura::compiler::types::as_int(*macro_n) ==
+                      aura::compiler::types::as_int(*by_marker),
                   "macro-introduced matches by-marker MacroIntroduced");
         }
     }

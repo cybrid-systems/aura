@@ -101,8 +101,7 @@ int main() {
         auto orphan = scratch.add_variable(pool.intern("orphan"));
         (void)orphan;
         scratch.compact_nodes_soft();
-        CHECK(scratch.soft_compact_count() >= soft_before,
-              "scratch soft_compact_count observable");
+        CHECK(scratch.soft_compact_count() >= soft_before, "scratch soft_compact_count observable");
         ws->compact_nodes_soft();
         CHECK(ws->current_generation() == gen_before,
               "compact_nodes_soft does not bump generation");

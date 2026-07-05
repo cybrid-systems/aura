@@ -129,13 +129,12 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
                  .category = "eda",
                  .schema = "(string) -> int"});
     primitives_.set_meta_for_name(
-        "eda:query-nodes",
-        PrimMeta{.arity = 1,
-                 .pure = true,
-                 .safety_flags = 0,
-                 .doc = "Count workspace nodes matching an SV NodeTag name.",
-                 .category = "eda",
-                 .schema = "(string) -> int"});
+        "eda:query-nodes", PrimMeta{.arity = 1,
+                                    .pure = true,
+                                    .safety_flags = 0,
+                                    .doc = "Count workspace nodes matching an SV NodeTag name.",
+                                    .category = "eda",
+                                    .schema = "(string) -> int"});
     primitives_.set_meta_for_name(
         "eda:mutate-add-instance",
         PrimMeta{.arity = 3,

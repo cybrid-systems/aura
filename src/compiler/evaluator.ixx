@@ -749,8 +749,9 @@ export class Evaluator {
                                                    Evaluator& ev);
     friend void primitives_detail::register_eval_observability_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_eda_primitives(std::function<void(std::string, PrimFn)> add,
-                                                           Evaluator& ev);
+    friend void
+    primitives_detail::register_eda_primitives(std::function<void(std::string, PrimFn)> add,
+                                               Evaluator& ev);
     friend void primitives_detail::register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
                                             std::span<const aura::compiler::types::EvalValue>)>)>
@@ -1898,8 +1899,8 @@ private:
     // Build (or rebuild) the index for the current
     // workspace. Called by query:pattern (and other
     // future matchers) before walking.
-    void build_tag_arity_index(
-        std::uint8_t trigger = static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery)) const;
+    void build_tag_arity_index(std::uint8_t trigger = static_cast<std::uint8_t>(
+                                   PatternIndexRebuildTrigger::LazyQuery)) const;
     void maybe_eager_rebuild_pattern_index_after_cow() const noexcept;
     void bump_pattern_index_rebuild_trigger(std::uint8_t trigger) const noexcept;
     void tag_arity_index_insert_node(const ast::FlatAST& flat, ast::NodeId id) const;
@@ -2927,9 +2928,9 @@ public:
             // race on which exact max wins is acceptable (the next
             // hot list operation will re-establish the high-water).
             auto prev = m->cdr_depth_max.load(std::memory_order_relaxed);
-            while (max_depth_observed > prev && !m->cdr_depth_max.compare_exchange_weak(
-                                                    prev, max_depth_observed,
-                                                    std::memory_order_relaxed)) {
+            while (max_depth_observed > prev &&
+                   !m->cdr_depth_max.compare_exchange_weak(prev, max_depth_observed,
+                                                           std::memory_order_relaxed)) {
             }
         }
     }

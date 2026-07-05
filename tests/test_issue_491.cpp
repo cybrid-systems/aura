@@ -53,8 +53,7 @@ int main() {
     {
         std::println("\n--- AC1: query:jit-stats-hash ---");
         auto stats = cs.eval("(query:jit-stats-hash)");
-        CHECK(stats && aura::compiler::types::is_hash(*stats),
-              "query:jit-stats-hash returns hash");
+        CHECK(stats && aura::compiler::types::is_hash(*stats), "query:jit-stats-hash returns hash");
         CHECK(snap_stat(cs, "compiles") >= 0, "compiles present");
         CHECK(snap_stat(cs, "fallback-count") >= 0, "fallback-count present");
         CHECK(snap_stat(cs, "consistency-violations") >= 0, "consistency-violations present");

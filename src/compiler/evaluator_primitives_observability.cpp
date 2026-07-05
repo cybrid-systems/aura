@@ -460,18 +460,13 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto load_total = load_sv_ok + load_sv_fail;
         const auto parse_total = parse_vr_ok + parse_vr_fail;
         const std::int64_t load_rate =
-            load_total == 0
-                ? 0
-                : static_cast<std::int64_t>((load_sv_ok * 100) / load_total);
+            load_total == 0 ? 0 : static_cast<std::int64_t>((load_sv_ok * 100) / load_total);
         const std::int64_t parse_rate =
-            parse_total == 0
-                ? 0
-                : static_cast<std::int64_t>((parse_vr_ok * 100) / parse_total);
+            parse_total == 0 ? 0 : static_cast<std::int64_t>((parse_vr_ok * 100) / parse_total);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"load-sv-total", make_int(static_cast<std::int64_t>(load_sv_ok))},
             {"load-sv-failure-total", make_int(static_cast<std::int64_t>(load_sv_fail))},
-            {"parse-verification-result-total",
-             make_int(static_cast<std::int64_t>(parse_vr_ok))},
+            {"parse-verification-result-total", make_int(static_cast<std::int64_t>(parse_vr_ok))},
             {"parse-verification-failure-total",
              make_int(static_cast<std::int64_t>(parse_vr_fail))},
             {"load-sv-success-rate", make_int(load_rate)},
@@ -1182,10 +1177,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             total_cap += gs.capacity;
             total_used += gs.used;
         }
-        const double frag =
-            total_cap == 0 ? 0.0
-                           : static_cast<double>(total_cap - total_used) /
-                                 static_cast<double>(total_cap);
+        const double frag = total_cap == 0 ? 0.0
+                                           : static_cast<double>(total_cap - total_used) /
+                                                 static_cast<double>(total_cap);
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
             if (!ht)
@@ -1853,11 +1847,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t mismatch_prevented = 0;
         std::uint64_t hotswap_invalidate = 0;
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            refreshed = m->jit_hotswap_live_closure_refreshed_total.load(
-                std::memory_order_relaxed);
+            refreshed = m->jit_hotswap_live_closure_refreshed_total.load(std::memory_order_relaxed);
             forced_deopt = m->jit_hotswap_forced_deopt_total.load(std::memory_order_relaxed);
-            mismatch_prevented = m->jit_hotswap_epoch_mismatch_prevented_total.load(
-                std::memory_order_relaxed);
+            mismatch_prevented =
+                m->jit_hotswap_epoch_mismatch_prevented_total.load(std::memory_order_relaxed);
             hotswap_invalidate = m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed);
         }
         auto* ht = FlatHashTable::create(8);
@@ -1887,13 +1880,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
         };
-        insert_kv("live-closure-refreshed-total",
-                  static_cast<std::int64_t>(refreshed));
+        insert_kv("live-closure-refreshed-total", static_cast<std::int64_t>(refreshed));
         insert_kv("forced-deopt-total", static_cast<std::int64_t>(forced_deopt));
-        insert_kv("epoch-mismatch-prevented-total",
-                  static_cast<std::int64_t>(mismatch_prevented));
-        insert_kv("hotswap-invalidate-total",
-                  static_cast<std::int64_t>(hotswap_invalidate));
+        insert_kv("epoch-mismatch-prevented-total", static_cast<std::int64_t>(mismatch_prevented));
+        insert_kv("hotswap-invalidate-total", static_cast<std::int64_t>(hotswap_invalidate));
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
@@ -1902,8 +1892,7 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #493: query:hotpath-bottleneck-stats — structured EDSL
     // hot-path breakdown for AI mutate→eval tuning.
     add("query:hotpath-bottleneck-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m =
-            static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t eval_flat =
             m ? m->hotpath_eval_flat_calls.load(std::memory_order_relaxed) : 0;
         const std::uint64_t lowering =
@@ -1914,8 +1903,7 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) : 0;
         const std::uint64_t soa_funcs =
             m ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t soa_wired =
-            m ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t soa_wired = m ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
         auto* ws = ev.workspace_flat();
         const std::uint64_t dirty_up = ws ? ws->mark_dirty_upward_call_count() : 0;
         const std::uint64_t dirty_early = ws ? ws->mark_dirty_early_exit_count() : 0;
@@ -1932,9 +1920,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         if (ev.arena_group_) {
             arena_triggers += ev.arena_group_->auto_compact_trigger_count();
         }
-        const std::uint64_t bottleneck_total =
-            eval_flat + lowering + soa_dual + dirty_up + dirty_early + passes_skip +
-            shape_dispatch + value_dispatch + arena_triggers;
+        const std::uint64_t bottleneck_total = eval_flat + lowering + soa_dual + dirty_up +
+                                               dirty_early + passes_skip + shape_dispatch +
+                                               value_dispatch + arena_triggers;
         auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
@@ -1984,8 +1972,7 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #494: query:pass-pipeline-stats — incremental pass-pipeline
     // yield + dirty short-circuit observability for AI mutate loops.
     add("query:pass-pipeline-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m =
-            static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t pipeline_yield =
             aura::compiler::pipeline_yield_count.load(std::memory_order_relaxed);
         const std::uint64_t passes_skip_dirty =
@@ -1997,9 +1984,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
         const std::uint64_t mod_skip =
             m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t pipeline_total = pipeline_yield + passes_skip_dirty +
-                                             passes_skip_type + relower_skip + relower_per_fn +
-                                             mod_skip;
+        const std::uint64_t pipeline_total = pipeline_yield + passes_skip_dirty + passes_skip_type +
+                                             relower_skip + relower_per_fn + mod_skip;
         auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
@@ -2040,14 +2026,12 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         // pure Wrap delegation is being exercised (or wire more if
         // it's not). The stat is the sum of both wraps so a
         // single field tells us "are the pure wraps hot?".
-        const std::uint64_t shape_pure =
-            aura::compiler::ShapeWrap::pure_delegation_hits();
+        const std::uint64_t shape_pure = aura::compiler::ShapeWrap::pure_delegation_hits();
         const std::uint64_t linear_pure =
             aura::compiler::LinearOwnershipWrap::pure_delegation_hits();
         insert_kv("pure-delegation-shape", static_cast<std::int64_t>(shape_pure));
         insert_kv("pure-delegation-linear", static_cast<std::int64_t>(linear_pure));
-        insert_kv("pure-delegation-total",
-                  static_cast<std::int64_t>(shape_pure + linear_pure));
+        insert_kv("pure-delegation-total", static_cast<std::int64_t>(shape_pure + linear_pure));
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

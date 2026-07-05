@@ -65,9 +65,9 @@ int main() {
     // AC2: eda:parse-netlist + eda:query-nodes roundtrip
     {
         std::println("\n--- AC2: parse-netlist + query-nodes ---");
-        auto parsed = cs.eval(
-            "(eda:parse-netlist "
-            "\"interface:Bus\\nmodport:master:clk,data\\nconstraint:c_dist:val inside {[0:255]};\")");
+        auto parsed = cs.eval("(eda:parse-netlist "
+                              "\"interface:Bus\\nmodport:master:clk,data\\nconstraint:c_dist:val "
+                              "inside {[0:255]};\")");
         CHECK(parsed && aura::compiler::types::is_int(*parsed) &&
                   aura::compiler::types::as_int(*parsed) == 3,
               "eda:parse-netlist parsed 3 nodes");
@@ -79,8 +79,9 @@ int main() {
         CHECK(mp_count && aura::compiler::types::is_int(*mp_count) &&
                   aura::compiler::types::as_int(*mp_count) >= 1,
               "eda:query-nodes Modport >= 1");
-        CHECK(snap_stat(cs, "parse-total") > parse_before,
-              std::format("parse-total grew ({} -> {})", parse_before, snap_stat(cs, "parse-total")));
+        CHECK(
+            snap_stat(cs, "parse-total") > parse_before,
+            std::format("parse-total grew ({} -> {})", parse_before, snap_stat(cs, "parse-total")));
     }
 
     aura::ast::NodeId iface_id = aura::ast::NULL_NODE;
@@ -110,14 +111,14 @@ int main() {
         std::println("\n--- AC3: mutate-add-instance + hardware feedback ---");
         auto upd = cs.eval(std::format("(eda:mutate-add-instance {} \"slave\" \"ready,valid\")",
                                        static_cast<int>(iface_id)));
-        CHECK(upd && aura::compiler::types::is_bool(*upd) &&
-                  aura::compiler::types::as_bool(*upd),
+        CHECK(upd && aura::compiler::types::is_bool(*upd) && aura::compiler::types::as_bool(*upd),
               "eda:mutate-add-instance succeeds");
         auto mp_after = cs.eval("(eda:query-nodes \"Modport\")");
         CHECK(mp_after && aura::compiler::types::is_int(*mp_after) &&
                   aura::compiler::types::as_int(*mp_after) >= 2,
               "modport count >= 2 after mutate-add-instance");
-        auto fb = cs.eval(std::format("(eda:run-hardware-feedback {})", static_cast<int>(iface_id)));
+        auto fb =
+            cs.eval(std::format("(eda:run-hardware-feedback {})", static_cast<int>(iface_id)));
         CHECK(fb && aura::compiler::types::is_bool(*fb) && aura::compiler::types::as_bool(*fb),
               "eda:run-hardware-feedback succeeds");
         CHECK(snap_stat(cs, "mutate-total") > mutate_before,

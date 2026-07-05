@@ -67,16 +67,13 @@ int main() {
     {
         std::println("\n--- AC2: dynamic list construction bumps pair-alloc-total ---");
         const auto before = stat_int(cs, "pair-alloc-total");
-        cs.eval(
-            "(define build-list (lambda (n) (let loop ((i 0) (acc '())) "
-            "(if (= i n) acc (loop (+ i 1) (append acc (list (+ i 1))))))))");
+        cs.eval("(define build-list (lambda (n) (let loop ((i 0) (acc '())) "
+                "(if (= i n) acc (loop (+ i 1) (append acc (list (+ i 1))))))))");
         auto r = cs.eval("(length (build-list 10))");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 10,
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 10,
               std::format("build-list 10 has length 10 (got {})",
-                          r && aura::compiler::types::is_int(*r)
-                                  ? aura::compiler::types::as_int(*r)
-                                  : -1));
+                          r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r)
+                                                                 : -1));
         const auto after = stat_int(cs, "pair-alloc-total");
         CHECK(after >= before + 10,
               std::format("pair-alloc-total bumped >= 10 on dynamic construction ({} -> {})",
@@ -93,12 +90,10 @@ int main() {
         const auto tr_before = stat_int(cs, "linear-traverse-total");
         const auto dm_before = stat_int(cs, "cdr-depth-max");
         auto r = cs.eval("(length big-list)");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 20,
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 20,
               std::format("length of 20-list returns 20 (got {})",
-                          r && aura::compiler::types::is_int(*r)
-                                  ? aura::compiler::types::as_int(*r)
-                                  : -1));
+                          r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r)
+                                                                 : -1));
         const auto tr_after = stat_int(cs, "linear-traverse-total");
         const auto dm_after = stat_int(cs, "cdr-depth-max");
         CHECK(tr_after >= tr_before + 20,
@@ -113,12 +108,10 @@ int main() {
         std::println("\n--- AC4: list-ref positional access ---");
         const auto tr_before = stat_int(cs, "linear-traverse-total");
         auto r = cs.eval("(list-ref big-list 5)");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 6,
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 6,
               std::format("list-ref big-list 5 == 6 (got {})",
-                          r && aura::compiler::types::is_int(*r)
-                                  ? aura::compiler::types::as_int(*r)
-                                  : -1));
+                          r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r)
+                                                                 : -1));
         const auto tr_after = stat_int(cs, "linear-traverse-total");
         CHECK(tr_after >= tr_before + 5,
               std::format("linear-traverse-total >= +5 ({} -> {})", tr_before, tr_after));
@@ -135,8 +128,8 @@ int main() {
         cs.eval("(define big-ones (filter (lambda (x) (> x 5)) big-list))");
         const auto after = stat_int(cs, "pair-alloc-total");
         CHECK(after >= before + 30,
-              std::format("pair-alloc-total bumped >= 30 for runtime map+filter ({} -> {})",
-                          before, after));
+              std::format("pair-alloc-total bumped >= 30 for runtime map+filter ({} -> {})", before,
+                          after));
     }
 
     // AC6: foldl — bumps linear-traverse on the entire walk.
@@ -144,12 +137,10 @@ int main() {
         std::println("\n--- AC6: foldl cdr-walk bump ---");
         const auto before = stat_int(cs, "linear-traverse-total");
         auto r = cs.eval("(foldl + 0 big-list)");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 210,
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 210,
               std::format("foldl + 0 [1..20] == 210 (got {})",
-                          r && aura::compiler::types::is_int(*r)
-                                  ? aura::compiler::types::as_int(*r)
-                                  : -1));
+                          r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r)
+                                                                 : -1));
         const auto after = stat_int(cs, "linear-traverse-total");
         CHECK(after >= before + 20,
               std::format("foldl bumped linear-traverse >= +20 ({} -> {})", before, after));
@@ -184,8 +175,8 @@ int main() {
         const auto tr_after = stat_int(cs, "linear-traverse-total");
         const auto pa_after = stat_int(cs, "pair-alloc-total");
         CHECK(tr_after >= tr_before + 20 * 2 * k_iters,
-              std::format("linear-traverse-total grew with concurrent length ({} -> {})",
-                          tr_before, tr_after));
+              std::format("linear-traverse-total grew with concurrent length ({} -> {})", tr_before,
+                          tr_after));
         CHECK(pa_after >= pa_before,
               std::format("pair-alloc-total non-decreasing ({} -> {})", pa_before, pa_after));
     }

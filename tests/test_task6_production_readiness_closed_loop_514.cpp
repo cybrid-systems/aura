@@ -77,8 +77,7 @@ static void run_matrix(CompilerService& cs) {
     auto irs = cs.eval("(query:ir-hygiene-stats)");
     auto pms = cs.eval("(query:pattern-marker-stats)");
     std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker-hash={}", skips0, skips1,
-                 irs && is_hash(*irs) ? ir_hygiene_total(cs) : 0,
-                 pms && is_hash(*pms) ? 1 : 0);
+                 irs && is_hash(*irs) ? ir_hygiene_total(cs) : 0, pms && is_hash(*pms) ? 1 : 0);
     CHECK(skips1 > skips0, "MacroIntroduced filtered in query:pattern");
     CHECK(irs && is_hash(*irs), "query:ir-hygiene-stats returns hash");
     CHECK(pms && is_hash(*pms), "query:pattern-marker-stats returns hash");

@@ -65,8 +65,7 @@ int main() {
     {
         std::println("\n--- AC1: compile:ir-soa-stats has 5 fields ---");
         auto h = cs.eval("(compile:ir-soa-stats)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "(compile:ir-soa-stats) returns hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "(compile:ir-soa-stats) returns hash");
         // Existing fields (back-compat with #254)
         CHECK(snap_stat(cs, "instructions-emitted") >= 0, "instructions-emitted present");
         CHECK(snap_stat(cs, "functions-emitted") >= 0, "functions-emitted present");
@@ -98,9 +97,8 @@ int main() {
     const auto instr_before = snap_stat(cs, "instructions-emitted");
     {
         std::println("\n--- AC3: dual-emit bumps view-cache-hits ---");
-        CHECK(cs.eval(
-                  "(set-code \"(define (compute x) (+ x 1) (+ x 2) (+ x 3))\") "
-                  "(eval-current)")
+        CHECK(cs.eval("(set-code \"(define (compute x) (+ x 1) (+ x 2) (+ x 3))\") "
+                      "(eval-current)")
                   .has_value(),
               "set-code + eval-current (multi-block body)");
         const auto view_hits_after = snap_stat(cs, "view-cache-hits");
@@ -114,8 +112,8 @@ int main() {
         // columns = one "view-equivalent" SoA column access). They
         // MUST agree on the magnitude.
         CHECK(view_hits_after == instr_after,
-              std::format("view-cache-hits == instructions-emitted ({} == {})",
-                          view_hits_after, instr_after));
+              std::format("view-cache-hits == instructions-emitted ({} == {})", view_hits_after,
+                          instr_after));
     }
 
     // AC4: a small mutate:rebind triggers invalidate_function, which
@@ -125,8 +123,7 @@ int main() {
         std::println("\n--- AC4: mutate:rebind bumps block-dirty + saved counters ---");
         const auto dirty_before = snap_stat(cs, "block-dirty-hits");
         const auto saved_before = snap_stat(cs, "relower-blocks-saved");
-        CHECK(cs.eval(
-                  "(mutate:rebind \"compute\" \"(lambda (x) (+ x 10))\" \"issue603\")")
+        CHECK(cs.eval("(mutate:rebind \"compute\" \"(lambda (x) (+ x 10))\" \"issue603\")")
                   .has_value(),
               "mutate:rebind compute under Guard");
         const auto dirty_after = snap_stat(cs, "block-dirty-hits");
@@ -140,11 +137,9 @@ int main() {
     // AC5: post-mutate eval still works (no crash on the SoA path).
     {
         std::println("\n--- AC5: eval-current after mutate survives ---");
-        CHECK(cs.eval("(eval-current)").has_value(),
-              "eval-current after mutate:rebind (no crash)");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate:rebind (no crash)");
         auto r = cs.eval("(compute 1)");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 11,
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 11,
               "(compute 1) == 11 after mutate (new body: (+ x 10))");
     }
 
@@ -155,8 +150,8 @@ int main() {
         auto h = cs.eval("(query:irsoa-incremental-stats)");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "(query:irsoa-incremental-stats) still returns hash");
-        auto wired = cs.eval(
-            std::format("(hash-ref (query:irsoa-incremental-stats) 'soa-wired-hits')"));
+        auto wired =
+            cs.eval(std::format("(hash-ref (query:irsoa-incremental-stats) 'soa-wired-hits')"));
         CHECK(wired && aura::compiler::types::is_int(*wired) &&
                   aura::compiler::types::as_int(*wired) >= 1,
               "soa-wired-hits >= 1 after eval-current");
@@ -180,8 +175,7 @@ int main() {
     // observable (unchanged code path).
     {
         std::println("\n--- AC8: pre-existing counters unchanged ---");
-        CHECK(snap_stat(cs, "instructions-emitted") >= 1,
-              "instructions-emitted still readable");
+        CHECK(snap_stat(cs, "instructions-emitted") >= 1, "instructions-emitted still readable");
         CHECK(snap_stat(cs, "functions-emitted") >= 1, "functions-emitted still readable");
     }
 

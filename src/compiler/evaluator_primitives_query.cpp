@@ -306,74 +306,73 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - impact-snapshots, mutation-impacts, dirty-nodes, macro-markers
     //   - boundary-depth, guard-epoch, ring-seq, ring-capacity
     //   - boundary-log-total, boundary-log-recommendation
-    add("query:mutation-boundary-log",
-        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_void();
-            const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
+    add("query:mutation-boundary-log", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        const auto entry = ev->get_latest_mutation_impact_entry();
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
                 }
-            };
-            const std::uint64_t snapshots = ev->get_impact_snapshot_count();
-            const std::uint64_t impacts = ev->get_mutation_impact_count();
-            const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
-            const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
-            const std::uint64_t ring_seq = ev->get_mutation_impact_ring_seq();
-            const std::uint64_t total =
-                snapshots + impacts + entry.epoch_delta + entry.nodes_changed + dirty;
-            std::int64_t recommendation = 0;
-            if (!ev->get_last_schema_validation_ok())
-                recommendation = 3;
-            else if (entry.nodes_changed > 20)
-                recommendation = 2;
-            else if (dirty > 10)
-                recommendation = 1;
-            insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
-            insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
-            insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
-            insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
-            insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
-            insert_kv("mutation-impacts", static_cast<std::int64_t>(impacts));
-            insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
-            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
-            insert_kv("boundary-depth",
-                      static_cast<std::int64_t>(Evaluator::mutation_boundary_depth()));
-            insert_kv("guard-epoch", static_cast<std::int64_t>(ev->get_guard_dirty_epoch_count()));
-            insert_kv("ring-seq", static_cast<std::int64_t>(ring_seq));
-            insert_kv("ring-capacity", 8); // Evaluator::kMutationImpactRingSize
-            insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
-            insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
-            insert_kv("boundary-log-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        });
+            }
+        };
+        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+        const std::uint64_t impacts = ev->get_mutation_impact_count();
+        const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
+        const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
+        const std::uint64_t ring_seq = ev->get_mutation_impact_ring_seq();
+        const std::uint64_t total =
+            snapshots + impacts + entry.epoch_delta + entry.nodes_changed + dirty;
+        std::int64_t recommendation = 0;
+        if (!ev->get_last_schema_validation_ok())
+            recommendation = 3;
+        else if (entry.nodes_changed > 20)
+            recommendation = 2;
+        else if (dirty > 10)
+            recommendation = 1;
+        insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
+        insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
+        insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
+        insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
+        insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
+        insert_kv("mutation-impacts", static_cast<std::int64_t>(impacts));
+        insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
+        insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+        insert_kv("boundary-depth",
+                  static_cast<std::int64_t>(Evaluator::mutation_boundary_depth()));
+        insert_kv("guard-epoch", static_cast<std::int64_t>(ev->get_guard_dirty_epoch_count()));
+        insert_kv("ring-seq", static_cast<std::int64_t>(ring_seq));
+        insert_kv("ring-capacity", 8); // Evaluator::kMutationImpactRingSize
+        insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
+        insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
+        insert_kv("boundary-log-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #489: query:stability-stats. Hash view of StableNodeRef
     // enforcement counters for EDSL mutate/query hot paths.
@@ -896,51 +895,50 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - recursive-skips: pattern_recursive_macro_skipped_
     //   - hygiene-violations: hygiene_violation_count_
     //   - macro-markers: workspace MacroIntroduced marker tally
-    add("query:macro-hygiene-stats",
-        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_void();
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
+    add("query:macro-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
                 }
-            };
-            insert_kv("root-skips",
-                      static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
-            insert_kv("recursive-skips",
-                      static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped()));
-            insert_kv("hygiene-violations",
-                      static_cast<std::int64_t>(ev->get_hygiene_violation_count()));
-            insert_kv("macro-markers",
-                      static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        });
+            }
+        };
+        insert_kv("root-skips",
+                  static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
+        insert_kv("recursive-skips",
+                  static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped()));
+        insert_kv("hygiene-violations",
+                  static_cast<std::int64_t>(ev->get_hygiene_violation_count()));
+        insert_kv("macro-markers",
+                  static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #548: query:panic-checkpoint-lifecycle-stats.
     // Returns the sum of the 4 panic-checkpoint lifecycle
@@ -1569,59 +1567,58 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - respect-macro-hygiene: InlinePass::respect_macro_hygiene_ (1=on)
     //   - ir-hygiene-total: inline_skipped + macro_markers
     //   - ir-hygiene-recommendation: 0=ok, 1=review skips, 2=markers w/o policy
-    add("query:ir-hygiene-stats",
-        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_void();
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
+    add("query:ir-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
                 }
-            };
-            const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
-            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-            const std::uint64_t total = inline_skipped + markers;
-            const bool respects = InlinePass::get_respect_macro_hygiene();
-            std::int64_t recommendation = 0;
-            if (inline_skipped > 0 && !respects)
-                recommendation = 3;
-            else if (inline_skipped > 5)
-                recommendation = 2;
-            else if (markers > 0 && inline_skipped == 0 && respects)
-                recommendation = 1;
-            insert_kv("inline-hygiene-skipped", static_cast<std::int64_t>(inline_skipped));
-            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
-            insert_kv("respect-macro-hygiene", respects ? 1 : 0);
-            insert_kv("ir-hygiene-total", static_cast<std::int64_t>(total));
-            insert_kv("ir-hygiene-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        });
+            }
+        };
+        const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        const std::uint64_t total = inline_skipped + markers;
+        const bool respects = InlinePass::get_respect_macro_hygiene();
+        std::int64_t recommendation = 0;
+        if (inline_skipped > 0 && !respects)
+            recommendation = 3;
+        else if (inline_skipped > 5)
+            recommendation = 2;
+        else if (markers > 0 && inline_skipped == 0 && respects)
+            recommendation = 1;
+        insert_kv("inline-hygiene-skipped", static_cast<std::int64_t>(inline_skipped));
+        insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+        insert_kv("respect-macro-hygiene", respects ? 1 : 0);
+        insert_kv("ir-hygiene-total", static_cast<std::int64_t>(total));
+        insert_kv("ir-hygiene-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #503 / #514: query:pattern-marker-stats. Hash view of
     // query:pattern subtree marker/hygiene counters for Agent loops:
@@ -1631,59 +1628,58 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - macro-markers: workspace MacroIntroduced marker tally
     //   - pattern-marker-total: root + recursive + violations + markers
     //   - pattern-marker-recommendation: 0=ok, 1=review skips, 2=alert
-    add("query:pattern-marker-stats",
-        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_void();
-            auto* ht = FlatHashTable::create(12);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
+    add("query:pattern-marker-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ht = FlatHashTable::create(12);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
                 }
-            };
-            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
-            const std::uint64_t violations = ev->get_hygiene_violation_count();
-            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-            const std::uint64_t total = root_skips + recursive_skips + violations + markers;
-            std::int64_t recommendation = 0;
-            if (violations > 0)
-                recommendation = 2;
-            else if (root_skips + recursive_skips > 10)
-                recommendation = 1;
-            insert_kv("root-skips", static_cast<std::int64_t>(root_skips));
-            insert_kv("recursive-skips", static_cast<std::int64_t>(recursive_skips));
-            insert_kv("hygiene-violations", static_cast<std::int64_t>(violations));
-            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
-            insert_kv("pattern-marker-total", static_cast<std::int64_t>(total));
-            insert_kv("pattern-marker-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        });
+            }
+        };
+        const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+        const std::uint64_t violations = ev->get_hygiene_violation_count();
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        const std::uint64_t total = root_skips + recursive_skips + violations + markers;
+        std::int64_t recommendation = 0;
+        if (violations > 0)
+            recommendation = 2;
+        else if (root_skips + recursive_skips > 10)
+            recommendation = 1;
+        insert_kv("root-skips", static_cast<std::int64_t>(root_skips));
+        insert_kv("recursive-skips", static_cast<std::int64_t>(recursive_skips));
+        insert_kv("hygiene-violations", static_cast<std::int64_t>(violations));
+        insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+        insert_kv("pattern-marker-total", static_cast<std::int64_t>(total));
+        insert_kv("pattern-marker-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #517: query:consolidated-production-priority-stats.
     // Returns the sum of 9 counter groups spanning the 3 P0 foundational
@@ -2962,79 +2958,81 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // Issue #492: query:shape-profiler-stats — structured ShapeProfiler
     // deopt/stability view for AI orchestration (non-duplicative with
     // #570 int-sum and #407 burst-stats).
-    add("query:shape-profiler-stats", [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t stable_hits =
-            shape::shape_stability_hit_count.load(std::memory_order_relaxed);
-        const std::uint64_t version_bumps =
-            shape::shape_version_bump_count.load(std::memory_order_relaxed);
-        const std::uint64_t fiber_refresh =
-            shape::shape_fiber_refresh_count.load(std::memory_order_relaxed);
-        const std::uint64_t churn =
-            shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
-        const std::uint64_t deopt_hooks =
-            shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
-        const std::uint64_t jit_shape_miss =
-            shape::jit_shape_miss_count.load(std::memory_order_relaxed);
-        const std::uint64_t deopt_storm =
-            shape::shape_deopt_storm_count.load(std::memory_order_relaxed);
-        const std::uint64_t shape_changes =
-            m ? m->shape_changes_observed.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t deopt_count = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t spec_hits =
-            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t spec_misses =
-            m ? m->specialization_misses.load(std::memory_order_relaxed) : 0;
-        constexpr std::int64_t k_window =
-            static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultWindowSize);
-        constexpr std::int64_t k_ratio_bp = static_cast<std::int64_t>(
-            shape::ShapeProfiler::kDefaultStabilityRatio * 10000.0);
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    add("query:shape-profiler-stats",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t stable_hits =
+                shape::shape_stability_hit_count.load(std::memory_order_relaxed);
+            const std::uint64_t version_bumps =
+                shape::shape_version_bump_count.load(std::memory_order_relaxed);
+            const std::uint64_t fiber_refresh =
+                shape::shape_fiber_refresh_count.load(std::memory_order_relaxed);
+            const std::uint64_t churn =
+                shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
+            const std::uint64_t deopt_hooks =
+                shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
+            const std::uint64_t jit_shape_miss =
+                shape::jit_shape_miss_count.load(std::memory_order_relaxed);
+            const std::uint64_t deopt_storm =
+                shape::shape_deopt_storm_count.load(std::memory_order_relaxed);
+            const std::uint64_t shape_changes =
+                m ? m->shape_changes_observed.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t deopt_count =
+                m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t spec_hits =
+                m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t spec_misses =
+                m ? m->specialization_misses.load(std::memory_order_relaxed) : 0;
+            constexpr std::int64_t k_window =
+                static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultWindowSize);
+            constexpr std::int64_t k_ratio_bp =
+                static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultStabilityRatio * 10000.0);
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("stability-hits", static_cast<std::int64_t>(stable_hits));
-        insert_kv("version-bumps", static_cast<std::int64_t>(version_bumps));
-        insert_kv("fiber-refresh", static_cast<std::int64_t>(fiber_refresh));
-        insert_kv("shape-churn", static_cast<std::int64_t>(churn));
-        insert_kv("deopt-hooks", static_cast<std::int64_t>(deopt_hooks));
-        insert_kv("jit-shape-miss", static_cast<std::int64_t>(jit_shape_miss));
-        insert_kv("deopt-storm-count", static_cast<std::int64_t>(deopt_storm));
-        insert_kv("shape-changes-observed", static_cast<std::int64_t>(shape_changes));
-        insert_kv("deopt-count", static_cast<std::int64_t>(deopt_count));
-        insert_kv("specialization-hits", static_cast<std::int64_t>(spec_hits));
-        insert_kv("specialization-misses", static_cast<std::int64_t>(spec_misses));
-        insert_kv("window-size", k_window);
-        insert_kv("stability-ratio-bp", k_ratio_bp);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("stability-hits", static_cast<std::int64_t>(stable_hits));
+            insert_kv("version-bumps", static_cast<std::int64_t>(version_bumps));
+            insert_kv("fiber-refresh", static_cast<std::int64_t>(fiber_refresh));
+            insert_kv("shape-churn", static_cast<std::int64_t>(churn));
+            insert_kv("deopt-hooks", static_cast<std::int64_t>(deopt_hooks));
+            insert_kv("jit-shape-miss", static_cast<std::int64_t>(jit_shape_miss));
+            insert_kv("deopt-storm-count", static_cast<std::int64_t>(deopt_storm));
+            insert_kv("shape-changes-observed", static_cast<std::int64_t>(shape_changes));
+            insert_kv("deopt-count", static_cast<std::int64_t>(deopt_count));
+            insert_kv("specialization-hits", static_cast<std::int64_t>(spec_hits));
+            insert_kv("specialization-misses", static_cast<std::int64_t>(spec_misses));
+            insert_kv("window-size", k_window);
+            insert_kv("stability-ratio-bp", k_ratio_bp);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #571: query:value-dispatch-stats. Returns the sum
     // of 4 EvalValue v2 dispatch observability counters:
@@ -3646,9 +3644,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 stale_refresh + bridge_hit + linear_pass + gc_skipped + env_refresh;
             const std::uint64_t epoch_checks = stale_refresh + bridge_hit;
             const std::int64_t refresh_pct =
-                epoch_checks > 0
-                    ? static_cast<std::int64_t>((stale_refresh * 100) / epoch_checks)
-                    : 0;
+                epoch_checks > 0 ? static_cast<std::int64_t>((stale_refresh * 100) / epoch_checks)
+                                 : 0;
             std::int64_t recommendation = 0;
             if (gc_skipped > 0)
                 recommendation = 2;
@@ -3841,7 +3838,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t stale = ev->get_envframe_stale_refresh_count();
         const std::uint64_t mismatch = ev->get_envframe_version_mismatch_in_walk();
         const std::uint64_t gc_skips = ev->get_envframe_gc_walk_safe_skips();
-        return make_int(static_cast<std::int64_t>(desync + dual_sync + stale + mismatch + gc_skips));
+        return make_int(
+            static_cast<std::int64_t>(desync + dual_sync + stale + mismatch + gc_skips));
     });
 
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {

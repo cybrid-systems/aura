@@ -67,8 +67,7 @@ int main() {
         CHECK(ring_after > ring_before,
               std::format("ring_seq grew ({} -> {})", ring_before, ring_after));
         auto log = cs.eval("(query:mutation-boundary-log)");
-        CHECK(log && aura::compiler::types::is_hash(*log),
-              "boundary-log hash after Guard mutate");
+        CHECK(log && aura::compiler::types::is_hash(*log), "boundary-log hash after Guard mutate");
     }
 
     // AC3: AI loop can consume log without extra snapshot queries
@@ -89,8 +88,7 @@ int main() {
         CHECK(cs.eval("(mutate:rebind \"a\" \"30\")").has_value(), "third mutate under Guard");
         (void)cs.eval("(query:pattern \"a\")");
         auto log = cs.eval("(query:mutation-boundary-log)");
-        CHECK(log && aura::compiler::types::is_hash(*log),
-              "boundary-log hash after query cycle");
+        CHECK(log && aura::compiler::types::is_hash(*log), "boundary-log hash after query cycle");
     }
 
     // AC5: query-only path zero regression on Guard safety
@@ -101,8 +99,7 @@ int main() {
         const auto impact0 = cs2.evaluator().get_mutation_impact_count();
         (void)cs2.eval("(query:pattern \"a\")");
         auto log = cs2.eval("(query:mutation-boundary-log)");
-        CHECK(log && aura::compiler::types::is_hash(*log),
-              "boundary-log hash on query-only path");
+        CHECK(log && aura::compiler::types::is_hash(*log), "boundary-log hash on query-only path");
         CHECK(cs2.evaluator().get_mutation_impact_count() == impact0,
               "mutation_impact unchanged on query-only path");
     }

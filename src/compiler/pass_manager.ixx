@@ -95,7 +95,7 @@ export inline std::atomic<std::uint64_t> pipeline_yield_count{0};
 export inline std::atomic<std::uint64_t> passes_skipped_dirty_pipeline{0};
 
 namespace pass_pipeline_detail {
-inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
+    inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
 }
 
 export void set_pipeline_yield_hook(PipelineYieldHook hook) noexcept {
@@ -601,8 +601,7 @@ static_assert(IncrementalPass<ConstantFoldingWrap>,
 
 // Issue #606: PureAnalysisPass satisfaction for the new ShapeWrap +
 // LinearOwnershipWrap (placed with the other Pass static_asserts).
-static_assert(PureAnalysisPass<aura::compiler::ShapeWrap>,
-              "ShapeWrap should be PureAnalysisPass");
+static_assert(PureAnalysisPass<aura::compiler::ShapeWrap>, "ShapeWrap should be PureAnalysisPass");
 static_assert(PureAnalysisPass<aura::compiler::LinearOwnershipWrap>,
               "LinearOwnershipWrap should be PureAnalysisPass");
 
