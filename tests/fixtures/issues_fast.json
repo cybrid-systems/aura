@@ -57,6 +57,7 @@
     "test_issue_578_observability",
     "test_issue_579_observability",
     "test_issue_580_observability",
-    "test_issue_581_observability"
+    "test_issue_581_observability",
+    "test_issue_582_observability"
   ]
 }

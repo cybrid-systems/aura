@@ -3457,6 +3457,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:hardware-backend-stats",
             // Issue #581 — StableNodeRef + dirty propagation SV SoC scalability
             "query:stable-ref-sv-scale-stats",
+            // Issue #582 — EDA SV concurrency + atomic batch + fiber safety
+            "query:eda-concurrency-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3497,10 +3499,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 146 entries as of #581 ship (145 from #580 + 1 stable-ref-sv-scale
-        // observability hash primitive from #581:
-        // query:stable-ref-sv-scale-stats).
-        return make_int(146);
+        // 147 entries as of #582 ship (146 from #581 + 1 eda-concurrency
+        // observability hash primitive from #582:
+        // query:eda-concurrency-stats).
+        return make_int(147);
     });
 }
 
