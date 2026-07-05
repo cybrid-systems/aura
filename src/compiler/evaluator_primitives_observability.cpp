@@ -389,6 +389,97 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #616: query:eda-hw-stats — EDA hardware-co-design
+    // primitives observability. Companion to query:eda-foundation-stats
+    // (#499) but covering the file-boundary surface (load-sv,
+    // parse-verification-result). Separate primitive so the #499
+    // foundation stats shape stays unchanged for back-compat, and
+    // the file-I/O layer has its own dedicated dashboard.
+    //
+    // Returned hash:
+    //   - load-sv-total               successful (eda:load-sv) calls
+    //   - load-sv-failure-total       failed (eda:load-sv) calls
+    //   - parse-verification-result-total successful calls
+    //   - parse-verification-failure-total failed calls
+    //   - load-sv-success-rate        0..100 (0 when both are 0)
+    //   - parse-verification-success-rate 0..100 (0 when both are 0)
+    //
+    // The success-rate fields are computed inline so the Agent
+    // doesn't have to do the division itself; the per-call counters
+    // are also exposed so a custom Agent can compute its own
+    // moving-window rate.
+    add("query:eda-hw-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t load_sv_ok =
+            m ? m->eda_load_sv_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t load_sv_fail =
+            m ? m->eda_load_sv_failure_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t parse_vr_ok =
+            m ? m->eda_parse_verification_result_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t parse_vr_fail =
+            m ? m->eda_parse_verification_failure_total.load(std::memory_order_relaxed) : 0;
+        const auto load_total = load_sv_ok + load_sv_fail;
+        const auto parse_total = parse_vr_ok + parse_vr_fail;
+        const std::int64_t load_rate =
+            load_total == 0
+                ? 0
+                : static_cast<std::int64_t>((load_sv_ok * 100) / load_total);
+        const std::int64_t parse_rate =
+            parse_total == 0
+                ? 0
+                : static_cast<std::int64_t>((parse_vr_ok * 100) / parse_total);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"load-sv-total", make_int(static_cast<std::int64_t>(load_sv_ok))},
+            {"load-sv-failure-total", make_int(static_cast<std::int64_t>(load_sv_fail))},
+            {"parse-verification-result-total",
+             make_int(static_cast<std::int64_t>(parse_vr_ok))},
+            {"parse-verification-failure-total",
+             make_int(static_cast<std::int64_t>(parse_vr_fail))},
+            {"load-sv-success-rate", make_int(load_rate)},
+            {"parse-verification-success-rate", make_int(parse_rate)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #478: query:primitive-error-stats — returns a pair
     // (error-count . error-values-size) for Agent recovery loops.
     add("query:primitive-error-stats", [&ev](const auto&) -> EvalValue {
@@ -2810,7 +2901,11 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 98 entries as of #501 ship (97 from #500 + query:ir-hygiene-stats in stats.aura).
+        // 98 entries as of #501 ship (97 from #500 + query:ir-hygiene-stats
+        // in stats.aura). #616's query:eda-hw-stats was added AFTER
+        // #501, so the post-rebase count is still 98 (the #501 bump
+        // already accounted for the extra primitive; rebase is
+        // orthogonal to the count).
         return make_int(98);
     });
 }

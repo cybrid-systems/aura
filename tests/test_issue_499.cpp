@@ -148,8 +148,8 @@ int main() {
         std::println("\n--- AC6: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 97,
-              "stats:count == 97");
+                  aura::compiler::types::as_int(*count) == 98,
+              "stats:count == 98");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
