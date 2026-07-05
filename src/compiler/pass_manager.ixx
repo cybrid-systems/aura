@@ -89,6 +89,23 @@ export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, 
     return !pass.has_error();
 }
 
+// Issue #494: optional yield hook between pass stages (wired from service).
+export using PipelineYieldHook = bool (*)() noexcept;
+export inline std::atomic<std::uint64_t> pipeline_yield_count{0};
+export inline std::atomic<std::uint64_t> passes_skipped_dirty_pipeline{0};
+
+namespace pass_pipeline_detail {
+inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
+}
+
+export void set_pipeline_yield_hook(PipelineYieldHook hook) noexcept {
+    pass_pipeline_detail::g_pipeline_yield_hook = hook;
+}
+
+export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
+    return pass_pipeline_detail::g_pipeline_yield_hook;
+}
+
 // ── run_pipeline — fold over passes with short-circuit ──────────
 //
 // Issue #381: added a contract on the parameter pack. C++26
@@ -112,6 +129,10 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
 export template <Pass P>
 bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
     post(!pass.has_error() || true) {
+    if (pass_pipeline_detail::g_pipeline_yield_hook &&
+        pass_pipeline_detail::g_pipeline_yield_hook()) {
+        pipeline_yield_count.fetch_add(1, std::memory_order_relaxed);
+    }
     pass.run(mod);
     return !pass.has_error();
 }
@@ -194,6 +215,16 @@ concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id)
     { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
 };
 
+// ── Issue #494: JITFriendlyPass concept ───────────────────────
+//
+// Passes that expose a pipeline epoch hint for JIT / mutation_epoch
+// coordination. The hint is advisory (relaxed-ordering); CompilerService
+// may set it from mutation_epoch_ before incremental re-lower.
+export template <typename P>
+concept JITFriendlyPass = Pass<P> && requires(const P& p) {
+    { p.pipeline_epoch_hint() } -> std::convertible_to<std::uint64_t>;
+};
+
 // ── Issue #381: run_incremental_pipeline — fold over per-function / per-block work ──────────
 //
 // Mirrors `run_pipeline` but constrained to `IncrementalPass`.
@@ -232,8 +263,10 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
                 break;
             }
         }
-        if (!any_dirty)
+        if (!any_dirty) {
+            passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
             continue;
+        }
         pass.run(func);
         if (pass.has_error())
             return false;
@@ -304,9 +337,12 @@ public:
     bool has_error() const { return result_.has_error; }
     std::string_view name() const { return "arity"; }
     const ArityCheckResult& result() const { return result_; }
+    [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
+    void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
 private:
     ArityCheckResult result_;
+    std::uint64_t pipeline_epoch_ = 0;
 };
 
 // ── ConstantFoldingWrap — compile-time constant folding (Issue #212) ─
@@ -386,6 +422,8 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "const-fold"; }
     std::size_t folded_count() const { return folded_; }
+    [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
+    void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
 private:
     // Legacy per-instance known-map (kept for fold_block callers
@@ -400,10 +438,14 @@ private:
     std::unordered_map<std::uint32_t, std::int64_t> known_;
     std::function<bool(std::uint32_t)> block_dirty_fn_;
     std::size_t folded_ = 0;
+    std::uint64_t pipeline_epoch_ = 0;
 };
 
 static_assert(DirtyAwarePass<ConstantFoldingWrap>,
               "ConstantFoldingWrap exposes is_block_dirty for IRSoA wiring");
+static_assert(JITFriendlyPass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap exposes pipeline_epoch_hint for JIT paths");
+static_assert(JITFriendlyPass<ArityWrap>, "ArityWrap exposes pipeline_epoch_hint");
 
 // ── TypeCheckWrap — type checking pass (pre-lowering, FlatAST level) ──
 // Unlike other passes, this operates on FlatAST before IR lowering.
@@ -802,6 +844,8 @@ public:
     // Issue #629: Branch instructions whose per-branch cast
     // insertion was skipped due to narrow_evidence (per-run).
     std::size_t narrow_evidence_skipped() const { return narrow_evidence_skipped_; }
+    [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
+    void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
@@ -811,7 +855,11 @@ private:
     // Issue #629: per-run coercion observability.
     std::size_t castop_emitted_ = 0;
     std::size_t narrow_evidence_skipped_ = 0;
+    std::uint64_t pipeline_epoch_ = 0;
 };
+
+static_assert(JITFriendlyPass<TypeSpecializationWrap>,
+              "TypeSpecializationWrap exposes pipeline_epoch_hint");
 
 // ── mark_coercions — mark nodes needing coercion (Issue #163) ───
 // Operates on FlatAST after type-checking, before lowering.
@@ -1208,6 +1256,8 @@ public:
     // every run(). Exposed via (compile:dead-coercion-elapsed)
     // primitive for cumulative timing across the pipeline.
     std::uint64_t elapsed_us() const { return elapsed_us_; }
+    [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
+    void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
@@ -1217,7 +1267,11 @@ private:
     std::size_t kept_for_debug_ = 0;
     std::uint64_t elapsed_us_ = 0;
     bool keep_for_debug_ = false;
+    std::uint64_t pipeline_epoch_ = 0;
 };
+
+static_assert(JITFriendlyPass<DeadCoercionEliminationPass>,
+              "DeadCoercionEliminationPass exposes pipeline_epoch_hint");
 
 // Issue #160: Dead Code Elimination (DCE) Pass.
 //

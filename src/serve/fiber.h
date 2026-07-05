@@ -38,6 +38,7 @@ enum class YieldReason : uint8_t {
     Explicit,          // explicit yield() call
     SchedulerSteal,    // fiber was stolen by another worker
     OperationBoundary, // yield at sender/receiver boundary (exec adapter)
+    PassPipeline,      // yield between incremental pass-pipeline stages (#494)
 };
 
 // ── Fiber state ────────────────────────────────────────
@@ -95,7 +96,7 @@ public:
     bool is_stealable() const {
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         return r == YieldReason::Explicit || r == YieldReason::MutationBoundary ||
-               r == YieldReason::OperationBoundary;
+               r == YieldReason::OperationBoundary || r == YieldReason::PassPipeline;
     }
 
     // Issue #448: is_at_safe_mutation_boundary() returns true
@@ -166,6 +167,8 @@ public:
                 return "SchedulerSteal";
             case YieldReason::OperationBoundary:
                 return "OperationBoundary";
+            case YieldReason::PassPipeline:
+                return "PassPipeline";
         }
         return "Unknown";
     }

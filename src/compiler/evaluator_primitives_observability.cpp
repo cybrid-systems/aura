@@ -17,6 +17,7 @@ import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.value;
+import aura.compiler.pass_manager;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1489,6 +1490,64 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #494: query:pass-pipeline-stats — incremental pass-pipeline
+    // yield + dirty short-circuit observability for AI mutate loops.
+    add("query:pass-pipeline-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m =
+            static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t pipeline_yield =
+            aura::compiler::pipeline_yield_count.load(std::memory_order_relaxed);
+        const std::uint64_t passes_skip_dirty =
+            aura::compiler::passes_skipped_dirty_pipeline.load(std::memory_order_relaxed);
+        const std::uint64_t passes_skip_type = ev.get_passes_skipped_type_dirty();
+        const std::uint64_t relower_skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mod_skip =
+            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t pipeline_total = pipeline_yield + passes_skip_dirty +
+                                             passes_skip_type + relower_skip + relower_per_fn +
+                                             mod_skip;
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("pipeline-yield-count", static_cast<std::int64_t>(pipeline_yield));
+        insert_kv("passes-skipped-dirty", static_cast<std::int64_t>(passes_skip_dirty));
+        insert_kv("passes-skipped-type-dirty", static_cast<std::int64_t>(passes_skip_type));
+        insert_kv("relower-skipped", static_cast<std::int64_t>(relower_skip));
+        insert_kv("relower-per-fn", static_cast<std::int64_t>(relower_per_fn));
+        insert_kv("module-dirty-skips", static_cast<std::int64_t>(mod_skip));
+        insert_kv("pipeline-total", static_cast<std::int64_t>(pipeline_total));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // (query:soa-dirty-stats) — Issue #429: live SoA
     // dirty state aggregate. Returns a hash with 8 fields
     // computed in one pass over ir_cache_v2_:
@@ -2114,6 +2173,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:shape-profiler-stats",
             // Issue #493 — EDSL hot-path bottleneck breakdown hash
             "query:hotpath-bottleneck-stats",
+            // Issue #494 — Pass pipeline yield + dirty short-circuit hash
+            "query:pass-pipeline-stats",
             // Issue #571 — EvalValue v2 dispatch + contracts
             "query:value-dispatch-stats",
             // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
@@ -2325,8 +2386,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 91 entries as of #493 ship (90 from #492 + query:hotpath-bottleneck-stats).
-        return make_int(91);
+        // 92 entries as of #494 ship (91 from #493 + query:pass-pipeline-stats).
+        return make_int(92);
     });
 }
 
