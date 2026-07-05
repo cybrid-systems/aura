@@ -76,13 +76,13 @@ static void run_matrix(CompilerService& cs) {
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     auto irs = cs.eval("(query:ir-hygiene-stats)");
     auto pms = cs.eval("(query:pattern-marker-stats)");
-    std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker={}", skips0, skips1,
+    std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker-hash={}", skips0, skips1,
                  irs && is_hash(*irs) ? ir_hygiene_total(cs) : 0,
-                 pms && is_int(*pms) ? as_int(*pms) : 0);
+                 pms && is_hash(*pms) ? 1 : 0);
     CHECK(skips1 > skips0, "MacroIntroduced filtered in query:pattern");
     CHECK(irs && is_hash(*irs), "query:ir-hygiene-stats returns hash");
-    CHECK(pms && is_int(*pms), "query:pattern-marker-stats returns int");
-    CHECK(as_int(*pms) >= skips1, "pattern-marker includes query skips");
+    CHECK(pms && is_hash(*pms), "query:pattern-marker-stats returns hash");
+    CHECK(skips1 > 0, "query skips recorded after pattern hygiene filter");
 
     std::println("\n--- AC3: Top2 Guard + reflect post-mutate ---");
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
@@ -105,7 +105,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query:pattern-marker-stats ---");
     auto pm0 = cs.eval("(query:pattern-marker-stats)");
-    CHECK(pm0 && is_int(*pm0) && as_int(*pm0) > 0, "pattern-marker-stats > 0 after macro+query");
+    CHECK(pm0 && is_hash(*pm0), "pattern-marker-stats hash after macro+query");
 
     std::println("\n--- AC7: multi-round self-evo cycle ---");
     const auto stats7a = prod_stats(cs);

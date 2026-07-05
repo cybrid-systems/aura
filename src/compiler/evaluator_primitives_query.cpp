@@ -1547,21 +1547,67 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #514: query:pattern-marker-stats. Returns the sum of
-    // query-side marker/hygiene counters (Top 1 — query matcher):
-    //   - macro_introduced_skipped_in_query_  (default :respect-hygiene)
-    //   - hygiene_violation_count_
-    //   - marker_macro_introduced_count  (workspace subtree marker tally)
-    add("query:pattern-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
-        const std::uint64_t violations = ev->get_hygiene_violation_count();
-        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-        return make_int(static_cast<std::int64_t>(skips + violations + markers));
-    });
+    // Issue #503 / #514: query:pattern-marker-stats. Hash view of
+    // query:pattern subtree marker/hygiene counters for Agent loops:
+    //   - root-skips: macro_introduced_skipped_in_query_
+    //   - recursive-skips: pattern_recursive_macro_skipped_
+    //   - hygiene-violations: hygiene_violation_count_
+    //   - macro-markers: workspace MacroIntroduced marker tally
+    //   - pattern-marker-total: root + recursive + violations + markers
+    //   - pattern-marker-recommendation: 0=ok, 1=review skips, 2=alert
+    add("query:pattern-marker-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(12);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t violations = ev->get_hygiene_violation_count();
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+            const std::uint64_t total = root_skips + recursive_skips + violations + markers;
+            std::int64_t recommendation = 0;
+            if (violations > 0)
+                recommendation = 2;
+            else if (root_skips + recursive_skips > 10)
+                recommendation = 1;
+            insert_kv("root-skips", static_cast<std::int64_t>(root_skips));
+            insert_kv("recursive-skips", static_cast<std::int64_t>(recursive_skips));
+            insert_kv("hygiene-violations", static_cast<std::int64_t>(violations));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("pattern-marker-total", static_cast<std::int64_t>(total));
+            insert_kv("pattern-marker-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #517: query:consolidated-production-priority-stats.
     // Returns the sum of 9 counter groups spanning the 3 P0 foundational

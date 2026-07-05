@@ -2901,10 +2901,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 99 entries as of #502 ship (98 from #501 + query:mutation-impact-snapshot
-        // in stats.aura). #616 query:eda-hw-stats is in stats:list but not
-        // stats.aura registry (non-duplicative observability slice).
-        return make_int(99);
+        // 100 entries as of #503 ship (99 from #502 + query:pattern-marker-stats).
+        return make_int(100);
     });
 }
 
