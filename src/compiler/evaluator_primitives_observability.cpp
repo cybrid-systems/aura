@@ -3057,6 +3057,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:eda-verification-stats",
             // Issue #511 — Workspace snapshot + checkpoint persistence stats
             "query:workspace-snapshot-stats",
+            // Issue #512 — Runtime orchestration production-readiness stats
+            "query:runtime-orchestration-stats",
             // Issue #697 — Declarative primitives extension kit
             "query:primitives-extension-stats",
             // Issue #709 — Registry fast dispatch + capture discipline
@@ -3089,9 +3091,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 106 entries as of #511 slice (105 from #510 + 1 workspace-snapshot
-        // query primitive from #511: query:workspace-snapshot-stats).
-        return make_int(106);
+        // 107 entries as of #512 slice (106 from #511 + 1 runtime-orchestration
+        // query primitive from #512: query:runtime-orchestration-stats).
+        return make_int(107);
     });
 }
 

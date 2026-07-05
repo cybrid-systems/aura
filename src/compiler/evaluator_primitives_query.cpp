@@ -10,6 +10,7 @@ module;
 #include "compiler/shape_profiler.h"
 #include "compiler/value_tags.h"
 #include "serve/fiber.h"
+#include "serve/metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -1257,6 +1258,91 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("panic-safe-source-len", static_cast<std::int64_t>(source_len));
             insert_kv("workspace-snapshot-total", static_cast<std::int64_t>(total));
             insert_kv("workspace-snapshot-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #512: query:runtime-orchestration-stats. Hash view of runtime
+    // production orchestration gaps (work-stealing outermost enforcement,
+    // EnvFrame/GC safepoint coordination, fiber migration) — non-duplicative
+    // synthesis of #500 work-steal-stats, #618 scheduler-mutation-coord-stats,
+    // and #543 envframe-dualpath-stats:
+    //   - steal-attempts / steal-successes / steal-deferred-outermost /
+    //     steal-violations: work-stealing + MutationBoundary safety
+    //   - mutation-boundary-depth: current guard nesting (0 = steal-safe)
+    //   - gc-safepoint-requests / gc-safepoint-waits /
+    //     gc-pauses-attributed-to-mutation: scheduler/GC coordination
+    //   - envframe-stale-refresh: EnvFrame dual-path consistency signal
+    //   - lock-contention-us / fiber-migration-attempts: orchestration load
+    //   - runtime-orchestration-total / runtime-orchestration-recommendation
+    add("query:runtime-orchestration-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t steal_attempts = aura_work_steal_attempts_total();
+            const std::uint64_t steal_successes = aura_work_steal_successes_total();
+            const std::uint64_t steal_deferred = aura_adaptive_steal_global_deferred_total();
+            const std::uint64_t steal_violations = ev->get_mutation_steal_violation_count();
+            const std::uint64_t boundary_depth = aura_evaluator_mutation_boundary_depth();
+            const std::uint64_t gc_requests = ev->get_gc_safepoint_requests_total();
+            const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
+            const std::uint64_t gc_attributed = aura_fiber_static_gc_pause_attributed_to_mutation();
+            const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t lock_us = ev->get_lock_contention_us();
+            const std::uint64_t migration = ev->get_mutation_steal_attempts();
+            const std::uint64_t total = steal_attempts + steal_successes + steal_deferred +
+                                        steal_violations + gc_requests + gc_waits + gc_attributed +
+                                        env_refresh + migration;
+            std::int64_t recommendation = 0;
+            if (steal_violations > 0)
+                recommendation = 3;
+            else if (steal_deferred > steal_successes && steal_deferred > 3)
+                recommendation = 2;
+            else if (boundary_depth > 0 && steal_attempts > 0)
+                recommendation = 1;
+            insert_kv("steal-attempts", static_cast<std::int64_t>(steal_attempts));
+            insert_kv("steal-successes", static_cast<std::int64_t>(steal_successes));
+            insert_kv("steal-deferred-outermost", static_cast<std::int64_t>(steal_deferred));
+            insert_kv("steal-violations", static_cast<std::int64_t>(steal_violations));
+            insert_kv("mutation-boundary-depth", static_cast<std::int64_t>(boundary_depth));
+            insert_kv("gc-safepoint-requests", static_cast<std::int64_t>(gc_requests));
+            insert_kv("gc-safepoint-waits", static_cast<std::int64_t>(gc_waits));
+            insert_kv("gc-pauses-attributed-to-mutation", static_cast<std::int64_t>(gc_attributed));
+            insert_kv("envframe-stale-refresh", static_cast<std::int64_t>(env_refresh));
+            insert_kv("lock-contention-us", static_cast<std::int64_t>(lock_us));
+            insert_kv("fiber-migration-attempts", static_cast<std::int64_t>(migration));
+            insert_kv("runtime-orchestration-total", static_cast<std::int64_t>(total));
+            insert_kv("runtime-orchestration-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
