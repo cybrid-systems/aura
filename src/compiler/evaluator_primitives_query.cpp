@@ -5620,6 +5620,126 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         ws->mark_occurrence_stale(node_id);
         return make_bool(true);
     });
+
+    // Issue #625: query:pass-pipeline-incremental-stats-hash —
+    // Agent-discoverable structured companion to the existing
+    // query:pass-pipeline-stats (#494/#606, 10-field) and
+    // query:pass-contracts-stats (#406, int-sum-of-7). This
+    // primitive specifically covers AC4 from the issue body
+    // — the incremental re-lower dashboard the Agent reads to
+    // confirm dirty-block short-circuit savings.
+    //
+    // Fields (6):
+    //   - passes-run                 lifetime # of full
+    //                                run_pipeline() invocations
+    //                                (pass_pipeline_runs_total,
+    //                                bumped in pass_manager.ixx)
+    //   - contracts-checked          synthetic: zerooverhead_wins /
+    //                                (zerooverhead_wins + value_
+    //                                dispatch_miss_count + 1) * 100;
+    //                                measures how often the
+    //                                Contracts / cheap-view dispatch
+    //                                was used as a fast path
+    //   - pure-delegation-hits       ShapeWrap + LinearOwnershipWrap
+    //                                pure_delegation_hits() sum
+    //   - shortcircuit-savings       passes_skipped_dirty_pipeline
+    //                                + module_dirty_skips (total
+    //                                work avoided by the dirty
+    //                                short-circuit path)
+    //   - dirty-blocks-skipped       passes_skipped_dirty_pipeline
+    //                                (more directly: each pass
+    //                                skipped by the dirty filter)
+    //   - schema == 625              sentinel for Agent drift
+    //                                detection (mirrors #618+#620+
+    //                                #621+#622+#623+#624 sentinels)
+    //
+    // Discovery before this PR: the C++ side already exposes the
+    // full pipeline + contracts + dirty-skipped counter surface
+    // via aura::compiler::pipeline_yield_count + passes_skipped_
+    // dirty_pipeline + passes_skipped_type_dirty + ShapeWrap +
+    // LinearOwnershipWrap + CompilerMetrics::relower_*
+    // (added by #494 / #606 / #406 / #686). The single NEW
+    // contribution is the structured primitive the issue body
+    // AC4 lists by name + the `pass_pipeline_runs_total` counter
+    // (per-full-pipeline-run, not per-pass).
+    //
+    // The remaining #625 AC work (more `requires` constraints on
+    // Pass/AnalysisPass, fold-expressions in run_pipeline, uniform
+    // ShapeProfilerWrap / LinearOwnershipWrap / DirtyImpactWrap
+    // classes, estimate_relower_blocks integration with
+    // invalidate_function) is invasive C++ that needs benchmarking
+    // + perf regression coverage before going in.
+    add("query:pass-pipeline-incremental-stats-hash",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const std::uint64_t passes_run =
+                pass_pipeline_runs_total.load(std::memory_order_relaxed);
+            const std::uint64_t dirty_blocks_skipped =
+                aura::compiler::passes_skipped_dirty_pipeline.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t shortcircuit_savings =
+                dirty_blocks_skipped +
+                (ev.compiler_metrics()
+                     ? static_cast<aura::compiler::CompilerMetrics*>(
+                           ev.compiler_metrics())
+                           ->module_dirty_skips.load(std::memory_order_relaxed)
+                     : 0);
+            const std::uint64_t zero_wins =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->coercion_zerooverhead_win_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t dispatch_miss =
+                types::value_dispatch_miss_count.load(std::memory_order_relaxed);
+            const std::uint64_t contracts_denom = zero_wins + dispatch_miss + 1;
+            const std::int64_t contracts_checked =
+                static_cast<std::int64_t>(
+                    (zero_wins * 100) / contracts_denom);
+            const std::uint64_t pure_delegation =
+                aura::compiler::ShapeWrap::pure_delegation_hits() +
+                aura::compiler::LinearOwnershipWrap::pure_delegation_hits();
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("passes-run", static_cast<std::int64_t>(passes_run));
+            insert_kv("contracts-checked", contracts_checked);
+            insert_kv("pure-delegation-hits",
+                      static_cast<std::int64_t>(pure_delegation));
+            insert_kv("shortcircuit-savings",
+                      static_cast<std::int64_t>(shortcircuit_savings));
+            insert_kv("dirty-blocks-skipped",
+                      static_cast<std::int64_t>(dirty_blocks_skipped));
+            insert_kv("schema", 625);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #288: best-effort shape check for the P0 ship.

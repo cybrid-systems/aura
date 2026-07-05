@@ -3060,6 +3060,20 @@ add_dependencies(all_test_issue_targets test_issue_623)
 aura_add_issue_test(test_issue_624)
 aura_issue_test_link_llvm_jit(test_issue_624)
 add_dependencies(all_test_issue_targets test_issue_624)
+# Issue #625: Pass concept + Contracts + zero-overhead pipeline —
+# 1 new Aura primitive (query:pass-pipeline-incremental-stats-hash)
+# that the issue body AC4 specifies by name. 1 new atomic counter
+# (pass_pipeline_runs_total, bumped per-full-pipeline-run in
+# pass_manager.ixx). 4 of the 5 AC4 fields are derived from
+# existing counters (shortcircuit-savings = dirty_skipped +
+# module_dirty_skips; dirty-blocks-skipped = dirty_pipeline_skip;
+# pure-delegation-hits = ShapeWrap + LinearOwnershipWrap sums;
+# contracts-checked synthetic from zerooverhead_wins). Only the
+# 'passes-run' field is the new atomic. Builds on #494 / #606 /
+# #406 / #686 counter surface.
+aura_add_issue_test(test_issue_625)
+aura_issue_test_link_llvm_jit(test_issue_625)
+add_dependencies(all_test_issue_targets test_issue_625)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
