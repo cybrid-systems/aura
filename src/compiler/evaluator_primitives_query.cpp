@@ -3747,6 +3747,124 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #624: query:shape-stability-jit-stats-hash —
+    // Agent-discoverable structured companion to the existing
+    // query:shape-stability-stats (#570/#605, int-sum) and
+    // query:shape-profiler-stats (#492, 12-field). This primitive
+    // specifically covers AC4 from the issue body — a
+    // JIT-shape-stability dashboard the Agent can probe to decide
+    // when to trigger hot-swap invalidation + rebuild ahead of a
+    // heavy mutate.
+    //
+    // Fields (5):
+    //   - stability-ratio-post-mutate   synthetic: shape-churn /
+    //                                   (shape-churn + shape-changes-
+    //                                   observed) * 100, rounded;
+    //                                   ~0 when both are 0. Higher
+    //                                   = more instability after
+    //                                   mutate.
+    //   - deopt-on-instability          synthetic: jit-shape-miss
+    //                                   / (jit-shape-miss + version-
+    //                                   bumps) * 100; 0 when both
+    //                                   are 0. Higher = more
+    //                                   deopt-triggering shapes.
+    //   - version-bumps                 shape::shape_version_bump_count
+    //                                   (existing counter from #570)
+    //   - jit-shape-miss                shape::jit_shape_miss_count
+    //                                   (existing counter from #605)
+    //   - wrong-opt-prevented           shape::shape_deopt_storm_count
+    //                                   (existing counter from #570) —
+    //                                   each deopt storm is a wrong
+    //                                   speculative-opt the system
+    //                                   caught and backed out
+    //   - schema == 624                  sentinel for Agent drift
+    //                                   detection (mirrors #618's +
+    //                                   #620's + #621's + #622's)
+    //
+    // Discovery before this PR: the C++ side already exposes the
+    // full feature list via shape::*_count counters in `shape::*`
+    // namespace (added by #570 / #605 / #492 / #686). The single
+    // NEW contribution is the structured primitive the issue
+    // body explicitly names — AC4 listed `query:shape-stability-
+    // jit-stats` with these exact fields, and no prior PR shipped
+    // it under that name. So #624 ships ONE new Aura primitive.
+    //
+    // The remaining #624 AC work (post-mutate re-eval in
+    // record_shape + GuardShape dispatch version check on the
+    // shape version bump in aura_jit lower + optional invalidate
+    // in mutate primitives success path) is invasive C++ + hot-
+    // path change that needs benchmarking + perf regression
+    // coverage alongside the JIT/hot-swap work in #601/#491.
+    add("query:shape-stability-jit-stats-hash",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const std::uint64_t shape_churn =
+                shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
+            const std::uint64_t version_bumps =
+                shape::shape_version_bump_count.load(std::memory_order_relaxed);
+            const std::uint64_t jit_shape_miss =
+                shape::jit_shape_miss_count.load(std::memory_order_relaxed);
+            const std::uint64_t deopt_storms =
+                shape::shape_deopt_storm_count.load(std::memory_order_relaxed);
+            const std::uint64_t shape_changes_observed =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->shape_changes_observed.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t churn_total = shape_churn + shape_changes_observed;
+            const std::int64_t post_mutate_ratio = churn_total == 0
+                ? 0
+                : static_cast<std::int64_t>(
+                      (shape_churn * 100) / churn_total);
+            const std::uint64_t deopt_denom =
+                jit_shape_miss + version_bumps;
+            const std::int64_t deopt_on_instability =
+                deopt_denom == 0
+                    ? 0
+                    : static_cast<std::int64_t>(
+                          (jit_shape_miss * 100) / deopt_denom);
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("stability-ratio-post-mutate", post_mutate_ratio);
+            insert_kv("deopt-on-instability", deopt_on_instability);
+            insert_kv("version-bumps",
+                      static_cast<std::int64_t>(version_bumps));
+            insert_kv("jit-shape-miss",
+                      static_cast<std::int64_t>(jit_shape_miss));
+            insert_kv("wrong-opt-prevented",
+                      static_cast<std::int64_t>(deopt_storms));
+            insert_kv("schema", 624);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #571: query:value-dispatch-stats. Returns the sum
     // of 4 EvalValue v2 dispatch observability counters:
     //   - value_dispatch_hit_count       (table + range hit)

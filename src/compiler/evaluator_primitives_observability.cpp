@@ -3095,13 +3095,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 113 entries as of #515 ship (112 from #623 + 1 consolidated-p0
-        // production observability hash primitive from #515:
-        // query:consolidated-p0-production-stats). #623's 2 arena auto-
-        // compact threshold primitives (arena:auto-compact-threshold,
-        // arena:set-auto-compact-threshold) are tunables, not *-stats
-        // list members; the 112 baseline already reflected their ship.
-        return make_int(113);
+        // 114 entries as of #624 ship (113 from #515 + 1 shape-
+        // stability-jit-stats hash primitive from #624:
+        // query:shape-stability-jit-stats-hash).
+        return make_int(114);
     });
 }
 
