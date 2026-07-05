@@ -1525,6 +1525,9 @@ public:
     mutable std::atomic<std::uint64_t> node_recycle_total_{0};
     mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
     mutable std::atomic<std::uint64_t> node_compact_total_{0};
+    // Issue #497: soft compaction + stale-ref auto-refresh observability.
+    mutable std::atomic<std::uint64_t> soft_compact_count_{0};
+    mutable std::atomic<std::uint64_t> stale_ref_auto_refresh_count_{0};
     // Issue #437: verification-dirty observability counters.
     // Bumped by apply_verify_dirty_bits. Stats-only
     // (relaxed-ordering). Exposed via the
@@ -2105,6 +2108,8 @@ public:
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
         , node_compact_total_(other.node_compact_total_.load())
+        , soft_compact_count_(other.soft_compact_count_.load())
+        , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
         , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
         , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
         , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
@@ -2169,6 +2174,8 @@ public:
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
             node_compact_total_.store(other.node_compact_total_.load());
+            soft_compact_count_.store(other.soft_compact_count_.load());
+            stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
             match_info_ = std::move(other.match_info_);
             region_by_sym_ = std::move(other.region_by_sym_);
             region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
@@ -2237,6 +2244,8 @@ public:
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
         , node_compact_total_(other.node_compact_total_.load())
+        , soft_compact_count_(other.soft_compact_count_.load())
+        , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
         , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
         , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
         , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
@@ -2298,6 +2307,8 @@ public:
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
             node_compact_total_.store(other.node_compact_total_.load());
+            soft_compact_count_.store(other.soft_compact_count_.load());
+            stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
             match_info_ = other.match_info_;
             region_by_sym_ = other.region_by_sym_;
             region_by_lambda_id_ = other.region_by_lambda_id_;
@@ -3408,6 +3419,15 @@ public:
         return recycled;
     }
 
+    // Issue #497: recycle dead slots without full SoA remap or
+    // generation bump (avoids invalidating all StableNodeRefs).
+    [[nodiscard]] std::size_t compact_nodes_soft() {
+        const auto recycled = recycle_dead_nodes();
+        if (recycled > 0)
+            soft_compact_count_.fetch_add(1, std::memory_order_relaxed);
+        return recycled;
+    }
+
     [[nodiscard]] std::size_t compact_nodes() {
         auto live = mark_live_nodes();
         std::size_t live_count = 0;
@@ -3658,6 +3678,15 @@ public:
     }
     std::uint64_t node_compact_total() const noexcept {
         return node_compact_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t soft_compact_count() const noexcept {
+        return soft_compact_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t stale_ref_auto_refresh_count() const noexcept {
+        return stale_ref_auto_refresh_count_.load(std::memory_order_relaxed);
+    }
+    void record_stale_ref_auto_refresh() noexcept {
+        stale_ref_auto_refresh_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     void clear() {
@@ -5145,6 +5174,11 @@ public:
         // access is needed.
         bool is_valid_in(const FlatAST& ast) const noexcept;
         bool validate_with_provenance(const FlatAST& ast) noexcept;
+
+        // Issue #497: refresh gen/wrap from a still-live node id when
+        // invalidation is gen-only (same wrap epoch, slot not recycled).
+        bool refresh_if_stale(FlatAST& ast) noexcept;
+        std::optional<NodeView> validate_or_refresh(FlatAST& ast) noexcept;
 
         // Issue #303: get provenance snapshot. Returns a tuple
         // describing where the ref came from. Pure read — does

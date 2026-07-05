@@ -88,6 +88,35 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
     return ok;
 }
 
+bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
+    if (is_valid_in(ast)) {
+        validate_with_provenance(ast);
+        return true;
+    }
+    if (id == NULL_NODE || id >= ast.size())
+        return false;
+    if (wrap_epoch != ast.wrap_epoch())
+        return false;
+    if (ast.is_free_slot(id))
+        return false;
+    if (!ast.is_valid_id_gen(id, gen, wrap_epoch))
+        return false;
+    ast.restamp_subtree_generation(id);
+    const auto fresh = ast.make_ref(id);
+    gen = fresh.gen;
+    wrap_epoch = fresh.wrap_epoch;
+    subtree_gen_at_capture = fresh.subtree_gen_at_capture;
+    last_validated_generation = ast.generation();
+    ast.record_stale_ref_auto_refresh();
+    return is_valid_in(ast);
+}
+
+std::optional<NodeView> FlatAST::StableNodeRef::validate_or_refresh(FlatAST& ast) noexcept {
+    if (!refresh_if_stale(ast))
+        return std::nullopt;
+    return ast.get_safe(*this);
+}
+
 // Issue #303: get provenance snapshot. Returns a tuple
 // describing where the ref came from. Pure read — does
 // not validate the ref.
