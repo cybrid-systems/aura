@@ -950,6 +950,139 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #578: EDA-SV-review closing hash for structured SV IR +
+    // query/mutate primitives + dirty propagation completion.
+    add("query:sv-structured-edsl-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t property_count = 0;
+        std::uint64_t covergroup_count = 0;
+        std::uint64_t coverpoint_count = 0;
+        std::uint64_t verification_dirty_nodes = 0;
+        std::uint64_t property_weaken_count = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                switch (ws->get(id).tag) {
+                    case aura::ast::NodeTag::Property:
+                        ++property_count;
+                        break;
+                    case aura::ast::NodeTag::Covergroup:
+                        ++covergroup_count;
+                        break;
+                    case aura::ast::NodeTag::Coverpoint:
+                        ++coverpoint_count;
+                        break;
+                    default:
+                        break;
+                }
+                if (ws->verification_dirty(id) != 0)
+                    ++verification_dirty_nodes;
+            }
+            for (const auto& rec : ws->mutation_log_view()) {
+                if (rec.operator_name.find("weaken") != std::string::npos)
+                    ++property_weaken_count;
+            }
+        }
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t pattern_hits = ev.get_pattern_structural_index_hits();
+        const std::uint64_t pattern_misses = ev.get_pattern_structural_index_misses();
+        const std::uint64_t pattern_denom = pattern_hits + pattern_misses + 1;
+        const std::int64_t struct_hit_rate_pct =
+            static_cast<std::int64_t>((pattern_hits * 100) / pattern_denom);
+        const std::uint64_t sv_attempts =
+            ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
+        const std::uint64_t sv_success =
+            ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_success_total() : 0;
+        const std::uint64_t structured_hits =
+            m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t dirty_props = ev.get_verify_tool_dirty_propagations_total();
+        const std::uint64_t dirty_up =
+            ev.workspace_flat() ? ev.workspace_flat()->mark_dirty_upward_call_count() : 0;
+        const std::uint64_t assert_dirty =
+            ev.workspace_flat() ? ev.workspace_flat()->verify_assertion_dirty_total() : 0;
+        const std::uint64_t coverage_dirty =
+            ev.workspace_flat() ? ev.workspace_flat()->verify_coverage_dirty_total() : 0;
+        const std::uint64_t sva_dirty =
+            ev.workspace_flat() ? ev.workspace_flat()->verify_sva_dirty_total() : 0;
+        const std::uint64_t emit_ok =
+            m ? m->sv_emit_parse_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t emit_fail =
+            m ? m->sv_emit_parse_fail_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t hw_hooks =
+            m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t dirty_verif_propagated =
+            dirty_props + verification_dirty_nodes + dirty_up;
+        const std::uint64_t total = property_count + covergroup_count + coverpoint_count +
+                                    pattern_hits + sv_attempts + sv_success + structured_hits +
+                                    dirty_verif_propagated + emit_ok + emit_fail + hw_hooks +
+                                    property_weaken_count;
+        std::int64_t recommendation = 0;
+        if (sv_attempts > 0 && sv_success == 0)
+            recommendation = 3;
+        else if (emit_fail > emit_ok && emit_fail > 0)
+            recommendation = 2;
+        else if (structured_hits > 0 || sv_success > 0 || dirty_verif_propagated > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"sv-struct-pattern-hits", make_int(static_cast<std::int64_t>(pattern_hits))},
+            {"sv-struct-pattern-misses", make_int(static_cast<std::int64_t>(pattern_misses))},
+            {"sv-struct-hit-rate-pct", make_int(struct_hit_rate_pct)},
+            {"coverpoint-mutate-success", make_int(static_cast<std::int64_t>(sv_success))},
+            {"property-weaken-count", make_int(static_cast<std::int64_t>(property_weaken_count))},
+            {"dirty-verification-propagated",
+             make_int(static_cast<std::int64_t>(dirty_verif_propagated))},
+            {"mark-dirty-upward-calls", make_int(static_cast<std::int64_t>(dirty_up))},
+            {"verify-assertion-dirty-total", make_int(static_cast<std::int64_t>(assert_dirty))},
+            {"verify-coverage-dirty-total", make_int(static_cast<std::int64_t>(coverage_dirty))},
+            {"verify-sva-dirty-total", make_int(static_cast<std::int64_t>(sva_dirty))},
+            {"emit-compatibility-checks", make_int(static_cast<std::int64_t>(emit_ok))},
+            {"emit-parse-fail-count", make_int(static_cast<std::int64_t>(emit_fail))},
+            {"hardware-hook-calls", make_int(static_cast<std::int64_t>(hw_hooks))},
+            {"structured-mutate-hits", make_int(static_cast<std::int64_t>(structured_hits))},
+            {"eda-sv-review-schema", make_int(578)},
+            {"sv-structured-edsl-total", make_int(static_cast<std::int64_t>(total))},
+            {"sv-structured-edsl-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #496: query:sv-node-stats — native SV NodeTag census +
     // mutate counters for verification closed-loop tuning.
     add("query:sv-node-stats", [&ev](const auto&) -> EvalValue {

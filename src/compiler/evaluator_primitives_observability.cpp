@@ -3449,6 +3449,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:arena-auto-compact-defrag-stats",
             // Issue #572 — Pass Pipeline DirtyAware + fold short-circuit completion
             "query:pass-pipeline-dirtyaware-stats",
+            // Issue #578 — Structured SV IR + query/mutate + dirty propagation completion
+            "query:sv-structured-edsl-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3489,10 +3491,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 142 entries as of #633 ship (141 from #632 + 1 stdlib-
-        // compiler-demands observability hash primitive from #633:
-        // query:stdlib-compiler-demands-stats-hash).
-        return make_int(142);
+        // 143 entries as of #578 ship (142 from #633 + 1 sv-structured-edsl
+        // observability hash primitive from #578:
+        // query:sv-structured-edsl-stats).
+        return make_int(143);
     });
 }
 
