@@ -598,6 +598,48 @@ std::optional<CoverpointIR> map_coverpoint_node_to_ir(const FlatAST& flat, const
     return cp;
 }
 
+std::optional<ConstraintIR> map_constraint_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                                      NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Constraint)
+        return std::nullopt;
+    if (v.sym_id == INVALID_SYM)
+        return std::nullopt;
+    std::vector<std::string> exprs;
+    for (std::uint32_t i = 0; i < 64; ++i) {
+        SymId expr = flat.param_at(id, i);
+        if (expr == INVALID_SYM)
+            break;
+        exprs.emplace_back(pool.resolve(expr));
+    }
+    return make_constraint(pool.resolve(v.sym_id), std::move(exprs));
+}
+
+std::optional<ClassIR> map_class_node_to_ir(const FlatAST& flat, const StringPool& pool,
+                                            NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Class)
+        return std::nullopt;
+    if (v.sym_id == INVALID_SYM)
+        return std::nullopt;
+    ClassIR cls;
+    cls.name = pool.resolve(v.sym_id);
+    SymId base = flat.param_at(id, 0);
+    if (base != INVALID_SYM)
+        cls.base = pool.resolve(base);
+    for (NodeId child : flat.children(id)) {
+        if (auto c = map_constraint_node_to_ir(flat, pool, child))
+            cls.items.push_back(emit_constraint(*c));
+        else if (auto cp = map_coverpoint_node_to_ir(flat, pool, child))
+            cls.items.push_back(emit_coverpoint(*cp));
+    }
+    return cls;
+}
+
 std::optional<CovergroupIR> map_covergroup_node_to_ir(const FlatAST& flat, const StringPool& pool,
                                                       NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
@@ -777,9 +819,10 @@ SvEmitValidation validate_sv_emit(const std::string_view sv_text) {
         result.error = "unbalanced {";
         return result;
     }
-    static constexpr std::string_view k_keywords[] = {"interface",  "property",  "coverpoint",
-                                                      "covergroup", "sequence",  "assert",
-                                                      "modport",    "endmodule", "endinterface"};
+    static constexpr std::string_view k_keywords[] = {
+        "interface",  "property",  "coverpoint", "covergroup", "sequence",  "assert",
+        "modport",    "constraint", "class",     "endmodule", "endinterface", "endclass",
+    };
     bool found = sv_text.find("// sv re-emit stub") != std::string_view::npos;
     for (const auto kw : k_keywords) {
         if (sv_text.find(kw) != std::string_view::npos) {
@@ -820,6 +863,12 @@ SvReemitResult reemit_sv_node(const FlatAST& flat, const StringPool& pool, const
     } else if (tag == NodeTag::Assert) {
         if (auto ir = map_assert_node_to_ir(flat, pool, id))
             result.sv_text = emit_property(*ir);
+    } else if (tag == NodeTag::Constraint) {
+        if (auto ir = map_constraint_node_to_ir(flat, pool, id))
+            result.sv_text = emit_constraint(*ir);
+    } else if (tag == NodeTag::Class) {
+        if (auto ir = map_class_node_to_ir(flat, pool, id))
+            result.sv_text = emit_class(*ir);
     } else {
         result.sv_text = "// sv re-emit stub for node ";
         result.sv_text.append(std::to_string(id));

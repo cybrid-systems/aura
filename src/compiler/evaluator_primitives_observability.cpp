@@ -2175,6 +2175,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:hotpath-bottleneck-stats",
             // Issue #494 — Pass pipeline yield + dirty short-circuit hash
             "query:pass-pipeline-stats",
+            // Issue #496 — Native SV NodeTag census + mutate counters
+            "query:sv-node-stats",
             // Issue #571 — EvalValue v2 dispatch + contracts
             "query:value-dispatch-stats",
             // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
@@ -2386,8 +2388,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 92 entries as of #494 ship (91 from #493 + query:pass-pipeline-stats).
-        return make_int(92);
+        // 93 entries as of #496 ship (92 from #494 + query:sv-node-stats).
+        return make_int(93);
     });
 }
 

@@ -147,6 +147,10 @@ export enum class NodeTag : std::uint32_t {
     Assert = 0x1F,
     Covergroup = 0x20,
     Coverpoint = 0x21,
+    // Issue #496: SV constraint + class tags for verification-driven
+    // randomization and OOP containers (native FlatAST SoA).
+    Constraint = 0x22,
+    Class = 0x23,
 };
 
 // Issue #402: FlatAST summary flags. Bit-set computed eagerly
@@ -407,7 +411,7 @@ export struct NodeMeta {
 // Tag-to-metadata mapping, indexed by `tag - 1`.
 // Tags must be sequential starting from 1 (LiteralInt = 0x01).
 // Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 33> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 35> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true, false, false},       // 0x01
     {NodeTag::Variable, "Variable", 0, false, true, false, false, false},           // 0x02
     {NodeTag::Call, "Call", 1, true, false, false, false, false},                   // 0x03
@@ -448,6 +452,8 @@ export constexpr std::array<NodeMeta, 33> kNodeMeta = {{
     {NodeTag::Assert, "Assert", 1, false, true, false, false, false},         // 0x1F
     {NodeTag::Covergroup, "Covergroup", 0, true, false, false, false, false}, // 0x20
     {NodeTag::Coverpoint, "Coverpoint", 0, true, false, false, false, false}, // 0x21
+    {NodeTag::Constraint, "Constraint", 0, true, false, false, false, false}, // 0x22
+    {NodeTag::Class, "Class", 0, true, false, false, false, false},           // 0x23
 }};
 
 
@@ -2790,6 +2796,38 @@ public:
         return id;
     }
 
+    // Issue #496: SV constraint builder. Expressions stored in param_data_
+    // (same side-table shape as Coverpoint bins / Modport ports).
+    [[nodiscard]] NodeId add_constraint(SymId name, std::span<const SymId> expressions) {
+        auto id = add_node(NodeTag::Constraint);
+        sym_id_[id] = name;
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), expressions.begin(), expressions.end());
+        param_annot_data_.resize(param_annot_data_.size() + expressions.size(), NULL_NODE);
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(expressions.size());
+        return id;
+    }
+
+    // Issue #496: SV class builder. Optional base class stored as the first
+    // param_data_ entry when base_sym != INVALID_SYM; body items are children_.
+    [[nodiscard]] NodeId add_class(SymId name, SymId base_sym,
+                                   std::span<const NodeId> body) {
+        auto id = add_node(NodeTag::Class);
+        sym_id_[id] = name;
+        if (base_sym != INVALID_SYM) {
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.push_back(base_sym);
+            param_annot_data_.push_back(NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = 1;
+        }
+        children_[id] = PersistentChildVector<NodeId>(
+            body.size(), [&](std::size_t i) -> NodeId { return body[i]; });
+        link_children(id);
+        return id;
+    }
+
     void append_param(NodeId id, SymId val) {
         if (id >= param_begin_.size())
             return;
@@ -4511,7 +4549,8 @@ public:
             propagate_sva_verify = (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
                                     src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
                                     src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
-                                    src_tag == NodeTag::Coverpoint);
+                                    src_tag == NodeTag::Coverpoint ||
+                                    src_tag == NodeTag::Constraint || src_tag == NodeTag::Class);
         }
         if (!propagate_sva_verify && id < verify_dirty_.size())
             propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;

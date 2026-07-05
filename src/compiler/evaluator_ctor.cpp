@@ -89,6 +89,14 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
                  .category = "sva",
                  .schema = "(int string) -> bool"});
     primitives_.set_meta_for_name(
+        "eda:update-constraint",
+        PrimMeta{.arity = 2,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Append a constraint expression to a native Constraint AST node.",
+                 .category = "sva",
+                 .schema = "(int string) -> bool"});
+    primitives_.set_meta_for_name(
         "eda:run-verification-feedback",
         PrimMeta{.arity = 2,
                  .pure = false,

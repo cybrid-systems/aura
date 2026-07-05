@@ -318,6 +318,15 @@ export std::optional<PropertyIR> map_assert_node_to_ir(const aura::ast::FlatAST&
                                                        const aura::ast::StringPool& pool,
                                                        aura::ast::NodeId id);
 
+// Issue #496: AST tag → ConstraintIR / ClassIR mappers.
+export std::optional<ConstraintIR> map_constraint_node_to_ir(const aura::ast::FlatAST& flat,
+                                                               const aura::ast::StringPool& pool,
+                                                               aura::ast::NodeId id);
+
+export std::optional<ClassIR> map_class_node_to_ir(const aura::ast::FlatAST& flat,
+                                                   const aura::ast::StringPool& pool,
+                                                   aura::ast::NodeId id);
+
 // Debug helpers (SymId-aware — resolve via the pool).
 export std::string debug_sv_modport(const SVModportIR& m, const aura::ast::StringPool& pool);
 
