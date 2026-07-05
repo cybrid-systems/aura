@@ -95,6 +95,8 @@
     "query:hotpath-bottleneck-stats"
     ; ── Issue #494 — Pass pipeline yield + dirty short-circuit observability ──
     "query:pass-pipeline-stats"
+    ; ── Issue #496 — Native SV NodeTag census + mutate observability ──
+    "query:sv-node-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
