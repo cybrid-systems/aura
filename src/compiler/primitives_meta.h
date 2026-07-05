@@ -25,7 +25,8 @@ inline constexpr std::string_view kPrimCategoryGeneral = "general";
 
 // Issue #697 extension kit version (bumped when schema/contracts change).
 // #709: capture contract + fast slot dispatch + registry stats.
-inline constexpr int kPrimitivesExtensionKitVersion = 2;
+// #498: constraint skeleton template + query:primitive-metadata.
+inline constexpr int kPrimitivesExtensionKitVersion = 3;
 
 // Agent-facing skeleton bundle returned by primitive:generate-skeleton.
 struct PrimitiveSkeleton {
@@ -74,6 +75,8 @@ namespace primitives_meta_detail {
     }
 
     inline std::string suggest_primitive_name(std::string_view desc, std::string_view category) {
+        if (contains_ci(desc, "constraint"))
+            return "eda:update-constraint";
         if (category == kPrimCategorySva && contains_ci(desc, "coverpoint"))
             return "eda:add-coverpoint-bin";
         if (category == kPrimCategorySva && contains_ci(desc, "property"))
@@ -95,7 +98,19 @@ inline PrimitiveSkeleton generate_primitive_skeleton(std::string_view descriptio
     sk.category = detect_category(description);
     const auto prim_name = suggest_primitive_name(description, sk.category);
 
-    if (prim_name == "eda:add-coverpoint-bin") {
+    if (prim_name == "eda:update-constraint") {
+        sk.spec = "(constraint-id expr-string) -> bool";
+        sk.cpp_lambda = "add_mutate(\"eda:update-constraint\", [&ev](const auto& a) -> EvalValue {\n"
+                        "    bool ok = true;\n"
+                        "    MutationBoundaryGuard guard(ev, &ok);\n"
+                        "    ws->append_param(cid, pool->intern(expr));\n"
+                        "    return make_bool(true);\n"
+                        "});";
+        sk.test_snippet = "(eda:update-constraint <constraint-id> \"val < 128;\")";
+        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
+                          "\"Append constraint expr on native Constraint node.\", "
+                          "\"(int string) -> bool\")";
+    } else if (prim_name == "eda:add-coverpoint-bin") {
         sk.spec = "(coverpoint-id bin-name-string) -> bool";
         sk.cpp_lambda =
             "add_mutate(\"eda:add-coverpoint-bin\", [&ev](const auto& a) -> EvalValue {\n"

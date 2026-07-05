@@ -99,6 +99,8 @@
     "query:sv-node-stats"
     ; ── Issue #497 — Long-session StableRef lifecycle observability ──
     "query:stable-ref-lifecycle-stats"
+    ; ── Issue #498 — AI-native primitive metadata observability ──
+    "query:primitive-metadata"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

@@ -82,7 +82,7 @@ int main() {
         CHECK(stat_int(cs, "category-verification") >= 1, "category-verification >= 1");
         CHECK(stat_int(cs, "category-eda") >= 1, "category-eda >= 1");
         CHECK(stat_int(cs, "documented-with-schema") >= 4, "documented-with-schema >= 4");
-        CHECK(stat_int(cs, "extension-kit-version") == 2, "extension-kit-version == 2");
+        CHECK(stat_int(cs, "extension-kit-version") == 3, "extension-kit-version == 3");
         CHECK(stat_int(cs, "registry-slots") > 0, "registry-slots > 0");
     }
 

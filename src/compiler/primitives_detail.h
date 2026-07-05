@@ -31,6 +31,8 @@ inline constexpr int kPrimCaptureContractVersion = 1;
         .schema = SCHEMA                                                                           \
     }
 
+// Issue #498: use Evaluator::prim_registrar_with_meta() as register_with_spec.
+
 namespace primitives_detail {
 
     // Issue #709: bump the aggregate fast-path counter only.
