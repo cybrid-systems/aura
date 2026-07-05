@@ -729,6 +729,85 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #583: registry + core primitives hot-path observability hash
+    // (structured companion to int-sum query:primitives-stats).
+    add("query:primitives-registry-core-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t registry_slots = ev.get_primitive_slot_count();
+        const std::uint64_t errors = ev.get_primitive_error_count();
+        const std::uint64_t stored = ev.get_primitive_error_values_size();
+        const std::uint64_t mutations = ev.total_mutations();
+        const std::uint64_t queries = ev.get_total_query_calls();
+        const std::uint64_t specialization =
+            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t fastpath =
+            m ? m->primitive_fastpath_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t primitive_call_count = mutations + queries;
+        const std::uint64_t hot_path_hits = specialization + fastpath;
+        const std::uint64_t call_denom = primitive_call_count + errors + 1;
+        const std::int64_t error_rate_pct = static_cast<std::int64_t>((errors * 100) / call_denom);
+        const std::uint64_t total =
+            registry_slots + primitive_call_count + errors + stored + hot_path_hits;
+        std::int64_t recommendation = 0;
+        if (errors > primitive_call_count / 10 && errors > 0)
+            recommendation = 3;
+        else if (registry_slots == 0)
+            recommendation = 2;
+        else if (hot_path_hits > 0 || primitive_call_count > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"registry-slots", make_int(static_cast<std::int64_t>(registry_slots))},
+            {"primitive-call-count", make_int(static_cast<std::int64_t>(primitive_call_count))},
+            {"error-rate-pct", make_int(error_rate_pct)},
+            {"hot-path-hits", make_int(static_cast<std::int64_t>(hot_path_hits))},
+            {"error-path-cost", make_int(static_cast<std::int64_t>(errors))},
+            {"consistency-violations", make_int(static_cast<std::int64_t>(stored))},
+            {"registry-core-schema", make_int(583)},
+            {"primitives-registry-core-total", make_int(static_cast<std::int64_t>(total))},
+            {"primitives-registry-core-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #710: verify_tool/diagnostic Guard + StableRef + dirty propagation stats.
     add("query:verify-tool-guard-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
