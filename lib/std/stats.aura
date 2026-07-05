@@ -111,6 +111,8 @@
     "query:runtime-orchestration-stats"
     ; ── Issue #513 — AOT hot-reload consolidated observability ──
     "query:aot-hot-reload-stats"
+    ; ── Issue #515 — Consolidated Top 5 P0 production-readiness tracker ──
+    "query:consolidated-p0-production-stats"
     ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
     "query:work-steal-stats"
     ; ── Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering) ──

@@ -1541,6 +1541,104 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_hash(hidx);
     });
 
+    // Issue #515: query:consolidated-p0-production-stats. Hash view of the
+    // consolidated Top 5 P0 production-readiness pillars (non-duplicative
+    // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
+    // int-sum, #517 3-pillar int-sum, and #520 Top-5 roadmap int-sum):
+    //   P1 Persistence (#511): checkpoint-save/commit + gen-wrap
+    //   P2 EDA (#510): coverage-feedback + assert-failures
+    //   P3 SoA (#506): passes-skipped + ir-soa-emitted + module-dirty-skips
+    //   P4 Memory (#505): bridge-epoch + closure-refresh + envframe-refresh
+    //   P5 Orchestration (#500/#512): steal-attempts/violations + boundary-depth
+    //   - consolidated-p0-production-total / consolidated-p0-production-recommendation
+    add("query:consolidated-p0-production-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t checkpoint_save = ev->get_panic_checkpoint_save_count();
+            const std::uint64_t checkpoint_commit = ev->get_panic_checkpoint_commit_count();
+            const std::uint64_t gen_wrap = ws ? ws->generation_wrap_count() : 0;
+            const std::uint64_t coverage = ws ? ws->verification_coverage_feedback_total() : 0;
+            const std::uint64_t assert_fail = ws ? ws->verification_assert_failure_total() : 0;
+            const std::uint64_t passes_skipped = ev->get_passes_skipped_type_dirty();
+            const std::uint64_t ir_soa =
+                m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) +
+                        m->ir_soa_functions_emitted.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t module_dirty =
+                m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t bridge_epoch =
+                m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t closure_refresh =
+                m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t envframe_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t steal_attempts = aura_work_steal_attempts_total();
+            const std::uint64_t steal_violations = ev->get_mutation_steal_violation_count();
+            const std::uint64_t boundary_depth = aura_evaluator_mutation_boundary_depth();
+            const std::uint64_t total = checkpoint_save + checkpoint_commit + gen_wrap + coverage +
+                                        assert_fail + passes_skipped + ir_soa + module_dirty +
+                                        bridge_epoch + closure_refresh + envframe_refresh +
+                                        steal_attempts + steal_violations + boundary_depth;
+            std::int64_t recommendation = 0;
+            if (steal_violations > 0)
+                recommendation = 3;
+            else if (assert_fail > coverage && assert_fail > 0)
+                recommendation = 2;
+            else if (gen_wrap > 0 || envframe_refresh > bridge_epoch)
+                recommendation = 1;
+            insert_kv("checkpoint-save", static_cast<std::int64_t>(checkpoint_save));
+            insert_kv("checkpoint-commit", static_cast<std::int64_t>(checkpoint_commit));
+            insert_kv("gen-wrap", static_cast<std::int64_t>(gen_wrap));
+            insert_kv("eda-coverage-feedback", static_cast<std::int64_t>(coverage));
+            insert_kv("eda-assert-failures", static_cast<std::int64_t>(assert_fail));
+            insert_kv("soa-passes-skipped", static_cast<std::int64_t>(passes_skipped));
+            insert_kv("soa-ir-emitted", static_cast<std::int64_t>(ir_soa));
+            insert_kv("soa-module-dirty-skips", static_cast<std::int64_t>(module_dirty));
+            insert_kv("memory-bridge-epoch", static_cast<std::int64_t>(bridge_epoch));
+            insert_kv("memory-closure-refresh", static_cast<std::int64_t>(closure_refresh));
+            insert_kv("memory-envframe-refresh", static_cast<std::int64_t>(envframe_refresh));
+            insert_kv("orchestration-steal-attempts", static_cast<std::int64_t>(steal_attempts));
+            insert_kv("orchestration-steal-violations",
+                      static_cast<std::int64_t>(steal_violations));
+            insert_kv("orchestration-boundary-depth", static_cast<std::int64_t>(boundary_depth));
+            insert_kv("consolidated-p0-production-total", static_cast<std::int64_t>(total));
+            insert_kv("consolidated-p0-production-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #549: query:self-evolution-stability-stats.
     // Returns the sum of the 4 self-evolution observability
     // counters:
