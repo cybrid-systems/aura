@@ -68,6 +68,8 @@
     "query:sv-structured-edsl-stats"
     ; ── Issue #579 — Verification feedback → structured mutate closed-loop ──
     "query:verification-feedback-loop-stats"
+    ; ── Issue #580 — Hardware backend emit maturity + commercial interop ──
+    "query:hardware-backend-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
