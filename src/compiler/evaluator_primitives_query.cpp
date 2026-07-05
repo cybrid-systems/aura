@@ -1809,6 +1809,100 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #525: query:guard-production-impact-stats. Commercial P0 hash view
+    // of MutationBoundaryGuard post-success impact snapshot + reflect/schema
+    // validation closed-loop — non-duplicative synthesis of #504
+    // mutation-boundary-log, #488 mutation-impact-snapshot, and #551
+    // reflect-postmutate-stats; avoids #515 consolidated P0 tracker and #597
+    // macro-reflect-self-evo-stats broad bundle:
+    //   - epoch-after/delta, nodes-changed, reasons-mask: latest ring entry
+    //   - impact-snapshots / mutation-impacts: Guard success tallies
+    //   - dirty-nodes / macro-markers: snapshot marker+delta surface
+    //   - schema-pass/fail/valid: post_mutation_reflect_validate hook
+    //   - guard-epoch / boundary-depth / dirty-propagation: epoch coordination
+    //   - checkpoint-commits: panic checkpoint commit on Guard success
+    //   - validation-pass-rate-pct: pass / (pass + fail) * 100
+    //   - guard-production-impact-total / guard-production-impact-recommendation
+    add("query:guard-production-impact-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto entry = ev->get_latest_mutation_impact_entry();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+            const std::uint64_t impacts = ev->get_mutation_impact_count();
+            const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
+            const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
+            const std::uint64_t pass = ev->get_schema_validation_pass_count();
+            const std::uint64_t fail = ev->get_schema_validation_fail_count();
+            const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+            const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
+            const std::uint64_t commits = ev->get_panic_checkpoint_commit_count();
+            const std::uint64_t validations = pass + fail;
+            const std::int64_t pass_rate_pct =
+                validations > 0 ? static_cast<std::int64_t>((pass * 100) / validations) : 100;
+            const std::uint64_t total = snapshots + impacts + entry.epoch_delta +
+                                        entry.nodes_changed + dirty + pass + fail + guard_epoch +
+                                        dirty_prop + commits;
+            std::int64_t recommendation = 0;
+            if (fail > 0 || !ev->get_last_schema_validation_ok())
+                recommendation = 3;
+            else if (entry.nodes_changed > 20)
+                recommendation = 2;
+            else if (dirty > 0 || snapshots > 0)
+                recommendation = 1;
+            insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
+            insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
+            insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
+            insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
+            insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
+            insert_kv("mutation-impacts", static_cast<std::int64_t>(impacts));
+            insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("schema-pass", static_cast<std::int64_t>(pass));
+            insert_kv("schema-fail", static_cast<std::int64_t>(fail));
+            insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
+            insert_kv("guard-epoch", static_cast<std::int64_t>(guard_epoch));
+            insert_kv("boundary-depth",
+                      static_cast<std::int64_t>(Evaluator::mutation_boundary_depth()));
+            insert_kv("dirty-propagation", static_cast<std::int64_t>(dirty_prop));
+            insert_kv("checkpoint-commits", static_cast<std::int64_t>(commits));
+            insert_kv("validation-pass-rate-pct", pass_rate_pct);
+            insert_kv("guard-production-impact-total", static_cast<std::int64_t>(total));
+            insert_kv("guard-production-impact-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
