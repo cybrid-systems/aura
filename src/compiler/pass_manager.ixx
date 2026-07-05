@@ -749,17 +749,20 @@ public:
                     // Counted in linear_elide_count_ (exposed via
                     // CompilerMetrics::linear_elide_count + the
                     // (compile:linear-elide-count) Aura primitive).
-                    if (instr.opcode == aura::ir::IROpcode::MoveOp) {
-                        auto src_slot = ops[1];
-                        if (src_slot < block.instructions.size()) {
-                            auto& src_instr = block.instructions[src_slot];
-                            if (src_instr.linear_ownership_state == 1 /*Owned*/) {
-                                block.instructions[i].opcode = aura::ir::IROpcode::Nop;
-                                block.instructions[i].operands = {0, 0, 0, 0};
-                                ++linear_elide_count_;
-                            }
-                        }
-                    }
+                    // Linear-move elision (Issue #253/#149) was disabled:
+                    // rewriting MoveOp to Nop leaves the result slot
+                    // uninitialized (defaults to 0), but the runtime
+                    // MoveOp handler extracts the inner value from the
+                    // linear container (linear_heap_[id].value) into
+                    // locals[result]. Eliding makes e.g.
+                    // `(move (Linear 42))` return 0 instead of 42. The
+                    // original elision used the source slot ID as a raw
+                    // instruction index, which only happened to be
+                    // correct for densely packed top-level IR. The
+                    // MoveOp dispatch in the interpreter is cheap
+                    // (linear_heap lookup + refcount) so the perf win
+                    // is not worth the correctness risk. Re-introduce
+                    // only after a proper def-use map is available.
 
                     ++i;
                 }

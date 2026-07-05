@@ -342,7 +342,17 @@ typedef struct {
 static ScalarFn s_func_table[MAX_FUNCTIONS] = {NULL};
 
 // Issue #708: tracked registration for refcount-safe hot-reload swap.
-extern void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
+// Weak default no-op so that runtime.c-only builds (e.g. the
+// standalone unit-test harness `tests/runtime_test_harness.c` which
+// only links lib/runtime.c + the harness) compile cleanly. When the
+// full aura binary is linked, src/compiler/aura_jit_bridge.cpp
+// provides a strong definition that overrides this weak one — the
+// linker resolves the strong symbol at link time, so no runtime
+// cost.
+__attribute__((weak)) void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
+    (void)func_id;
+    (void)fn_ptr;
+}
 
 // Register a function pointer for a given func_id.
 // Called by AOT registration code (generated .c file) before main().

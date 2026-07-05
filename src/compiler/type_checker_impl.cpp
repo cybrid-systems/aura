@@ -2276,6 +2276,11 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 }
                 inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
             }
+            // Moving a linear resource consumes the wrapper and yields the
+            // underlying value, so `(move (Linear e))` has type T (not
+            // (Linear T)) and can flow into Any-typed positions (e.g. display).
+            if (auto* lt = reg_.linear_of(inner_type))
+                inner_type = lt->inner;
             result = inner_type;
             break;
         }
