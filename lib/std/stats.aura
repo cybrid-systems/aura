@@ -89,6 +89,8 @@
     "compile:jit-stats"
     ; ── Issue #491 — JIT production-readiness observability ──
     "query:jit-stats-hash"
+    ; ── Issue #492 — ShapeProfiler deopt/stability observability ──
+    "query:shape-profiler-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

@@ -7,6 +7,7 @@ module;
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/shape.h"
+#include "compiler/shape_profiler.h"
 #include "compiler/value_tags.h"
 #include "serve/fiber.h"
 
@@ -2671,6 +2672,83 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             shape::jit_shape_miss_count.load(std::memory_order_relaxed);
         return make_int(static_cast<std::int64_t>(stable_hits + version_bumps + fiber_refresh +
                                                   churn + deopt_hooks + jit_shape_miss));
+    });
+
+    // Issue #492: query:shape-profiler-stats — structured ShapeProfiler
+    // deopt/stability view for AI orchestration (non-duplicative with
+    // #570 int-sum and #407 burst-stats).
+    add("query:shape-profiler-stats", [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t stable_hits =
+            shape::shape_stability_hit_count.load(std::memory_order_relaxed);
+        const std::uint64_t version_bumps =
+            shape::shape_version_bump_count.load(std::memory_order_relaxed);
+        const std::uint64_t fiber_refresh =
+            shape::shape_fiber_refresh_count.load(std::memory_order_relaxed);
+        const std::uint64_t churn =
+            shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
+        const std::uint64_t deopt_hooks =
+            shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
+        const std::uint64_t jit_shape_miss =
+            shape::jit_shape_miss_count.load(std::memory_order_relaxed);
+        const std::uint64_t deopt_storm =
+            shape::shape_deopt_storm_count.load(std::memory_order_relaxed);
+        const std::uint64_t shape_changes =
+            m ? m->shape_changes_observed.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t deopt_count = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t spec_hits =
+            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t spec_misses =
+            m ? m->specialization_misses.load(std::memory_order_relaxed) : 0;
+        constexpr std::int64_t k_window =
+            static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultWindowSize);
+        constexpr std::int64_t k_ratio_bp = static_cast<std::int64_t>(
+            shape::ShapeProfiler::kDefaultStabilityRatio * 10000.0);
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("stability-hits", static_cast<std::int64_t>(stable_hits));
+        insert_kv("version-bumps", static_cast<std::int64_t>(version_bumps));
+        insert_kv("fiber-refresh", static_cast<std::int64_t>(fiber_refresh));
+        insert_kv("shape-churn", static_cast<std::int64_t>(churn));
+        insert_kv("deopt-hooks", static_cast<std::int64_t>(deopt_hooks));
+        insert_kv("jit-shape-miss", static_cast<std::int64_t>(jit_shape_miss));
+        insert_kv("deopt-storm-count", static_cast<std::int64_t>(deopt_storm));
+        insert_kv("shape-changes-observed", static_cast<std::int64_t>(shape_changes));
+        insert_kv("deopt-count", static_cast<std::int64_t>(deopt_count));
+        insert_kv("specialization-hits", static_cast<std::int64_t>(spec_hits));
+        insert_kv("specialization-misses", static_cast<std::int64_t>(spec_misses));
+        insert_kv("window-size", k_window);
+        insert_kv("stability-ratio-bp", k_ratio_bp);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #571: query:value-dispatch-stats. Returns the sum

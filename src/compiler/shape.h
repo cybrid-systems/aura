@@ -60,6 +60,8 @@ inline std::atomic<std::uint64_t> shape_version_bump_count{0};
 inline std::atomic<std::uint64_t> shape_fiber_refresh_count{0};
 inline std::atomic<std::uint64_t> mutation_shape_churn_count{0};
 inline std::atomic<std::uint64_t> shape_deopt_hook_fire_count{0};
+// Issue #492: stable→unstable / invalidate deopt storm tally.
+inline std::atomic<std::uint64_t> shape_deopt_storm_count{0};
 // Issue #605: JIT cache entries compiled with a shape_map but
 // invalidated by a newer ShapeProfiler version (post-mutate).
 inline std::atomic<std::uint64_t> jit_shape_miss_count{0};

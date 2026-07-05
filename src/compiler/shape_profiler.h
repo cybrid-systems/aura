@@ -74,6 +74,8 @@ public:
 
     void set_window_size(std::uint32_t n) { window_size_ = n; }
     void set_stability_ratio(double r) { stability_ratio_ = r; }
+    [[nodiscard]] std::uint32_t window_size() const noexcept { return window_size_; }
+    [[nodiscard]] double stability_ratio() const noexcept { return stability_ratio_; }
 
     // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
     void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {

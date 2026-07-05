@@ -2026,6 +2026,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:prompt6-safety-score",
             // Issue #570 — ShapeProfiler stability + deopt
             "query:shape-stability-stats",
+            // Issue #492 — ShapeProfiler structured deopt/stability hash
+            "query:shape-profiler-stats",
             // Issue #571 — EvalValue v2 dispatch + contracts
             "query:value-dispatch-stats",
             // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
@@ -2237,8 +2239,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 89 entries as of #491 ship (88 from #490 + query:jit-stats-hash).
-        return make_int(89);
+        // 90 entries as of #492 ship (89 from #491 + query:shape-profiler-stats).
+        return make_int(90);
     });
 }
 
