@@ -1859,6 +1859,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:envframe-dualpath-stats",
             // Issue #547 — Pattern + MacroIntroduced hygiene
             "query:pattern-index-stats",
+            // Issue #490 — lazy vs eager pattern-index rebuild observability
+            "query:pattern-index-rebuild-stats",
             "query:pattern-hygiene-stats",
             // Issue #486 — MacroIntroduced hygiene decision hash
             "query:macro-hygiene-stats",
@@ -2134,8 +2136,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 87 entries as of #489 ship (86 from #488 + query:stability-stats).
-        return make_int(87);
+        // 88 entries as of #490 ship (87 from #489 + query:pattern-index-rebuild-stats).
+        return make_int(88);
     });
 }
 

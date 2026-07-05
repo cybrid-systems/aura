@@ -2836,6 +2836,10 @@ add_dependencies(all_test_issue_targets test_issue_488)
 aura_add_issue_test(test_issue_489)
 aura_issue_test_link_llvm_jit(test_issue_489)
 add_dependencies(all_test_issue_targets test_issue_489)
+# Issue #490: proactive tag_arity_index rebuild on COW/compact + policy tuning.
+aura_add_issue_test(test_issue_490)
+aura_issue_test_link_llvm_jit(test_issue_490)
+add_dependencies(all_test_issue_targets test_issue_490)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

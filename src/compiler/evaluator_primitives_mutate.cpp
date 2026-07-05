@@ -1096,6 +1096,50 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                   ev.get_stale_ref_warned_count()));
     });
 
+    // Issue #490: (mutate:set-pattern-index-policy "lazy"|"eager-after-mutate"|"eager-after-cow")
+    add_mutate("mutate:set-pattern-index-policy", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& s = ev.string_heap_[idx];
+        if (s == "lazy" || s == "default") {
+            ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::Lazy);
+            return make_bool(true);
+        }
+        if (s == "eager-after-mutate" || s == "eager-mutate") {
+            ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::EagerAfterMutate);
+            return make_bool(true);
+        }
+        if (s == "eager-after-cow" || s == "eager-cow") {
+            ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::EagerAfterCow);
+            return make_bool(true);
+        }
+        return make_bool(false);
+    });
+
+    // Issue #490: (query:pattern-index-policy) — current rebuild policy string.
+    add("query:pattern-index-policy", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        const char* name = "lazy";
+        switch (ev.get_pattern_index_policy()) {
+            case Evaluator::PatternIndexPolicy::EagerAfterMutate:
+                name = "eager-after-mutate";
+                break;
+            case Evaluator::PatternIndexPolicy::EagerAfterCow:
+                name = "eager-after-cow";
+                break;
+            case Evaluator::PatternIndexPolicy::Lazy:
+            default:
+                name = "lazy";
+                break;
+        }
+        auto pidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(name);
+        return make_string(static_cast<std::int32_t>(pidx));
+    });
+
     // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
     add("query:as-stable-ref", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)

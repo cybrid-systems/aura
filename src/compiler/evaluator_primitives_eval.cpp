@@ -100,6 +100,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // hook would do this, but set-code assigns directly
         // here, so we invalidate inline.)
         ev.invalidate_tag_arity_index();
+        // Issue #490: optional eager rebuild after workspace swap.
+        ev.maybe_eager_rebuild_pattern_index_after_cow();
         ev.update_shared_tree_root();
         // Invalidate def-use index (new workspace)
         // (ASAN fix #107 leak) delete the old index; without this,
