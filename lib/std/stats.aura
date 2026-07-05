@@ -40,6 +40,8 @@
     "query:pattern-production-index-stats"
     ; ── Issue #530 — Incremental re-lower + ir_cache/JIT production tracker ──
     "query:incremental-production-relower-stats"
+    ; ── Issue #532 — JIT opcode coverage + IR consistency + hot-swap safety ──
+    "query:jit-consistency-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
