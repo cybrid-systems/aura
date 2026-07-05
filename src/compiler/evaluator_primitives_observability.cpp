@@ -2643,6 +2643,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitive-metadata",
             // Issue #499 — EDA foundation primitives module observability
             "query:eda-foundation-stats",
+            // Issue #500 — Work-stealing + MutationBoundary depth observability
+            "query:work-steal-stats",
             "query:fiber-migration-stats",
             "query:mutation-coordination-stats",
             "query:envframe-stale-stats",
@@ -2808,8 +2810,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 96 entries as of #499 ship (95 from #498 + query:eda-foundation-stats).
-        return make_int(96);
+        // 97 entries as of #500 ship (96 from #499 + query:work-steal-stats).
+        return make_int(97);
     });
 }
 

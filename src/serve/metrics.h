@@ -330,6 +330,9 @@ struct AdaptiveStealStats {
     std::atomic<std::uint64_t> llm_tail_reductions{0};
     std::atomic<std::uint64_t> deferred_pressure_boosts{0};
     std::atomic<std::uint64_t> global_deferred_mutation_total{0};
+    // Issue #500: ring-neighbor steal attempts (before random victim).
+    std::atomic<std::uint64_t> ring_steal_attempts{0};
+    std::atomic<std::uint64_t> ring_steal_successes{0};
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {
@@ -361,6 +364,10 @@ std::uint64_t aura_adaptive_steal_outermost_preferred();
 std::uint64_t aura_adaptive_steal_llm_tail_reductions();
 std::uint64_t aura_adaptive_steal_deferred_pressure_boosts();
 std::uint64_t aura_adaptive_steal_global_deferred_total();
+std::uint64_t aura_adaptive_steal_ring_attempts();
+std::uint64_t aura_adaptive_steal_ring_successes();
+std::uint64_t aura_work_steal_attempts_total();
+std::uint64_t aura_work_steal_successes_total();
 std::uint64_t aura_per_fiber_stack_pool_hits();
 std::uint64_t aura_per_fiber_stack_pool_lazy_allocs();
 std::uint64_t aura_per_fiber_stack_pool_max_depth();

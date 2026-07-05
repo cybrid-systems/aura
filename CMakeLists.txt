@@ -2873,6 +2873,10 @@ add_dependencies(all_test_issue_targets test_issue_498)
 aura_add_issue_test(test_issue_499)
 aura_issue_test_link_llvm_jit(test_issue_499)
 add_dependencies(all_test_issue_targets test_issue_499)
+# Issue #500: Work-stealing + MutationBoundary outermost depth safety.
+aura_add_issue_test(test_issue_500)
+aura_issue_test_link_llvm_jit(test_issue_500)
+add_dependencies(all_test_issue_targets test_issue_500)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

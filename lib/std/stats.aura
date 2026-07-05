@@ -103,6 +103,8 @@
     "query:primitive-metadata"
     ; ── Issue #499 — EDA foundation primitives module observability ──
     "query:eda-foundation-stats"
+    ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
+    "query:work-steal-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

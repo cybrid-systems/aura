@@ -684,6 +684,14 @@ extern "C" void aura_evaluator_bump_steal_deferred_violation() {
     ev->bump_boundary_violation_count();
 }
 
+// Issue #500: log scheduler steal attempts in evaluator metrics.
+extern "C" void aura_evaluator_bump_mutation_steal_attempt() {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_mutation_steal_attempt();
+}
+
 // Issue #485: transfer mutation stack on Fiber::resume.
 extern "C" void aura_evaluator_resume_fiber_migration() {
     auto* ev = evaluator_for_scheduler_hooks();
