@@ -51,8 +51,8 @@ static int g_failed = 0;
         }                                                                                          \
     } while (0)
 
-static std::int64_t prov_int(aura::compiler::CompilerService& cs,
-                             std::string_view hash_eval, std::string_view key) {
+static std::int64_t prov_int(aura::compiler::CompilerService& cs, std::string_view hash_eval,
+                             std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_eval, key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
@@ -79,10 +79,8 @@ int main() {
         // accept #f as the "no workspace" signal and validate the
         // hash fields exist on the success path later via AC2.
         auto r0 = cs.eval("(query:stable-ref-provenance 0)");
-        CHECK(r0.has_value(),
-              "provenance returns a value (not void)");
-        if (r0 && aura::compiler::types::is_bool(*r0) &&
-            !aura::compiler::types::as_bool(*r0)) {
+        CHECK(r0.has_value(), "provenance returns a value (not void)");
+        if (r0 && aura::compiler::types::is_bool(*r0) && !aura::compiler::types::as_bool(*r0)) {
             std::println("  (no workspace loaded in fresh service — #f is expected)");
         }
         // The shape check is best done after a workspace is loaded.
@@ -130,10 +128,10 @@ int main() {
             CHECK(fid_val >= 0, std::format("fiber-id >= 0 (got {})", fid_val));
             CHECK(is_live == 0 || is_live == 1,
                   std::format("is-live in {{0,1}} (got {})", is_live));
-            CHECK(schema == 620,
-                  std::format("schema == 620 (got {})", schema));
+            CHECK(schema == 620, std::format("schema == 620 (got {})", schema));
         } else {
-            std::println("  (workspace-flat-size returned non-int or 0; skipping success-path probe — covered by AC1's no-workspace #f path)");
+            std::println("  (workspace-flat-size returned non-int or 0; skipping success-path "
+                         "probe — covered by AC1's no-workspace #f path)");
         }
     }
 
@@ -147,13 +145,10 @@ int main() {
         // Even with no workspace, both calls should return the same
         // (#f) value — durability check.
         const bool a_is_bool_f =
-            a && aura::compiler::types::is_bool(*a) &&
-            !aura::compiler::types::as_bool(*a);
+            a && aura::compiler::types::is_bool(*a) && !aura::compiler::types::as_bool(*a);
         const bool b_is_bool_f =
-            b && aura::compiler::types::is_bool(*b) &&
-            !aura::compiler::types::as_bool(*b);
-        CHECK(a_is_bool_f == b_is_bool_f,
-              "both calls have the same shape (both #f or both hash)");
+            b && aura::compiler::types::is_bool(*b) && !aura::compiler::types::as_bool(*b);
+        CHECK(a_is_bool_f == b_is_bool_f, "both calls have the same shape (both #f or both hash)");
     }
 
     // AC4: provenance call bumps the
@@ -190,11 +185,9 @@ int main() {
         CHECK(s0 && aura::compiler::types::is_int(*s0),
               "(query:stable-ref-stats) returns an int (#457 back-compat)");
         auto s1 = cs.eval("(query:stable-ref-stats-hash)");
-        CHECK(s1.has_value(),
-              "(query:stable-ref-stats-hash) reachable (#470 back-compat)");
+        CHECK(s1.has_value(), "(query:stable-ref-stats-hash) reachable (#470 back-compat)");
         auto lc = cs.eval("(query:stable-ref-lifecycle-stats)");
-        CHECK(lc.has_value(),
-              "(query:stable-ref-lifecycle-stats) reachable (#497 back-compat)");
+        CHECK(lc.has_value(), "(query:stable-ref-lifecycle-stats) reachable (#497 back-compat)");
     }
 
     // AC6: concurrent provenance calls under 2 threads × 4 iters.
@@ -215,9 +208,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned values",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned values", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

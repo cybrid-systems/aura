@@ -26,7 +26,7 @@ std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{
 // (orchestration:tune-gc-frequency ratio) primitive writes here;
 // the scheduler can opt-in to consult it (follow-up).
 namespace {
-std::atomic<std::uint32_t> g_gc_frequency_tune_ratio_{50};
+    std::atomic<std::uint32_t> g_gc_frequency_tune_ratio_{50};
 } // namespace
 std::atomic<std::uint32_t>& gc_frequency_tune_ratio() noexcept {
     return g_gc_frequency_tune_ratio_;
