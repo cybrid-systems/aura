@@ -423,6 +423,166 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 
+    // Issue #633: query:stdlib-compiler-demands-stats-hash —
+    // Agent-discoverable structured dashboard for the stdlib
+    // commercial-evolution reverse-ask surface (specifically
+    // covers AC5 from the issue body).
+    //
+    // Fields (5):
+    //   - hotpath-calls         sum of the existing hot-path
+    //                          counters (value_dispatch_hit_count +
+    //                          primitive_fastpath_hits_total +
+    //                          hotpath_eval_flat_calls +
+    //                          hotpath_lowering_calls +
+    //                          hotpath_soa_dual_emit_hits).
+    //                          Synthesizes the AI primitive layer's
+    //                          "hotpath_calls" demand signal.
+    //   - error-consistency     existing value_contract_violation_
+    //                          count (from #479 + #709). Higher
+    //                          numbers = more contract violations
+    //                          = more "error_consistency" debt.
+    //   - extension-count       new stdlib_extension_count_total
+    //                          atomic (foundation for AC3 DEFINE_
+    //                          PRIMITIVE macro work — bumped per
+    //                          new extension registered).
+    //                          Value is 0 until AC3 wire-up.
+    //   - ai-native-hits        new ai_native_primitive_hits_total
+    //                          atomic (foundation for AC4 — bumped
+    //                          per Agent-generated primitive
+    //                          registration).
+    //                          Value is 0 until AC4 wire-up.
+    //   - soa-jit-win           existing primitive_fastpath_hits_
+    //                          total (from #709) — proxy for
+    //                          SoA/JIT win-rate at the primitive
+    //                          layer.
+    //   - schema == 633         sentinel for Agent drift detection
+    //                          (mirrors the full chain through
+    //                          #618+#620+#621+#622+#623+#624+#625+
+    //                          #626+#630+#631+#632 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers ~80% of the AC5 surface:
+    //   - (query:schema-of-primitive) (#617) — per-primitive schema
+    //   - (query:primitives-meta-catalog) (#617) — 5-field catalog
+    //   - (query:primitives-extensions-list) (#618) — extensions
+    //   - (query:primitives-stats) (#479) — 8-field hot-path hash
+    //   - (query:primitives-meta-stats) (#617) — primitive-meta
+    //   - (query:primitives-fastpath-per-prim) (#709) — per-prim
+    //   - hotpath counters on CompilerMetrics + PassPipeline
+    //     Counters + PassPipeline metrics.
+    // What AC5 specifies by **exact name + fields** —
+    // `query:stdlib-compiler-demands-stats` with
+    // {hotpath_calls, error_consistency, extension_count,
+    // ai_native_hits, SoA/JIT_win} — was *not* shipped under
+    // that exact name. So #633 ships ONE new Aura primitive
+    // + 2 new foundation atomics.
+    //
+    // The remaining #633 AC1 + AC2 + AC3 + AC4 work (SoA value
+    // views for primitives, unified PRIM_ERROR across registry,
+    // DEFINE_PRIMITIVE macro, AI-generated primitive sandbox) is
+    // invasive C++ + stdlib + reflect work that needs
+    // benchmarking + perf regression coverage alongside the
+    // existing AI/JSON/SoA initiatives — separate follow-ups.
+    add("query:stdlib-compiler-demands-stats-hash",
+        [&ev](const auto&) -> EvalValue {
+            // hotpath-calls: sum of all hot-path counters.
+            const std::uint64_t dispatch_hits =
+                types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+            const std::uint64_t fastpath_hits =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->primitive_fastpath_hits_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t hotpath_eval =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->hotpath_eval_flat_calls.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t hotpath_lowering =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->hotpath_lowering_calls.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t soa_dual_emit =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->hotpath_soa_dual_emit_hits.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t hotpath_calls = dispatch_hits + fastpath_hits +
+                                               hotpath_eval + hotpath_lowering +
+                                               soa_dual_emit;
+            // error-consistency: existing value_contract_violation_count.
+            const std::uint64_t error_consistency =
+                types::value_contract_violation_count.load(
+                    std::memory_order_relaxed);
+            // extension-count: new foundation atomic (0 until AC3 macro).
+            const std::uint64_t extension_count =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->stdlib_extension_count_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // ai-native-hits: new foundation atomic (0 until AC4 wire-up).
+            const std::uint64_t ai_native_hits =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->ai_native_primitive_hits_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // soa-jit-win: existing primitive_fastpath_hits_total proxy.
+            const std::uint64_t soa_jit_win = fastpath_hits;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("hotpath-calls", static_cast<std::int64_t>(hotpath_calls));
+            insert_kv("error-consistency",
+                      static_cast<std::int64_t>(error_consistency));
+            insert_kv("extension-count",
+                      static_cast<std::int64_t>(extension_count));
+            insert_kv("ai-native-hits",
+                      static_cast<std::int64_t>(ai_native_hits));
+            insert_kv("soa-jit-win",
+                      static_cast<std::int64_t>(soa_jit_win));
+            insert_kv("schema", 633);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -3329,7 +3489,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        return make_int(139);
+        // 142 entries as of #633 ship (141 from #632 + 1 stdlib-
+        // compiler-demands observability hash primitive from #633:
+        // query:stdlib-compiler-demands-stats-hash).
+        return make_int(142);
     });
 }
 

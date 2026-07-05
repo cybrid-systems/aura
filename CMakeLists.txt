@@ -3184,6 +3184,19 @@ add_dependencies(all_test_issue_targets test_issue_631)
 aura_add_issue_test(test_issue_632)
 aura_issue_test_link_llvm_jit(test_issue_632)
 add_dependencies(all_test_issue_targets test_issue_632)
+# Issue #633: stdlib commercial-evolution reverse-ask observability
+# foundation — 1 new Aura primitive
+# (query:stdlib-compiler-demands-stats-hash) + 2 new atomics
+# (stdlib_extension_count_total + ai_native_primitive_hits_total).
+# Primitive has 5 fields: 2 derived sums from existing hot-path
+# counters (hotpath-calls + soa-jit-win) + 1 verbatim existing
+# counter (error-consistency) + 2 from the new atomics
+# (extension-count + ai-native-hits, foundation for AC3+AC4 wire-up,
+# currently 0) + schema sentinel. Builds on #479 / #617 / #618 /
+# #625 / #709 existing primitives + counters.
+aura_add_issue_test(test_issue_633)
+aura_issue_test_link_llvm_jit(test_issue_633)
+add_dependencies(all_test_issue_targets test_issue_633)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

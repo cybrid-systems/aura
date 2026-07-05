@@ -639,6 +639,15 @@ struct CompilerMetrics {
     // has a dashboard today; values are 0 until AC2 + AC3 wire-up.
     std::atomic<std::uint64_t> atomic_batch_sv_rollback_total{0};
     std::atomic<std::uint64_t> atomic_batch_sv_impact_nodes_total{0};
+    // Issue #633: stdlib commercial-evolution reverse-ask counters.
+    // Foundation scaffolding for the future DEFINE_PRIMITIVE
+    // macro work (#633 AC3) + AI-generated primitive registration
+    // tracking (#633 AC4). P0 ships the counters + the
+    // (query:stdlib-compiler-demands-stats-hash) primitive so the
+    // Agent has a dashboard today; values are 0 until the future
+    // extension macro + AI-generate path lands.
+    std::atomic<std::uint64_t> stdlib_extension_count_total{0};
+    std::atomic<std::uint64_t> ai_native_primitive_hits_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
