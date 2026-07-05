@@ -1249,6 +1249,9 @@ aura_issue_test_link_llvm_jit(test_issue_568_observability)
 # Issue #569 slice: arena-auto-compact-defrag-stats hash observability.
 aura_add_issue_test(test_issue_569_observability)
 aura_issue_test_link_llvm_jit(test_issue_569_observability)
+# Issue #572 slice: pass-pipeline-dirtyaware-stats hash observability.
+aura_add_issue_test(test_issue_572_observability)
+aura_issue_test_link_llvm_jit(test_issue_572_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +

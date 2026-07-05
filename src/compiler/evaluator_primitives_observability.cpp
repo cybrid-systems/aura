@@ -2329,6 +2329,102 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #572: Task4-review closing hash for Pass/AnalysisPass Concepts +
+    // fold short-circuit + DirtyAwarePass + pure Wrap delegation.
+    add("query:pass-pipeline-dirtyaware-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t pipeline_runs =
+            aura::compiler::pass_pipeline_runs_total.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_yield =
+            aura::compiler::pipeline_yield_count.load(std::memory_order_relaxed);
+        const std::uint64_t passes_skip_dirty =
+            aura::compiler::passes_skipped_dirty_pipeline.load(std::memory_order_relaxed);
+        const std::uint64_t passes_skip_type = ev.get_passes_skipped_type_dirty();
+        const std::uint64_t passes_skipped_due_to_dirty = passes_skip_dirty + passes_skip_type;
+        const std::uint64_t relower_skip =
+            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t relower_per_fn =
+            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mod_skip =
+            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t block_dirty_hits =
+            m ? m->ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t wrap_delegation =
+            aura::compiler::ShapeWrap::pure_delegation_hits() +
+            aura::compiler::LinearOwnershipWrap::pure_delegation_hits();
+        const std::uint64_t latency_denom = pipeline_runs + passes_skipped_due_to_dirty + 1;
+        const std::int64_t incremental_latency_win_pct =
+            static_cast<std::int64_t>((passes_skipped_due_to_dirty * 100) / latency_denom);
+        const std::uint64_t total = pipeline_runs + pipeline_yield + passes_skipped_due_to_dirty +
+                                    relower_skip + relower_per_fn + mod_skip + block_dirty_hits +
+                                    wrap_delegation;
+        std::int64_t recommendation = 0;
+        if (pipeline_runs > 0 && passes_skipped_due_to_dirty == 0)
+            recommendation = 3;
+        else if (wrap_delegation == 0 && pipeline_runs > 0)
+            recommendation = 2;
+        else if (passes_skipped_due_to_dirty > 0 || wrap_delegation > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"pass-pipeline-runs", make_int(static_cast<std::int64_t>(pipeline_runs))},
+            {"pipeline-yield-count", make_int(static_cast<std::int64_t>(pipeline_yield))},
+            {"passes-skipped-due-to-dirty",
+             make_int(static_cast<std::int64_t>(passes_skipped_due_to_dirty))},
+            {"passes-skipped-dirty-pipeline",
+             make_int(static_cast<std::int64_t>(passes_skip_dirty))},
+            {"passes-skipped-type-dirty", make_int(static_cast<std::int64_t>(passes_skip_type))},
+            {"wrap-delegation-count", make_int(static_cast<std::int64_t>(wrap_delegation))},
+            {"relower-skipped", make_int(static_cast<std::int64_t>(relower_skip))},
+            {"relower-per-fn", make_int(static_cast<std::int64_t>(relower_per_fn))},
+            {"module-dirty-skips", make_int(static_cast<std::int64_t>(mod_skip))},
+            {"ir-soa-block-dirty-hits", make_int(static_cast<std::int64_t>(block_dirty_hits))},
+            {"incremental-latency-win-pct", make_int(incremental_latency_win_pct)},
+            {"task4-review-schema", make_int(572)},
+            {"pass-pipeline-dirtyaware-total", make_int(static_cast<std::int64_t>(total))},
+            {"pass-pipeline-dirtyaware-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // (query:soa-dirty-stats) — Issue #429: live SoA
     // dirty state aggregate. Returns a hash with 8 fields
     // computed in one pass over ir_cache_v2_:
@@ -3191,6 +3287,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:soa-children-columnar-migration-stats",
             // Issue #569 — Arena auto-compact + defrag + fiber safepoint completion
             "query:arena-auto-compact-defrag-stats",
+            // Issue #572 — Pass Pipeline DirtyAware + fold short-circuit completion
+            "query:pass-pipeline-dirtyaware-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3231,10 +3329,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 138 entries as of #569 ship (137 from #568 + 1 arena-auto-compact-
-        // defrag observability hash primitive from #569:
-        // query:arena-auto-compact-defrag-stats).
-        return make_int(138);
+        // 139 entries as of #572 ship (138 from #569 + 1 pass-pipeline-dirtyaware
+        // observability hash primitive from #572:
+        // query:pass-pipeline-dirtyaware-stats).
+        return make_int(139);
     });
 }
 
