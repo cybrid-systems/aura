@@ -2726,6 +2726,8 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
     // many runtime helper calls the JIT replaced with inline
     // sequences. Single number for observability.
     const auto intrinsic = intrinsic_count.load(std::memory_order_relaxed);
+    const auto fallback = fallback_count.load(std::memory_order_relaxed);
+    const auto consistency = consistency_violations.load(std::memory_order_relaxed);
     // Live prim-call counters from aura_jit_runtime.cpp
     // (read via the global accessors). The total is in nanoseconds;
     // average per call is computed inline.
@@ -2737,12 +2739,14 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
                   "cached_fns=%llu inlined_prims=%llu slow_prims=%llu "
                   "prim_calls=%llu prim_avg_ns=%llu "
                   "verify_fail=%llu add_mod_fail=%llu "
-                  "unhandled_opcode=%llu intrinsics=%llu",
+                  "unhandled_opcode=%llu intrinsics=%llu "
+                  "fallback_count=%llu consistency_violations=%llu",
                   (unsigned long long)cc, (unsigned long long)avg_us, (unsigned long long)hs,
                   (unsigned long long)cfns, (unsigned long long)inl, (unsigned long long)slow,
                   (unsigned long long)pc, (unsigned long long)pavg, (unsigned long long)vfail,
                   (unsigned long long)mfail, (unsigned long long)unhandled,
-                  (unsigned long long)intrinsic);
+                  (unsigned long long)intrinsic, (unsigned long long)fallback,
+                  (unsigned long long)consistency);
     return buf;
 }
 

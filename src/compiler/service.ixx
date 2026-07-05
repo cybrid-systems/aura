@@ -7259,6 +7259,17 @@ private:
                 metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        // Issue #491: drop stale AuraJIT modules alongside jit_cache_
+        // erase so in-flight fibers cannot keep executing old native
+        // code after invalidate_function / hot-swap.
+        jit_.invalidate(name.c_str());
+        jit_.invalidate_prefix(name.c_str());
+        metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        for (auto& dep_name : dependents) {
+            jit_.invalidate(dep_name.c_str());
+            jit_.invalidate_prefix(dep_name.c_str());
+            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        }
 
         // Issue #225 cycle 3: invalidate bridge data for
         // the mutated function and all its dependents.

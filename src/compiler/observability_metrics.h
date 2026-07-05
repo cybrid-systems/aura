@@ -32,6 +32,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_compile_misses{0};
     // jit_cache_ erase (from invalidate_function)
     std::atomic<std::uint64_t> jit_cache_evictions{0};
+    // Issue #491: AuraJIT::invalidate / invalidate_prefix calls from
+    // invalidate_function + hot-swap paths (hot-swap safety wiring).
+    std::atomic<std::uint64_t> jit_hotswap_invalidate_total{0};
     // --emit-binary
     std::atomic<std::uint64_t> aot_emits{0};
     std::atomic<std::uint64_t> aot_fallbacks{0};

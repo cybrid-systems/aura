@@ -87,6 +87,8 @@
     "compile:compiler-incremental-stats"
     "compile:typecheck-stats"
     "compile:jit-stats"
+    ; ── Issue #491 — JIT production-readiness observability ──
+    "query:jit-stats-hash"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
