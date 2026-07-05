@@ -99,6 +99,9 @@ void Evaluator::register_all_primitives() {
 
     primitives_detail::register_eval_observability_primitives(prim_registrar(), *this);
 
+    // Issue #499: foundational EDA parse/query/mutate primitives module.
+    primitives_detail::register_eda_primitives(prim_registrar(), *this);
+
     primitives_detail::register_security_primitives(prim_registrar(), *this);
 
     // Issue #443: external simulator tool-calling +

@@ -574,6 +574,12 @@ struct CompilerMetrics {
     // Issue #697: Declarative primitives extension kit observability.
     std::atomic<std::uint64_t> primitive_skeleton_generations_total{0};
     std::atomic<std::uint64_t> primitive_eda_meta_backfill_total{0};
+    // Issue #499: EDA foundation primitives module observability.
+    std::atomic<std::uint64_t> eda_foundation_parse_total{0};
+    std::atomic<std::uint64_t> eda_foundation_query_total{0};
+    std::atomic<std::uint64_t> eda_foundation_mutate_total{0};
+    std::atomic<std::uint64_t> eda_foundation_waveform_total{0};
+    std::atomic<std::uint64_t> eda_foundation_feedback_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
