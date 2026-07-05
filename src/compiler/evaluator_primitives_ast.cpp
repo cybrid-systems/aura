@@ -1104,7 +1104,12 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
         if (!ev.workspace_flat_)
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->compact_nodes()));
+        const auto reclaimed = ev.workspace_flat_->compact_nodes();
+        // Issue #490: compact remaps NodeIds — drop stale Evaluator
+        // index entries, then optionally eager-rebuild per policy.
+        ev.invalidate_tag_arity_index();
+        ev.maybe_eager_rebuild_pattern_index_after_cow();
+        return make_int(static_cast<std::int64_t>(reclaimed));
     });
 
     // (ast:validate-post-restore) — Issue #263: check generation_ /

@@ -3558,11 +3558,10 @@ public:
         node_first_mutation_ = std::move(new_node_first_mutation);
         node_gen_ = std::move(new_node_gen);
         value_cache_ = std::move(new_value_cache);
-        // Issue #447: invalidate the tag+arity index after
-        // COW. The follow-up hooks the COW path into a
-        // rebuild, but P0 just clears (next query call
-        // triggers a lazy rebuild).
-        tag_arity_index_.clear();
+        // Issue #490: proactive rebuild after compact remap so
+        // query:tag-arity-count / find_by_tag_arity avoid a
+        // lazy O(n) spike on the next query call.
+        rebuild_tag_arity_index();
 
         root = remap(root);
 

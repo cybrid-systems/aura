@@ -142,7 +142,27 @@ void Evaluator::tag_arity_index_sync_after_mutation(const aura::ast::FlatAST& fl
     tag_arity_index_synced_gen_ = flat.generation();
 }
 
-void Evaluator::build_tag_arity_index() const {
+void Evaluator::bump_pattern_index_rebuild_trigger(std::uint8_t trigger) const noexcept {
+    switch (static_cast<PatternIndexRebuildTrigger>(trigger)) {
+        case PatternIndexRebuildTrigger::EagerMutate:
+            pattern_index_eager_mutate_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case PatternIndexRebuildTrigger::EagerCow:
+            pattern_index_eager_cow_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case PatternIndexRebuildTrigger::LazyQuery:
+        default:
+            pattern_index_lazy_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+            break;
+    }
+}
+
+void Evaluator::maybe_eager_rebuild_pattern_index_after_cow() const noexcept {
+    if (pattern_index_policy_ == PatternIndexPolicy::EagerAfterCow && workspace_flat_)
+        build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerCow));
+}
+
+void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
     // Issue #371: take unique_lock for the duration of the
     // build/sync path. invalidate_tag_arity_index() (reached
     // below when workspace_flat_ is null) takes the same
@@ -168,6 +188,7 @@ void Evaluator::build_tag_arity_index() const {
 
     if (tag_arity_index_workspace_ != workspace_flat_ || tag_arity_index_.empty()) {
         tag_arity_index_rebuild_full(flat);
+        bump_pattern_index_rebuild_trigger(trigger);
         return;
     }
 
@@ -178,10 +199,12 @@ void Evaluator::build_tag_arity_index() const {
 
     if (cur_gen == tag_arity_index_synced_gen_ && cur_size > tag_arity_index_synced_size_) {
         tag_arity_index_append_nodes(flat, tag_arity_index_synced_size_);
+        bump_pattern_index_rebuild_trigger(trigger);
         return;
     }
 
     tag_arity_index_sync_after_mutation(flat);
+    bump_pattern_index_rebuild_trigger(trigger);
 }
 
 void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, EvalValue result,

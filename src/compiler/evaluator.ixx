@@ -1331,6 +1331,8 @@ public:
         // invalidation is safe — invalidate is a no-op if
         // the index is already empty.)
         invalidate_tag_arity_index();
+        if (f && pattern_index_policy_ == PatternIndexPolicy::EagerAfterCow)
+            build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerCow));
     }
     void set_workspace_pool(ast::StringPool* p) { workspace_pool_ = p; }
     ast::FlatAST* workspace_flat() const { return workspace_flat_; }
@@ -1893,7 +1895,10 @@ private:
     // Build (or rebuild) the index for the current
     // workspace. Called by query:pattern (and other
     // future matchers) before walking.
-    void build_tag_arity_index() const;
+    void build_tag_arity_index(
+        std::uint8_t trigger = static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery)) const;
+    void maybe_eager_rebuild_pattern_index_after_cow() const noexcept;
+    void bump_pattern_index_rebuild_trigger(std::uint8_t trigger) const noexcept;
     void tag_arity_index_insert_node(const ast::FlatAST& flat, ast::NodeId id) const;
     void tag_arity_index_remove_node(ast::NodeId id) const;
     void tag_arity_index_rebuild_full(const ast::FlatAST& flat) const;
@@ -2203,6 +2208,18 @@ public:
         bool param_columns_restored = false;
     };
 
+    // Issue #490: pattern-index rebuild policy + trigger kinds.
+    enum class PatternIndexPolicy : std::uint8_t {
+        Lazy = 0,
+        EagerAfterMutate = 1,
+        EagerAfterCow = 2,
+    };
+    enum class PatternIndexRebuildTrigger : std::uint8_t {
+        LazyQuery = 0,
+        EagerMutate = 1,
+        EagerCow = 2,
+    };
+
 private:
     // Issue #189: total mutations counter (for observability).
     // Bumped alongside defuse_version_ so dashboards can see
@@ -2449,6 +2466,10 @@ private:
         Strict = 2,
     };
     StaleRefPolicy stale_ref_policy_ = StaleRefPolicy::Warn;
+    PatternIndexPolicy pattern_index_policy_ = PatternIndexPolicy::Lazy;
+    mutable std::atomic<std::uint64_t> pattern_index_lazy_rebuilds_{0};
+    mutable std::atomic<std::uint64_t> pattern_index_eager_mutate_rebuilds_{0};
+    mutable std::atomic<std::uint64_t> pattern_index_eager_cow_rebuilds_{0};
     // Issue #448: mutation coordination observability. Bumped
     // by the scheduler / fiber hooks when:
     //   - a work-steal attempt is deferred or skipped
@@ -3010,6 +3031,19 @@ public:
     // policy + bump the counters.
     [[nodiscard]] StaleRefPolicy get_stale_ref_policy() const noexcept { return stale_ref_policy_; }
     void set_stale_ref_policy(StaleRefPolicy p) noexcept { stale_ref_policy_ = p; }
+    [[nodiscard]] PatternIndexPolicy get_pattern_index_policy() const noexcept {
+        return pattern_index_policy_;
+    }
+    void set_pattern_index_policy(PatternIndexPolicy p) noexcept { pattern_index_policy_ = p; }
+    [[nodiscard]] std::uint64_t get_pattern_index_lazy_rebuilds() const noexcept {
+        return pattern_index_lazy_rebuilds_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_index_eager_mutate_rebuilds() const noexcept {
+        return pattern_index_eager_mutate_rebuilds_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_index_eager_cow_rebuilds() const noexcept {
+        return pattern_index_eager_cow_rebuilds_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t get_stale_ref_blocked_count() const noexcept {
         return stale_ref_blocked_count_.load(std::memory_order_relaxed);
     }
@@ -3371,7 +3405,9 @@ public:
     // The index is normally lazy-built on first use, so
     // this is only needed for direct unit tests of the
     // index itself.
-    void force_build_tag_arity_index() const { build_tag_arity_index(); }
+    void force_build_tag_arity_index() const {
+        build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery));
+    }
     // Test accessors for setting the workspace directly
     // (bypassing the Aura primitive pipeline, which is
     // tested separately).
@@ -4339,6 +4375,13 @@ public:
             // that the AI Agent can monitor.
             if (outermost && ev_->arena_group_) {
                 ev_->arena_group_->bump_auto_compact_guard_call();
+            }
+            // Issue #490: proactive Evaluator tag_arity_index rebuild
+            // on successful outermost Guard exit when policy requests it.
+            if (outermost && success &&
+                ev_->pattern_index_policy_ == PatternIndexPolicy::EagerAfterMutate) {
+                ev_->build_tag_arity_index(
+                    static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
             }
             // unique_lock destructor runs automatically here.
         }

@@ -31,6 +31,8 @@
     "query:envframe-dualpath-stats"
     ; ── Issue #547 — Pattern + MacroIntroduced hygiene ──
     "query:pattern-index-stats"
+    ; ── Issue #490 — pattern-index lazy/eager rebuild observability ──
+    "query:pattern-index-rebuild-stats"
     "query:pattern-hygiene-stats"
     ; ── Issue #548 — Panic-checkpoint lifecycle ──
     "query:panic-checkpoint-lifecycle-stats"

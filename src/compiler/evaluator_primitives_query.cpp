@@ -648,6 +648,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   rebuild_time_us + delta_hits));
     });
 
+    // Issue #490: query:pattern-index-rebuild-stats. Hash view of
+    // lazy vs eager Evaluator index rebuild counters + FlatAST timing.
+    add("query:pattern-index-rebuild-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            std::uint64_t flat_rebuilds = 0;
+            std::uint64_t flat_rebuild_time_us = 0;
+            if (auto* ws = ev->workspace_flat()) {
+                flat_rebuilds = ws->tag_arity_index_rebuilds();
+                flat_rebuild_time_us = ws->tag_arity_index_rebuild_time_us();
+            }
+            auto* ht = FlatHashTable::create(12);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("lazy-rebuilds",
+                      static_cast<std::int64_t>(ev->get_pattern_index_lazy_rebuilds()));
+            insert_kv("eager-mutate-rebuilds",
+                      static_cast<std::int64_t>(ev->get_pattern_index_eager_mutate_rebuilds()));
+            insert_kv("eager-cow-rebuilds",
+                      static_cast<std::int64_t>(ev->get_pattern_index_eager_cow_rebuilds()));
+            insert_kv("flat-rebuilds", static_cast<std::int64_t>(flat_rebuilds));
+            insert_kv("flat-rebuild-time-us", static_cast<std::int64_t>(flat_rebuild_time_us));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #547: query:pattern-hygiene-stats. Returns
     // the sum of the 2 query:pattern hygiene observability
     // counters:
