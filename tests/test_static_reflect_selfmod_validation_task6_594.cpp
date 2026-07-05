@@ -28,6 +28,7 @@ namespace aura_594_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
@@ -100,7 +101,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: query regression ---");
     auto rps = cs.eval("(query:reflect-postmutate-stats)");
     auto rbs = cs.eval("(query:reflect-edsl-bridge-stats)");
-    CHECK(rps && is_int(*rps), "reflect-postmutate-stats regression");
+    CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
     CHECK(rbs && is_int(*rbs), "reflect-edsl-bridge-stats regression");
 }
 

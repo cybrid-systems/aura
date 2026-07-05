@@ -71,20 +71,15 @@ bool test_reflect_snapshot_counters_reachable() {
     return true;
 }
 
-// ── AC2: query:reflect-postmutate-stats returns integer sum
+// ── AC2: query:reflect-postmutate-stats returns hash
 bool test_query_reflect_postmutate_stats() {
-    std::println("\n--- AC2: (query:reflect-postmutate-stats) returns integer ---");
+    std::println("\n--- AC2: (query:reflect-postmutate-stats) returns hash ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:reflect-postmutate-stats)");
     CHECK(r.has_value(), "(query:reflect-postmutate-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:reflect-postmutate-stats) is integer");
-    if (r && aura::compiler::types::is_int(*r)) {
-        const auto v = aura::compiler::types::as_int(*r);
-        std::println("  query:reflect-postmutate-stats = {}", v);
-        CHECK(v >= 0, "(query:reflect-postmutate-stats) >= 0 (4 counters sum)");
-    }
+    CHECK(aura::compiler::types::is_hash(*r), "(query:reflect-postmutate-stats) is hash");
     return true;
 }
 
@@ -224,8 +219,8 @@ bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:reflect-postmutate-stats)");
-    CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:reflect-postmutate-stats) (new for #551)");
+    CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
+          "(query:reflect-postmutate-stats) (hash for #502)");
     auto r2 = cs.eval("(query:typed-mutation-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:typed-mutation-stats) (regression for #550)");

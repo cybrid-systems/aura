@@ -269,8 +269,8 @@ bool test_regression_existing_primitives() {
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:self-evolution-stability-stats) (regression for #549)");
     auto r3 = cs.eval("(query:reflect-postmutate-stats)");
-    CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:reflect-postmutate-stats) (regression for #551)");
+    CHECK(r3.has_value() && aura::compiler::types::is_hash(*r3),
+          "(query:reflect-postmutate-stats) (regression for #502)");
     auto r4 = cs.eval("(query:stable-ref-stats)");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
           "(query:stable-ref-stats) (regression for #457)");

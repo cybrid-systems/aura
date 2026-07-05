@@ -107,6 +107,8 @@
     "query:work-steal-stats"
     ; ── Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering) ──
     "query:ir-hygiene-stats"
+    ; ── Issue #502 — Post-mutate reflect validation + impact snapshot ──
+    "query:mutation-impact-snapshot"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

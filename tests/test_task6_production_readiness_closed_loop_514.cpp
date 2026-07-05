@@ -32,6 +32,13 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
+static std::int64_t reflect_postmutate_total(CompilerService& cs) {
+    auto r = cs.eval("(hash-ref (query:reflect-postmutate-stats) 'reflect-postmutate-total')");
+    if (!r || !is_int(*r))
+        return 0;
+    return as_int(*r);
+}
+
 static std::int64_t ir_hygiene_total(CompilerService& cs) {
     auto r = cs.eval("(hash-ref (query:ir-hygiene-stats) 'ir-hygiene-total')");
     if (!r || !is_int(*r))
@@ -116,7 +123,8 @@ static void run_matrix(CompilerService& cs) {
     auto rps = cs.eval("(query:reflect-postmutate-stats)");
     auto tms = cs.eval("(query:typed-mutation-stats)");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
-    CHECK(rps && is_int(*rps), "reflect-postmutate-stats regression");
+    CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
+    CHECK(reflect_postmutate_total(cs) >= 0, "reflect-postmutate-total non-negative");
     CHECK(tms && is_int(*tms), "typed-mutation-stats regression");
 }
 

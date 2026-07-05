@@ -2342,6 +2342,8 @@ private:
     mutable std::atomic<std::uint64_t> schema_validation_fail_count_{0};
     mutable std::atomic<std::uint64_t> dirty_nodes_in_snapshot_{0};
     mutable std::atomic<std::uint64_t> macro_markers_in_snapshot_{0};
+    // Issue #502: last post_mutation_reflect_validate() outcome (1=pass, 0=fail).
+    mutable std::atomic<std::uint8_t> last_schema_validation_ok_{1};
     // Issue #555: Task1 typed self-mod observability counters.
     // Exposed via (query:typed-mutation-stats-task1) primitive.
     // Stats-only (relaxed-ordering).
@@ -3024,6 +3026,12 @@ public:
     }
     void set_macro_markers_in_snapshot(std::uint64_t v) const noexcept {
         macro_markers_in_snapshot_.store(v, std::memory_order_relaxed);
+    }
+    void set_last_schema_validation_ok(bool v) const noexcept {
+        last_schema_validation_ok_.store(v ? 1 : 0, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool get_last_schema_validation_ok() const noexcept {
+        return last_schema_validation_ok_.load(std::memory_order_relaxed) != 0;
     }
     // Issue #488: post-mutate reflect validation + latest impact entry.
     [[nodiscard]] bool post_mutation_reflect_validate() const noexcept;
