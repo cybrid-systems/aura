@@ -82,6 +82,8 @@
     "query:primitives-error-stats"
     ; ── Issue #586 — EDA/infrastructure primitives registry extension observability ──
     "query:eda-primitives-stats"
+    ; ── Issue #587 — AI-native primitives development support observability ──
+    "query:primitives-ai-native-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
