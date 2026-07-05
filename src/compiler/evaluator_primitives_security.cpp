@@ -1290,6 +1290,118 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #582: EDA SV concurrency + atomic batch + fiber safety
+    // observability for multi-agent verification closed loops.
+    add("query:eda-concurrency-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        auto* ws = ev.workspace_flat();
+        const std::uint64_t boundary_violations = ev.get_boundary_violation_count();
+        const std::uint64_t batch_steal = ev.get_atomic_batch_steal_violation();
+        const std::uint64_t sv_concurrent_mutate_deadlocks = boundary_violations + batch_steal;
+        const std::uint64_t ws_commits = ws ? ws->atomic_batch_commits() : 0;
+        const std::uint64_t ev_commits = ev.atomic_batch_count();
+        const std::uint64_t rollbacks = ev.atomic_batch_rollbacks();
+        const std::uint64_t sv_rollbacks =
+            m ? m->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+        const std::uint64_t atomic_batch_sv_success =
+            ws_commits + ev_commits + sv_success > rollbacks + sv_rollbacks
+                ? ws_commits + ev_commits + sv_success - rollbacks - sv_rollbacks
+                : ws_commits + ev_commits;
+        const std::uint64_t feedback_hits =
+            m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t steal_deferred = aura_adaptive_steal_global_deferred_total();
+        const std::uint64_t feedback_during_steal_events =
+            feedback_hits > 0 && steal_deferred > 0
+                ? (feedback_hits < steal_deferred ? feedback_hits : steal_deferred)
+                : 0;
+        std::uint64_t sv_nodes = 0;
+        if (ws) {
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                switch (ws->get(id).tag) {
+                    case aura::ast::NodeTag::Interface:
+                    case aura::ast::NodeTag::Modport:
+                    case aura::ast::NodeTag::Property:
+                    case aura::ast::NodeTag::Sequence:
+                    case aura::ast::NodeTag::Assert:
+                    case aura::ast::NodeTag::Covergroup:
+                    case aura::ast::NodeTag::Coverpoint:
+                    case aura::ast::NodeTag::Constraint:
+                    case aura::ast::NodeTag::Class:
+                        ++sv_nodes;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        const std::uint64_t boundary_violation_on_sv = sv_nodes > 0 ? boundary_violations : 0;
+        const std::uint64_t in_fiber = ev.atomic_batch_in_fiber_total();
+        const std::uint64_t total = sv_concurrent_mutate_deadlocks + atomic_batch_sv_success +
+                                    feedback_during_steal_events + boundary_violation_on_sv +
+                                    feedback_hits + steal_deferred + in_fiber;
+        std::int64_t recommendation = 0;
+        if (sv_concurrent_mutate_deadlocks > 0)
+            recommendation = 3;
+        else if (steal_deferred > feedback_hits && steal_deferred > 3)
+            recommendation = 2;
+        else if (atomic_batch_sv_success > 0 || sv_success > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"sv-concurrent-mutate-deadlocks",
+             make_int(static_cast<std::int64_t>(sv_concurrent_mutate_deadlocks))},
+            {"atomic-batch-sv-success",
+             make_int(static_cast<std::int64_t>(atomic_batch_sv_success))},
+            {"feedback-during-steal-events",
+             make_int(static_cast<std::int64_t>(feedback_during_steal_events))},
+            {"boundary-violation-on-sv",
+             make_int(static_cast<std::int64_t>(boundary_violation_on_sv))},
+            {"eda-concurrency-schema", make_int(582)},
+            {"eda-concurrency-total", make_int(static_cast<std::int64_t>(total))},
+            {"eda-concurrency-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #581: StableNodeRef + generation_ + dirty propagation
     // scalability for massive SV SoC under AI multi-round iterations.
     add("query:stable-ref-sv-scale-stats", [&ev](const auto&) -> EvalValue {
