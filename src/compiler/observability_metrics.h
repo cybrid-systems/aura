@@ -648,6 +648,38 @@ struct CompilerMetrics {
     // extension macro + AI-generate path lands.
     std::atomic<std::uint64_t> stdlib_extension_count_total{0};
     std::atomic<std::uint64_t> ai_native_primitive_hits_total{0};
+    // Issue #637: IRClosure + EnvFrame versioning + bridge
+    // invalidate protocol counters (P0 memory-safety foundation).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen inside
+    // apply_closure + materialize_call_env + invalidate_function
+    // when they wire in bridge_epoch / EnvFrame.version checks
+    // + Guard dtor-driven rebuilds. P0 ships the counters +
+    // the agent-visible (query:closure-bridge-safety-stats-hash)
+    // primitive so the Agent has a dashboard today; values
+    // are 0 until the enforcement work ships.
+    //   - closure_invalidation_post_mutate_total: count of
+    //     invalidate_function calls that fired AFTER a
+    //     workspace mutate (rebind / set-body / typed-mutate)
+    //     rather than on cold compilation. The ratio of
+    //     (this / invalidate_function_calls) measures the
+    //     share of invalidations triggered by the AI Agent
+    //     hot-swap path vs. cold compile.
+    //   - closure_version_mismatch_caught_total: bridge_epoch
+    //     / EnvFrame.version mismatch detections in
+    //     apply_closure (both paths) + materialize_call_env.
+    //     Each catch prevents a potential UAF / stale-env
+    //     read on a long-lived closure — count is the
+    //     "near-miss" rate the safety net prevented.
+    //   - closure_safe_rebuild_total: successful bridge
+    //     rebuilds performed after a mismatch (Guard dtor
+    //     path). The ratio (safe_rebuilds / mismatches) is
+    //     the recovery rate — 1.0 means every detected
+    //     mismatch was safely recovered, < 1.0 means some
+    //     fell back to error path (uncaught).
+    std::atomic<std::uint64_t> closure_invalidation_post_mutate_total{0};
+    std::atomic<std::uint64_t> closure_version_mismatch_caught_total{0};
+    std::atomic<std::uint64_t> closure_safe_rebuild_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
