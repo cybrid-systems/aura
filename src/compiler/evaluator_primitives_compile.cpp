@@ -108,7 +108,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // Re-use the build_hash pattern from closure:stats
         // above (same FNV-1a hash + open-addressing insert).
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            // Issue #603: 5 fields now (instructions-emitted,
+            // functions-emitted, view-cache-hits, block-dirty-hits,
+            // relower-blocks-saved) — capacity 16 to fit with the
+            // 50% max-load open-addressing policy.
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -147,14 +151,25 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         };
         std::uint64_t instr = 0, funcs = 0;
+        std::uint64_t view_hits = 0, dirty_hits = 0, blocks_saved = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
             instr = m->ir_soa_instructions_emitted.load(std::memory_order_relaxed);
             funcs = m->ir_soa_functions_emitted.load(std::memory_order_relaxed);
+            // Issue #603: full consumer adoption + per-block dirty_
+            // driven minimal re-lower observability. The first two
+            // fields (instructions/functions) cover dual-emit volumes;
+            // the three below cover the hot-path consumer side.
+            view_hits = m->ir_soa_view_cache_hits_total.load(std::memory_order_relaxed);
+            dirty_hits = m->ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed);
+            blocks_saved = m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed);
         }
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"instructions-emitted", make_int(static_cast<std::int64_t>(instr))},
             {"functions-emitted", make_int(static_cast<std::int64_t>(funcs))},
+            {"view-cache-hits", make_int(static_cast<std::int64_t>(view_hits))},
+            {"block-dirty-hits", make_int(static_cast<std::int64_t>(dirty_hits))},
+            {"relower-blocks-saved", make_int(static_cast<std::int64_t>(blocks_saved))},
         };
         return build_hash(kv);
     });

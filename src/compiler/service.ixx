@@ -4044,6 +4044,14 @@ public:
             return false;
         }
         const std::size_t dirty_blocks = it->second.dirty_block_count();
+        // Issue #603: bump the block_dirty_hits counter whenever the
+        // bitmask reports ≥1 dirty block in this entry. Pair with
+        // relower_blocks_saved (the clean-block counter above) so
+        // an AI agent can compute dirty_block_ratio = hits / (hits +
+        // saved). Atomic relaxed; advisory telemetry only.
+        if (dirty_blocks > 0)
+            metrics_.ir_soa_block_dirty_hits_total.fetch_add(dirty_blocks,
+                                                              std::memory_order_relaxed);
         if (dirty_blocks == 0) {
             // Bitmask says nothing changed → reuse cached IR.
             // Bump the skip counter; do NOT call lowering.
@@ -4051,6 +4059,17 @@ public:
             // lowering pass when the bitmask is clean.
             metrics_.relower_skipped_entirely_count.fetch_add(1, std::memory_order_relaxed);
             metrics_.irsoa_cache_miss_reduction.fetch_add(1, std::memory_order_relaxed);
+            // Issue #603: every block in every function is clean —
+            // that's the maximal relower_blocks_saved win per call.
+            // Sum all block counts so the observability primitive
+            // exposes the per-call win (rather than only the call
+            // count).
+            std::size_t total_blocks_saved = 0;
+            for (const auto& fb : it->second.block_dirty_per_func_)
+                total_blocks_saved += fb.size();
+            if (total_blocks_saved > 0)
+                metrics_.ir_soa_relower_blocks_saved_total.fetch_add(
+                    total_blocks_saved, std::memory_order_relaxed);
             return true;
         }
         // Issue #224 cycle 3: detect single-function-dirty
@@ -7474,6 +7493,14 @@ private:
                                                         std::memory_order_relaxed);
             metrics_.irsoa_wired_hits.fetch_add(1, std::memory_order_relaxed);
             metrics_.hotpath_soa_dual_emit_hits.fetch_add(1, std::memory_order_relaxed);
+            // Issue #603: view-equivalent SoA column access in the
+            // dual-emit lowering path. Each instruction emitted to
+            // the SoA columns is one column read / one "view" at
+            // the IRFunctionSoA level. Tracking this lets the AI
+            // self-modify loop measure whether the SoA path is
+            // being exercised under mutation churn.
+            metrics_.ir_soa_view_cache_hits_total.fetch_add(snap->instructions_emitted,
+                                                             std::memory_order_relaxed);
             pending_soa_snapshot_ = *snap;
         }
     }
