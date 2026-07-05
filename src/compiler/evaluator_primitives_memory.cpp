@@ -1084,6 +1084,62 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // Issue #623: production-harden arena auto-compact threshold.
+    //
+    // (arena:auto-compact-threshold) — read the current
+    // fragmentation-ratio threshold below which auto-compact
+    // does NOT trigger. Default 0.50 in the C++ side
+    // (ArenaGroup::compact_threshold_); settable via the
+    // primitive below. Returns -1 if no arena group is loaded,
+    // else the threshold * 100 (integer percentage 0..95).
+    //
+    // (arena:set-auto-compact-threshold ratio) — write the
+    // threshold. ratio is a percentage 0..95; out-of-range args
+    // are clamped to the valid range by the C++ side
+    // (std::clamp). Returns the previous value (also 0..95).
+    // Bumps arena_auto_compact_threshold_set_total on every
+    // call. The Agent's memory-pressure watchdog can tune this
+    // at runtime to make auto-compact more aggressive under
+    // sustained churn, more lax when fragmentation is stable.
+    //
+    // P0 ships these 2 primitives + 1 counter. The bigger
+    // #623 work (auto-trigger wiring on allocate, basic live
+    // defrag for small tiers, SoA dirty wiring) was already
+    // done by #604 (fiber/GC coord) + #685 (alloc-path
+    // policy counters) + #300 (defrag foundation). The
+    // threshold-tunables are the production-harden layer on
+    // top of the existing observability surface.
+    add("arena:auto-compact-threshold",
+        [&ev](const auto&) -> EvalValue {
+            if (!ev.arena_group_)
+                return make_int(-1);
+            const double cur = ev.arena_group_->compact_threshold();
+            return make_int(static_cast<std::int64_t>(cur * 100.0));
+        });
+    add("arena:set-auto-compact-threshold",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (!ev.arena_group_)
+                return make_int(-1);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->arena_auto_compact_threshold_set_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            const double prev = ev.arena_group_->compact_threshold();
+            // Default to no-op return of previous value (reads-only mode).
+            if (a.empty() || !is_int(a[0]))
+                return make_int(static_cast<std::int64_t>(prev * 100.0));
+            const std::int64_t requested = as_int(a[0]);
+            // Clamp 0..95 internally, same as the C++ std::clamp in
+            // set_compact_threshold. Negative → 0, > 95 → 95.
+            std::int64_t clamped = requested;
+            if (clamped < 0)
+                clamped = 0;
+            else if (clamped > 95)
+                clamped = 95;
+            ev.arena_group_->set_compact_threshold(
+                static_cast<double>(clamped) / 100.0);
+            return make_int(static_cast<std::int64_t>(prev * 100.0));
+        });
 }
 
 } // namespace aura::compiler::primitives_detail
