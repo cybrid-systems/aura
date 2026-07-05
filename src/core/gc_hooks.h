@@ -46,6 +46,17 @@ inline std::atomic<GcSafepointCheckFn> g_arena_safepoint_check{nullptr};
 using GcRecordAllocFn = void (*)();
 inline std::atomic<GcRecordAllocFn> g_arena_record_alloc{nullptr};
 
+// ── Fiber-context probe (Issue #604) ────────────────────────
+// Returns true when the calling thread is running inside a
+// scheduled fiber (g_current_fiber != nullptr). compact() /
+// defrag() consult this so that a compaction requested from a
+// fiber context bumps compaction_yield_checks and hits the GC
+// safepoint (coordinating the yield) rather than blindly
+// trimming the buffer. Null in stdin mode / pre-scheduler, so
+// the arena treats every compaction as non-fiber.
+using GcFiberActiveFn = bool (*)();
+inline std::atomic<GcFiberActiveFn> g_fiber_active{nullptr};
+
 // ── Convenience: call if set ───────────────────────────────
 inline void safepoint_check() noexcept {
     auto fn = g_arena_safepoint_check.load(std::memory_order_acquire);
@@ -57,6 +68,11 @@ inline void record_alloc() noexcept {
     auto fn = g_arena_record_alloc.load(std::memory_order_acquire);
     if (fn)
         fn();
+}
+
+inline bool fiber_active() noexcept {
+    auto fn = g_fiber_active.load(std::memory_order_acquire);
+    return fn ? fn() : false;
 }
 
 } // namespace aura::gc_hooks

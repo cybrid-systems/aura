@@ -2875,6 +2875,12 @@ add_dependencies(all_test_issue_targets test_issue_601)
 aura_add_issue_test(test_issue_603)
 aura_issue_test_link_llvm_jit(test_issue_603)
 add_dependencies(all_test_issue_targets test_issue_603)
+# Issue #604: arena auto-compact + defrag + fiber/GC safepoint coordination.
+# compact()/defrag() now consult gc_hooks::fiber_active() and hit the GC
+# safepoint from a fiber context; (query:arena-auto-stats) is a live snapshot.
+aura_add_issue_test(test_issue_604)
+aura_issue_test_link_llvm_jit(test_issue_604)
+add_dependencies(all_test_issue_targets test_issue_604)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
