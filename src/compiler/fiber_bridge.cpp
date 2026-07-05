@@ -44,6 +44,7 @@ __attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 
 // Issue #485: deferred steal violation + resume migration.
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}
+__attribute__((weak)) void aura_evaluator_bump_mutation_steal_attempt() {}
 __attribute__((weak)) void aura_evaluator_resume_fiber_migration() {}
 
 } // extern "C"

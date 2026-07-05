@@ -1112,6 +1112,82 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #500: query:work-steal-stats — consolidated work-stealing +
+    // MutationBoundary outermost-depth observability for Agent loops.
+    add("query:work-steal-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const std::uint64_t steal_attempts = aura_work_steal_attempts_total();
+        const std::uint64_t steal_successes = aura_work_steal_successes_total();
+        const std::uint64_t deferred = aura_adaptive_steal_global_deferred_total();
+        const std::uint64_t ring_attempts = aura_adaptive_steal_ring_attempts();
+        const std::uint64_t ring_successes = aura_adaptive_steal_ring_successes();
+        const std::uint64_t outermost_pref = aura_adaptive_steal_outermost_preferred();
+        const std::uint64_t migration_attempts = ev.get_mutation_steal_attempts();
+        const std::uint64_t steal_violations = ev.get_mutation_steal_violation_count();
+        const std::uint64_t boundary_depth = Evaluator::mutation_boundary_depth();
+        const std::uint64_t work_steal_total =
+            steal_attempts + steal_successes + deferred + migration_attempts + ring_attempts;
+        std::int64_t recommendation = 0;
+        if (steal_violations > 0)
+            recommendation = 3;
+        else if (deferred > steal_successes && deferred > 5)
+            recommendation = 2;
+        else if (steal_attempts > 0 && steal_successes == 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"steal-attempts", make_int(static_cast<std::int64_t>(steal_attempts))},
+            {"steal-successes", make_int(static_cast<std::int64_t>(steal_successes))},
+            {"steal-deferred-mutation", make_int(static_cast<std::int64_t>(deferred))},
+            {"steal-violations", make_int(static_cast<std::int64_t>(steal_violations))},
+            {"mutation-boundary-depth", make_int(static_cast<std::int64_t>(boundary_depth))},
+            {"fiber-migration-attempts", make_int(static_cast<std::int64_t>(migration_attempts))},
+            {"ring-steal-attempts", make_int(static_cast<std::int64_t>(ring_attempts))},
+            {"ring-steal-successes", make_int(static_cast<std::int64_t>(ring_successes))},
+            {"outermost-preferred", make_int(static_cast<std::int64_t>(outermost_pref))},
+            {"work-steal-total", make_int(static_cast<std::int64_t>(work_steal_total))},
+            {"work-steal-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #707: Per-fiber MutationStack / YieldCheckpoint pool stats.
     add("query:per-fiber-stack-pool-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
