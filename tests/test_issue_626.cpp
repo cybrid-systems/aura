@@ -66,8 +66,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:contracts-hotpath-stats-hash) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:contracts-hotpath-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -96,22 +95,16 @@ int main() {
         const auto dirty_skipped = hash_int(cs, "dirty-blocks-skipped");
         const auto schema = hash_int(cs, "schema");
         CHECK(contracts_checked >= 0 && contracts_checked <= 100,
-              std::format("contracts-checked in [0,100] (got {})",
-                          contracts_checked));
-        CHECK(violations >= 0,
-              std::format("violations-in-debug >= 0 (got {})", violations));
-        CHECK(consteval_hits >= 0,
-              std::format("consteval-hits >= 0 (got {})", consteval_hits));
+              std::format("contracts-checked in [0,100] (got {})", contracts_checked));
+        CHECK(violations >= 0, std::format("violations-in-debug >= 0 (got {})", violations));
+        CHECK(consteval_hits >= 0, std::format("consteval-hits >= 0 (got {})", consteval_hits));
         CHECK(zero_overhead >= 0,
               std::format("zero-overhead-savings >= 0 (got {})", zero_overhead));
-        CHECK(pipeline_runs >= 0,
-              std::format("pass-pipeline-runs >= 0 (got {})", pipeline_runs));
+        CHECK(pipeline_runs >= 0, std::format("pass-pipeline-runs >= 0 (got {})", pipeline_runs));
         CHECK(arena_triggers >= 0,
               std::format("arena-auto-triggers >= 0 (got {})", arena_triggers));
-        CHECK(dirty_skipped >= 0,
-              std::format("dirty-blocks-skipped >= 0 (got {})", dirty_skipped));
-        CHECK(schema == 626,
-              std::format("schema == 626 (got {})", schema));
+        CHECK(dirty_skipped >= 0, std::format("dirty-blocks-skipped >= 0 (got {})", dirty_skipped));
+        CHECK(schema == 626, std::format("schema == 626 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -144,20 +137,15 @@ int main() {
         const auto arena_triggers = hash_int(cs, "arena-auto-triggers");
         const auto dirty_skipped = hash_int(cs, "dirty-blocks-skipped");
         CHECK(contracts_checked == 0,
-              std::format("fresh-service contracts-checked == 0 (got {})",
-                          contracts_checked));
+              std::format("fresh-service contracts-checked == 0 (got {})", contracts_checked));
         CHECK(violations == 0,
-              std::format("fresh-service violations-in-debug == 0 (got {})",
-                          violations));
+              std::format("fresh-service violations-in-debug == 0 (got {})", violations));
         CHECK(pipeline_runs == 0,
-              std::format("fresh-service pass-pipeline-runs == 0 (got {})",
-                          pipeline_runs));
+              std::format("fresh-service pass-pipeline-runs == 0 (got {})", pipeline_runs));
         CHECK(arena_triggers == 0,
-              std::format("fresh-service arena-auto-triggers == 0 (got {})",
-                          arena_triggers));
+              std::format("fresh-service arena-auto-triggers == 0 (got {})", arena_triggers));
         CHECK(dirty_skipped == 0,
-              std::format("fresh-service dirty-blocks-skipped == 0 (got {})",
-                          dirty_skipped));
+              std::format("fresh-service dirty-blocks-skipped == 0 (got {})", dirty_skipped));
         CHECK(zero_overhead >= 0,
               std::format("fresh-service zero-overhead-savings is non-negative (got {})",
                           zero_overhead));
@@ -167,8 +155,7 @@ int main() {
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 626,
-              std::format("schema == 626 (got {})", schema));
+        CHECK(schema == 626, std::format("schema == 626 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -190,9 +177,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
