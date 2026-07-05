@@ -109,6 +109,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:hygiene-violation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:incremental-effectiveness` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:incremental-production-relower-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ir-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1259,6 +1260,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:hygiene-violation-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:incremental-effectiveness` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:incremental-production-relower-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:index-stats` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ir-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
