@@ -78,6 +78,8 @@
     "query:primitives-registry-core-stats"
     ; ── Issue #584 — Primitives hot-path AI-agent stress observability ──
     "query:primitives-hotpath-stats"
+    ; ── Issue #585 — Unified primitive error handling + recovery observability ──
+    "query:primitives-error-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
