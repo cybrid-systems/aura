@@ -107,6 +107,8 @@
     "query:eda-verification-stats"
     ; ── Issue #511 — Workspace snapshot + checkpoint persistence ──
     "query:workspace-snapshot-stats"
+    ; ── Issue #512 — Runtime orchestration production-readiness ──
+    "query:runtime-orchestration-stats"
     ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
     "query:work-steal-stats"
     ; ── Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering) ──
