@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**697** registrations scanned from `src/**/*.cpp`.
+**699** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (18%)
-- **core**: 201 primitives (29%)
+- **core**: 203 primitives (29%)
 - **internal-observable**: 225 primitives (32%)
 - **convenience**: 147 primitives (21%)
 
@@ -663,10 +663,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `_agent:list` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Arena: (14)
+## Arena: (16)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:adaptive-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-with-policy` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -675,6 +676,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:defrag-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:set-auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:should-auto-compact?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:shrink-to-fit` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -951,7 +953,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (201)
+### Core builtins (must remain primitive) (203)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -963,6 +965,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arena:adaptive-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:adaptive-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-with-policy` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -971,6 +974,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:set-auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:should-auto-compact?` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:shrink-to-fit` — `src/compiler/evaluator_primitives_memory.cpp`

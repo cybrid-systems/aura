@@ -3093,17 +3093,11 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 110 entries as of #513 ship (109 from #622 + 1 aot-hot-reload
-        // observability hash primitive from #513:
-        // query:aot-hot-reload-stats). The 3 mutate:atomic-*
-        // primitives that were originally planned shipped
-        // instead as the existing (mutate:atomic-batch ...) list-
-        // call form from #192/#213; the existing
-        // (query:atomic-batch-stats) (#437) already covers the
-        // int-side; (atomic-batch:stats) (#192) covers the
-        // batch-count observability surface. #622's contribution
-        // is the structured-hash companion only.
-        return make_int(110);
+        // 112 entries as of #623 ship (110 from #513 + 2 arena auto-
+        // compact threshold primitives from #623:
+        // arena:auto-compact-threshold,
+        // arena:set-auto-compact-threshold).
+        return make_int(112);
     });
 }
 
