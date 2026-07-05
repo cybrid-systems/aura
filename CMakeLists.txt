@@ -1270,6 +1270,9 @@ aura_issue_test_link_llvm_jit(test_issue_582_observability)
 # Issue #583 slice: primitives-registry-core-stats hash observability.
 aura_add_issue_test(test_issue_583_observability)
 aura_issue_test_link_llvm_jit(test_issue_583_observability)
+# Issue #584 slice: primitives-hotpath-stats AI-agent stress observability.
+aura_add_issue_test(test_issue_584_observability)
+aura_issue_test_link_llvm_jit(test_issue_584_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +
