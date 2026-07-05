@@ -38,6 +38,8 @@
     "query:pattern-hygiene-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
+    ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
+    "query:guard-production-impact-stats"
     ; ── Issue #548 — Panic-checkpoint lifecycle ──
     "query:panic-checkpoint-lifecycle-stats"
     ; ── Issue #549 — Self-evolution stability ──
