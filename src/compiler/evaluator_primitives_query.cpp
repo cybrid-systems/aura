@@ -750,6 +750,128 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_string(static_cast<std::int32_t>(idx));
     });
 
+    // Issue #618: query:scheduler-mutation-coord-stats —
+    // structured-hash companion to (query:orchestration-metrics).
+    // The latter (#451) returns a JSON string for back-compat
+    // with existing test_issue_451; this primitive is the
+    // Agent-discoverable structured form for the LLM-aware
+    // orchestrator side.
+    //
+    // Returned hash:
+    //   - gc-pauses-attributed-to-mutation  int (lifetime # of
+    //                                      GC safepoints where the
+    //                                      wait was attributed to
+    //                                      an active MutationBoundary
+    //                                      guard)
+    //   - mutation-boundary-depth            int (current call
+    //                                      depth — 0 = not inside
+    //                                      any guard; >0 = nested)
+    //   - current-fiber-id                  int (current Fiber's
+    //                                      numeric id, or 0 if no
+    //                                      fiber is active on this
+    //                                      thread)
+    //   - is-fibers-active                  bool (true iff
+    //                                      current-fiber-id > 0)
+    //   - gc-frequency-tune-ratio           int (0..100; the value
+    //                                      the last
+    //                                      (orchestration:tune-gc-
+    //                                      frequency ratio) call
+    //                                      set; default 50)
+    //   - schema                           int (sentinel = 618 so
+    //                                      the Agent can detect
+    //                                      schema changes)
+    add("query:scheduler-mutation-coord-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto& string_heap = ev->string_heap_mut();
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const std::uint64_t gc_pauses =
+            aura_fiber_static_gc_pause_attributed_to_mutation();
+        const std::uint64_t depth = aura_evaluator_mutation_boundary_depth();
+        const std::uint64_t cur_fiber = aura_fiber_current_id();
+        const std::uint64_t ratio =
+            static_cast<std::uint64_t>(
+                aura::serve::gc_frequency_tune_ratio().load(std::memory_order_relaxed));
+        insert_kv("gc-pauses-attributed-to-mutation",
+                  static_cast<std::int64_t>(gc_pauses));
+        insert_kv("mutation-boundary-depth",
+                  static_cast<std::int64_t>(depth));
+        insert_kv("current-fiber-id",
+                  static_cast<std::int64_t>(cur_fiber));
+        insert_kv("is-fibers-active",
+                  cur_fiber > 0 ? 1 : 0);
+        insert_kv("gc-frequency-tune-ratio",
+                  static_cast<std::int64_t>(ratio));
+        insert_kv("schema", 618);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #618: (orchestration:tune-gc-frequency ratio) —
+    // setter for the GC safepoint frequency tuning atomic.
+    // (orchestration:tune-gc-frequency) with no arg reads back
+    // the current value. With an int arg in [0, 100] writes +
+    // returns the previous value. Out-of-range args are clamped
+    // (negative -> 0; > 100 -> 100) so callers don't have to
+    // validate.
+    //
+    // P0 ships write/read/return; the actual scheduler-side
+    // consult of this atomic is a follow-up. Until then, the
+    // value is dormant but visible to the Agent via
+    // (query:scheduler-mutation-coord-stats) so the LLM-aware
+    // tuning loop can be wired up without re-touching the
+    // scheduler in the same PR.
+    add("orchestration:tune-gc-frequency", [](std::span<const EvalValue> a) -> EvalValue {
+        auto& ratio = aura::serve::gc_frequency_tune_ratio();
+        const std::uint64_t prev = ratio.load(std::memory_order_relaxed);
+        if (a.empty()) {
+            return make_int(static_cast<std::int64_t>(prev));
+        }
+        if (!is_int(a[0])) {
+            // Bad-arg: return current value as int, no change.
+            return make_int(static_cast<std::int64_t>(prev));
+        }
+        std::int64_t requested = as_int(a[0]);
+        std::uint32_t clamped = 0;
+        if (requested < 0)
+            clamped = 0;
+        else if (requested > 100)
+            clamped = 100;
+        else
+            clamped = static_cast<std::uint32_t>(requested);
+        ratio.store(clamped, std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(prev));
+    });
+
     // Issue #447: query:query-stats. Returns the sum
     // of the 3 tag+arity index counters (hits / misses /
     // rebuilds) as an integer. P0 ships the sum; the

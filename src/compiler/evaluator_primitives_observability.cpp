@@ -3085,8 +3085,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 102 entries as of #507 ship (101 from #504/#617 + query:task4-hotpath-contracts).
-        return make_int(102);
+        // 103 entries as of #618 ship (102 from #507 + 2 orchestration
+        // primitives from #618: query:scheduler-mutation-coord-stats,
+        // orchestration:tune-gc-frequency).
+        return make_int(103);
     });
 }
 
