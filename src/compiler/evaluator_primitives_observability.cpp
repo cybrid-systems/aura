@@ -3014,6 +3014,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:deployment-stats",
             // Issue #465 — C++26 hot-path contracts + consteval
             "query:cxx26-hotpath-invariants",
+            // Issue #507 — Task4 hot-path Contracts + consteval sites
+            "query:task4-hotpath-contracts",
             // Issue #678 — PCV span lifetime safety in query layer
             "query:span-lifetime-stats",
             // Issue #679 — nested Guard + atomic-batch rollback alignment
@@ -3081,11 +3083,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 101 entries as of #504 ship (100 from #503 + query:mutation-boundary-log).
-        // #617's 3 introspection primitives (query:primitives-by-category,
-        // query:schema-of-primitive, query:primitives-meta-catalog)
-        // were already counted in #504's bump; rebase kept the 101.
-        return make_int(101);
+        // 102 entries as of #507 ship (101 from #504/#617 + query:task4-hotpath-contracts).
+        return make_int(102);
     });
 }
 

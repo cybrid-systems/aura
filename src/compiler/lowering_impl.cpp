@@ -78,6 +78,9 @@ static std::uint32_t lower_flat_expr(
     state.current_flat = &flat;
     state.current_pool = &pool;
     LoweringState::SourceScope scope(state, id); // RAII: protects type_id propagation
+    // Issue #507: debug contract on valid NodeId range (observe mode
+    // uses early exit below instead of aborting on stale ids).
+    contract_assert(id == NULL_NODE || id < flat.size());
     // Early exit for invalid ids (backup for contract-observe mode)
     if (id == NULL_NODE || id >= flat.size()) {
         auto slot = state.alloc_local();

@@ -2897,6 +2897,10 @@ add_dependencies(all_test_issue_targets test_issue_504)
 aura_add_issue_test(test_issue_505)
 aura_issue_test_link_llvm_jit(test_issue_505)
 add_dependencies(all_test_issue_targets test_issue_505)
+# Issue #507: Task4 hot-path Contracts + consteval invariants.
+aura_add_issue_test(test_issue_507)
+aura_issue_test_link_llvm_jit(test_issue_507)
+add_dependencies(all_test_issue_targets test_issue_507)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)
