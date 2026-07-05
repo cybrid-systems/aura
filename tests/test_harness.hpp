@@ -85,10 +85,10 @@ inline std::vector<TestCase>& registry() {
 
 inline int register_test(const char* name, TestFn fn) {
     registry().push_back(TestCase{name, fn});
-    return 0;  // dummy return so it can be used in static init
+    return 0; // dummy return so it can be used in static init
 }
 
-}  // namespace aura::test
+} // namespace aura::test
 
 // ── CHECK / EXPECT macros (backward-compat) ───────────────────
 //
@@ -111,16 +111,17 @@ inline int register_test(const char* name, TestFn fn) {
 // makes the message own its data for the duration of the
 // macro body. Accepts both const char* and std::string
 // arguments thanks to std::string's converting constructor.
-#define CHECK(cond, msg) do { \
-    const std::string _check_msg = (msg); \
-    if (!(cond)) { \
-        std::println(std::cerr, "  FAIL: {} (line {})", _check_msg, __LINE__); \
-        ++::aura::test::g_failed; \
-    } else { \
-        std::println("  PASS: {}", _check_msg); \
-        ++::aura::test::g_passed; \
-    } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        const std::string _check_msg = (msg);                                                      \
+        if (!(cond)) {                                                                             \
+            std::println(std::cerr, "  FAIL: {} (line {})", _check_msg, __LINE__);                 \
+            ++::aura::test::g_failed;                                                              \
+        } else {                                                                                   \
+            std::println("  PASS: {}", _check_msg);                                                \
+            ++::aura::test::g_passed;                                                              \
+        }                                                                                          \
+    } while (0)
 
 // Optional: an EXPECT_* family for new tests that want
 // richer reporting (currently mapped to the same counter
@@ -145,10 +146,9 @@ inline int register_test(const char* name, TestFn fn) {
 //
 // The body of a TEST() is the test function itself — it
 // can use CHECK/EXPECT_* macros to record results.
-#define TEST(test_name) \
-    static void test_name(); \
-    static int test_name##_reg = \
-        ::aura::test::register_test(#test_name, test_name); \
+#define TEST(test_name)                                                                            \
+    static void test_name();                                                                       \
+    static int test_name##_reg = ::aura::test::register_test(#test_name, test_name);               \
     static void test_name()
 
 // ── RUN_ALL_TESTS() — unified main() body ────────────────────
@@ -167,8 +167,7 @@ inline int RUN_ALL_TESTS() {
         // No registered tests. The file used legacy
         // CHECK() macros directly. Report the counters.
         std::println("──────────────────────────────────────");
-        std::println("Total: {} passed, {} failed",
-                     ::aura::test::g_passed, ::aura::test::g_failed);
+        std::println("Total: {} passed, {} failed", ::aura::test::g_passed, ::aura::test::g_failed);
         return ::aura::test::g_failed == 0 ? 0 : 1;
     }
     // Run registered tests.
@@ -188,8 +187,7 @@ inline int RUN_ALL_TESTS() {
         }
     }
     std::println("════════════════════════════════════════");
-    std::println("Total: {} passed, {} failed (across {} test cases)",
-                 passed, failed, reg.size());
+    std::println("Total: {} passed, {} failed (across {} test cases)", passed, failed, reg.size());
     return failed == 0 ? 0 : 1;
 }
 
@@ -224,8 +222,7 @@ inline int RUN_ALL_TESTS() {
 //
 // Returns the env value as int, or `default_value` if the
 // env is unset / empty / unparseable / non-positive.
-[[nodiscard]] inline int k_int_env(const char* name,
-                                   int default_value) noexcept {
+[[nodiscard]] inline int k_int_env(const char* name, int default_value) noexcept {
     if (const char* v = std::getenv(name); v != nullptr && *v != '\0') {
         char* end = nullptr;
         const long parsed = std::strtol(v, &end, 10);
@@ -236,4 +233,4 @@ inline int RUN_ALL_TESTS() {
     return default_value;
 }
 
-#endif  // AURA_TEST_HARNESS_HPP
+#endif // AURA_TEST_HARNESS_HPP

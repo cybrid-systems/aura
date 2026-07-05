@@ -1,6 +1,7 @@
 // Minimal common harness for issue/pilot test binaries (refactor 3.2 dedup pilot).
-// Reduces boilerplate in the 3 CMake pilots (test_error_merr, test_primitives_init, test_harness_pilot).
-// Usage: #include "issue_test_harness.hpp" then define your test_foo() funcs; the main + CHECK are provided.
+// Reduces boilerplate in the 3 CMake pilots (test_error_merr, test_primitives_init,
+// test_harness_pilot). Usage: #include "issue_test_harness.hpp" then define your test_foo() funcs;
+// the main + CHECK are provided.
 #ifndef AURA_ISSUE_TEST_HARNESS_HPP
 #define AURA_ISSUE_TEST_HARNESS_HPP
 
@@ -21,16 +22,17 @@ static int g_failed = 0;
 // is freed and ASan flags a heap-use-after-free. Copying
 // into a local std::string makes the message own its data
 // for the duration of the macro body.
-#define CHECK(cond, msg) do { \
-    const std::string _check_msg = (msg); \
-    if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", _check_msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", _check_msg); \
-        ++g_passed; \
-    } \
-} while(0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        const std::string _check_msg = (msg);                                                      \
+        if (!(cond)) {                                                                             \
+            std::println("  FAIL: {} (line {})", _check_msg, __LINE__);                            \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", _check_msg);                                                \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // Run the pilot's test_* functions (caller defines them) and report.
 // Usage in pilot .cpp:
@@ -73,14 +75,12 @@ namespace aura_test_harness {
 // Capture count StableNodeRefs from the flat starting at
 // NodeId{0} .. NodeId{count-1}. Returns a vector of the
 // deduced StableNodeRef type (auto in the caller).
-template <typename FlatT>
-auto capture_stable_refs(FlatT& flat, int count) {
+template <typename FlatT> auto capture_stable_refs(FlatT& flat, int count) {
     using RefT = decltype(flat.make_ref(typename FlatT::NodeId{0}));
     std::vector<RefT> refs;
     refs.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        refs.push_back(flat.make_ref(typename FlatT::NodeId{
-            static_cast<std::uint32_t>(i)}));
+        refs.push_back(flat.make_ref(typename FlatT::NodeId{static_cast<std::uint32_t>(i)}));
     }
     return refs;
 }
@@ -88,17 +88,14 @@ auto capture_stable_refs(FlatT& flat, int count) {
 struct RefStats {
     std::size_t still_valid = 0;
     std::size_t dangling = 0;
-    [[nodiscard]] std::size_t total() const noexcept {
-        return still_valid + dangling;
-    }
+    [[nodiscard]] std::size_t total() const noexcept { return still_valid + dangling; }
     [[nodiscard]] double dangling_pct() const noexcept {
         return total() == 0 ? 0.0
-                             : 100.0 * static_cast<double>(dangling) / static_cast<double>(total());
+                            : 100.0 * static_cast<double>(dangling) / static_cast<double>(total());
     }
 };
 
-template <typename FlatT, typename RefsT>
-RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
+template <typename FlatT, typename RefsT> RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
     RefStats stats;
     for (auto& ref : refs) {
         if (ref.is_valid_in(flat)) {
@@ -110,7 +107,7 @@ RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
     return stats;
 }
 
-}  // namespace aura_test_harness
+} // namespace aura_test_harness
 
 // ── Env-var knob helpers (Issue #371 follow-up) ───────────
 //
@@ -127,8 +124,7 @@ RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
 //
 // Returns the env value as int, or `default_value` if the
 // env is unset / empty / unparseable / non-positive.
-[[nodiscard]] inline int k_int_env(const char* name,
-                                   int default_value) noexcept {
+[[nodiscard]] inline int k_int_env(const char* name, int default_value) noexcept {
     if (const char* v = std::getenv(name); v != nullptr && *v != '\0') {
         char* end = nullptr;
         const long parsed = std::strtol(v, &end, 10);
@@ -139,4 +135,4 @@ RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
     return default_value;
 }
 
-#endif  // AURA_ISSUE_TEST_HARNESS_HPP
+#endif // AURA_ISSUE_TEST_HARNESS_HPP
