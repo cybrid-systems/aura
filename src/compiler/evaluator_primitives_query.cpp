@@ -2368,6 +2368,111 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #534: query:arena-production-compaction-stats. Commercial P0 hash
+    // view of auto-compaction threshold policy + live-object defrag
+    // coordination with fiber safepoints and MutationBoundaryGuard — non-
+    // duplicative synthesis of #405 arena-compaction-stats int-sum, #430
+    // arena-compaction-stats-hash, #464 arena-auto-stats, #685 arena-auto-
+    // compact-stats, #604 arena-fragmentation-snapshot, and #300 defrag
+    // foundation themes; avoids repeating the per-field #430 hash surface:
+    //   P1 Fragmentation policy: fragmentation-ratio-pct, peak-used-bytes,
+    //      compaction-efficiency-pct
+    //   P2 Auto-compact lifecycle: auto-compact-triggers/skips/guard-calls,
+    //      compactions, bytes-saved, last-saved
+    //   P3 Defrag coordination: defrag-attempted-count, defrag-saved-bytes
+    //   P4 Safepoint/Guard: compaction-yield-checks, paused-by-boundary,
+    //      gc-safepoint-waits, safepoint-coordination-count
+    //   - arena-production-compaction-total / recommendation
+    add("query:arena-production-compaction-stats",
+        [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto& group = ev.arena_group();
+            const auto stats = group.total_stats();
+            const auto policy = group.auto_compact_policy_stats();
+            const std::uint64_t triggers =
+                group.auto_compact_trigger_count() + policy.auto_triggers;
+            const std::uint64_t skips = group.auto_compact_skip_count();
+            const std::uint64_t guard_calls = group.auto_compact_guard_call_count();
+            const std::uint64_t compacts = stats.compaction_count;
+            const std::uint64_t saved = stats.total_compaction_saved;
+            const std::uint64_t last_saved = stats.last_compaction_saved;
+            const std::uint64_t defrag_attempted = stats.defrag_attempted_count;
+            const std::uint64_t defrag_saved =
+                policy.defrag_savings + stats.defrag_savings_alloc + stats.last_defrag_saved;
+            const std::uint64_t yield_checks = group.compaction_yield_checks_group() +
+                                               policy.yield_checks_hit +
+                                               stats.compaction_yield_checks;
+            const std::uint64_t paused = ev.compaction_paused_by_boundary();
+            const std::uint64_t gc_waits = ev.get_gc_safepoint_waits_total();
+            const std::uint64_t gc_deferred = ev.get_gc_safepoint_deferred_total();
+            const std::uint64_t safepoint_coord = yield_checks + paused + gc_waits + gc_deferred;
+            const std::uint64_t mutations = ev.total_mutations();
+            const std::uint64_t dirty = ev.get_dirty_propagation_count();
+            const std::int64_t frag_pct =
+                static_cast<std::int64_t>(stats.fragmentation_ratio() * 100.0);
+            const std::int64_t efficiency_pct =
+                static_cast<std::int64_t>((saved * 100) / (compacts + 1));
+            const std::uint64_t total = triggers + skips + guard_calls + compacts + saved +
+                                        defrag_attempted + defrag_saved + safepoint_coord +
+                                        mutations + dirty + stats.peak_used;
+            std::int64_t recommendation = 0;
+            if (frag_pct > 30 && saved == 0 && compacts == 0)
+                recommendation = 3;
+            else if (paused > yield_checks && paused > 0)
+                recommendation = 2;
+            else if (triggers > 0 || compacts > 0 || defrag_saved > 0)
+                recommendation = 1;
+            insert_kv("fragmentation-ratio-pct", frag_pct);
+            insert_kv("peak-used-bytes", static_cast<std::int64_t>(stats.peak_used));
+            insert_kv("auto-compact-triggers", static_cast<std::int64_t>(triggers));
+            insert_kv("auto-compact-skips", static_cast<std::int64_t>(skips));
+            insert_kv("auto-compact-guard-calls", static_cast<std::int64_t>(guard_calls));
+            insert_kv("compactions", static_cast<std::int64_t>(compacts));
+            insert_kv("bytes-saved", static_cast<std::int64_t>(saved));
+            insert_kv("last-saved", static_cast<std::int64_t>(last_saved));
+            insert_kv("defrag-attempted-count", static_cast<std::int64_t>(defrag_attempted));
+            insert_kv("defrag-saved-bytes", static_cast<std::int64_t>(defrag_saved));
+            insert_kv("compaction-yield-checks", static_cast<std::int64_t>(yield_checks));
+            insert_kv("paused-by-boundary", static_cast<std::int64_t>(paused));
+            insert_kv("gc-safepoint-waits", static_cast<std::int64_t>(gc_waits));
+            insert_kv("safepoint-coordination-count", static_cast<std::int64_t>(safepoint_coord));
+            insert_kv("mutation-volume", static_cast<std::int64_t>(mutations));
+            insert_kv("dirty-propagation", static_cast<std::int64_t>(dirty));
+            insert_kv("compaction-efficiency-pct", efficiency_pct);
+            insert_kv("arena-production-compaction-total", static_cast<std::int64_t>(total));
+            insert_kv("arena-production-compaction-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
