@@ -630,6 +630,15 @@ struct CompilerMetrics {
     // the enforcement work ships.
     std::atomic<std::uint64_t> cross_fiber_violations_total{0};
     std::atomic<std::uint64_t> safe_resolves_total{0};
+    // Issue #632: atomic-batch SV-specific observability counters.
+    // Foundation scaffolding for the AC2 + AC3 enforcement work —
+    // the bumps happen when Guard aggregates rollback + impact
+    // for SV-tagged mutates inside an atomic batch. P0 ships the
+    // counters + the agent-visible
+    // (query:atomic-batch-sv-stats-hash) primitive so the Agent
+    // has a dashboard today; values are 0 until AC2 + AC3 wire-up.
+    std::atomic<std::uint64_t> atomic_batch_sv_rollback_total{0};
+    std::atomic<std::uint64_t> atomic_batch_sv_impact_nodes_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
