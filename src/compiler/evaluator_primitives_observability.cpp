@@ -3081,6 +3081,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:arena-production-compaction-stats",
             // Issue #535 — C++26 Contracts + consteval hot-path production tracker
             "query:contracts-production-hotpath-stats",
+            // Issue #539 — SV verification feedback → structured mutate closed loop
+            "query:sv-production-verification-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3121,10 +3123,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 131 entries as of #631 ship (130 from #535 + 1 stable-ref
-        // provenance SV observability hash primitive from #631:
-        // query:stable-ref-provenance-sv-stats-hash).
-        return make_int(131);
+        // 132 entries as of #539 ship (131 from #631 + 1 sv-production-
+        // verification observability hash primitive from #539:
+        // query:sv-production-verification-stats).
+        return make_int(132);
     });
 }
 

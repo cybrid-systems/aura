@@ -48,6 +48,8 @@
     "query:arena-production-compaction-stats"
     ; ── Issue #535 — C++26 Contracts + consteval hot-path production tracker ──
     "query:contracts-production-hotpath-stats"
+    ; ── Issue #539 — SV verification feedback → structured mutate closed loop ──
+    "query:sv-production-verification-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

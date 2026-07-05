@@ -2704,6 +2704,114 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #539: query:sv-production-verification-stats. Commercial P0 hash
+    // view of EDA verification feedback → structured SV mutate closed loop +
+    // commercial tool interop — non-duplicative synthesis of #519 edsl-eda-sv-
+    // closedloop-stats, #630 sv-verification-closedloop-stats-hash, #510
+    // eda-verification-stats, and #469 verification_dirty_ themes; avoids
+    // repeating the per-field #630 hash surface verbatim:
+    //   P1 Feedback mapping: feedback-mapped-count, feedback-mutate-success,
+    //      structured-mutate-hits
+    //   P2 SV mutate impact: sv-mutate-attempts/success, stable-ref-captures,
+    //      dirty-propagated-nodes
+    //   P3 Verification dirty: coverage-feedback-total, assert-failure-total
+    //   P4 Re-emit/re-verify: reverify-success, verification-convergence,
+    //      hardware-hook-calls, commercial-reemits, rollback-on-partial
+    //   - feedback-success-rate-pct / sv-production-verification-total / recommendation
+    add("query:sv-production-verification-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t feedback_mapped =
+                m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t feedback_success =
+                ev->get_verify_tool_feedback_mutate_success_total() +
+                (m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0);
+            const std::uint64_t structured_hits =
+                m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
+            const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+            const std::uint64_t stable_ref = ev->get_verify_tool_stable_ref_hits_total();
+            const std::uint64_t dirty_props = ev->get_verify_tool_dirty_propagations_total();
+            const std::uint64_t coverage = ws ? ws->verification_coverage_feedback_total() : 0;
+            const std::uint64_t assert_fail = ws ? ws->verification_assert_failure_total() : 0;
+            const std::uint64_t reverify =
+                m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t convergence =
+                m ? m->eda_sv_verification_convergence_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hw_hooks =
+                m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t reemits =
+                m ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t rollback =
+                m ? m->sv_emit_parse_fail_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t feedback_denom = feedback_mapped + sv_attempts + 1;
+            const std::int64_t feedback_success_pct =
+                static_cast<std::int64_t>((feedback_success * 100) / feedback_denom);
+            const std::uint64_t total = feedback_mapped + feedback_success + structured_hits +
+                                        sv_attempts + sv_success + stable_ref + dirty_props +
+                                        coverage + assert_fail + reverify + convergence + hw_hooks +
+                                        reemits + rollback;
+            std::int64_t recommendation = 0;
+            if (assert_fail > coverage && assert_fail > 0)
+                recommendation = 3;
+            else if (sv_attempts > 0 && sv_success == 0)
+                recommendation = 2;
+            else if (feedback_mapped > 0 || reverify > 0 || structured_hits > 0)
+                recommendation = 1;
+            insert_kv("feedback-mapped-count", static_cast<std::int64_t>(feedback_mapped));
+            insert_kv("feedback-mutate-success", static_cast<std::int64_t>(feedback_success));
+            insert_kv("structured-mutate-hits", static_cast<std::int64_t>(structured_hits));
+            insert_kv("sv-mutate-attempts", static_cast<std::int64_t>(sv_attempts));
+            insert_kv("sv-mutate-success", static_cast<std::int64_t>(sv_success));
+            insert_kv("stable-ref-captures-in-sv", static_cast<std::int64_t>(stable_ref));
+            insert_kv("dirty-propagated-nodes", static_cast<std::int64_t>(dirty_props));
+            insert_kv("coverage-feedback-total", static_cast<std::int64_t>(coverage));
+            insert_kv("assert-failure-total", static_cast<std::int64_t>(assert_fail));
+            insert_kv("reverify-success", static_cast<std::int64_t>(reverify));
+            insert_kv("verification-convergence", static_cast<std::int64_t>(convergence));
+            insert_kv("hardware-hook-calls", static_cast<std::int64_t>(hw_hooks));
+            insert_kv("commercial-reemits", static_cast<std::int64_t>(reemits));
+            insert_kv("rollback-on-partial", static_cast<std::int64_t>(rollback));
+            insert_kv("feedback-success-rate-pct", feedback_success_pct);
+            insert_kv("sv-production-verification-total", static_cast<std::int64_t>(total));
+            insert_kv("sv-production-verification-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
