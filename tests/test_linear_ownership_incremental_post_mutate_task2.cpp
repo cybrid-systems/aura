@@ -37,6 +37,7 @@ namespace aura_575_detail {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
 
@@ -174,7 +175,7 @@ static void run_integration_matrix(CompilerService& cs) {
     auto lms = cs.eval("(query:linear-ownership-mutation-stats)");
     auto ces = cs.eval("(query:closure-env-safety-stats)");
     CHECK(lms && is_int(*lms), "query:linear-ownership-mutation-stats returns int");
-    CHECK(ces && is_int(*ces), "query:closure-env-safety-stats returns int");
+    CHECK(ces && is_hash(*ces), "query:closure-env-safety-stats returns hash");
 
     std::println("\n--- AC8: multi-round linear mutate matrix ---");
     const auto stats8a = linear_incremental_stats(cs);

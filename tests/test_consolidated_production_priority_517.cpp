@@ -28,6 +28,7 @@ namespace aura_517_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t consolidated_stats(CompilerService& cs) {
@@ -68,7 +69,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: P2 Memory safety regression ---");
     auto ces = cs.eval("(query:closure-env-safety-stats)");
-    CHECK(ces && is_int(*ces), "closure-env-safety-stats regression");
+    CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
 
     std::println("\n--- AC5: P3 SoA hotpath regression ---");
     auto soa = cs.eval("(query:soa-hotpath-adoption-stats)");

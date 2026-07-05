@@ -2893,6 +2893,10 @@ add_dependencies(all_test_issue_targets test_issue_503)
 aura_add_issue_test(test_issue_504)
 aura_issue_test_link_llvm_jit(test_issue_504)
 add_dependencies(all_test_issue_targets test_issue_504)
+# Issue #505: closure/EnvFrame/bridge_epoch post-invalidate safety stats hash.
+aura_add_issue_test(test_issue_505)
+aura_issue_test_link_llvm_jit(test_issue_505)
+add_dependencies(all_test_issue_targets test_issue_505)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

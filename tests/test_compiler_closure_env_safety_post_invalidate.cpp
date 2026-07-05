@@ -8,8 +8,8 @@
 // long-running AI multi-round self-modify loops:
 //
 //   - AC1: 4 new counters reachable + start at 0
-//   - AC2: (query:closure-env-safety-stats) returns integer
-//          sum of 4 counters
+//   - AC2: (query:closure-env-safety-stats) returns hash
+//          with per-counter fields
 //   - AC3: closure_stale_refresh_count bumps under Aura mutate
 //          (driven by invalidate_function path)
 //   - AC4: bridge_epoch_hit_count bumps via CompilerService
@@ -70,20 +70,15 @@ bool test_closure_env_safety_counters_reachable() {
     return true;
 }
 
-// ── AC2: query:closure-env-safety-stats returns integer sum
+// ── AC2: query:closure-env-safety-stats returns hash
 bool test_query_closure_env_safety_stats() {
-    std::println("\n--- AC2: (query:closure-env-safety-stats) returns integer ---");
+    std::println("\n--- AC2: (query:closure-env-safety-stats) returns hash ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:closure-env-safety-stats)");
     CHECK(r.has_value(), "(query:closure-env-safety-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:closure-env-safety-stats) is integer");
-    if (r && aura::compiler::types::is_int(*r)) {
-        const auto v = aura::compiler::types::as_int(*r);
-        std::println("  query:closure-env-safety-stats = {}", v);
-        CHECK(v >= 0, "(query:closure-env-safety-stats) >= 0 (4 counters sum)");
-    }
+    CHECK(aura::compiler::types::is_hash(*r), "(query:closure-env-safety-stats) is hash");
     return true;
 }
 
@@ -234,7 +229,7 @@ bool test_regression_existing_primitives() {
     std::println("\n--- AC10: regression — #543/#549/#556 primitives still work ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:closure-env-safety-stats)");
-    CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
+    CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
           "(query:closure-env-safety-stats) (new for #531)");
     auto r2 = cs.eval("(query:envframe-dualpath-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),

@@ -37,6 +37,7 @@ namespace aura_610_detail {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
 
@@ -160,7 +161,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC5: closure-env-safety-stats regression ---");
     auto ces = cs.eval("(query:closure-env-safety-stats)");
-    CHECK(ces && is_int(*ces), "query:closure-env-safety-stats still works");
+    CHECK(ces && is_hash(*ces), "query:closure-env-safety-stats still works");
 
     std::println("\n--- AC6: invalidate bumps deopt_on_linear ---");
     const auto stats6a = linear_mutation_stats(cs);
