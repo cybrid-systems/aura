@@ -355,7 +355,7 @@ bool test_regression_related_primitives() {
     std::println("\n--- AC12: regression — related Prompt6 primitives ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:closure-env-safety-stats)");
-    CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
+    CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
           "(query:closure-env-safety-stats) (regression for #531)");
     auto r2 = cs.eval("(query:envframe-dualpath-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),

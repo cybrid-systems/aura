@@ -3587,54 +3587,85 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             static_cast<std::int64_t>(steals + violations + unsafe_attempts + contention_us));
     });
 
-    // Issue #531: query:closure-env-safety-stats. Returns
-    // the sum of 4 closure / EnvFrame / bridge_epoch /
-    // linear_ownership_state observability counters from
-    // the shared CompilerMetrics struct:
-    //   - closure_stale_refresh_count_  (# of stale
-    //     IRClosure refreshes triggered by
-    //     invalidate_function — the closure-refresh
-    //     frequency post-mutate)
-    //   - bridge_epoch_hit_count_       (# of bridge_epoch
-    //     match checks that succeeded — closure was fresh,
-    //     no refresh needed)
-    //   - linear_check_pass_count_      (# of linear
-    //     ownership_state runtime checks that passed —
-    //     Linear* op proceeded with fast path)
-    //   - gc_envframe_stale_skipped_    (# of GCEnvWalkFn
-    //     visits that skipped a stale EnvFrame — > 0
-    //     means a COW/compaction or version mismatch was
-    //     caught at GC time)
-    //
-    // P0: returns an integer = sum of the 4 counters.
-    // Follow-up: returns a 4-tuple
-    // (stale-refresh bridge-hit linear-pass gc-skipped) so
-    // the AI Agent can compute refresh_rate =
-    // stale_refresh / (stale_refresh + bridge_hit) and
-    // react to gc_envframe_stale_skipped > 0 as a hard
-    // alert (silent EnvFrame mismatch).
-    add("query:closure-env-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        // Read from the shared CompilerMetrics struct via
-        // the Evaluator's void pointer (set by CompilerService
-        // via set_compiler_metrics(&metrics_)). Cast back to
-        // CompilerMetrics* to access the 4 new counters.
-        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
-        if (!m)
-            return make_int(0);
-        const std::uint64_t stale_refresh =
-            m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
-        const std::uint64_t bridge_hit = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
-        const std::uint64_t linear_pass =
-            m->linear_check_pass_count_.load(std::memory_order_relaxed);
-        const std::uint64_t gc_skipped =
-            m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed);
-        return make_int(
-            static_cast<std::int64_t>(stale_refresh + bridge_hit + linear_pass + gc_skipped));
-    });
+    // Issue #505 / #531: query:closure-env-safety-stats. Hash view of
+    // closure / EnvFrame / bridge_epoch / linear_ownership_state
+    // post-invalidate safety counters for AI multi-round mutate loops:
+    //   - stale-refresh: closure_stale_refresh_count_
+    //   - bridge-hit: bridge_epoch_hit_count_
+    //   - linear-pass: linear_check_pass_count_
+    //   - gc-skipped: gc_envframe_stale_skipped_
+    //   - env-stale-refresh: envframe_stale_refresh_count_
+    //   - closure-env-safety-total: sum of the 5 counters
+    //   - refresh-rate-pct: stale / (stale + bridge) * 100
+    //   - closure-env-safety-recommendation: 0=ok, 1=review, 2=alert
+    add("query:closure-env-safety-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(12);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t stale_refresh =
+                m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t bridge_hit =
+                m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t linear_pass =
+                m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t gc_skipped =
+                m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t total =
+                stale_refresh + bridge_hit + linear_pass + gc_skipped + env_refresh;
+            const std::uint64_t epoch_checks = stale_refresh + bridge_hit;
+            const std::int64_t refresh_pct =
+                epoch_checks > 0
+                    ? static_cast<std::int64_t>((stale_refresh * 100) / epoch_checks)
+                    : 0;
+            std::int64_t recommendation = 0;
+            if (gc_skipped > 0)
+                recommendation = 2;
+            else if (refresh_pct > 25)
+                recommendation = 1;
+            insert_kv("stale-refresh", static_cast<std::int64_t>(stale_refresh));
+            insert_kv("bridge-hit", static_cast<std::int64_t>(bridge_hit));
+            insert_kv("linear-pass", static_cast<std::int64_t>(linear_pass));
+            insert_kv("gc-skipped", static_cast<std::int64_t>(gc_skipped));
+            insert_kv("env-stale-refresh", static_cast<std::int64_t>(env_refresh));
+            insert_kv("closure-env-safety-total", static_cast<std::int64_t>(total));
+            insert_kv("refresh-rate-pct", refresh_pct);
+            insert_kv("closure-env-safety-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the

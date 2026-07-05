@@ -24,6 +24,7 @@
     "test_issue_501_hygiene",
     "test_issue_502",
     "test_issue_503",
-    "test_issue_504"
+    "test_issue_504",
+    "test_issue_505"
   ]
 }

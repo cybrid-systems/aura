@@ -37,6 +37,7 @@ namespace aura_638_detail {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
 
@@ -174,7 +175,7 @@ static void run_matrix(CompilerService& cs) {
     auto ces = cs.eval("(query:closure-env-safety-stats)");
     auto sps = cs.eval("(query:shape-stability-stats)");
     CHECK(lms && is_int(*lms), "linear-ownership-mutation-stats regression");
-    CHECK(ces && is_int(*ces), "closure-env-safety-stats regression");
+    CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
     CHECK(sps && is_int(*sps), "shape-stability-stats regression");
 }
 
