@@ -3475,6 +3475,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitives-hotpath-stats",
             // Issue #585 — Unified primitive error handling + recovery observability
             "query:primitives-error-stats",
+            // Issue #586 — EDA/infrastructure primitives registry extension observability
+            "query:eda-primitives-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3515,10 +3517,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 150 entries as of #585 ship (149 from #584 + 1 primitives-error
-        // stats registration from #585 — unified error/recovery hash:
-        // query:primitives-error-stats).
-        return make_int(150);
+        // 151 entries as of #586 ship (150 from #585 + 1 eda-primitives
+        // stats registration from #586 — EDA infra registry extension hash:
+        // query:eda-primitives-stats).
+        return make_int(151);
     });
 }
 

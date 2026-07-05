@@ -891,6 +891,118 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #586: EDA/infrastructure primitives registry extension observability
+    // hash. Synthesizes registry EDA category counts, foundation primitive
+    // activity (#499), SV mutate/feedback closed-loop, and verification_dirty
+    // propagation for AI Agent infra-driven verification loops.
+    add("query:eda-primitives-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t eda_registered = ev.primitives_.category_meta_count("eda") +
+                                             ev.primitives_.category_meta_count("sva") +
+                                             ev.primitives_.category_meta_count("verification");
+        const std::uint64_t parse =
+            m ? m->eda_foundation_parse_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mutate =
+            m ? m->eda_foundation_mutate_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback =
+            m ? m->eda_foundation_feedback_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t hooks =
+            m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+        auto* ws = ev.workspace_flat();
+        const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
+        const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+        std::uint64_t verification_dirty_nodes = 0;
+        std::uint64_t sv_nodes = 0;
+        if (ws) {
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                switch (ws->get(id).tag) {
+                    case aura::ast::NodeTag::Interface:
+                    case aura::ast::NodeTag::Modport:
+                    case aura::ast::NodeTag::Property:
+                    case aura::ast::NodeTag::Sequence:
+                    case aura::ast::NodeTag::Assert:
+                    case aura::ast::NodeTag::Covergroup:
+                    case aura::ast::NodeTag::Coverpoint:
+                    case aura::ast::NodeTag::Constraint:
+                    case aura::ast::NodeTag::Class:
+                        ++sv_nodes;
+                        break;
+                    default:
+                        break;
+                }
+                if (ws->verification_dirty(id) != 0)
+                    ++verification_dirty_nodes;
+            }
+        }
+        const std::int64_t closed_loop_rate_pct =
+            sv_attempts > 0 ? static_cast<std::int64_t>((sv_success * 100) / sv_attempts)
+                            : (sv_success > 0 ? 100 : 0);
+        const std::uint64_t total = eda_registered + parse + mutate + feedback + sv_attempts +
+                                    sv_success + verification_dirty_nodes + hooks + sv_nodes;
+        std::int64_t recommendation = 0;
+        if (eda_registered == 0)
+            recommendation = 3;
+        else if (parse == 0)
+            recommendation = 2;
+        else if (feedback == 0 && sv_success == 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"eda-registered-count", make_int(static_cast<std::int64_t>(eda_registered))},
+            {"foundation-parse-total", make_int(static_cast<std::int64_t>(parse))},
+            {"foundation-mutate-total", make_int(static_cast<std::int64_t>(mutate))},
+            {"foundation-feedback-total", make_int(static_cast<std::int64_t>(feedback))},
+            {"sv-mutate-attempts", make_int(static_cast<std::int64_t>(sv_attempts))},
+            {"sv-mutate-success", make_int(static_cast<std::int64_t>(sv_success))},
+            {"verification-dirty-nodes",
+             make_int(static_cast<std::int64_t>(verification_dirty_nodes))},
+            {"hardware-hook-calls", make_int(static_cast<std::int64_t>(hooks))},
+            {"closed-loop-rate-pct", make_int(closed_loop_rate_pct)},
+            {"eda-primitives-schema", make_int(586)},
+            {"eda-primitives-total", make_int(static_cast<std::int64_t>(total))},
+            {"eda-primitives-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #710: verify_tool/diagnostic Guard + StableRef + dirty propagation stats.
     add("query:verify-tool-guard-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
