@@ -1055,6 +1055,26 @@ struct CompilerMetrics {
     // is invasive to the Primitives class.
     std::atomic<std::uint64_t> primitive_call_total{0};
 
+    // Issue #614: primitives hot-path memory-stability counters.
+    //   - pair_alloc_total:       # of pairs.push_back calls in
+    //                             evaluator_primitives_list.cpp
+    //                             (list / append / reverse / map /
+    //                             filter / member foldl). Each
+    //                             push_back is one Pair allocation
+    //                             in the evaluator's pairs_ vector.
+    //   - linear_traverse_total: # of cdr-walk steps across
+    //                             length / list-ref / member / foldl.
+    //                             O(n) per cdr hop where n is the
+    //                             list depth; exposes pair-chain cost
+    //                             under AI multi-round mutate.
+    //   - cdr_depth_max:         longest single linear traverse
+    //                             observed (high-water mark). Useful
+    //                             for detecting pathological list
+    //                             chains in production agent loops.
+    std::atomic<std::uint64_t> pair_alloc_total{0};
+    std::atomic<std::uint64_t> linear_traverse_total{0};
+    std::atomic<std::uint64_t> cdr_depth_max{0};
+
     // Issue #452: AOT hot-update + region filtering
     // observability. Each counter is a per-bridge-event
     // monotonic total readable via (query:aot-stats).

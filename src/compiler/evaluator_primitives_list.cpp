@@ -82,12 +82,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return make_void();
     };
-    add("list", [&pairs](std::span<const EvalValue> a) {
+    add("list", [&pairs, &ev](std::span<const EvalValue> a) {
         // Build proper list (pair chain ending with void)
         EvalValue result = make_void();
         for (auto it = a.rbegin(); it != a.rend(); ++it) {
             auto id = pairs.size();
             pairs.push_back({*it, result});
+            ev.bump_pair_alloc_count(); // Issue #614
             result = make_pair(id);
         }
         return result;
@@ -109,7 +110,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("null?", [](const auto& a) {
         return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
     });
-    add("length", [&pairs](std::span<const EvalValue> a) {
+    add("length", [&pairs, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
@@ -123,6 +124,10 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             v = pairs[idx].cdr;
             n++;
         }
+        // Issue #614: surface the cdr-walk cost so AI agents can
+        // see list-depth vs pair_alloc in production.
+        ev.bump_linear_traverse_count(static_cast<std::uint64_t>(n),
+                                       static_cast<std::uint64_t>(n));
         return make_int(n);
     });
     add("list-ref", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -145,6 +150,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             v = pairs[idx].cdr;
         }
+        // Issue #614: surface the cdr-walk depth for list-ref so the
+        // high-water tracks worst-case positional access cost.
+        ev.bump_linear_traverse_count(pos, pos);
         if (is_pair(v)) {
             auto idx = as_pair_idx(v);
             return idx < pairs.size() ? pairs[idx].car : make_int(0);
@@ -185,7 +193,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(0);
     });
     // (append list ...) — Variadic: concatenate all provided lists
-    add("append", [&pairs](std::span<const EvalValue> a) {
+    add("append", [&pairs, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
         if (a.size() < 2)
@@ -213,6 +221,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 }
                 auto new_id = pairs.size();
                 pairs.push_back({pairs[idx].car, make_void()});
+                ev.bump_pair_alloc_count(); // Issue #614
                 auto new_pair = make_pair(new_id);
                 if (is_void(new_result))
                     new_result = new_pair;
@@ -232,7 +241,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return result;
     });
-    add("reverse", [&pairs](std::span<const EvalValue> a) {
+    add("reverse", [&pairs, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
@@ -245,12 +254,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return a[0];
             auto new_id = pairs.size();
             pairs.push_back({pairs[idx].car, result});
+            ev.bump_pair_alloc_count(); // Issue #614
             result = make_pair(new_id);
             v = pairs[idx].cdr;
         }
         return result;
     });
-    add("map", [&pairs, apply_unary](std::span<const EvalValue> a) {
+    add("map", [&pairs, apply_unary, &ev](std::span<const EvalValue> a) {
         // (map func list) — apply func to each element, collect results
         if (a.size() < 2 || is_void(a[1]))
             return make_void();
@@ -269,6 +279,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             auto new_id = pairs.size();
             pairs.push_back({mapped, make_void()});
+            ev.bump_pair_alloc_count(); // Issue #614
             auto new_pair = make_pair(new_id);
 
             if (first) {
@@ -287,7 +298,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
         return result;
     });
-    add("filter", [&pairs, apply_pred](std::span<const EvalValue> a) {
+    add("filter", [&pairs, apply_pred, &ev](std::span<const EvalValue> a) {
         // (filter pred list) — keep elements where pred returns truthy
         if (a.size() < 2 || is_void(a[1]))
             return make_void();
@@ -306,6 +317,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (keep) {
                 auto new_id = pairs.size();
                 pairs.push_back({pairs[idx].car, make_void()});
+                ev.bump_pair_alloc_count(); // Issue #614
                 auto new_pair = make_pair(new_id);
 
                 if (first) {
@@ -325,7 +337,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
         return result;
     });
-    add("take", [&pairs](std::span<const EvalValue> a) {
+    add("take", [&pairs, &ev](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_void();
         auto n = static_cast<std::size_t>(as_int(a[0]));
@@ -342,6 +354,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return result;
             auto new_id = pairs.size();
             pairs.push_back({pairs[idx].car, result});
+            ev.bump_pair_alloc_count(); // Issue #614
             result = make_pair(new_id);
             v = pairs[idx].cdr;
         }
@@ -355,6 +368,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 break;
             auto nid = pairs.size();
             pairs.push_back({pairs[idx].car, final});
+            ev.bump_pair_alloc_count(); // Issue #614
             final = make_pair(nid);
             result = pairs[idx].cdr;
         }
@@ -377,11 +391,12 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return v;
     });
-    add("foldl", [&pairs, apply_binary](std::span<const EvalValue> a) {
+    add("foldl", [&pairs, apply_binary, &ev](std::span<const EvalValue> a) {
         if (a.size() < 3)
             return make_void();
         auto acc = a[1];
         auto lst = a[2];
+        std::uint64_t steps = 0;
 
         while (!is_end_of_list(lst)) {
             if (!is_pair(lst))
@@ -391,7 +406,10 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 break;
             acc = apply_binary(a[0], acc, pairs[idx].car);
             lst = pairs[idx].cdr;
+            ++steps;
         }
+        // Issue #614: bump the cdr-walk count once at the end.
+        ev.bump_linear_traverse_count(steps, steps);
         return acc;
     });
 }

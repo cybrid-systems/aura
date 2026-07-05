@@ -2901,6 +2901,33 @@ public:
             m->primitive_call_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #614: primitives hot-path memory-stability counters.
+    // Bumped by evaluator_primitives_list.cpp (pair pushes +
+    // cdr walks) so the AI agent can correlate the
+    // (query:primitive-perf-stats) call_total with the pair/
+    // traverse cost it imposed.
+    inline void bump_pair_alloc_count() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pair_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    inline void bump_linear_traverse_count(std::uint64_t steps,
+                                           std::uint64_t max_depth_observed) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_traverse_total.fetch_add(steps, std::memory_order_relaxed);
+            // max_high_water — observe the largest ever. relaxed load +
+            // store is the standard low-contention pattern; a brief
+            // race on which exact max wins is acceptable (the next
+            // hot list operation will re-establish the high-water).
+            auto prev = m->cdr_depth_max.load(std::memory_order_relaxed);
+            while (max_depth_observed > prev && !m->cdr_depth_max.compare_exchange_weak(
+                                                    prev, max_depth_observed,
+                                                    std::memory_order_relaxed)) {
+            }
+        }
+    }
     // Issue #549: self-evolution-stability accessors + bump
     // helpers. Public so the
     // (query:self-evolution-stability-stats) primitive can
