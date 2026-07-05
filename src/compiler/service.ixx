@@ -526,6 +526,9 @@ public:
             (void)dirty_scope;
             mark_shape_dirty_for_fn_key(fn_key);
         });
+        // Issue #492: stability loss / invalidate → JIT eviction +
+        // fiber refresh (closes ShapeProfiler → JIT hot-swap loop).
+        shape::set_shape_deopt_hook(&CompilerService::shape_deopt_hook_trampoline);
         evaluator_.set_type_registry(&type_registry_);
         // Issue #252: wire the shared CompilerMetrics to the
         // Evaluator. apply_closure increments the closure_*
@@ -8375,6 +8378,64 @@ public:
     }
     void bump_shape_fiber_refresh() noexcept { shape::record_shape_fiber_refresh(); }
 
+    // Issue #492: ShapeProfiler deopt hook trampoline (C fn ptr).
+    static void shape_deopt_hook_trampoline(shape::FnKey fn_key, std::uint64_t version,
+                                            std::uint32_t dirty_scope) noexcept {
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        static_cast<CompilerService*>(raw)->on_shape_deopt_hook(fn_key, version, dirty_scope);
+    }
+
+    // Issue #492: JIT/cache eviction + observability on shape deopt.
+    void on_shape_deopt_hook(shape::FnKey fn_key, std::uint64_t version,
+                             std::uint32_t dirty_scope) noexcept {
+        (void)version;
+        if (dirty_scope == 0)
+            return;
+
+        std::string name;
+        for (const auto& [n, _] : ir_cache_v2_) {
+            if (shape::make_fn_key(session_id_, n) == fn_key) {
+                name = n;
+                break;
+            }
+        }
+        if (name.empty()) {
+            std::shared_lock cache_read(jit_cache_mtx_);
+            for (const auto& [n, _] : jit_cache_) {
+                if (shape::make_fn_key(session_id_, n) == fn_key) {
+                    name = n;
+                    break;
+                }
+            }
+        }
+        if (name.empty()) {
+            for (const auto& [n, _] : dep_graph_) {
+                if (shape::make_fn_key(session_id_, n) == fn_key) {
+                    name = n;
+                    break;
+                }
+            }
+        }
+
+        if (dirty_scope == shape::kShapeDirtyScopeStabilityLoss) {
+            metrics_.shape_changes_observed.fetch_add(1, std::memory_order_relaxed);
+            shape::shape_deopt_storm_count.fetch_add(1, std::memory_order_relaxed);
+            bump_shape_fiber_refresh();
+        }
+
+        if (!name.empty()) {
+            jit_.invalidate(name.c_str());
+            jit_.invalidate_prefix(name.c_str());
+            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                if (jit_cache_.erase(name) > 0)
+                    metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
 
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
