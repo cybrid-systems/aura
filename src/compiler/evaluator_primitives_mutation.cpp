@@ -350,6 +350,98 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return result;
     });
+
+    // Issue #622: high-level Aura primitives for atomic / batched
+    // mutates. **IMPORTANT — discovery before this PR:
+    // (mutate:atomic-batch ops-list "summary") already exists
+    // (#192 / #213, evaluator_primitives_mutate.cpp:2645) and
+    // provides a list-call form. Likewise, (atomic-batch:stats)
+    // (#192, evaluator_primitives_observability.cpp:1586) and
+    // (query:atomic-batch-stats) (#437, evaluator_primitives_
+    // compile.cpp:2098) and (query:atomic-batch-rollback-stats)
+    // (#529, evaluator_primitives_query.cpp:3772) already cover
+    // the observability surface. So instead of duplicating
+    // primitives with split-name forms (mutate:atomic-begin/
+    // commit/rollback) and a duplicate query:atomic-batch-stats
+    // hash, **#622 ships one new Aura primitive** — a
+    // structured-hash companion to the existing flat-int
+    // (query:atomic-batch-stats) from #437 — that surfaces
+    // per-batch runtime state (active flag, current batch's
+    // suppressed-bumps count) that's NOT in either
+    // (atomic-batch:stats) or (query:atomic-batch-stats).
+    //
+    // The remaining #622 AC2 (Guard nesting-depth + per-batch
+    // impact_nodes + rollback_success_rate) + AC4 (in-batch
+    // StableRef refresh) are invasive Guard-internal / observability
+    // changes that need benchmarking + perf regression coverage
+    // alongside the MutateBoundary stack work in #619 — separate
+    // follow-ups.
+
+    // (query:atomic-batch-stats-hash) — Agent-discoverable
+    // structured companion to (query:atomic-batch-stats) (which
+    // returns an int). 4-field hash:
+    //   - active                    bool: is a batch in progress?
+    //                                 FlatAST::atomic_batch_active()
+    //   - commits-total             lifetime # of successful
+    //                                 commits (atomic_batch_commits_)
+    //   - bumps-saved-last-batch    # of suppressed gen bumps
+    //                                 in the most recent batch
+    //                                 (atomic_batch_bumps_saved_,
+    //                                 reset on each begin)
+    //   - schema == 622             sentinel for Agent drift
+    //                                 detection (mirrors #618's
+    //                                 sentinel + #620's + #621's)
+    //
+    // Note: (atomic-batch:stats) from #192 already exposes
+    // batch-count / ops-total / rollback-count / ops-per-batch
+    // / bumps-saved-total. The fields above complement that
+    // observability surface with the per-batch runtime state
+    // (which batch is currently open, how much bumps the current
+    // batch would emit if committed).
+    add("query:atomic-batch-stats-hash", [&ev](const auto&) -> EvalValue {
+        std::uint64_t commits = 0;
+        std::uint64_t bumps_saved = 0;
+        bool active = false;
+        if (ev.workspace_flat_) {
+            commits = ev.workspace_flat_->atomic_batch_commits();
+            bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
+            active = ev.workspace_flat_->atomic_batch_active();
+        }
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("active", active ? 1 : 0);
+        insert_kv("commits-total", static_cast<std::int64_t>(commits));
+        insert_kv("bumps-saved-last-batch", static_cast<std::int64_t>(bumps_saved));
+        insert_kv("schema", 622);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
