@@ -7387,6 +7387,7 @@ private:
         const std::string* self_name, const aura::core::TypeRegistry* /*type_reg*/ = nullptr,
         const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
         std::uint32_t narrowing_evidence = 0) {
+        metrics_.hotpath_lowering_calls.fetch_add(1, std::memory_order_relaxed);
         auto mod = aura::compiler::lower_to_ir_with_cache(
             flat, pool, arena_, cache, cache_hits, primitives, cache_bridge, cache_strings,
             self_name, &type_registry_, value_cells, narrowing_evidence);
@@ -7404,6 +7405,7 @@ private:
             metrics_.ir_soa_functions_emitted.fetch_add(snap->functions_emitted,
                                                         std::memory_order_relaxed);
             metrics_.irsoa_wired_hits.fetch_add(1, std::memory_order_relaxed);
+            metrics_.hotpath_soa_dual_emit_hits.fetch_add(1, std::memory_order_relaxed);
             pending_soa_snapshot_ = *snap;
         }
     }
