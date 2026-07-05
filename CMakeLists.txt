@@ -3027,6 +3027,15 @@ add_dependencies(all_test_issue_targets test_issue_622)
 aura_add_issue_test(test_issue_623)
 aura_issue_test_link_llvm_jit(test_issue_623)
 add_dependencies(all_test_issue_targets test_issue_623)
+# Issue #624: ShapeProfiler + GuardShape + JIT maturity — 1 new Aura
+# primitive (query:shape-stability-jit-stats-hash) that the issue
+# body AC4 specifies by name. 3 fields use existing shape::*
+# counters verbatim; 2 fields are derived inline (stability-ratio-
+# post-mutate / deopt-on-instability). Builds on the existing
+# shape:: namespace counters from #570 / #605 / #492 / #686.
+aura_add_issue_test(test_issue_624)
+aura_issue_test_link_llvm_jit(test_issue_624)
+add_dependencies(all_test_issue_targets test_issue_624)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
