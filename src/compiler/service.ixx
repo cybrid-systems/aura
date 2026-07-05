@@ -2044,7 +2044,13 @@ public:
                     return std::nullopt;
                 }
 
-                aura::compiler::Env ne;
+                // Issue #708 / thread-pool-enqueue-stdin: construct the bridge
+                // Env with top_env as parent so owner_ is inherited (mirrors the
+                // sibling bridge below). A default Env leaves owner_=nullptr →
+                // eval_env.owner()->bump_primitive_call_count() null-derefs
+                // (SIGSEGV si_addr=0x528) on the first primitive call in an IR
+                // bridge, e.g. the body of an enqueued (lambda () (+ 1 2)).
+                aura::compiler::Env ne(&evaluator_.top_env());
                 ne.set_primitives(&evaluator_.primitives());
                 for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size();
                      ++i)

@@ -207,6 +207,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         // deque map-array reallocation race under fiber:spawn).
         Env ne = materialize_call_env(cl_copy);
         ne.set_primitives(&primitives_);
+        // materialize_call_env returns a default Env (owner_=nullptr) for
+        // no-capture closures; set owner so eval_flat's primitive dispatch
+        // (eval_env.owner()->bump_primitive_call_count()) has a valid this.
+        ne.set_owner(this);
 
         // Issue #145: set the pool so bind_symid can mirror
         // lambda params into the string-keyed bindings_ array
