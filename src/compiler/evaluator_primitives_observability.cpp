@@ -3455,6 +3455,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:verification-feedback-loop-stats",
             // Issue #580 — Hardware backend emit maturity + commercial interop
             "query:hardware-backend-stats",
+            // Issue #581 — StableNodeRef + dirty propagation SV SoC scalability
+            "query:stable-ref-sv-scale-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3495,10 +3497,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 145 entries as of #580 ship (144 from #579 + 1 hardware-backend
-        // observability hash primitive from #580:
-        // query:hardware-backend-stats).
-        return make_int(145);
+        // 146 entries as of #581 ship (145 from #580 + 1 stable-ref-sv-scale
+        // observability hash primitive from #581:
+        // query:stable-ref-sv-scale-stats).
+        return make_int(146);
     });
 }
 
