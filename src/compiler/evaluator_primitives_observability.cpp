@@ -3067,6 +3067,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:prompt6-memory-safety-stats",
             // Issue #519 — EDSL/EDA/SV verification closed-loop tracker
             "query:edsl-eda-sv-closedloop-stats",
+            // Issue #521 — Multi-fiber orchestration + MutationBoundary safety
+            "query:multi-fiber-orchestration-stats",
             // Issue #697 — Declarative primitives extension kit
             "query:primitives-extension-stats",
             // Issue #709 — Registry fast dispatch + capture discipline
@@ -3099,10 +3101,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 116 entries as of #519 ship (115 from #516 + 1 edsl-eda-sv-closedloop
-        // observability hash primitive from #519:
-        // query:edsl-eda-sv-closedloop-stats).
-        return make_int(116);
+        // 117 entries as of #521 ship (116 from #519 + 1 multi-fiber-
+        // orchestration observability hash primitive from #521:
+        // query:multi-fiber-orchestration-stats).
+        return make_int(117);
     });
 }
 

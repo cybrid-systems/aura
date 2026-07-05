@@ -3180,6 +3180,97 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #521: query:multi-fiber-orchestration-stats. Hash view of
+    // commercial multi-fiber orchestration + MutationBoundary + work-
+    // stealing safety (non-duplicative synthesis of #500 work-steal-stats,
+    // #618 scheduler-mutation-coord-stats, and #512 runtime-orchestration
+    // themes; avoids #512 envframe pillar and #515-#520 meta trackers):
+    //   - steal-attempts / steal-successes / steal-deferred-outermost:
+    //     outermost MutationBoundary steal enforcement
+    //   - steal-violations / boundary-violations / unsafe-boundary-attempts:
+    //     concurrent mutation safety alert surface
+    //   - mutation-boundary-depth / current-fiber-id: live guard state
+    //   - gc-safepoint-requests / gc-safepoint-waits /
+    //     gc-pauses-attributed-to-mutation: scheduler/GC coordination
+    //   - fiber-migration-attempts / lock-contention-us: orchestration load
+    //   - multi-fiber-orchestration-total / multi-fiber-orchestration-recommendation
+    add("query:multi-fiber-orchestration-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t steal_attempts = aura_work_steal_attempts_total();
+            const std::uint64_t steal_successes = aura_work_steal_successes_total();
+            const std::uint64_t steal_deferred = aura_adaptive_steal_global_deferred_total();
+            const std::uint64_t steal_violations = ev->get_mutation_steal_violation_count();
+            const std::uint64_t boundary_violations = ev->get_boundary_violation_count();
+            const std::uint64_t unsafe_boundary = ev->get_unsafe_boundary_attempts();
+            const std::uint64_t boundary_depth = aura_evaluator_mutation_boundary_depth();
+            const std::uint64_t cur_fiber = aura_fiber_current_id();
+            const std::uint64_t gc_requests = ev->get_gc_safepoint_requests_total();
+            const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
+            const std::uint64_t gc_attributed = aura_fiber_static_gc_pause_attributed_to_mutation();
+            const std::uint64_t migration = ev->get_mutation_steal_attempts();
+            const std::uint64_t lock_us = ev->get_lock_contention_us();
+            const std::uint64_t total = steal_attempts + steal_successes + steal_deferred +
+                                        steal_violations + boundary_violations + unsafe_boundary +
+                                        gc_requests + gc_waits + gc_attributed + migration +
+                                        lock_us;
+            std::int64_t recommendation = 0;
+            if (steal_violations > 0 || boundary_violations > 0)
+                recommendation = 3;
+            else if (steal_deferred > steal_successes && steal_deferred > 3)
+                recommendation = 2;
+            else if (boundary_depth > 0 && steal_attempts > 0)
+                recommendation = 1;
+            insert_kv("steal-attempts", static_cast<std::int64_t>(steal_attempts));
+            insert_kv("steal-successes", static_cast<std::int64_t>(steal_successes));
+            insert_kv("steal-deferred-outermost", static_cast<std::int64_t>(steal_deferred));
+            insert_kv("steal-violations", static_cast<std::int64_t>(steal_violations));
+            insert_kv("boundary-violations", static_cast<std::int64_t>(boundary_violations));
+            insert_kv("unsafe-boundary-attempts", static_cast<std::int64_t>(unsafe_boundary));
+            insert_kv("mutation-boundary-depth", static_cast<std::int64_t>(boundary_depth));
+            insert_kv("current-fiber-id", static_cast<std::int64_t>(cur_fiber));
+            insert_kv("gc-safepoint-requests", static_cast<std::int64_t>(gc_requests));
+            insert_kv("gc-safepoint-waits", static_cast<std::int64_t>(gc_waits));
+            insert_kv("gc-pauses-attributed-to-mutation", static_cast<std::int64_t>(gc_attributed));
+            insert_kv("fiber-migration-attempts", static_cast<std::int64_t>(migration));
+            insert_kv("lock-contention-us", static_cast<std::int64_t>(lock_us));
+            insert_kv("multi-fiber-orchestration-total", static_cast<std::int64_t>(total));
+            insert_kv("multi-fiber-orchestration-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #506: query:soa-hotpath-adoption-stats. Returns the sum
     // of 8 IR SoA + dirty-aware Pass Pipeline adoption counters
     // spanning evaluator/lowering hot paths (#463 scaffold →
