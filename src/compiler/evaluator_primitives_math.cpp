@@ -66,9 +66,7 @@ void register_math_regex_and_arithmetic_primitives(
                 std::regex re(string_heap[pi]);
                 return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
             } catch (...) {
-                return make_primitive_error(string_heap, error_values,
-                                            "regex-match?: invalid regular expression",
-                                            primitive_error_counter);
+                return PRIM_ERROR("regex-match?: invalid regular expression");
             }
         });
 
@@ -88,9 +86,7 @@ void register_math_regex_and_arithmetic_primitives(
                     return make_string(id);
                 }
             } catch (...) {
-                return make_primitive_error(string_heap, error_values,
-                                            "regex-find: invalid regular expression",
-                                            primitive_error_counter);
+                return PRIM_ERROR("regex-find: invalid regular expression");
             }
             return make_void();
         });
@@ -109,9 +105,7 @@ void register_math_regex_and_arithmetic_primitives(
                 string_heap.push_back(std::move(result));
                 return make_string(id);
             } catch (...) {
-                return make_primitive_error(string_heap, error_values,
-                                            "regex-replace: invalid regular expression",
-                                            primitive_error_counter);
+                return PRIM_ERROR("regex-replace: invalid regular expression");
             }
         });
 
@@ -139,9 +133,7 @@ void register_math_regex_and_arithmetic_primitives(
             }
             return result;
         } catch (...) {
-            return make_primitive_error(string_heap, error_values,
-                                        "regex-split: invalid regular expression",
-                                        primitive_error_counter);
+            return PRIM_ERROR("regex-split: invalid regular expression");
         }
     });
 

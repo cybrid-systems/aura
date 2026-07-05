@@ -721,6 +721,10 @@ void register_workspace_query_primitives(
                     try {
                         target_depth = std::stoi(p.value);
                     } catch (...) {
+                        // [SILENCE-PRIM-#615] Non-numeric :depth
+                        // predicate silently de-selects the node rather
+                        // than raising — documented parse-tolerant
+                        // filter behavior across all ws predicates.
                         match = false;
                         break;
                     }
@@ -1311,6 +1315,9 @@ void register_workspace_query_primitives(
                 auto tname = treg.name_of(aura::core::TypeId{type_id_value, 1});
                 type_name = std::string(tname);
             } catch (...) {
+                // [SILENCE-PRIM-#615] type_name fallback for unknown
+                // / unregistered TypeId — display-only path; caller
+                // handles empty via the "<unnamed>" branch below.
                 type_name = "<unknown>";
             }
             if (type_name.empty())

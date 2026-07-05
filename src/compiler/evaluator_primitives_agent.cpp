@@ -72,6 +72,10 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
         try {
             interval = std::stod(ev.string_heap_[idx]);
         } catch (...) {
+            // [SILENCE-PRIM-#615] Rate-limit interval parse failure is
+            // non-user-visible; default of 1.0 below is the documented
+            // behavior. Upgrading to PRIM_ERROR would force callers to
+            // wrap a system-internal call.
         }
         if (interval < 0.1)
             interval = 0.1;
@@ -1752,7 +1756,8 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
             auto aa = find_after(analytics, "avg-attempts");
             if (!aa.empty())
                 avg_attempts = std::stod(aa);
-        } catch (...) { /* malformed → keep defaults */
+        } catch (...) {
+            /* [SILENCE-PRIM-#615] malformed → keep defaults */
         }
 
         // Parse top-errors: walk "(k1:n1 k2:n2 ...)" inside top-errors:(...)
@@ -1780,6 +1785,9 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
                     try {
                         top_errors[k] = std::stoi(te.substr(nstart, i - nstart));
                     } catch (...) {
+                        // [SILENCE-PRIM-#615] Top-errors array parse failure
+                        // leaves slot at its zero-init default; this is
+                        // best-effort telemetry extraction, not user input.
                     }
                 }
             }

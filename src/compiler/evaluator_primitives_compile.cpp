@@ -2027,7 +2027,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             fallback_freq =
                 static_cast<std::int64_t>(snap.closure_tw_calls + snap.closure_ffi_calls);
         } catch (...) {
-            // Service-side failure: zeros are already initialized.
+            // [SILENCE-PRIM-#615] Service-side metric snapshot
+            // failure; zeros are already initialized.
         }
 
         // Build 4-tuple as nested pairs (right-associated):

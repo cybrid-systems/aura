@@ -87,6 +87,43 @@ namespace primitives_detail {
             prim_record_capture_violation(m);
     }
 
+    // Issue #615: PRIM_ERROR macro — wrap make_primitive_error with the
+    // standard capture names so primitive error sites read as one-liners
+    // instead of repeating the 4-arg call. Requires the enclosing lambda
+    // (or function) to have in scope:
+    //   - std::pmr::vector<std::string>&    string_heap
+    //   - std::vector<EvalValue>&           error_values
+    //   - std::atomic<std::uint64_t>*       primitive_error_counter
+    // matching the register_*_primitives() signature in evaluator.ixx.
+    //
+    // Usage:
+    //   add("regex-match?", [&string_heap, &error_values,
+    //                        primitive_error_counter](std::span<const EvalValue> a) {
+    //       ...
+    //       } catch (...) {
+    //           return PRIM_ERROR("regex-match?: invalid regular expression");
+    //       }
+    //   });
+    //
+    // Why a macro (not a free function): the 3 references above need to
+    // come from the enclosing lambda capture list, which only the
+    // preprocessor can substitute without dragging the call-site context
+    // into a helper. A free helper would force every primitive to
+    // forward `string_heap` / `error_values` / `primitive_error_counter`
+    // through argument plumbing on every error site — a net regression
+    // for readability. Macro keeps the call site `return PRIM_ERROR(msg);`
+    // and the helper is the one place the 4-arg shape lives.
+    //
+    // Scope-limited note: this intentionally does NOT cover sites where
+    // (a) the lambda doesn't already capture the 3 standard names (rare;
+    // future follow-up may add typed overloads for those), or (b) the
+    // site is intentionally silent (defensive best-effort fallback,
+    // e.g. parsing-tolerant reflect helpers). Those carry a sibling
+    // [SILENCE-PRIM-#615] comment near the catch instead.
+#define PRIM_ERROR(MSG) \
+    ::aura::compiler::primitives_detail::make_primitive_error( \
+        string_heap, error_values, (MSG), primitive_error_counter)
+
 } // namespace primitives_detail
 
 } // namespace aura::compiler

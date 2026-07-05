@@ -192,8 +192,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     fs.cow_epoch = node->cow_epoch;
             }
         } catch (...) {
-            // OOM during deep copy — store the source anyway so the
-            // snapshot at least exists for diff / fallback restore.
+            // [SILENCE-PRIM-#615] OOM during deep copy — store the
+            // source anyway so the snapshot at least exists for
+            // diff / fallback restore.
             fs.has_flat = false;
         }
 
@@ -419,7 +420,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                         ev.pre_cache_workspace_defines_fn_();
                     did_direct = true;
                 } catch (...) {
-                    // Fall through to source-based restore
+                    // [SILENCE-PRIM-#615] Fall through to
+                    // source-based restore when the fast path fails.
                     did_direct = false;
                 }
             }
