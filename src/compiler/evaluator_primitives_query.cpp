@@ -1124,14 +1124,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             const std::uint64_t total = hits + misses;
             const std::int64_t arity_accuracy =
-                total == 0
-                    ? 0
-                    : static_cast<std::int64_t>((hits * 100) / total);
+                total == 0 ? 0 : static_cast<std::int64_t>((hits * 100) / total);
             const std::uint64_t delta_denom = delta_hits + rebuilds;
             const std::int64_t delta_hit_rate =
-                delta_denom == 0
-                    ? 0
-                    : static_cast<std::int64_t>((delta_hits * 100) / delta_denom);
+                delta_denom == 0 ? 0 : static_cast<std::int64_t>((delta_hits * 100) / delta_denom);
             std::int64_t recommendation = 0;
             if (total > 0 && arity_accuracy < 50)
                 recommendation = 1;
@@ -1458,6 +1454,92 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #513: query:aot-hot-reload-stats. Consolidated hash view of AOT
+    // hot-reload production readiness (func_table epoch swap, stale detection,
+    // refcount/region safety) — non-duplicative synthesis of #708
+    // query:aot-reload-stats + query:aot-checkpoint-version-stats:
+    //   - reload-attempts / reload-success / stale-rejected: dlopen path
+    //   - refcount-swaps / concurrent-safe-reloads: func_table epoch swap
+    //   - region-violations / deopt-on-steal: multi-fiber safety signals
+    //   - checkpoint-version-drifts: defuse/bridge_epoch drift probe
+    //   - func-table-epoch / defuse-version: live version state
+    //   - aot-hot-reload-total / aot-hot-reload-recommendation
+    add("query:aot-hot-reload-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t attempts =
+            m ? m->aot_reload_attempts_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t success =
+            m ? m->aot_hot_update_success_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stale =
+            m ? m->aot_stale_reject_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t swaps = m ? m->aot_refcount_swaps_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t region_viol =
+            m ? m->aot_region_mismatch_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t deopt_steal =
+            m ? m->aot_deopt_on_steal_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t concurrent_safe =
+            m ? m->aot_concurrent_safe_reloads_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t drifts =
+            m ? m->aot_checkpoint_version_drifts_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        const std::uint64_t defuse_ver = aura_get_aot_defuse_version();
+        const std::uint64_t total = attempts + success + stale + swaps + region_viol + deopt_steal +
+                                    concurrent_safe + drifts;
+        std::int64_t recommendation = 0;
+        if (region_viol > 0 || deopt_steal > 0)
+            recommendation = 3;
+        else if (stale > success && stale > 0)
+            recommendation = 2;
+        else if (drifts > 0)
+            recommendation = 1;
+        insert_kv("reload-attempts", static_cast<std::int64_t>(attempts));
+        insert_kv("reload-success", static_cast<std::int64_t>(success));
+        insert_kv("stale-rejected", static_cast<std::int64_t>(stale));
+        insert_kv("refcount-swaps", static_cast<std::int64_t>(swaps));
+        insert_kv("region-violations", static_cast<std::int64_t>(region_viol));
+        insert_kv("deopt-on-steal", static_cast<std::int64_t>(deopt_steal));
+        insert_kv("concurrent-safe-reloads", static_cast<std::int64_t>(concurrent_safe));
+        insert_kv("checkpoint-version-drifts", static_cast<std::int64_t>(drifts));
+        insert_kv("func-table-epoch", static_cast<std::int64_t>(table_epoch));
+        insert_kv("defuse-version", static_cast<std::int64_t>(defuse_ver));
+        insert_kv("aot-hot-reload-total", static_cast<std::int64_t>(total));
+        insert_kv("aot-hot-reload-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #549: query:self-evolution-stability-stats.
     // Returns the sum of the 4 self-evolution observability

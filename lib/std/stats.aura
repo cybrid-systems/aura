@@ -109,6 +109,8 @@
     "query:workspace-snapshot-stats"
     ; ── Issue #512 — Runtime orchestration production-readiness ──
     "query:runtime-orchestration-stats"
+    ; ── Issue #513 — AOT hot-reload consolidated observability ──
+    "query:aot-hot-reload-stats"
     ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
     "query:work-steal-stats"
     ; ── Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering) ──
