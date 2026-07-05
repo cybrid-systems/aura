@@ -1903,6 +1903,113 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #528: query:pattern-production-index-stats. Commercial P0 hash view
+    // of query:pattern incremental tag_arity_index + MacroIntroduced hygiene
+    // integration for large-AST AI loops — non-duplicative synthesis of #547
+    // pattern-index-stats, #490 pattern-index-rebuild-stats, #621
+    // pattern-index-stats-hash, and #547 pattern-hygiene-stats; avoids #524
+    // macro-production-hygiene-stats IR/clone bundle and #503 pattern-marker
+    // int-only themes:
+    //   P1 Index: hits/misses/rebuilds, dirty-marks, rebuild-time-us, delta-hits
+    //   P2 Rebuild triggers: lazy/eager-mutate/eager-cow rebuild tallies
+    //   P3 Structural fast-path: structural-hits/misses, index-entries
+    //   P4 Hygiene: root-skips, recursive-skips, hygiene-violations, markers
+    //   - arity-accuracy-pct / delta-hit-rate-pct derived metrics
+    //   - pattern-production-index-total / pattern-production-index-recommendation
+    add("query:pattern-production-index-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t hits = ws ? ws->tag_arity_index_hits() : 0;
+            const std::uint64_t misses = ws ? ws->tag_arity_index_misses() : 0;
+            const std::uint64_t rebuilds = ws ? ws->tag_arity_index_rebuilds() : 0;
+            const std::uint64_t dirty_marks = ws ? ws->tag_arity_index_dirty_marks() : 0;
+            const std::uint64_t rebuild_time_us = ws ? ws->tag_arity_index_rebuild_time_us() : 0;
+            const std::uint64_t delta_hits = ws ? ws->tag_arity_index_delta_hits() : 0;
+            const std::uint64_t lazy_rebuilds = ev->get_pattern_index_lazy_rebuilds();
+            const std::uint64_t eager_mutate = ev->get_pattern_index_eager_mutate_rebuilds();
+            const std::uint64_t eager_cow = ev->get_pattern_index_eager_cow_rebuilds();
+            const std::uint64_t structural_hits = ev->get_pattern_structural_index_hits();
+            const std::uint64_t structural_misses = ev->get_pattern_structural_index_misses();
+            const std::uint64_t index_entries = ev->tag_arity_index_entry_count();
+            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t violations = ev->get_hygiene_violation_count();
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+            const std::uint64_t index_total = hits + misses;
+            const std::int64_t arity_accuracy_pct =
+                index_total == 0 ? 0 : static_cast<std::int64_t>((hits * 100) / index_total);
+            const std::uint64_t delta_denom = delta_hits + rebuilds;
+            const std::int64_t delta_hit_rate_pct =
+                delta_denom == 0 ? 0 : static_cast<std::int64_t>((delta_hits * 100) / delta_denom);
+            const std::uint64_t total = hits + misses + rebuilds + dirty_marks + rebuild_time_us +
+                                        delta_hits + root_skips + recursive_skips + violations +
+                                        structural_hits + structural_misses;
+            std::int64_t recommendation = 0;
+            if (violations > 0)
+                recommendation = 3;
+            else if (index_total > 0 && arity_accuracy_pct < 50)
+                recommendation = 2;
+            else if (rebuilds > 0 &&
+                     rebuild_time_us > static_cast<std::uint64_t>(delta_hits + 1) * 100)
+                recommendation = 2;
+            else if (root_skips + recursive_skips > 0)
+                recommendation = 1;
+            insert_kv("index-hits", static_cast<std::int64_t>(hits));
+            insert_kv("index-misses", static_cast<std::int64_t>(misses));
+            insert_kv("index-rebuilds", static_cast<std::int64_t>(rebuilds));
+            insert_kv("dirty-marks", static_cast<std::int64_t>(dirty_marks));
+            insert_kv("rebuild-time-us", static_cast<std::int64_t>(rebuild_time_us));
+            insert_kv("delta-hits", static_cast<std::int64_t>(delta_hits));
+            insert_kv("lazy-rebuilds", static_cast<std::int64_t>(lazy_rebuilds));
+            insert_kv("eager-mutate-rebuilds", static_cast<std::int64_t>(eager_mutate));
+            insert_kv("eager-cow-rebuilds", static_cast<std::int64_t>(eager_cow));
+            insert_kv("structural-hits", static_cast<std::int64_t>(structural_hits));
+            insert_kv("structural-misses", static_cast<std::int64_t>(structural_misses));
+            insert_kv("index-entries", static_cast<std::int64_t>(index_entries));
+            insert_kv("root-skips", static_cast<std::int64_t>(root_skips));
+            insert_kv("recursive-skips", static_cast<std::int64_t>(recursive_skips));
+            insert_kv("hygiene-violations", static_cast<std::int64_t>(violations));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("arity-accuracy-pct", arity_accuracy_pct);
+            insert_kv("delta-hit-rate-pct", delta_hit_rate_pct);
+            insert_kv("pattern-production-index-total", static_cast<std::int64_t>(total));
+            insert_kv("pattern-production-index-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6

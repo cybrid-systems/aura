@@ -36,6 +36,8 @@
     ; ── Issue #490 — pattern-index lazy/eager rebuild observability ──
     "query:pattern-index-rebuild-stats"
     "query:pattern-hygiene-stats"
+    ; ── Issue #528 — Pattern index + hygiene production tracker ──
+    "query:pattern-production-index-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
