@@ -3082,6 +3082,74 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   snapshots + cross_cow));
     });
 
+    // Issue #507: query:task4-hotpath-contracts. Hash view of C++26
+    // Contracts + consteval invariants baked into Task4 hot paths
+    // (inline_shape_of, ASTArena::create, run_one/run_pipeline,
+    // lowering_impl NodeId guard; non-duplicative with #465 tag-encoding
+    // hash and #406 pass-contracts-stats runtime counters):
+    //   - inline-shape-post: inline_shape_of post contract
+    //   - arena-create-pre: ASTArena::create sizeof/align pre
+    //   - arena-allocate-raw-pre: allocate_raw size/align pre
+    //   - run-one-contract: run_one pre/post contracts
+    //   - run-pipeline-contract: run_pipeline non-empty pre
+    //   - lowering-node-id-contract: lower_flat_expr NodeId guard
+    //   - shape-dispatch-table-size: k_task4_shape_dispatch_table_size
+    //   - consteval-hits: k_shape_value_consteval_hits inventory
+    //   - task4-contracts-total: sum of contract-site flags
+    //   - task4-contracts-recommendation: 0=ok
+    add("query:task4-hotpath-contracts", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        constexpr std::int64_t k_site = 1;
+        const std::int64_t table_size =
+            static_cast<std::int64_t>(shape::k_task4_shape_dispatch_table_size);
+        const std::int64_t consteval_hits =
+            static_cast<std::int64_t>(shape::k_shape_value_consteval_hits);
+        const std::int64_t total = k_site * 6 + table_size + (consteval_hits > 0 ? 1 : 0);
+        insert_kv("inline-shape-post", k_site);
+        insert_kv("arena-create-pre", k_site);
+        insert_kv("arena-allocate-raw-pre", k_site);
+        insert_kv("run-one-contract", k_site);
+        insert_kv("run-pipeline-contract", k_site);
+        insert_kv("lowering-node-id-contract", k_site);
+        insert_kv("shape-dispatch-table-size", table_size);
+        insert_kv("consteval-hits", consteval_hits);
+        insert_kv("task4-contracts-total", total);
+        insert_kv("task4-contracts-recommendation", 0);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
     // from across the workspace + Evaluator:

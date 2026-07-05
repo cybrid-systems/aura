@@ -113,6 +113,8 @@
     "query:pattern-marker-stats"
     ; ── Issue #504 — MutationBoundaryGuard impact log for AI loops ──
     "query:mutation-boundary-log"
+    ; ── Issue #507 — Task4 hot-path Contracts + consteval invariants ──
+    "query:task4-hotpath-contracts"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

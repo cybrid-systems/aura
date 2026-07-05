@@ -247,7 +247,8 @@ public:
     // (otherwise placement-new is undefined). Zero runtime cost.
     template <typename T, typename... Args>
         requires std::constructible_from<T, Args...>
-    [[nodiscard]] T* create(Args&&... args) post(r : r != nullptr) {
+    [[nodiscard]] T* create(Args&&... args) pre(sizeof(T) > 0)
+        pre(alignof(T) > 0 && (alignof(T) & (alignof(T) - 1)) == 0) post(r : r != nullptr) {
         void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);

@@ -14,6 +14,7 @@
 #ifndef AURA_COMPILER_SHAPE_H
 #define AURA_COMPILER_SHAPE_H
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -71,9 +72,29 @@ inline std::atomic<std::uint64_t> history_jitter_reduction_count{0};
 inline std::atomic<std::uint64_t> shape_dirty_hook_fire_count{0};
 // Issue #686: inline_shape_of Ref-path dispatch observability.
 inline std::atomic<std::uint64_t> inline_shape_ref_dispatch_count{0};
-// Issue #686: compile-time tag/shape static_assert inventory
+// Issue #507: consteval EvalValueTag → base ShapeID dispatch table
+// (complements value_tags.h low-2-bit table; Ref/Special refined
+// at runtime in inline_shape_of).
+inline constexpr std::array<ShapeID, 5> k_shape_tag_dispatch_table = {
+    SHAPE_INT, SHAPE_REF, SHAPE_STRING, SHAPE_ANY, SHAPE_FLOAT,
+};
+inline constexpr std::uint32_t k_task4_shape_dispatch_table_size = 5;
+static_assert(k_shape_tag_dispatch_table[0] == SHAPE_INT,
+              "shape dispatch table drift: tag 0 must map to SHAPE_INT");
+static_assert(k_shape_tag_dispatch_table[1] == SHAPE_REF,
+              "shape dispatch table drift: tag 1 must map to SHAPE_REF");
+static_assert(k_shape_tag_dispatch_table[2] == SHAPE_STRING,
+              "shape dispatch table drift: tag 2 must map to SHAPE_STRING");
+static_assert(k_shape_tag_dispatch_table[3] == SHAPE_ANY,
+              "shape dispatch table drift: tag 3 must map to SHAPE_ANY");
+static_assert(k_shape_tag_dispatch_table[4] == SHAPE_FLOAT,
+              "shape dispatch table drift: tag 4 must map to SHAPE_FLOAT");
+static_assert(k_task4_shape_dispatch_table_size == k_shape_tag_dispatch_table.size(),
+              "shape dispatch table size must match array length");
+
+// Issue #686 / #507: compile-time tag/shape static_assert inventory
 // (value_tags.h + shape.h + shape_profiler.cpp guards).
-inline constexpr std::uint32_t k_shape_value_consteval_hits = 24;
+inline constexpr std::uint32_t k_shape_value_consteval_hits = 30;
 
 inline void record_shape_fiber_refresh() noexcept {
     shape_fiber_refresh_count.fetch_add(1, std::memory_order_relaxed);
@@ -136,7 +157,7 @@ ShapeID compute_shape_id(const Shape& shape);
 // ── Quick inline shape ID from EvalValue raw bits ──────────────
 // Fast path: extract ShapeID from an int64_t tagged value.
 // Full implementation (with heap traversal) is in shape_profiler.cpp.
-ShapeID inline_shape_of(std::int64_t val);
+ShapeID inline_shape_of(std::int64_t val) post(r : is_known_inline_shape_id(r));
 
 // ── String conversion ──────────────────────────────────────────
 const char* shape_tag_name(ShapeTag tag) noexcept;
