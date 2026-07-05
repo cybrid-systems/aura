@@ -2350,6 +2350,10 @@ private:
     // (query:stale-ref-stats) primitive.
     std::atomic<std::uint64_t> stale_ref_blocked_count_{0};
     std::atomic<std::uint64_t> stale_ref_warned_count_{0};
+    // Issue #489: raw NodeId vs StableNodeRef usage in mutate/query
+    // primitive entry points (stats-only, relaxed-ordering).
+    std::atomic<std::uint64_t> raw_nodeid_usage_in_primitives_count_{0};
+    std::atomic<std::uint64_t> stable_ref_validated_in_primitives_count_{0};
     // Issue #438: fiber migration + work-stealing
     // observability. Bumped in
     // transfer_mutation_stack_to_current_fiber
@@ -3017,6 +3021,18 @@ public:
     }
     void bump_stale_ref_warned_count() noexcept {
         stale_ref_warned_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_raw_nodeid_usage_in_primitives_count() const noexcept {
+        return raw_nodeid_usage_in_primitives_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_validated_in_primitives_count() const noexcept {
+        return stable_ref_validated_in_primitives_count_.load(std::memory_order_relaxed);
+    }
+    void bump_raw_nodeid_usage_in_primitives_count() noexcept {
+        raw_nodeid_usage_in_primitives_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_stable_ref_validated_in_primitives_count() noexcept {
+        stable_ref_validated_in_primitives_count_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #438: fiber-migration observability
     // accessors + bump helpers. Public so the

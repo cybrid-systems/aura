@@ -5120,6 +5120,14 @@ public:
             std::uint16_t last_validated_generation;
         };
         [[nodiscard]] Provenance get_provenance() const noexcept;
+
+        // Issue #489: ergonomics for EDSL primitive validation paths.
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return id != NULL_NODE;
+        }
+        [[nodiscard]] NodeId value_or(NodeId fallback) const noexcept {
+            return id != NULL_NODE ? id : fallback;
+        }
     };
 
     // Issue #291: serialize a StableNodeRef to a compact

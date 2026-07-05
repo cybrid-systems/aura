@@ -291,6 +291,56 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #489: query:stability-stats. Hash view of StableNodeRef
+    // enforcement counters for EDSL mutate/query hot paths.
+    add("query:stability-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        std::uint64_t invalidations = 0;
+        if (auto* ws = ev->workspace_flat())
+            invalidations = ws->stable_ref_invalidations();
+        auto* ht = FlatHashTable::create(12);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("raw-nodeid-usage",
+                  static_cast<std::int64_t>(ev->get_raw_nodeid_usage_in_primitives_count()));
+        insert_kv("stable-ref-validated",
+                  static_cast<std::int64_t>(ev->get_stable_ref_validated_in_primitives_count()));
+        insert_kv("stale-ref-blocked",
+                  static_cast<std::int64_t>(ev->get_stale_ref_blocked_count()));
+        insert_kv("stale-ref-warned", static_cast<std::int64_t>(ev->get_stale_ref_warned_count()));
+        insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #456: query:epoch-stats. Returns the current
     // defuse_version_ epoch (the global counter bumped
     // on every mutation boundary entry/exit). Stamps

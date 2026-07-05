@@ -69,6 +69,8 @@
     ; ── Pre-existing (Issue #288, #391, #447, #457, #459) ──
     "query:query-stats"
     "query:stale-ref-stats"
+    ; ── Issue #489 — StableNodeRef enforcement observability ──
+    "query:stability-stats"
     "query:atomic-batch-stats"
     "query:stable-ref-stats"
     "query:fiber-migration-stats"

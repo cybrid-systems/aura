@@ -285,6 +285,80 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         });
     };
 
+    // Issue #489: unified StableNodeRef / raw NodeId resolution for mutate hot paths.
+    // Defined inside register_mutate_primitives (Evaluator friend) for private access.
+    auto unpack_stable_ref_arg = [&ev](const EvalValue& arg) -> std::optional<StableNodeRef> {
+        if (!is_pair(arg))
+            return std::nullopt;
+        const auto outer = as_pair_idx(arg);
+        if (!is_int(ev.pairs_[outer].car))
+            return std::nullopt;
+        StableNodeRef ref{};
+        ref.id = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
+        const auto cdr = ev.pairs_[outer].cdr;
+        if (is_pair(cdr)) {
+            const auto inner = as_pair_idx(cdr);
+            if (is_int(ev.pairs_[inner].car))
+                ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
+        } else if (is_int(cdr)) {
+            ref.gen = static_cast<std::uint16_t>(as_int(cdr));
+        }
+        return ref;
+    };
+
+    auto resolve_mutate_node_arg = [&ev, mev, unpack_stable_ref_arg](
+                                       aura::ast::FlatAST& flat, const EvalValue& arg, const char* op,
+                                       bool* ok, aura::ast::NodeId& out_node) -> EvalValue {
+        if (auto packed = unpack_stable_ref_arg(arg)) {
+            ev.bump_stable_ref_validated_in_primitives_count();
+            StableNodeRef ref = *packed;
+            if (!ref.is_valid_in(flat) || !flat.get_safe(ref)) {
+                *ok = false;
+                const auto policy = ev.get_stale_ref_policy();
+                if (policy == Evaluator::StaleRefPolicy::Strict) {
+                    ev.bump_stale_ref_blocked_count();
+                    auto idx = ev.string_heap_.size();
+                    ev.string_heap_.push_back("stale-ref");
+                    return mev(ev.string_heap_[idx].c_str(),
+                             "stable-ref is stale (Strict policy blocked)");
+                }
+                if (policy == Evaluator::StaleRefPolicy::Warn)
+                    ev.bump_stale_ref_warned_count();
+                return mev("stale-ref", std::string(op) + ": stable-ref is stale");
+            }
+            out_node = ref.id;
+            return make_void();
+        }
+        if (is_int(arg)) {
+            ev.bump_raw_nodeid_usage_in_primitives_count();
+            const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
+            if (node >= flat.size()) {
+                *ok = false;
+                return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
+                                               " >= flat size " + std::to_string(flat.size()));
+            }
+            const auto ref = flat.make_ref(node);
+            if (!ref.is_valid_in(flat) || !flat.get_safe(ref)) {
+                *ok = false;
+                const auto policy = ev.get_stale_ref_policy();
+                if (policy == Evaluator::StaleRefPolicy::Strict) {
+                    ev.bump_stale_ref_blocked_count();
+                    auto idx = ev.string_heap_.size();
+                    ev.string_heap_.push_back("stale-ref");
+                    return mev(ev.string_heap_[idx].c_str(),
+                               "raw node-id is stale (Strict policy blocked)");
+                }
+                if (policy == Evaluator::StaleRefPolicy::Warn)
+                    ev.bump_stale_ref_warned_count();
+                return mev("stale-ref", std::string(op) + ": raw node-id is stale");
+            }
+            out_node = node;
+            return make_void();
+        }
+        *ok = false;
+        return mev("bad-arg", std::string("usage: (") + op + " node-id|stable-ref ...)");
+    };
+
     // ── Typed mutation operators ──────────────────────────────────
 
     // (mutate:replace-type node-id new-type-str)
@@ -295,32 +369,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // the workspace write lock (only had the version bump) —
     // migrating via the guard adds the lock that should have
     // been there.
-    add_mutate("mutate:replace-type", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:replace-type", [resolve_mutate_node_arg, &ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
         if (aura::messaging::g_fiber_yield_mutation_boundary)
             aura::messaging::g_fiber_yield_mutation_boundary();
 
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) {
+        if (a.size() < 2 || !is_string(a[1])) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:replace-type node-id new-type)");
-        }
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto type_idx = as_string_idx(a[1]);
-        if (type_idx >= ev.string_heap_.size()) {
-            ok = false;
-            return ev.make_merr("bad-arg", "type string index out of range");
+            return ev.make_merr("bad-arg",
+                                "usage: (mutate:replace-type node-id|stable-ref new-type)");
         }
         if (!ev.workspace_flat_) {
             ok = false;
             return ev.make_merr("no-workspace", "no workspace AST loaded");
         }
         auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        if (auto resolve_err =
+                resolve_mutate_node_arg(flat, a[0], "mutate:replace-type", &ok, node);
+            !is_void(resolve_err))
+            return resolve_err;
+        auto type_idx = as_string_idx(a[1]);
+        if (type_idx >= ev.string_heap_.size()) {
             ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
-                                                    " >= flat size " + std::to_string(flat.size()));
+            return ev.make_merr("bad-arg", "type string index out of range");
         }
 
         auto old_tid = flat.type_id(node);
@@ -368,7 +442,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // add_mutation_with_rollback for int_val_/float_val_/sym_id_
     // — so the rollback path actually restores the original
     // value on exit(success=false).
-    add_mutate("mutate:replace-value", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:replace-value", [resolve_mutate_node_arg, &ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // (Step 0.2/0.3) local merr removed; using centralized make_merr
@@ -376,12 +450,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         aura::messaging::g_fiber_yield_mutation_boundary
             ? aura::messaging::g_fiber_yield_mutation_boundary()
             : (void)0; // safe point before mutation
-        if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2])) {
+        if (a.size() < 3 || !is_string(a[2])) {
             ok = false;
-            return ev.make_merr(
-                "bad-arg", "usage: (mutate:replace-value node-id new-value summary [ppa-hint])");
+            return ev.make_merr("bad-arg", "usage: (mutate:replace-value node-id|stable-ref "
+                                            "new-value summary [ppa-hint])");
         }
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (!ev.workspace_flat_) {
+            ok = false;
+            return ev.make_merr("no-workspace", "no workspace AST loaded");
+        }
+        auto& flat = *ev.workspace_flat_;
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        if (auto resolve_err =
+                resolve_mutate_node_arg(flat, a[0], "mutate:replace-value", &ok, node);
+            !is_void(resolve_err))
+            return resolve_err;
         std::uint8_t ppa_hint = 0;
         if (a.size() >= 4 && is_int(a[3]))
             ppa_hint = aura::compiler::hardware::parse_ppa_hint(as_int(a[3]));
@@ -389,16 +472,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (sum_idx >= ev.string_heap_.size()) {
             ok = false;
             return ev.make_merr("bad-arg", "summary string index out of range");
-        }
-        if (!ev.workspace_flat_) {
-            ok = false;
-            return ev.make_merr("no-workspace", "no workspace AST loaded");
-        }
-        auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
-            ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
-                                                    " >= flat size " + std::to_string(flat.size()));
         }
 
         auto nv = flat.get(node);
@@ -1021,6 +1094,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         (void)a;
         return make_int(static_cast<std::int64_t>(ev.get_stale_ref_blocked_count() +
                                                   ev.get_stale_ref_warned_count()));
+    });
+
+    // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
+    add("query:as-stable-ref", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
+            return make_void();
+        const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto ref = ev.workspace_flat_->make_ref(id);
+        const auto pid = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
+                             make_int(static_cast<std::int64_t>(ref.gen))});
+        return make_pair(pid);
     });
 
     // Issue #439: (mutate:request-gc-safepoint
@@ -1751,7 +1836,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // rollback path bumps the version and invalidates the
     // defuse index, which is enough to surface "the workspace
     // state changed" to readers.
-    add_mutate("mutate:tweak-literal", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:tweak-literal", [resolve_mutate_node_arg, &ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -1761,18 +1846,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return mev("read-only", "workspace is read-only");
         }
-        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !ev.workspace_flat_) {
+        if (a.size() < 2 || !is_int(a[1]) || !ev.workspace_flat_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:tweak-literal node-id delta [summary])");
+            return mev("bad-arg",
+                        "usage: (mutate:tweak-literal node-id|stable-ref delta [summary])");
         }
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto delta = as_int(a[1]);
         auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
-            ok = false;
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                           std::to_string(flat.size()));
-        }
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        if (auto resolve_err =
+                resolve_mutate_node_arg(flat, a[0], "mutate:tweak-literal", &ok, node);
+            !is_void(resolve_err))
+            return resolve_err;
         // Issue #373: hygiene guard. If `node` is
         // MacroIntroduced, reject by default. Same opt-out
         // path as mutate:rebind.
