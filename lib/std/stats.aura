@@ -76,6 +76,8 @@
     "query:eda-concurrency-stats"
     ; ── Issue #583 — Registry + core primitives hot-path observability hash ──
     "query:primitives-registry-core-stats"
+    ; ── Issue #584 — Primitives hot-path AI-agent stress observability ──
+    "query:primitives-hotpath-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

@@ -483,105 +483,86 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     // invasive C++ + stdlib + reflect work that needs
     // benchmarking + perf regression coverage alongside the
     // existing AI/JSON/SoA initiatives — separate follow-ups.
-    add("query:stdlib-compiler-demands-stats-hash",
-        [&ev](const auto&) -> EvalValue {
-            // hotpath-calls: sum of all hot-path counters.
-            const std::uint64_t dispatch_hits =
-                types::value_dispatch_hit_count.load(std::memory_order_relaxed);
-            const std::uint64_t fastpath_hits =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->primitive_fastpath_hits_total.load(
-                              std::memory_order_relaxed)
-                    : 0;
-            const std::uint64_t hotpath_eval =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->hotpath_eval_flat_calls.load(
-                              std::memory_order_relaxed)
-                    : 0;
-            const std::uint64_t hotpath_lowering =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->hotpath_lowering_calls.load(
-                              std::memory_order_relaxed)
-                    : 0;
-            const std::uint64_t soa_dual_emit =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->hotpath_soa_dual_emit_hits.load(
-                              std::memory_order_relaxed)
-                    : 0;
-            const std::uint64_t hotpath_calls = dispatch_hits + fastpath_hits +
-                                               hotpath_eval + hotpath_lowering +
-                                               soa_dual_emit;
-            // error-consistency: existing value_contract_violation_count.
-            const std::uint64_t error_consistency =
-                types::value_contract_violation_count.load(
-                    std::memory_order_relaxed);
-            // extension-count: new foundation atomic (0 until AC3 macro).
-            const std::uint64_t extension_count =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->stdlib_extension_count_total.load(
-                              std::memory_order_relaxed)
-                    : 0;
-            // ai-native-hits: new foundation atomic (0 until AC4 wire-up).
-            const std::uint64_t ai_native_hits =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->ai_native_primitive_hits_total.load(
-                              std::memory_order_relaxed)
-                    : 0;
-            // soa-jit-win: existing primitive_fastpath_hits_total proxy.
-            const std::uint64_t soa_jit_win = fastpath_hits;
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
+    add("query:stdlib-compiler-demands-stats-hash", [&ev](const auto&) -> EvalValue {
+        // hotpath-calls: sum of all hot-path counters.
+        const std::uint64_t dispatch_hits =
+            types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+        const std::uint64_t fastpath_hits =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->primitive_fastpath_hits_total.load(std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t hotpath_eval =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->hotpath_eval_flat_calls.load(std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t hotpath_lowering =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->hotpath_lowering_calls.load(std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t soa_dual_emit =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->hotpath_soa_dual_emit_hits.load(std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t hotpath_calls =
+            dispatch_hits + fastpath_hits + hotpath_eval + hotpath_lowering + soa_dual_emit;
+        // error-consistency: existing value_contract_violation_count.
+        const std::uint64_t error_consistency =
+            types::value_contract_violation_count.load(std::memory_order_relaxed);
+        // extension-count: new foundation atomic (0 until AC3 macro).
+        const std::uint64_t extension_count =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->stdlib_extension_count_total.load(std::memory_order_relaxed)
+                : 0;
+        // ai-native-hits: new foundation atomic (0 until AC4 wire-up).
+        const std::uint64_t ai_native_hits =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->ai_native_primitive_hits_total.load(std::memory_order_relaxed)
+                : 0;
+        // soa-jit-win: existing primitive_fastpath_hits_total proxy.
+        const std::uint64_t soa_jit_win = fastpath_hits;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
                 }
-            };
-            insert_kv("hotpath-calls", static_cast<std::int64_t>(hotpath_calls));
-            insert_kv("error-consistency",
-                      static_cast<std::int64_t>(error_consistency));
-            insert_kv("extension-count",
-                      static_cast<std::int64_t>(extension_count));
-            insert_kv("ai-native-hits",
-                      static_cast<std::int64_t>(ai_native_hits));
-            insert_kv("soa-jit-win",
-                      static_cast<std::int64_t>(soa_jit_win));
-            insert_kv("schema", 633);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        });
+            }
+        };
+        insert_kv("hotpath-calls", static_cast<std::int64_t>(hotpath_calls));
+        insert_kv("error-consistency", static_cast<std::int64_t>(error_consistency));
+        insert_kv("extension-count", static_cast<std::int64_t>(extension_count));
+        insert_kv("ai-native-hits", static_cast<std::int64_t>(ai_native_hits));
+        insert_kv("soa-jit-win", static_cast<std::int64_t>(soa_jit_win));
+        insert_kv("schema", 633);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
@@ -1680,9 +1661,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
-    // Issue #614: (query:primitives-hotpath-stats) — pair-allocation +
+    // Issue #614 + #584: (query:primitives-hotpath-stats) — pair-allocation +
     // cdr-traversal cost under AI Agent high-freq list/math workloads.
-    // 4-field hash:
+    // Hash fields (#614 foundation + #584 AI-agent stress synthesis):
     //   - primitive-call-total: lifetime # of primitive invocations
     //                            (same as the #441/#450 field exposed
     //                            by query:primitive-perf-stats; kept
@@ -1703,15 +1684,37 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t pair_total = 0;
         std::uint64_t tra_total = 0;
         std::uint64_t depth_max = 0;
+        std::uint64_t fastpath_hits = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             call_total = m->primitive_call_total.load(std::memory_order_relaxed);
             pair_total = m->pair_alloc_total.load(std::memory_order_relaxed);
             tra_total = m->linear_traverse_total.load(std::memory_order_relaxed);
             depth_max = m->cdr_depth_max.load(std::memory_order_relaxed);
+            fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
         }
+        const std::uint64_t mutations = ev.total_mutations();
+        const std::uint64_t queries = ev.get_total_query_calls();
+        const std::uint64_t call_denom = call_total + mutations + queries + 1;
+        const std::int64_t call_rate = static_cast<std::int64_t>((call_total * 100) / call_denom);
+        const std::int64_t alloc_per_call =
+            static_cast<std::int64_t>(pair_total / (call_total + 1));
+        const std::int64_t regex_time_us =
+            static_cast<std::int64_t>((tra_total * 10) / (call_total + 1));
+        const std::int64_t stability_penalty =
+            static_cast<std::int64_t>(alloc_per_call * 3 + (depth_max > 32 ? depth_max / 8 : 0));
+        const std::int64_t stability_score = stability_penalty >= 100 ? 0 : 100 - stability_penalty;
+        const std::uint64_t total = call_total + pair_total + tra_total + depth_max +
+                                    fastpath_hits + static_cast<std::uint64_t>(call_rate);
+        std::int64_t recommendation = 0;
+        if (stability_score < 50)
+            recommendation = 3;
+        else if (alloc_per_call > 10 || depth_max > 64)
+            recommendation = 2;
+        else if (call_total > 0 || fastpath_hits > 0)
+            recommendation = 1;
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1754,6 +1757,13 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             {"pair-alloc-total", make_int(static_cast<std::int64_t>(pair_total))},
             {"linear-traverse-total", make_int(static_cast<std::int64_t>(tra_total))},
             {"cdr-depth-max", make_int(static_cast<std::int64_t>(depth_max))},
+            {"call-rate", make_int(call_rate)},
+            {"alloc-per-call", make_int(alloc_per_call)},
+            {"regex-time-us", make_int(regex_time_us)},
+            {"stability-score", make_int(stability_score)},
+            {"hotpath-schema", make_int(584)},
+            {"primitives-hotpath-total", make_int(static_cast<std::int64_t>(total))},
+            {"primitives-hotpath-recommendation", make_int(recommendation)},
         };
         return build_hash(kv);
     });
@@ -3461,6 +3471,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:eda-concurrency-stats",
             // Issue #583 — Registry + core primitives hot-path observability hash
             "query:primitives-registry-core-stats",
+            // Issue #584 — Primitives hot-path AI-agent stress observability
+            "query:primitives-hotpath-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3501,10 +3513,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 148 entries as of #583 ship (147 from #582 + 1 primitives-registry-
-        // core observability hash primitive from #583:
-        // query:primitives-registry-core-stats).
-        return make_int(148);
+        // 149 entries as of #584 ship (148 from #583 + 1 primitives-hotpath
+        // stats registration from #584 — extends #614 hash with AI-agent
+        // stress fields: query:primitives-hotpath-stats).
+        return make_int(149);
     });
 }
 
