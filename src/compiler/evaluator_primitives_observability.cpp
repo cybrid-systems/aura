@@ -564,6 +564,137 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #637: query:closure-bridge-safety-stats-hash —
+    // Agent-discoverable structured dashboard for IRClosure +
+    // EnvFrame versioning + bridge invalidate protocol
+    // (P0 memory-safety + commercial reliability surface;
+    // non-duplicative to #620 #623 #624 — see issue body).
+    //
+    // Fields (3 + sentinel):
+    //   - invalidations-post-mutate   new
+    //                          closure_invalidation_post_mutate_total
+    //                          atomic (foundation for AC1
+    //                          invalidate_function wire-up —
+    //                          bumped when invalidate_function
+    //                          fires after a workspace mutate).
+    //                          Value is 0 until AC1 wire-up.
+    //   - version-mismatches-caught   new
+    //                          closure_version_mismatch_caught_
+    //                          total atomic (foundation for
+    //                          AC2 bridge_epoch / EnvFrame
+    //                          .version check wire-up in
+    //                          apply_closure + materialize_
+    //                          call_env — bumped per detected
+    //                          mismatch that would otherwise
+    //                          have caused UAF / stale-env
+    //                          access). Value is 0 until
+    //                          AC2 wire-up.
+    //   - safe-rebuilds        new closure_safe_rebuild_total
+    //                          atomic (foundation for AC2/AC3
+    //                          Guard dtor + WorkspaceTree::
+    //                          resolve_safe_ref wire-up —
+    //                          bumped per successful bridge
+    //                          rebuild after a mismatch).
+    //                          Value is 0 until AC2/AC3
+    //                          wire-up.
+    //   - schema == 637         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the *foundation* for
+    //   - invalidate_function_calls (#401) + jit_cache_evictions
+    //     (#401) + compiler_inval_bridge_epoch_total (#498)
+    //     + bridge_epoch_hit_count_ (#531)
+    //     + jit_hotswap_*_total (#601) + linear_deopt_on_
+    //     invalidate_total (#531) + stable_ref_invalidations
+    //     (#604)
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:closure-bridge-safety-stats` with
+    // {invalidations_post_mutate, version_mismatches_caught,
+    // safe_rebuilds} — was *not* shipped under that exact
+    // name with that exact field set. So #637 ships ONE new
+    // Aura primitive + 3 new foundation atomics.
+    //
+    // The remaining #637 AC1 + AC2 + AC3 work (IRClosure
+    // env_version/weak_env stamp, apply_closure dual-path
+    // version check + integrate with MutationBoundaryGuard,
+    // bridge_epoch bump to JIT hot-swap / Interpreter fallback)
+    // is invasive C++ on the hot path + needs the 10k+ fiber
+    // stress + TSan coverage from the issue body — separate
+    // follow-ups.
+    add("query:closure-bridge-safety-stats-hash",
+        [&ev](const auto&) -> EvalValue {
+            // invalidations-post-mutate: new foundation atomic
+            // (0 until AC1 invalidate_function wire-up).
+            const std::uint64_t invalidations_post_mutate =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->closure_invalidation_post_mutate_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // version-mismatches-caught: new foundation atomic
+            // (0 until AC2 apply_closure + materialize_call_env
+            // wire-up).
+            const std::uint64_t version_mismatches_caught =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->closure_version_mismatch_caught_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // safe-rebuilds: new foundation atomic
+            // (0 until AC2/AC3 Guard dtor wire-up).
+            const std::uint64_t safe_rebuilds =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->closure_safe_rebuild_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("invalidations-post-mutate",
+                      static_cast<std::int64_t>(invalidations_post_mutate));
+            insert_kv("version-mismatches-caught",
+                      static_cast<std::int64_t>(version_mismatches_caught));
+            insert_kv("safe-rebuilds",
+                      static_cast<std::int64_t>(safe_rebuilds));
+            insert_kv("schema", 637);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -3519,10 +3650,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 152 entries as of #587 ship (151 from #586 + 1 primitives-ai-native
-        // stats registration from #587 — AI-native development support hash:
-        // query:primitives-ai-native-stats).
-        return make_int(152);
+        // 153 entries as of #637 ship (152 from #587 + 1 closure-bridge-
+        // safety observability hash primitive from #637:
+        // query:closure-bridge-safety-stats-hash).
+        return make_int(153);
     });
 }
 

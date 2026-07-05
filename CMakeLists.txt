@@ -3227,6 +3227,20 @@ add_dependencies(all_test_issue_targets test_issue_632)
 aura_add_issue_test(test_issue_633)
 aura_issue_test_link_llvm_jit(test_issue_633)
 add_dependencies(all_test_issue_targets test_issue_633)
+# Issue #637: query:closure-bridge-safety-stats-hash — P0
+# memory-safety foundation — 1 new Aura primitive
+# (query:closure-bridge-safety-stats-hash) + 3 new atomics
+# (closure_invalidation_post_mutate_total +
+# closure_version_mismatch_caught_total +
+# closure_safe_rebuild_total). Primitive has 4 fields: 3 from
+# the new atomics (all foundation scaffolding for AC1+AC2+AC3
+# enforcement, currently 0) + schema sentinel. Builds on
+# #401 / #498 / #531 / #601 / #604 existing counters +
+# invalidate_function / bridge_epoch infrastructure.
+# Non-duplicative to #620/#623/#624 (see issue body).
+aura_add_issue_test(test_issue_637)
+aura_issue_test_link_llvm_jit(test_issue_637)
+add_dependencies(all_test_issue_targets test_issue_637)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
