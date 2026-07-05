@@ -3085,6 +3085,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:sv-production-verification-stats",
             // Issue #540 — StableNodeRef + generation/mutation_log EDA stability
             "query:eda-stability-stats",
+            // Issue #541 — query:pattern + DefUseIndex + hygiene SV verification
+            "query:pattern-sv-verification-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3125,10 +3127,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 133 entries as of #540 ship (132 from #539 + 1 eda-stability
-        // observability hash primitive from #540:
-        // query:eda-stability-stats).
-        return make_int(133);
+        // 134 entries as of #541 ship (133 from #540 + 1 pattern-sv-
+        // verification observability hash primitive from #541:
+        // query:pattern-sv-verification-stats).
+        return make_int(134);
     });
 }
 

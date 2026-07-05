@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**720** registrations scanned from `src/**/*.cpp`.
+**721** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (17%)
 - **core**: 203 primitives (28%)
-- **internal-observable**: 246 primitives (34%)
+- **internal-observable**: 247 primitives (34%)
 - **convenience**: 147 primitives (20%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (246)
+## Query: (247)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -185,6 +185,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pattern-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-production-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-structural-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-sv-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:per-fiber-stack-pool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:primitive-fastpath-per-prim` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1180,7 +1181,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (246)
+### Internal observable (stats/counters) (247)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1344,6 +1345,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pattern-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-production-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-structural-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-sv-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:per-fiber-stack-pool-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitive-error-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:primitive-fastpath-per-prim` — `src/compiler/evaluator_primitives_observability.cpp`
