@@ -1695,6 +1695,20 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("relower-per-fn", static_cast<std::int64_t>(relower_per_fn));
         insert_kv("module-dirty-skips", static_cast<std::int64_t>(mod_skip));
         insert_kv("pipeline-total", static_cast<std::int64_t>(pipeline_total));
+        // Issue #606: pure-delegation observation — ShapeWrap +
+        // LinearOwnershipWrap bump a static atomic on every run()
+        // call. Surfaced here so the AI agent can verify the new
+        // pure Wrap delegation is being exercised (or wire more if
+        // it's not). The stat is the sum of both wraps so a
+        // single field tells us "are the pure wraps hot?".
+        const std::uint64_t shape_pure =
+            aura::compiler::ShapeWrap::pure_delegation_hits();
+        const std::uint64_t linear_pure =
+            aura::compiler::LinearOwnershipWrap::pure_delegation_hits();
+        insert_kv("pure-delegation-shape", static_cast<std::int64_t>(shape_pure));
+        insert_kv("pure-delegation-linear", static_cast<std::int64_t>(linear_pure));
+        insert_kv("pure-delegation-total",
+                  static_cast<std::int64_t>(shape_pure + linear_pure));
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
