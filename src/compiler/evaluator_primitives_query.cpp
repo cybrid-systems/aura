@@ -293,6 +293,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(ev->get_schema_validation_pass_count()));
             insert_kv("schema-fail",
                       static_cast<std::int64_t>(ev->get_schema_validation_fail_count()));
+            insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -1392,37 +1393,70 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(pass + fail + snapshots + marker_skips));
     });
 
-    // Issue #551: query:reflect-postmutate-stats. Returns
-    // the sum of the 4 reflect post-mutate observability
-    // counters:
-    //   - impact_snapshot_count_  (# of post-mutate impact
-    //     snapshots produced by Guard dtor success path)
-    //   - schema_validation_pass_count_  (# of auto_validate
-    //     calls that passed — post-mutate structural
-    //     integrity check)
-    //   - schema_validation_fail_count_  (# of auto_validate
-    //     calls that caught an inconsistency — production
-    //     critical to detect silent corruption)
-    //   - dirty_nodes_in_snapshot_  (# of dirty nodes captured
-    //     in the latest impact snapshot — per-snapshot stat)
-    //
-    // P0: returns an integer = sum of the 4 counters.
-    // Follow-up: returns a 4-tuple
-    // (impact-snapshots schema-pass schema-fail dirty-nodes)
-    // so the AI Agent can compute validation pass-rate
-    // (= pass / (pass + fail)) and react to schema-fail > 0
-    // as a hard alert (silent corruption).
-    add("query:reflect-postmutate-stats", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
-        const std::uint64_t pass = ev->get_schema_validation_pass_count();
-        const std::uint64_t fail = ev->get_schema_validation_fail_count();
-        const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
-        return make_int(static_cast<std::int64_t>(snapshots + pass + fail + dirty));
-    });
+    // Issue #502 / #551: query:reflect-postmutate-stats. Hash view of
+    // Guard post-mutate reflect validation + impact snapshot counters:
+    //   - impact-snapshots: impact_snapshot_count_
+    //   - schema-pass / schema-fail: auto_validate hook tallies
+    //   - dirty-nodes / macro-markers: latest snapshot fields
+    //   - schema-valid: last post_mutation_reflect_validate() result
+    //   - reflect-postmutate-total: sum of the 4 primary counters
+    //   - reflect-postmutate-recommendation: 0=ok, 1=review, 2=alert
+    add("query:reflect-postmutate-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(12);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+            const std::uint64_t pass = ev->get_schema_validation_pass_count();
+            const std::uint64_t fail = ev->get_schema_validation_fail_count();
+            const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
+            const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
+            const std::uint64_t total = snapshots + pass + fail + dirty;
+            std::int64_t recommendation = 0;
+            if (fail > 0 || !ev->get_last_schema_validation_ok())
+                recommendation = 2;
+            else if (dirty > 50)
+                recommendation = 1;
+            insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
+            insert_kv("schema-pass", static_cast<std::int64_t>(pass));
+            insert_kv("schema-fail", static_cast<std::int64_t>(fail));
+            insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
+            insert_kv("reflect-postmutate-total", static_cast<std::int64_t>(total));
+            insert_kv("reflect-postmutate-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #594: query:reflection-selfmod-stats. Returns the sum of
     // 5 static-reflection + self-mod validation observability counters

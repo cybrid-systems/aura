@@ -3869,6 +3869,7 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     set_dirty_nodes_in_snapshot(health.dirty_nodes);
     set_macro_markers_in_snapshot(health.macro_markers);
     const bool ok = health.generation_healthy && health.marker_consistent;
+    set_last_schema_validation_ok(ok);
     if (ok)
         bump_schema_validation_pass_count();
     else

@@ -378,8 +378,8 @@ bool test_regression_related_primitives() {
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(query:pattern-hygiene-stats) (regression for #547)");
     auto r2 = cs.eval("(query:reflect-postmutate-stats)");
-    CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:reflect-postmutate-stats) (regression for #551)");
+    CHECK(r2.has_value() && aura::compiler::types::is_hash(*r2),
+          "(query:reflect-postmutate-stats) (regression for #502)");
     auto r3 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:panic-checkpoint-lifecycle-stats) (regression for #548)");

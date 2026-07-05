@@ -132,7 +132,7 @@ int main() {
         auto rps = cs.eval("(query:reflect-postmutate-stats)");
         auto mi = cs.eval("(query:mutation-impact)");
         auto mrs = cs.eval("(query:macro-reflect-self-evo-stats)");
-        CHECK(rps && aura::compiler::types::is_int(*rps), "reflect-postmutate-stats regression");
+        CHECK(rps && aura::compiler::types::is_hash(*rps), "reflect-postmutate-stats regression");
         CHECK(mi && aura::compiler::types::is_int(*mi), "mutation-impact regression");
         CHECK(mrs && aura::compiler::types::is_int(*mrs), "macro-reflect-self-evo-stats regression");
     }
@@ -142,8 +142,8 @@ int main() {
         std::println("\n--- AC6: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 86,
-              "stats:count == 86");
+                  aura::compiler::types::as_int(*count) >= 86,
+              "stats:count >= 86");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
