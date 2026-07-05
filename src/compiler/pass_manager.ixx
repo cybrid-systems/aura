@@ -295,13 +295,15 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
 //               "ArityWrap should be PureAnalysisPass (run() must be const)");
 
 // IncrementalPass satisfaction: requires run_function +
-// run_block. ConstantFoldingWrap exposes `fold_function`
-// and `fold_block` (not `run_*`). The static_assert is
-// commented out below until the methods are renamed (or
-// until the concept is widened to accept `fold_*` aliases).
+// run_block. Issue #606: ConstantFoldingWrap now exposes
+// run_function + run_block aliases over its existing
+// fold_function / fold_block implementations. The legacy
+// names remain available for the 7 service.ixx + main.cpp
+// call sites — no churn there.
 //
-// static_assert(IncrementalPass<ConstantFoldingWrap>,
-//               "ConstantFoldingWrap should be IncrementalPass (rename fold_* → run_*)");
+// NOTE: this static_assert must live AFTER the
+// ConstantFoldingWrap class definition (it's documented
+// below next to its definition).
 
 // DirtyAwarePass satisfaction: requires is_block_dirty.
 // static_assert moved below ConstantFoldingWrap definition.
@@ -310,7 +312,10 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
 // ── ComputeKindWrap — analysis pass (wraps pure function) ─────
 export class ComputeKindWrap {
 public:
-    void run(aura::ir::IRModule& module) {
+    // Issue #606: now const — the only mutated state is the
+    // results_ accumulator (marked mutable), so the IRModule is
+    // observed read-only. Satisfies PureAnalysisPass.
+    void run(aura::ir::IRModule& module) const {
         results_.clear();
         for (auto& func : module.functions)
             results_.push_back(aura::compiler::compute_kind(func));
@@ -326,13 +331,17 @@ public:
     std::span<const ComputeKindResult> results() const { return results_; }
 
 private:
-    std::vector<ComputeKindResult> results_;
+    // mutable so the const-qualified run() can still clear/refill
+    // the accumulator (pure-analysis observation, not a logical
+    // mutation of the Pass instance from a caller's perspective).
+    mutable std::vector<ComputeKindResult> results_;
 };
 
 // ── ArityWrap — arity checking pass ────────────────────────────
 export class ArityWrap {
 public:
-    void run(aura::ir::IRModule& module) { result_ = aura::compiler::check_arity(module); }
+    // Issue #606: now const + result_ mutable — PureAnalysisPass.
+    void run(aura::ir::IRModule& module) const { result_ = aura::compiler::check_arity(module); }
 
     bool has_error() const { return result_.has_error; }
     std::string_view name() const { return "arity"; }
@@ -341,8 +350,135 @@ public:
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
 private:
-    ArityCheckResult result_;
+    // mutable so the const-qualified run() can store the result.
+    mutable ArityCheckResult result_;
     std::uint64_t pipeline_epoch_ = 0;
+};
+
+// ── Issue #606: ShapeWrap — pure read-only shape fingerprint pass ─
+//
+// Thin wrap that satisfies PureAnalysisPass: run() is const,
+// delegates to the per-function shape_id column on IRFunction
+// (Issue #60 Iter 1 — existing pure analyzer, no recomputation),
+// and accumulates one per-function shape fingerprint into a
+// results_ vector.
+//
+// The Wrap exists primarily so the pipeline can run shape
+// analysis as a typed PureAnalysisPass stage and bump the
+// pure-delegation counter for observability.
+export class ShapeWrap {
+public:
+    void run(aura::ir::IRModule& module) const {
+        results_.clear();
+        for (const auto& func : module.functions) {
+            // shape_id lives on IRInstruction (Issue #60 Iter 1),
+            // not on IRFunction. Aggregate one shape_id per
+            // function — take the shape_id of the first
+            // instruction (or 0 when the function has no
+            // instructions yet, as is common for an empty stub).
+            std::uint32_t sid = 0;
+            for (const auto& blk : func.blocks) {
+                if (!blk.instructions.empty()) {
+                    sid = blk.instructions.front().shape_id;
+                    break;
+                }
+            }
+            results_.push_back(sid);
+        }
+        pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "shape"; }
+    std::span<const std::uint32_t> shape_ids() const { return results_; }
+    static std::uint64_t pure_delegation_hits() noexcept {
+        return pure_delegation_hits_.load(std::memory_order_relaxed);
+    }
+
+private:
+    mutable std::vector<std::uint32_t> results_;
+    static inline std::atomic<std::uint64_t> pure_delegation_hits_{0};
+};
+
+// ── Issue #606: LinearOwnershipWrap — pure read-only linear use-after-move probe ─
+//
+// Reads every IRFunction's instruction stream for a
+// MoveOp/DropOp/RefCountOp consumer followed by a read of the
+// same slot; the same algorithm as the legacy LinearOwnershipPass
+// (a free function with the same shape exists in
+// aura.compiler.type_checker). The Wrap exists so the pipeline
+// can run linear-ownership analysis as a typed PureAnalysisPass
+// stage; matches the legacy pass's `has_error()` semantic
+// (use_after_move_count > 0).
+export class LinearOwnershipWrap {
+public:
+    void run(aura::ir::IRModule& module) const {
+        use_after_move_count_ = 0;
+        for (auto& func : module.functions) {
+            walk_function_(func);
+        }
+        pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool has_error() const { return use_after_move_count_ > 0; }
+    std::string_view name() const { return "linear-ownership"; }
+    std::size_t use_after_move_count() const { return use_after_move_count_; }
+    static std::uint64_t pure_delegation_hits() noexcept {
+        return pure_delegation_hits_.load(std::memory_order_relaxed);
+    }
+
+private:
+    mutable std::size_t use_after_move_count_ = 0;
+    static inline std::atomic<std::uint64_t> pure_delegation_hits_{0};
+
+    static bool is_consuming_(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::MoveOp:
+            case aura::ir::IROpcode::DropOp:
+            case aura::ir::IROpcode::RefCountOp:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    static bool reads_input_(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::Nop:
+            case aura::ir::IROpcode::Branch:
+            case aura::ir::IROpcode::Jump:
+            case aura::ir::IROpcode::Return:
+            case aura::ir::IROpcode::ConstVoid:
+            case aura::ir::IROpcode::CellGet:
+            case aura::ir::IROpcode::MakePair:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    void walk_function_(aura::ir::IRFunction& func) const {
+        std::vector<std::uint8_t> moved(func.local_count, 0);
+        for (auto& block : func.blocks) {
+            for (auto& instr : block.instructions) {
+                if (is_consuming_(instr.opcode)) {
+                    auto consumed = instr.operands[1];
+                    if (consumed < moved.size())
+                        moved[consumed] = 1;
+                } else if (reads_input_(instr.opcode)) {
+                    // Iterating operands[] directly (operand_count is
+                    // the legacy 0-4 counter; .size() is the
+                    // authoritative bound for the std::array view).
+                    const std::size_t n = std::min<std::size_t>(instr.operands.size(), 4);
+                    for (std::size_t k = 1; k < n; ++k) {
+                        auto s = instr.operands[k];
+                        if (s < moved.size() && moved[s])
+                            ++use_after_move_count_;
+                    }
+                }
+            }
+        }
+    }
 };
 
 // ── ConstantFoldingWrap — compile-time constant folding (Issue #212) ─
@@ -419,6 +555,14 @@ public:
         return n;
     }
 
+    // Issue #606: IncrementalPass aliases — the concept
+    // requires the overload `run(IRFunction&)` and
+    // `run(BasicBlock&)` literally. Legacy `fold_function` /
+    // `fold_block` are kept for back-compat with the 7
+    // service.ixx + main.cpp call sites that already use them.
+    void run(aura::ir::IRFunction& func) { (void)fold_function(func); }
+    void run(aura::ir::BasicBlock& block) { (void)fold_block(block); }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "const-fold"; }
     std::size_t folded_count() const { return folded_; }
@@ -446,6 +590,21 @@ static_assert(DirtyAwarePass<ConstantFoldingWrap>,
 static_assert(JITFriendlyPass<ConstantFoldingWrap>,
               "ConstantFoldingWrap exposes pipeline_epoch_hint for JIT paths");
 static_assert(JITFriendlyPass<ArityWrap>, "ArityWrap exposes pipeline_epoch_hint");
+
+// Issue #606: IncrementalPass satisfaction for ConstantFoldingWrap —
+// requires run_function + run_block aliases (added in this commit).
+// Placed HERE (after the class definition) rather than in the
+// header comment block above, because static_asserts can only
+// reference complete types.
+static_assert(IncrementalPass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap should be IncrementalPass (run_function/run_block aliases)");
+
+// Issue #606: PureAnalysisPass satisfaction for the new ShapeWrap +
+// LinearOwnershipWrap (placed with the other Pass static_asserts).
+static_assert(PureAnalysisPass<aura::compiler::ShapeWrap>,
+              "ShapeWrap should be PureAnalysisPass");
+static_assert(PureAnalysisPass<aura::compiler::LinearOwnershipWrap>,
+              "LinearOwnershipWrap should be PureAnalysisPass");
 
 // ── TypeCheckWrap — type checking pass (pre-lowering, FlatAST level) ──
 // Unlike other passes, this operates on FlatAST before IR lowering.

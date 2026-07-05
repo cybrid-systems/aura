@@ -2881,6 +2881,13 @@ add_dependencies(all_test_issue_targets test_issue_603)
 aura_add_issue_test(test_issue_604)
 aura_issue_test_link_llvm_jit(test_issue_604)
 add_dependencies(all_test_issue_targets test_issue_604)
+# Issue #606: Pass/AnalysisPass concept + fold pipeline + Pure Wrap adoption.
+# ComputeKindWrap/ArityWrap now const-correct (PureAnalysisPass);
+# ConstantFoldingWrap exposes run_function/run_block aliases (IncrementalPass);
+# ShapeWrap + LinearOwnershipWrap are new pure-delegating wraps.
+aura_add_issue_test(test_issue_606)
+aura_issue_test_link_llvm_jit(test_issue_606)
+add_dependencies(all_test_issue_targets test_issue_606)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
