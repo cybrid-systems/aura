@@ -580,6 +580,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eda_foundation_mutate_total{0};
     std::atomic<std::uint64_t> eda_foundation_waveform_total{0};
     std::atomic<std::uint64_t> eda_foundation_feedback_total{0};
+    // Issue #616: EDA hardware-co-design primitives (load-sv /
+    // parse-verification-result) observability. Counters are
+    // separate from the foundation ones above so that
+    // (query:eda-foundation-stats) shape from #499 stays
+    // unchanged and (query:eda-hw-stats) is the dedicated
+    // dashboard for the new file-I/O / verification-result
+    // primitives.
+    std::atomic<std::uint64_t> eda_load_sv_total{0};
+    std::atomic<std::uint64_t> eda_load_sv_failure_total{0};
+    std::atomic<std::uint64_t> eda_parse_verification_result_total{0};
+    std::atomic<std::uint64_t> eda_parse_verification_failure_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

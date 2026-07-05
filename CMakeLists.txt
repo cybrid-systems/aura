@@ -2922,6 +2922,14 @@ add_dependencies(all_test_issue_targets test_issue_614)
 aura_add_issue_test(test_issue_615)
 aura_issue_test_link_llvm_jit(test_issue_615)
 add_dependencies(all_test_issue_targets test_issue_615)
+# Issue #616: EDA hardware-co-design primitives — file-boundary layer
+# (eda:load-sv, eda:parse-verification-result) + dedicated observability
+# primitive (query:eda-hw-stats). 4 new atomic counters (eda_load_sv_total/
+# _failure_total + eda_parse_verification_result_total/_failure_total).
+# Fixtures: tests/fixtures/issue_616/sample.sv + cov.json.
+aura_add_issue_test(test_issue_616)
+aura_issue_test_link_llvm_jit(test_issue_616)
+add_dependencies(all_test_issue_targets test_issue_616)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
