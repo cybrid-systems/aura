@@ -1276,6 +1276,9 @@ aura_issue_test_link_llvm_jit(test_issue_584_observability)
 # Issue #585 slice: primitives-error-stats unified recovery observability.
 aura_add_issue_test(test_issue_585_observability)
 aura_issue_test_link_llvm_jit(test_issue_585_observability)
+# Issue #586 slice: eda-primitives-stats infra registry observability.
+aura_add_issue_test(test_issue_586_observability)
+aura_issue_test_link_llvm_jit(test_issue_586_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +
