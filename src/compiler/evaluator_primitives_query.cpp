@@ -595,8 +595,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // fiber_id = 0 when no fiber is active on this thread;
             // the Agent can compare two captures and detect a
             // cross-fiber swap via the fiber-id field.
-            const std::uint32_t cur_fiber =
-                static_cast<std::uint32_t>(aura_fiber_current_id());
+            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
             auto ref = ws->make_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
             const bool is_live = ref.is_valid_in(*ws);
             auto* ht = FlatHashTable::create(16);
@@ -906,23 +905,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 }
             }
         };
-        const std::uint64_t gc_pauses =
-            aura_fiber_static_gc_pause_attributed_to_mutation();
+        const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
         const std::uint64_t depth = aura_evaluator_mutation_boundary_depth();
         const std::uint64_t cur_fiber = aura_fiber_current_id();
-        const std::uint64_t ratio =
-            static_cast<std::uint64_t>(
-                aura::serve::gc_frequency_tune_ratio().load(std::memory_order_relaxed));
-        insert_kv("gc-pauses-attributed-to-mutation",
-                  static_cast<std::int64_t>(gc_pauses));
-        insert_kv("mutation-boundary-depth",
-                  static_cast<std::int64_t>(depth));
-        insert_kv("current-fiber-id",
-                  static_cast<std::int64_t>(cur_fiber));
-        insert_kv("is-fibers-active",
-                  cur_fiber > 0 ? 1 : 0);
-        insert_kv("gc-frequency-tune-ratio",
-                  static_cast<std::int64_t>(ratio));
+        const std::uint64_t ratio = static_cast<std::uint64_t>(
+            aura::serve::gc_frequency_tune_ratio().load(std::memory_order_relaxed));
+        insert_kv("gc-pauses-attributed-to-mutation", static_cast<std::int64_t>(gc_pauses));
+        insert_kv("mutation-boundary-depth", static_cast<std::int64_t>(depth));
+        insert_kv("current-fiber-id", static_cast<std::int64_t>(cur_fiber));
+        insert_kv("is-fibers-active", cur_fiber > 0 ? 1 : 0);
+        insert_kv("gc-frequency-tune-ratio", static_cast<std::int64_t>(ratio));
         insert_kv("schema", 618);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
@@ -4051,6 +4043,95 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t suc = ws->sv_mutate_success_total();
         const std::uint64_t cyc = ws->verify_loop_cycles_total();
         return make_int(static_cast<std::int64_t>(cov + ass + att + suc + cyc));
+    });
+
+    // Issue #510: query:eda-verification-stats. Hash view of commercial
+    // EDA verification interop + coverage/assert feedback closed-loop
+    // counters (non-duplicative with #469 int-sum verification-loop-stats,
+    // #695 eda-sv-closedloop-stress-stats stress harness, and #698
+    // hardware-backend-commercial-stats emit/parse focus):
+    //   - coverage-delta: verification_coverage_feedback_total
+    //   - assert-fail-count: verification_assert_failure_total
+    //   - auto-mutate-from-feedback: feedback_mutate_hits +
+    //     eda_sv_feedback_mutate_success + verify_tool_feedback_mutate_success
+    //   - commercial-reemits: commercial_reemits_total
+    //   - commercial-simulator-runs: commercial_simulator_runs_total
+    //   - verification-loop-success: verification_loop_success_total
+    //   - sv-mutate-success-rate-pct: 0..100 from attempts/success
+    //   - eda-verification-total: sum of primary counters
+    //   - eda-verification-recommendation: 0=ok, 1=assert-heavy, 2=low mutate rate
+    add("query:eda-verification-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ws = ev->workspace_flat();
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const std::uint64_t coverage = ws ? ws->verification_coverage_feedback_total() : 0;
+        const std::uint64_t assert_fail = ws ? ws->verification_assert_failure_total() : 0;
+        const std::uint64_t feedback_hits =
+            m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t eda_feedback_ok =
+            m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t verify_tool_feedback =
+            ev->get_verify_tool_feedback_mutate_success_total();
+        const std::uint64_t auto_mutate = feedback_hits + eda_feedback_ok + verify_tool_feedback;
+        const std::uint64_t reemits =
+            m ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sim_runs =
+            m ? m->commercial_simulator_runs_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t loop_success =
+            m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
+        const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+        const std::uint64_t success_rate_pct =
+            sv_attempts > 0 ? (100 * sv_success / sv_attempts) : (sv_success > 0 ? 100 : 0);
+        const std::uint64_t total =
+            coverage + assert_fail + auto_mutate + reemits + sim_runs + loop_success;
+        std::int64_t recommendation = 0;
+        if (assert_fail > coverage && auto_mutate == 0)
+            recommendation = 1;
+        else if (sv_attempts > 0 && success_rate_pct < 50)
+            recommendation = 2;
+        insert_kv("coverage-delta", static_cast<std::int64_t>(coverage));
+        insert_kv("assert-fail-count", static_cast<std::int64_t>(assert_fail));
+        insert_kv("auto-mutate-from-feedback", static_cast<std::int64_t>(auto_mutate));
+        insert_kv("commercial-reemits", static_cast<std::int64_t>(reemits));
+        insert_kv("commercial-simulator-runs", static_cast<std::int64_t>(sim_runs));
+        insert_kv("verification-loop-success", static_cast<std::int64_t>(loop_success));
+        insert_kv("sv-mutate-success-rate-pct", static_cast<std::int64_t>(success_rate_pct));
+        insert_kv("eda-verification-total", static_cast<std::int64_t>(total));
+        insert_kv("eda-verification-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #415: query:dirty-reason-propagation-stats. Returns

@@ -3053,6 +3053,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:sv-sva-structure-stats",
             // Issue #695 — EDA-SV verification closed-loop stress
             "query:eda-sv-closedloop-stress-stats",
+            // Issue #510 — EDA verification interop + feedback stats
+            "query:eda-verification-stats",
             // Issue #697 — Declarative primitives extension kit
             "query:primitives-extension-stats",
             // Issue #709 — Registry fast dispatch + capture discipline
@@ -3085,9 +3087,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 104 entries as of #620 ship (103 from #618 + 1 provenance
-        // query primitive from #620: query:stable-ref-provenance).
-        return make_int(104);
+        // 105 entries as of #510 slice (104 from #620 + 1 eda-verification
+        // query primitive from #510: query:eda-verification-stats).
+        return make_int(105);
     });
 }
 
