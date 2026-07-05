@@ -313,6 +313,82 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #499: query:eda-foundation-stats — EDA primitives module
+    // parse/query/mutate/waveform/feedback observability for Agent loops.
+    add("query:eda-foundation-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t parse =
+            m ? m->eda_foundation_parse_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t query =
+            m ? m->eda_foundation_query_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t mutate =
+            m ? m->eda_foundation_mutate_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t waveform =
+            m ? m->eda_foundation_waveform_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback =
+            m ? m->eda_foundation_feedback_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t hooks =
+            m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t foundation_total = parse + query + mutate + waveform + feedback;
+        std::int64_t recommendation = 0;
+        if (parse == 0)
+            recommendation = 1;
+        else if (mutate == 0)
+            recommendation = 2;
+        else if (feedback == 0)
+            recommendation = 3;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"parse-total", make_int(static_cast<std::int64_t>(parse))},
+            {"query-total", make_int(static_cast<std::int64_t>(query))},
+            {"mutate-total", make_int(static_cast<std::int64_t>(mutate))},
+            {"waveform-total", make_int(static_cast<std::int64_t>(waveform))},
+            {"feedback-total", make_int(static_cast<std::int64_t>(feedback))},
+            {"hardware-hook-calls", make_int(static_cast<std::int64_t>(hooks))},
+            {"foundation-total", make_int(static_cast<std::int64_t>(foundation_total))},
+            {"foundation-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #478: query:primitive-error-stats — returns a pair
     // (error-count . error-values-size) for Agent recovery loops.
     add("query:primitive-error-stats", [&ev](const auto&) -> EvalValue {
@@ -2565,6 +2641,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:stable-ref-lifecycle-stats",
             // Issue #498 — AI-native primitive metadata + skeleton ergonomics
             "query:primitive-metadata",
+            // Issue #499 — EDA foundation primitives module observability
+            "query:eda-foundation-stats",
             "query:fiber-migration-stats",
             "query:mutation-coordination-stats",
             "query:envframe-stale-stats",
@@ -2730,8 +2808,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 95 entries as of #498 ship (94 from #497 + query:primitive-metadata).
-        return make_int(95);
+        // 96 entries as of #499 ship (95 from #498 + query:eda-foundation-stats).
+        return make_int(96);
     });
 }
 

@@ -101,6 +101,8 @@
     "query:stable-ref-lifecycle-stats"
     ; ── Issue #498 — AI-native primitive metadata observability ──
     "query:primitive-metadata"
+    ; ── Issue #499 — EDA foundation primitives module observability ──
+    "query:eda-foundation-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

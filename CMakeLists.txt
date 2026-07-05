@@ -40,6 +40,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_compile.cpp
     src/compiler/evaluator_primitives_observability.cpp
     src/compiler/verify_tool.cpp
+    src/compiler/evaluator_primitives_eda.cpp
     src/compiler/evaluator_primitives_messaging.cpp
     src/compiler/evaluator_primitives_io.cpp
     src/compiler/evaluator_primitives_agent.cpp
@@ -2868,6 +2869,10 @@ add_dependencies(all_test_issue_targets test_issue_497)
 aura_add_issue_test(test_issue_498)
 aura_issue_test_link_llvm_jit(test_issue_498)
 add_dependencies(all_test_issue_targets test_issue_498)
+# Issue #499: EDA foundation primitives module + query:eda-foundation-stats.
+aura_add_issue_test(test_issue_499)
+aura_issue_test_link_llvm_jit(test_issue_499)
+add_dependencies(all_test_issue_targets test_issue_499)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

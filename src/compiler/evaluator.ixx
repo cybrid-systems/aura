@@ -639,6 +639,7 @@ namespace primitives_detail {
     void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
                                                 Evaluator& ev);
+    void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
                                             std::span<const aura::compiler::types::EvalValue>)>)>
@@ -748,6 +749,8 @@ export class Evaluator {
                                                    Evaluator& ev);
     friend void primitives_detail::register_eval_observability_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_eda_primitives(std::function<void(std::string, PrimFn)> add,
+                                                           Evaluator& ev);
     friend void primitives_detail::register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
                                             std::span<const aura::compiler::types::EvalValue>)>)>
