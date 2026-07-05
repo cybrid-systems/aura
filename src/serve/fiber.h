@@ -13,6 +13,7 @@
 // per-thread mutation boundary depth probe. Defined
 // in evaluator_fiber_mutation.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+extern "C" std::uint64_t aura_fiber_current_id();
 
 // Issue #588: per-fiber mutation stack depth from opaque storage.
 // Used by is_at_mutation_boundary_safe() on the victim fiber
@@ -343,6 +344,21 @@ extern void (*g_fiber_storage_deleter_)(void*);
 extern void (*g_fiber_yield_checkpoint_)(uint8_t reason);
 extern void (*g_fiber_resume_validate_)();
 extern void (*g_fiber_yield_checkpoint_deleter_)(void*);
+
+// Issue #618: GC safepoint frequency tuning. The
+// (orchestration:tune-gc-frequency ratio) primitive writes
+// a 0..100 ratio here; the scheduler can opt-in to consult
+// it when deciding whether to trigger a safepoint on the
+// next allocation. P0 ships write/read/return; the actual
+// scheduler-side consult is a separate follow-up.
+//
+// 0   = never safepoint (debug-only; will hurt tail latency
+//       in production multi-agent workloads)
+// 100 = safepoint on every allocation (very conservative;
+//       maximizes GC responsiveness at the cost of throughput)
+// 50  = the default (P0 ships this as the initial value;
+//       matches the historical "every Nth allocation" heuristic)
+extern std::atomic<std::uint32_t>& gc_frequency_tune_ratio() noexcept;
 
 // ── GCPhase — GC safepoint state machine (P2) ────────
 enum class GCPhase : uint8_t {

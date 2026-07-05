@@ -2964,6 +2964,13 @@ add_dependencies(all_test_issue_targets test_issue_616)
 aura_add_issue_test(test_issue_617)
 aura_issue_test_link_llvm_jit(test_issue_617)
 add_dependencies(all_test_issue_targets test_issue_617)
+# Issue #618: LLM-aware orchestration metrics foundation — 2 new
+# primitives (query:scheduler-mutation-coord-stats, orchestration:tune-
+# gc-frequency) + 1 new atomic (gc_frequency_tune_ratio in fiber.h).
+# Builds on #451/#588/#591/#607 counter + yield-classification infra.
+aura_add_issue_test(test_issue_618)
+aura_issue_test_link_llvm_jit(test_issue_618)
+add_dependencies(all_test_issue_targets test_issue_618)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

@@ -21,6 +21,17 @@ extern "C" void aura_evaluator_resume_fiber_migration();
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
 
+// Issue #618: GC safepoint frequency tuning atomic. Initialized to
+// 50 (matches historical every-Nth-allocation heuristic). The
+// (orchestration:tune-gc-frequency ratio) primitive writes here;
+// the scheduler can opt-in to consult it (follow-up).
+namespace {
+std::atomic<std::uint32_t> g_gc_frequency_tune_ratio_{50};
+} // namespace
+std::atomic<std::uint32_t>& gc_frequency_tune_ratio() noexcept {
+    return g_gc_frequency_tune_ratio_;
+}
+
 // TLS: current running fiber (nullptr = worker loop context)
 thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
