@@ -38,6 +38,8 @@
     "query:pattern-hygiene-stats"
     ; ── Issue #528 — Pattern index + hygiene production tracker ──
     "query:pattern-production-index-stats"
+    ; ── Issue #530 — Incremental re-lower + ir_cache/JIT production tracker ──
+    "query:incremental-production-relower-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

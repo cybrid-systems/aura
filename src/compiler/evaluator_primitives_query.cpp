@@ -2010,6 +2010,115 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #530: query:incremental-production-relower-stats. Commercial P0 hash
+    // view of incremental compilation dirty/re-lower granularity + ir_cache_ /
+    // dep_graph_ / JIT bridge interaction — non-duplicative synthesis of #460
+    // compiler-incremental-stats, #404 ir-soa-incremental-stats, #426
+    // compiler-cache-stats, and #429 soa-dirty-stats; avoids #506 soa-hotpath
+    // adoption int-sum and #515 consolidated P0 tracker:
+    //   P1 Re-lower path: partial/per-fn/full/skipped + blocks-saved
+    //   P2 Impact scope: impact-scope-calls + affected-blocks-total
+    //   P3 JIT/bridge: jit-invalidate + bridge-invalidate + invalidate-fn
+    //   P4 Live cache: dirty-blocks/fns, cached-fns, dirty-block-pct
+    //   P5 Triggers: should-relower + cascade-body-only
+    //   - min-scope-hit-rate-pct: blocks_saved / relower work * 100
+    //   - incremental-production-relower-total / recommendation
+    add("query:incremental-production-relower-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            Evaluator::SoaDirtyStats soa;
+            if (ev->get_soa_dirty_stats_fn_)
+                soa = ev->get_soa_dirty_stats_fn_();
+            const std::uint64_t should_relower =
+                m ? m->should_relower_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t partial = ev->get_partial_relower_count();
+            const std::uint64_t impact_calls = ev->get_impact_scope_calls();
+            const std::uint64_t affected_blocks = ev->get_total_affected_blocks();
+            const std::uint64_t relower_skip =
+                m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_per_fn =
+                m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_full =
+                m ? m->relower_full_called_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t blocks_saved =
+                m ? m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t jit_invalidate =
+                m ? m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t bridge_invalidate =
+                m ? m->compiler_inval_bridge_epoch_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t invalidate_fn =
+                m ? m->invalidate_function_calls.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t cascade_body =
+                m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_work = relower_full + relower_per_fn + 1;
+            const std::int64_t min_scope_hit_pct =
+                static_cast<std::int64_t>((blocks_saved * 100) / relower_work);
+            const std::uint64_t total = should_relower + partial + impact_calls + affected_blocks +
+                                        relower_skip + relower_per_fn + relower_full +
+                                        blocks_saved + jit_invalidate + cascade_body +
+                                        soa.dirty_blocks;
+            std::int64_t recommendation = 0;
+            if (soa.dirty_block_pct > 50 && blocks_saved == 0)
+                recommendation = 3;
+            else if (relower_full > relower_per_fn && min_scope_hit_pct < 25)
+                recommendation = 2;
+            else if (partial > 0 || blocks_saved > 0 || relower_skip > 0)
+                recommendation = 1;
+            insert_kv("should-relower-triggers", static_cast<std::int64_t>(should_relower));
+            insert_kv("partial-relowers", static_cast<std::int64_t>(partial));
+            insert_kv("impact-scope-calls", static_cast<std::int64_t>(impact_calls));
+            insert_kv("affected-blocks-total", static_cast<std::int64_t>(affected_blocks));
+            insert_kv("relower-skipped", static_cast<std::int64_t>(relower_skip));
+            insert_kv("relower-per-fn", static_cast<std::int64_t>(relower_per_fn));
+            insert_kv("relower-full", static_cast<std::int64_t>(relower_full));
+            insert_kv("blocks-saved", static_cast<std::int64_t>(blocks_saved));
+            insert_kv("jit-invalidate-count", static_cast<std::int64_t>(jit_invalidate));
+            insert_kv("bridge-invalidate-count", static_cast<std::int64_t>(bridge_invalidate));
+            insert_kv("invalidate-function-calls", static_cast<std::int64_t>(invalidate_fn));
+            insert_kv("cascade-body-only", static_cast<std::int64_t>(cascade_body));
+            insert_kv("dirty-blocks", static_cast<std::int64_t>(soa.dirty_blocks));
+            insert_kv("dirty-functions", static_cast<std::int64_t>(soa.dirty_fns));
+            insert_kv("cached-functions", static_cast<std::int64_t>(soa.cached_fns));
+            insert_kv("dirty-block-pct", static_cast<std::int64_t>(soa.dirty_block_pct));
+            insert_kv("min-scope-hit-rate-pct", min_scope_hit_pct);
+            insert_kv("incremental-production-relower-total", static_cast<std::int64_t>(total));
+            insert_kv("incremental-production-relower-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6

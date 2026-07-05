@@ -3071,6 +3071,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:guard-production-impact-stats",
             // Issue #528 — Pattern index + hygiene production tracker
             "query:pattern-production-index-stats",
+            // Issue #530 — Incremental re-lower + ir_cache/JIT production tracker
+            "query:incremental-production-relower-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3111,10 +3113,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 125 entries as of #630 ship (124 from #626 + 1 sv-verification
-        // closedloop observability hash primitive from #630:
-        // query:sv-verification-closedloop-stats-hash).
-        return make_int(125);
+        // 126 entries as of #530 ship (125 from #630 + 1 incremental-production-
+        // relower observability hash primitive from #530:
+        // query:incremental-production-relower-stats).
+        return make_int(126);
     });
 }
 
