@@ -601,6 +601,11 @@ struct CompilerMetrics {
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
+    // Issue #620: StableNodeRef provenance query counter.
+    // Bumped on every (query:stable-ref-provenance) call so the
+    // Agent can see how often the provenance surface is being
+    // exercised (high rate = hot path; needs benchmarking).
+    std::atomic<std::uint64_t> stable_ref_provenance_query_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

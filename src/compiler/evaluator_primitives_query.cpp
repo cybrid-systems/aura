@@ -551,6 +551,99 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #620: query:stable-ref-provenance — Agent-discoverable
+    // StableNodeRef provenance query. Takes a raw NodeId, calls
+    // ws->make_safe_ref(nid) to capture full provenance from the
+    // current FlatAST state, and returns a 9-field hash:
+    //   - id                          int (the captured node id)
+    //   - gen                         int (current generation_)
+    //   - mutation-id-at-capture      int (FlatAST next_mutation_id_)
+    //   - workspace-id                int (workspace layer; 0 = root)
+    //   - fiber-id                    int (current fiber's id, or 0
+    //                                  if no fiber is active — makes
+    //                                  cross-fiber steals visible)
+    //   - last-validated-generation   int (initially == gen; updated
+    //                                  by validate_with_provenance())
+    //   - wrap-epoch                  int (FlatAST wrap_epoch_; lets
+    //                                  the Agent detect refs captured
+    //                                  before a uint16_t wrap-around)
+    //   - subtree-gen-at-capture      int (per-Define subtree gen;
+    //                                  #392; EDA long-running helper)
+    //   - is-live                     bool (whether the captured
+    //                                  ref currently satisfies
+    //                                  ref.is_valid_in(ws))
+    //   - schema                      int (sentinel = 620 so the
+    //                                  Agent can detect schema drift)
+    //
+    // Returns #f when the NodeId is out-of-range or there's no
+    // workspace loaded, so the Agent can branch on the bool-result
+    // without confusing "unknown node" with "live node" (the
+    // latter still returns a hash with all fields populated).
+    add("query:stable-ref-provenance",
+        [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->stable_ref_provenance_query_total.fetch_add(1, std::memory_order_relaxed);
+            if (a.empty() || !is_int(a[0]))
+                return make_bool(false);
+            const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_bool(false);
+            if (nid >= ws->size())
+                return make_bool(false);
+            // Issue #303 / Issue #392: capture full provenance.
+            // fiber_id = 0 when no fiber is active on this thread;
+            // the Agent can compare two captures and detect a
+            // cross-fiber swap via the fiber-id field.
+            const std::uint32_t cur_fiber =
+                static_cast<std::uint32_t>(aura_fiber_current_id());
+            auto ref = ws->make_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
+            const bool is_live = ref.is_valid_in(*ws);
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_bool(false);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("id", static_cast<std::int64_t>(ref.id));
+            insert_kv("gen", static_cast<std::int64_t>(ref.gen));
+            insert_kv("mutation-id-at-capture",
+                      static_cast<std::int64_t>(ref.mutation_id_at_capture));
+            insert_kv("workspace-id", static_cast<std::int64_t>(ref.workspace_id));
+            insert_kv("fiber-id", static_cast<std::int64_t>(ref.fiber_id));
+            insert_kv("last-validated-generation",
+                      static_cast<std::int64_t>(ref.last_validated_generation));
+            insert_kv("wrap-epoch", static_cast<std::int64_t>(ref.wrap_epoch));
+            insert_kv("subtree-gen-at-capture",
+                      static_cast<std::int64_t>(ref.subtree_gen_at_capture));
+            insert_kv("is-live", is_live ? 1 : 0);
+            insert_kv("schema", 620);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #497: query:stable-ref-lifecycle-stats — long-session
     // generation/compaction/refresh observability for AI loops.
     add("query:stable-ref-lifecycle-stats",

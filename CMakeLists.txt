@@ -2971,6 +2971,13 @@ add_dependencies(all_test_issue_targets test_issue_617)
 aura_add_issue_test(test_issue_618)
 aura_issue_test_link_llvm_jit(test_issue_618)
 add_dependencies(all_test_issue_targets test_issue_618)
+# Issue #620: StableNodeRef provenance query primitive — 1 new Aura
+# primitive (query:stable-ref-provenance) + 1 new atomic counter.
+# Builds on #291/#303/#368/#392 StableNodeRef struct + make_safe_ref
+# + capture_for_fiber + is_valid_in foundation.
+aura_add_issue_test(test_issue_620)
+aura_issue_test_link_llvm_jit(test_issue_620)
+add_dependencies(all_test_issue_targets test_issue_620)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
