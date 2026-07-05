@@ -36,6 +36,8 @@
     ; ── Issue #490 — pattern-index lazy/eager rebuild observability ──
     "query:pattern-index-rebuild-stats"
     "query:pattern-hygiene-stats"
+    ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
+    "query:macro-production-hygiene-stats"
     ; ── Issue #548 — Panic-checkpoint lifecycle ──
     "query:panic-checkpoint-lifecycle-stats"
     ; ── Issue #549 — Self-evolution stability ──
