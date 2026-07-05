@@ -2869,6 +2869,12 @@ add_dependencies(all_test_issue_targets test_issue_497)
 aura_add_issue_test(test_issue_601)
 aura_issue_test_link_llvm_jit(test_issue_601)
 add_dependencies(all_test_issue_targets test_issue_601)
+# Issue #603: IR SoA full consumer adoption + per-block dirty_ driven
+# minimal re-lower — enhanced (compile:ir-soa-stats) primitive + 3 new
+# counters (view-cache-hits / block-dirty-hits / relower-blocks-saved).
+aura_add_issue_test(test_issue_603)
+aura_issue_test_link_llvm_jit(test_issue_603)
+add_dependencies(all_test_issue_targets test_issue_603)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

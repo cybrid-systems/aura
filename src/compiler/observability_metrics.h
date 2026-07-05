@@ -295,6 +295,27 @@ struct CompilerMetrics {
     // a single source of truth.
     std::atomic<std::uint64_t> ir_soa_instructions_emitted{0};
     std::atomic<std::uint64_t> ir_soa_functions_emitted{0};
+    // Issue #603: full consumer adoption + per-block dirty-driven
+    // minimal re-lower observability. Companion to the existing
+    // (compile:ir-soa-stats) hash primitive — those two fields
+    // cover dual-emit volumes; the three below cover the hot-
+    // path consumer side.
+    //   - ir_soa_view_cache_hits_total: SoA column iterations
+    //     where an instruction index was accessed via the
+    //     IRFunctionSoA columns (cheap column reads, the
+    //     view-equivalent access in the pass_manager hot loop).
+    //     Each instruction touched = +1.
+    //   - ir_soa_block_dirty_hits_total: is_block_dirty() calls
+    //     that returned true (block needs re-lower). Counterpart
+    //     to the existing dirty-cascade-savings (skip-side).
+    //   - ir_soa_relower_blocks_saved_total: blocks skipped
+    //     from re-lower because they were clean (the win from
+    //     per-block dirty_ driven minimal re-lower). Distinct
+    //     from relower_skipped_entirely_count which is at the
+    //     function granularity.
+    std::atomic<std::uint64_t> ir_soa_view_cache_hits_total{0};
+    std::atomic<std::uint64_t> ir_soa_block_dirty_hits_total{0};
+    std::atomic<std::uint64_t> ir_soa_relower_blocks_saved_total{0};
     // Issue #684: IRSoA full wiring into lowering/cache/JIT hot paths.
     // Exposed via (query:irsoa-incremental-stats).
     std::atomic<std::uint64_t> irsoa_wired_hits{0};
