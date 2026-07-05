@@ -60,6 +60,8 @@
     "query:primitives-governance-stats"
     ; ── Issue #568 — FlatAST children_ columnar SoA migration completion ──
     "query:soa-children-columnar-migration-stats"
+    ; ── Issue #569 — Arena auto-compact + defrag + fiber safepoint completion ──
+    "query:arena-auto-compact-defrag-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
