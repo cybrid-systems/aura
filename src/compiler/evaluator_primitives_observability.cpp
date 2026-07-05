@@ -3091,10 +3091,17 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 108 entries as of #621 ship (107 from #512 slice + 1 pattern-
-        // index stats hash primitive from #621: query:pattern-index-
-        // stats-hash).
-        return make_int(108);
+        // 109 entries as of #622 ship (108 from #621 + 1 atomic-batch
+        // observability hash primitive from #622:
+        // query:atomic-batch-stats-hash). The 3 mutate:atomic-*
+        // primitives that were originally planned shipped
+        // instead as the existing (mutate:atomic-batch ...) list-
+        // call form from #192/#213; the existing
+        // (query:atomic-batch-stats) (#437) already covers the
+        // int-side; (atomic-batch:stats) (#192) covers the
+        // batch-count observability surface. #622's contribution
+        // is the structured-hash companion only.
+        return make_int(109);
     });
 }
 

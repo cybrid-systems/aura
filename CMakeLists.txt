@@ -3001,6 +3001,14 @@ add_dependencies(all_test_issue_targets test_issue_620)
 aura_add_issue_test(test_issue_621)
 aura_issue_test_link_llvm_jit(test_issue_621)
 add_dependencies(all_test_issue_targets test_issue_621)
+# Issue #622: high-level Aura atomic-batch primitives — wraps
+# FlatAST's #250/#255 begin/commit/rollback_atomic_batch C++ API.
+# 4 new Aura primitives (mutate:atomic-begin/commit/rollback +
+# query:atomic-batch-stats). Builds on FlatAST atomic_batch_commits_/
+# atomic_batch_bumps_saved_/bump_generation_suppressed_ counters.
+aura_add_issue_test(test_issue_622)
+aura_issue_test_link_llvm_jit(test_issue_622)
+add_dependencies(all_test_issue_targets test_issue_622)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
