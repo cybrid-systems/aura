@@ -50,6 +50,8 @@
     "query:prompt6-safety-score"
     ; ── Issue #516 — Prompt6 memory/ownership/GC safety tracker ──
     "query:prompt6-memory-safety-stats"
+    ; ── Issue #519 — EDSL/EDA/SV verification closed-loop tracker ──
+    "query:edsl-eda-sv-closedloop-stats"
     ; ── Issue #570 — ShapeProfiler stability + deopt ──
     "query:shape-stability-stats"
     ; ── Issue #571 — EvalValue v2 dispatch + contracts ──

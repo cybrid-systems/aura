@@ -15,6 +15,7 @@ module;
 module aura.compiler.evaluator;
 
 import std;
+import aura.core.ast;
 import aura.core.type;
 import aura.compiler.pass_manager;
 import aura.compiler.value;
@@ -3054,6 +3055,126 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("violation-count", static_cast<std::int64_t>(violation_count));
             insert_kv("prompt6-memory-safety-total", static_cast<std::int64_t>(total));
             insert_kv("prompt6-memory-safety-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #519: query:edsl-eda-sv-closedloop-stats. Hash view of the
+    // consolidated EDSL/EDA/SV verification closed-loop pillars (non-
+    // duplicative synthesis of #496 sv-node-stats, #510 eda-verification-
+    // stats, #499 eda-foundation-stats, #497 stable-ref-lifecycle, and
+    // #413 mutation-log themes; avoids #514-#518 meta int-sum trackers):
+    //   P1 SV structured (#496): sv-node-total, sv-mutate-attempts/success,
+    //      structured-mutate-hits
+    //   P2 Query scale + hygiene (#447): tag-arity-index-hits,
+    //      hygiene-skipped-in-query
+    //   P3 StableRef (#497): stable-ref-invalidations, generation-wrap-count,
+    //      stable-ref-validated
+    //   P4 Verification interop (#510): coverage-feedback, assert-failures,
+    //      verification-loop-success, hardware-hook-calls
+    //   P5 Atomic batch (#413): atomic-batch-commits, mutation-log-rollbacks
+    //   - edsl-eda-sv-closedloop-total / edsl-eda-sv-closedloop-recommendation
+    add("query:edsl-eda-sv-closedloop-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            std::uint64_t sv_node_total = 0;
+            if (ws) {
+                for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                    switch (ws->get(id).tag) {
+                        case aura::ast::NodeTag::Interface:
+                        case aura::ast::NodeTag::Modport:
+                        case aura::ast::NodeTag::Property:
+                        case aura::ast::NodeTag::Sequence:
+                        case aura::ast::NodeTag::Assert:
+                        case aura::ast::NodeTag::Covergroup:
+                        case aura::ast::NodeTag::Coverpoint:
+                        case aura::ast::NodeTag::Constraint:
+                        case aura::ast::NodeTag::Class:
+                            ++sv_node_total;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+            const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
+            const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+            const std::uint64_t structured_hits =
+                m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t tag_hits = ws ? ws->tag_arity_index_hits() : 0;
+            const std::uint64_t hygiene_skipped = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t ref_inval = ws ? ws->stable_ref_invalidations() : 0;
+            const std::uint64_t gen_wrap = ws ? ws->generation_wrap_count() : 0;
+            const std::uint64_t ref_validated = ev->get_stable_ref_validated_in_primitives_count();
+            const std::uint64_t coverage = ws ? ws->verification_coverage_feedback_total() : 0;
+            const std::uint64_t assert_fail = ws ? ws->verification_assert_failure_total() : 0;
+            const std::uint64_t loop_success =
+                m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hw_hooks =
+                m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t batch_commits = ws ? ws->atomic_batch_commits() : 0;
+            const std::uint64_t rollbacks = ev->get_mutation_log_rollback_count();
+            const std::uint64_t total = sv_node_total + sv_attempts + sv_success + structured_hits +
+                                        tag_hits + hygiene_skipped + ref_inval + gen_wrap +
+                                        ref_validated + coverage + assert_fail + loop_success +
+                                        hw_hooks + batch_commits + rollbacks;
+            std::int64_t recommendation = 0;
+            if (assert_fail > coverage && assert_fail > 0)
+                recommendation = 3;
+            else if (sv_attempts > 0 && sv_success == 0)
+                recommendation = 2;
+            else if (ref_inval > 0)
+                recommendation = 1;
+            insert_kv("sv-node-total", static_cast<std::int64_t>(sv_node_total));
+            insert_kv("sv-mutate-attempts", static_cast<std::int64_t>(sv_attempts));
+            insert_kv("sv-mutate-success", static_cast<std::int64_t>(sv_success));
+            insert_kv("structured-mutate-hits", static_cast<std::int64_t>(structured_hits));
+            insert_kv("tag-arity-index-hits", static_cast<std::int64_t>(tag_hits));
+            insert_kv("hygiene-skipped-in-query", static_cast<std::int64_t>(hygiene_skipped));
+            insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(ref_inval));
+            insert_kv("generation-wrap-count", static_cast<std::int64_t>(gen_wrap));
+            insert_kv("stable-ref-validated", static_cast<std::int64_t>(ref_validated));
+            insert_kv("coverage-feedback", static_cast<std::int64_t>(coverage));
+            insert_kv("assert-failures", static_cast<std::int64_t>(assert_fail));
+            insert_kv("verification-loop-success", static_cast<std::int64_t>(loop_success));
+            insert_kv("hardware-hook-calls", static_cast<std::int64_t>(hw_hooks));
+            insert_kv("atomic-batch-commits", static_cast<std::int64_t>(batch_commits));
+            insert_kv("mutation-log-rollbacks", static_cast<std::int64_t>(rollbacks));
+            insert_kv("edsl-eda-sv-closedloop-total", static_cast<std::int64_t>(total));
+            insert_kv("edsl-eda-sv-closedloop-recommendation", recommendation);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

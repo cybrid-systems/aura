@@ -1192,6 +1192,9 @@ aura_issue_test_link_llvm_jit(test_issue_515_observability)
 # Issue #516 slice: prompt6-memory-safety-stats hash observability.
 aura_add_issue_test(test_issue_516_observability)
 aura_issue_test_link_llvm_jit(test_issue_516_observability)
+# Issue #519 slice: edsl-eda-sv-closedloop-stats hash observability.
+aura_add_issue_test(test_issue_519_observability)
+aura_issue_test_link_llvm_jit(test_issue_519_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +
@@ -2936,6 +2939,8 @@ add_dependencies(all_test_issue_targets test_issue_513_observability)
 add_dependencies(all_test_issue_targets test_issue_515_observability)
 # Issue #516 slice: prompt6-memory-safety-stats hash observability.
 add_dependencies(all_test_issue_targets test_issue_516_observability)
+# Issue #519 slice: edsl-eda-sv-closedloop-stats hash observability.
+add_dependencies(all_test_issue_targets test_issue_519_observability)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)
