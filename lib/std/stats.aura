@@ -64,6 +64,8 @@
     "query:arena-auto-compact-defrag-stats"
     ; ── Issue #572 — Pass Pipeline DirtyAware + fold short-circuit completion ──
     "query:pass-pipeline-dirtyaware-stats"
+    ; ── Issue #578 — Structured SV IR + query/mutate + dirty propagation completion ──
+    "query:sv-structured-edsl-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
