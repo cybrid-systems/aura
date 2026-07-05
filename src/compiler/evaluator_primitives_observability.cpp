@@ -3473,6 +3473,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitives-registry-core-stats",
             // Issue #584 — Primitives hot-path AI-agent stress observability
             "query:primitives-hotpath-stats",
+            // Issue #585 — Unified primitive error handling + recovery observability
+            "query:primitives-error-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3513,10 +3515,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 149 entries as of #584 ship (148 from #583 + 1 primitives-hotpath
-        // stats registration from #584 — extends #614 hash with AI-agent
-        // stress fields: query:primitives-hotpath-stats).
-        return make_int(149);
+        // 150 entries as of #585 ship (149 from #584 + 1 primitives-error
+        // stats registration from #585 — unified error/recovery hash:
+        // query:primitives-error-stats).
+        return make_int(150);
     });
 }
 
