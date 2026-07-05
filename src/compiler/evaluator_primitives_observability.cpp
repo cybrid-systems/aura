@@ -3111,10 +3111,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 124 entries as of #626 ship (123 from #528 + 1 contracts-hotpath
-        // observability hash primitive from #626:
-        // query:contracts-hotpath-stats-hash).
-        return make_int(124);
+        // 125 entries as of #630 ship (124 from #626 + 1 sv-verification
+        // closedloop observability hash primitive from #630:
+        // query:sv-verification-closedloop-stats-hash).
+        return make_int(125);
     });
 }
 
