@@ -124,7 +124,8 @@ int main() {
         auto phs = cs.eval("(query:pattern-hygiene-stats)");
         CHECK(pis && aura::compiler::types::is_int(*pis), "query:pattern-index-stats regression");
         CHECK(phs && aura::compiler::types::is_int(*phs), "query:pattern-hygiene-stats regression");
-        CHECK(cs.eval("(query:pattern \"base\")").has_value(), "query:pattern lazy path regression");
+        CHECK(cs.eval("(query:pattern \"base\")").has_value(),
+              "query:pattern lazy path regression");
     }
 
     // AC6: stats:count

@@ -314,8 +314,7 @@ void WorkerThread::run() {
                                 1, std::memory_order_relaxed);
                             stole = true;
                             if (my_metrics) {
-                                my_metrics->steal_successes.fetch_add(1,
-                                                                      std::memory_order_relaxed);
+                                my_metrics->steal_successes.fetch_add(1, std::memory_order_relaxed);
                             }
                         }
                     }
@@ -332,8 +331,7 @@ void WorkerThread::run() {
                             auto* victim = scheduler_->worker(victim_id);
                             aura_evaluator_bump_mutation_steal_attempt();
                             if (my_metrics) {
-                                my_metrics->steal_attempts.fetch_add(1,
-                                                                      std::memory_order_relaxed);
+                                my_metrics->steal_attempts.fetch_add(1, std::memory_order_relaxed);
                             }
                             if (try_steal_from(victim)) {
                                 stole = true;

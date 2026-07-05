@@ -2246,8 +2246,7 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
-        const std::uint64_t pipeline_epoch =
-            mutation_epoch_.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
         cf.set_pipeline_epoch(pipeline_epoch);
@@ -2436,8 +2435,7 @@ public:
             aura::compiler::ComputeKindWrap ck;
             aura::compiler::ArityWrap ar;
             aura::compiler::ConstantFoldingWrap cf;
-            const std::uint64_t pipeline_epoch =
-                mutation_epoch_.load(std::memory_order_relaxed);
+            const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
             ts.set_pipeline_epoch(pipeline_epoch);
             ar.set_pipeline_epoch(pipeline_epoch);
             cf.set_pipeline_epoch(pipeline_epoch);
@@ -4051,7 +4049,7 @@ public:
         // saved). Atomic relaxed; advisory telemetry only.
         if (dirty_blocks > 0)
             metrics_.ir_soa_block_dirty_hits_total.fetch_add(dirty_blocks,
-                                                              std::memory_order_relaxed);
+                                                             std::memory_order_relaxed);
         if (dirty_blocks == 0) {
             // Bitmask says nothing changed → reuse cached IR.
             // Bump the skip counter; do NOT call lowering.
@@ -4068,8 +4066,8 @@ public:
             for (const auto& fb : it->second.block_dirty_per_func_)
                 total_blocks_saved += fb.size();
             if (total_blocks_saved > 0)
-                metrics_.ir_soa_relower_blocks_saved_total.fetch_add(
-                    total_blocks_saved, std::memory_order_relaxed);
+                metrics_.ir_soa_relower_blocks_saved_total.fetch_add(total_blocks_saved,
+                                                                     std::memory_order_relaxed);
             return true;
         }
         // Issue #224 cycle 3: detect single-function-dirty
@@ -4647,8 +4645,7 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
-        const std::uint64_t pipeline_epoch =
-            mutation_epoch_.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
         cf.set_pipeline_epoch(pipeline_epoch);
@@ -6717,8 +6714,7 @@ private:
         mod.functions.push_back(func);
         aura::compiler::TypeSpecializationWrap ts(&type_registry_);
         aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
-        const std::uint64_t pipeline_epoch =
-            mutation_epoch_.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
         dce.set_pipeline_epoch(pipeline_epoch);
         ts.run(mod);
@@ -7500,7 +7496,7 @@ private:
             // self-modify loop measure whether the SoA path is
             // being exercised under mutation churn.
             metrics_.ir_soa_view_cache_hits_total.fetch_add(snap->instructions_emitted,
-                                                             std::memory_order_relaxed);
+                                                            std::memory_order_relaxed);
             pending_soa_snapshot_ = *snap;
         }
     }

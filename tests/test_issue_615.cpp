@@ -63,7 +63,8 @@ static std::int64_t err_stored_via_prim(aura::compiler::CompilerService& cs) {
 
 int main() {
     using namespace aura_issue_615_detail;
-    std::println("=== Issue #615: PRIM_ERROR macro + math.cpp unification + silent-swallow audit ===");
+    std::println(
+        "=== Issue #615: PRIM_ERROR macro + math.cpp unification + silent-swallow audit ===");
 
     aura::compiler::CompilerService cs;
 
@@ -94,11 +95,9 @@ int main() {
         const auto prim_after = err_count_via_prim(cs);
         const auto stored_after = err_stored_via_prim(cs);
         CHECK(cxx_after == cxx_before + 1,
-              std::format("C++-side counter bumped exactly +1 ({} -> {})",
-                          cxx_before, cxx_after));
+              std::format("C++-side counter bumped exactly +1 ({} -> {})", cxx_before, cxx_after));
         CHECK(prim_after == prim_before + 1,
-              std::format("Aura-side (car) bumped exactly +1 ({} -> {})",
-                          prim_before, prim_after));
+              std::format("Aura-side (car) bumped exactly +1 ({} -> {})", prim_before, prim_after));
         CHECK(stored_after == stored_before + 1,
               std::format("Aura-side (cdr / error_values_size) bumped exactly +1 ({} -> {})",
                           stored_before, stored_after));
@@ -137,13 +136,10 @@ int main() {
         auto r2 = cs.eval("(regex-find \"foo\" \"foobar\")");
         auto r3 = cs.eval("(regex-replace \"foo\" \"foobar\" \"baz\")");
         auto r4 = cs.eval("(regex-split \",\" \"a,b,c\")");
-        CHECK(r1 && aura::compiler::types::is_int(*r1) &&
-                  aura::compiler::types::as_int(*r1) == 1,
+        CHECK(r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 1,
               "valid regex-match? returns 1 (match found)");
-        CHECK(r2 && aura::compiler::types::is_string(*r2),
-              "valid regex-find returns a string");
-        CHECK(r3 && aura::compiler::types::is_string(*r3),
-              "valid regex-replace returns a string");
+        CHECK(r2 && aura::compiler::types::is_string(*r2), "valid regex-find returns a string");
+        CHECK(r3 && aura::compiler::types::is_string(*r3), "valid regex-replace returns a string");
         CHECK(r4 && aura::compiler::types::is_pair(*r4),
               "valid regex-split returns a pair (non-empty list)");
         const auto after = err_count_via_cxx(cs);
@@ -165,13 +161,12 @@ int main() {
         // NOT error. Raising would break every existing caller.
         const auto before = err_count_via_cxx(cs);
         auto p = cs.eval("(string->number \"not-a-number\")");
-        CHECK(p && aura::compiler::types::is_bool(*p) &&
-                  !aura::compiler::types::as_bool(*p),
+        CHECK(p && aura::compiler::types::is_bool(*p) && !aura::compiler::types::as_bool(*p),
               "string->number on parse failure still returns #f (per documented contract)");
         const auto after = err_count_via_cxx(cs);
-        CHECK(after == before,
-              std::format("string->number fallback did NOT bump counter ({} -> {})",
-                          before, after));
+        CHECK(
+            after == before,
+            std::format("string->number fallback did NOT bump counter ({} -> {})", before, after));
         // Note: agent.cpp swallows (line 75 / 1760 / 1788) and ast.cpp
         // falls (line 195 / 423) are internal parsing helpers — not
         // directly user-invocable. Their audit tags are verified by
@@ -202,8 +197,8 @@ int main() {
         t2.join();
         const auto after = err_count_via_cxx(cs);
         CHECK(error_count.load() == k_iters * 2,
-              std::format("concurrent invalid-regex: {} / {} returned error",
-                          error_count.load(), k_iters * 2));
+              std::format("concurrent invalid-regex: {} / {} returned error", error_count.load(),
+                          k_iters * 2));
         CHECK(after == before + k_iters * 2,
               std::format("C++ counter bumped exactly +{} under concurrency ({} -> {})",
                           k_iters * 2, before, after));

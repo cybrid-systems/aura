@@ -62,8 +62,7 @@ int main() {
               "query:pass-pipeline-stats returns hash");
         CHECK(snap_stat(cs, "pipeline-yield-count") >= 0, "pipeline-yield-count present");
         CHECK(snap_stat(cs, "passes-skipped-dirty") >= 0, "passes-skipped-dirty present");
-        CHECK(snap_stat(cs, "passes-skipped-type-dirty") >= 0,
-              "passes-skipped-type-dirty present");
+        CHECK(snap_stat(cs, "passes-skipped-type-dirty") >= 0, "passes-skipped-type-dirty present");
         CHECK(snap_stat(cs, "relower-skipped") >= 0, "relower-skipped present");
         CHECK(snap_stat(cs, "relower-per-fn") >= 0, "relower-per-fn present");
         CHECK(snap_stat(cs, "module-dirty-skips") >= 0, "module-dirty-skips present");

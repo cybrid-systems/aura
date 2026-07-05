@@ -120,9 +120,9 @@ namespace primitives_detail {
     // site is intentionally silent (defensive best-effort fallback,
     // e.g. parsing-tolerant reflect helpers). Those carry a sibling
     // [SILENCE-PRIM-#615] comment near the catch instead.
-#define PRIM_ERROR(MSG) \
-    ::aura::compiler::primitives_detail::make_primitive_error( \
-        string_heap, error_values, (MSG), primitive_error_counter)
+#define PRIM_ERROR(MSG)                                                                            \
+    ::aura::compiler::primitives_detail::make_primitive_error(string_heap, error_values, (MSG),    \
+                                                              primitive_error_counter)
 
 } // namespace primitives_detail
 

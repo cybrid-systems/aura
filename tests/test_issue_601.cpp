@@ -55,8 +55,7 @@ int main() {
               "query:jit-hotswap-closure-stats returns hash");
         CHECK(snap_stat(cs, "live-closure-refreshed-total") == 0,
               "live-closure-refreshed-total starts at 0");
-        CHECK(snap_stat(cs, "forced-deopt-total") == 0,
-              "forced-deopt-total starts at 0");
+        CHECK(snap_stat(cs, "forced-deopt-total") == 0, "forced-deopt-total starts at 0");
         CHECK(snap_stat(cs, "epoch-mismatch-prevented-total") == 0,
               "epoch-mismatch-prevented-total starts at 0");
         CHECK(snap_stat(cs, "hotswap-invalidate-total") >= 0,
@@ -76,13 +75,11 @@ int main() {
     // (single cs.eval call so the workspace is shared across set-code + apply).
     {
         std::println("\n--- AC3: closure created + applied pre-mutate ---");
-        auto r = cs.eval(
-            "(set-code \"(define (mk-adder n) (lambda (x) (+ x n)))"
-            " (define add5 (mk-adder 5))\") "
-            "(eval-current) "
-            "(add5 10)");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 15,
+        auto r = cs.eval("(set-code \"(define (mk-adder n) (lambda (x) (+ x n)))"
+                         " (define add5 (mk-adder 5))\") "
+                         "(eval-current) "
+                         "(add5 10)");
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 15,
               "(add5 10) == 15 (closure captured + applied)");
         const auto refreshed_before = snap_stat(cs, "live-closure-refreshed-total");
         const auto mismatch_before = snap_stat(cs, "epoch-mismatch-prevented-total");
@@ -96,14 +93,15 @@ int main() {
     {
         std::println("\n--- AC4: mutate:rebind triggers invalidate + walk ---");
         const auto hotswap_before = snap_stat(cs, "hotswap-invalidate-total");
-        CHECK(cs.eval(
+        CHECK(
+            cs.eval(
                   "(mutate:rebind \"mk-adder\" \"(lambda (n) (lambda (x) (+ x n)))\" \"issue601\")")
-                  .has_value(),
-              "mutate:rebind mk-adder lambda under Guard");
+                .has_value(),
+            "mutate:rebind mk-adder lambda under Guard");
         const auto hotswap_after = snap_stat(cs, "hotswap-invalidate-total");
-        CHECK(hotswap_after > hotswap_before,
-              std::format("hotswap-invalidate-total grew ({} -> {})",
-                          hotswap_before, hotswap_after));
+        CHECK(
+            hotswap_after > hotswap_before,
+            std::format("hotswap-invalidate-total grew ({} -> {})", hotswap_before, hotswap_after));
         CHECK(cs.eval("(eval-current)").has_value(),
               "eval-current after mutate (no crash on invalidation)");
     }
@@ -112,13 +110,11 @@ int main() {
     // invalidate (the proactive walk refreshed their bridge_epoch).
     {
         std::println("\n--- AC5: post-invalidate apply remains safe ---");
-        auto r = cs.eval(
-            "(set-code \"(define (mk-adder n) (lambda (x) (+ x n)))"
-            " (define add7 (mk-adder 7))\") "
-            "(eval-current) "
-            "(add7 100)");
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) == 107,
+        auto r = cs.eval("(set-code \"(define (mk-adder n) (lambda (x) (+ x n)))"
+                         " (define add7 (mk-adder 7))\") "
+                         "(eval-current) "
+                         "(add7 100)");
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 107,
               "(add7 100) == 107 after mutate (closure survived invalidation)");
     }
 
@@ -128,10 +124,9 @@ int main() {
         auto stats = cs.eval("(query:jit-stats-hash)");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:jit-stats-hash still returns hash after #601 wiring");
-        auto r = cs.eval(std::format(
-            "(hash-ref (query:jit-stats-hash) 'hotswap-invalidate-total')"));
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) >= 1,
+        auto r =
+            cs.eval(std::format("(hash-ref (query:jit-stats-hash) 'hotswap-invalidate-total')"));
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) >= 1,
               "jit-stats-hash still reports hotswap-invalidate-total >= 1");
     }
 

@@ -820,8 +820,8 @@ SvEmitValidation validate_sv_emit(const std::string_view sv_text) {
         return result;
     }
     static constexpr std::string_view k_keywords[] = {
-        "interface",  "property",  "coverpoint", "covergroup", "sequence",  "assert",
-        "modport",    "constraint", "class",     "endmodule", "endinterface", "endclass",
+        "interface", "property",   "coverpoint", "covergroup", "sequence",     "assert",
+        "modport",   "constraint", "class",      "endmodule",  "endinterface", "endclass",
     };
     bool found = sv_text.find("// sv re-emit stub") != std::string_view::npos;
     for (const auto kw : k_keywords) {

@@ -140,8 +140,7 @@ int main() {
         CHECK(folded >= 1, std::format("run(IRFunction&) alias folded >= 1 (got {})", folded));
         // Second call on the same block exercises the per-block alias.
         cf.run(mod.functions[0].blocks[0]);
-        CHECK(cf.folded_count() >= folded,
-              "run(BasicBlock&) alias does not decrease folded_count");
+        CHECK(cf.folded_count() >= folded, "run(BasicBlock&) alias does not decrease folded_count");
     }
 
     // AC4: EDSL observable — (query:pass-pipeline-stats) exposes
@@ -159,8 +158,8 @@ int main() {
         CHECK(linear_pure >= 0, "pure-delegation-linear present + >= 0");
         CHECK(total_pure >= 0, "pure-delegation-total present + >= 0");
         CHECK(total_pure == shape_pure + linear_pure,
-              std::format("total == shape + linear ({} == {} + {})",
-                          total_pure, shape_pure, linear_pure));
+              std::format("total == shape + linear ({} == {} + {})", total_pure, shape_pure,
+                          linear_pure));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

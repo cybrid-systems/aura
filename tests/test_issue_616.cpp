@@ -49,8 +49,8 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 // Read a string field from a hash returned by Aura (echoed as
 // (hash-ref h 'k') → string). Returns empty string on miss.
-static std::string hash_string(aura::compiler::CompilerService& cs,
-                               std::string_view hash_src, std::string_view key) {
+static std::string hash_string(aura::compiler::CompilerService& cs, std::string_view hash_src,
+                               std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_src, key));
     if (!r || !aura::compiler::types::is_string(*r))
         return {};
@@ -67,7 +67,8 @@ static std::int64_t hw_stat(aura::compiler::CompilerService& cs, std::string_vie
 
 int main() {
     using namespace aura_issue_616_detail;
-    std::println("=== Issue #616: EDA hardware-co-design primitives (load-sv + parse-verification-result + query:eda-hw-stats) ===");
+    std::println("=== Issue #616: EDA hardware-co-design primitives (load-sv + "
+                 "parse-verification-result + query:eda-hw-stats) ===");
 
     aura::compiler::CompilerService cs;
 
@@ -82,18 +83,14 @@ int main() {
         const auto load_ok_before = hw_stat(cs, "load-sv-total");
         const auto load_fail_before = hw_stat(cs, "load-sv-failure-total");
         auto h = cs.eval(std::format("(eda:load-sv \"{}\")", fixture));
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "(eda:load-sv) returns a hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "(eda:load-sv) returns a hash");
         auto eval_str = std::format("(eda:load-sv \"{}\")", fixture);
         const auto node_count = hash_int(cs, eval_str, "node-count");
         const auto status_ok = hash_int(cs, eval_str, "status-ok");
         const auto path_echo = hash_string(cs, eval_str, "path");
-        CHECK(node_count > 0,
-              std::format("node-count > 0 (got {})", node_count));
-        CHECK(status_ok == 1,
-              std::format("status-ok == 1 (got {})", status_ok));
-        CHECK(path_echo == fixture,
-              std::format("path echoed correctly (got '{}')", path_echo));
+        CHECK(node_count > 0, std::format("node-count > 0 (got {})", node_count));
+        CHECK(status_ok == 1, std::format("status-ok == 1 (got {})", status_ok));
+        CHECK(path_echo == fixture, std::format("path echoed correctly (got '{}')", path_echo));
         const auto load_ok_after = hw_stat(cs, "load-sv-total");
         const auto load_fail_after = hw_stat(cs, "load-sv-failure-total");
         // 1 (initial h) + 3 (hash_int x2 + hash_string x1) = 4 calls.
@@ -101,8 +98,8 @@ int main() {
               std::format("load-sv-total bumped +4 (1 initial + 3 field lookups) ({} -> {})",
                           load_ok_before, load_ok_after));
         CHECK(load_fail_after == load_fail_before,
-              std::format("load-sv-failure-total unchanged ({} -> {})",
-                          load_fail_before, load_fail_after));
+              std::format("load-sv-failure-total unchanged ({} -> {})", load_fail_before,
+                          load_fail_after));
     }
 
     // AC2: (eda:load-sv path) on a missing file returns the hash
@@ -121,12 +118,9 @@ int main() {
         const auto status_ok = hash_int(cs, eval_str, "status-ok");
         const auto reason = hash_string(cs, eval_str, "reason");
         const auto path_echo = hash_string(cs, eval_str, "path");
-        CHECK(node_count == 0,
-              std::format("node-count == 0 on missing path (got {})", node_count));
-        CHECK(status_ok == 0,
-              std::format("status-ok == 0 on missing path (got {})", status_ok));
-        CHECK(!reason.empty(),
-              std::format("reason is non-empty (got '{}')", reason));
+        CHECK(node_count == 0, std::format("node-count == 0 on missing path (got {})", node_count));
+        CHECK(status_ok == 0, std::format("status-ok == 0 on missing path (got {})", status_ok));
+        CHECK(!reason.empty(), std::format("reason is non-empty (got '{}')", reason));
         CHECK(path_echo == missing,
               std::format("path echoed even on missing (got '{}')", path_echo));
         const auto load_fail_after = hw_stat(cs, "load-sv-failure-total");
@@ -152,16 +146,11 @@ int main() {
         const auto fail = hash_int(cs, eval_str, "assertion-fail");
         const auto success = hash_int(cs, eval_str, "success");
         const auto path_echo = hash_string(cs, eval_str, "path");
-        CHECK(cov == 87,
-              std::format("coverage-pct == 87 (got {})", cov));
-        CHECK(pass == 42,
-              std::format("assertion-pass == 42 (got {})", pass));
-        CHECK(fail == 3,
-              std::format("assertion-fail == 3 (got {})", fail));
-        CHECK(success == 1,
-              std::format("success == 1 (got {})", success));
-        CHECK(path_echo == fixture,
-              std::format("path echoed correctly (got '{}')", path_echo));
+        CHECK(cov == 87, std::format("coverage-pct == 87 (got {})", cov));
+        CHECK(pass == 42, std::format("assertion-pass == 42 (got {})", pass));
+        CHECK(fail == 3, std::format("assertion-fail == 3 (got {})", fail));
+        CHECK(success == 1, std::format("success == 1 (got {})", success));
+        CHECK(path_echo == fixture, std::format("path echoed correctly (got '{}')", path_echo));
         const auto parse_ok_after = hw_stat(cs, "parse-verification-result-total");
         CHECK(parse_ok_after == parse_ok_before + 6,
               std::format("parse-verification-result-total bumped +6 (1+5 lookups) ({} -> {})",
@@ -180,8 +169,7 @@ int main() {
         CHECK(h && aura::compiler::types::is_hash(*h),
               "(eda:parse-verification-result) on missing path returns a hash");
         const auto success = hash_int(cs, eval_str, "success");
-        CHECK(success == 0,
-              std::format("success == 0 on missing path (got {})", success));
+        CHECK(success == 0, std::format("success == 0 on missing path (got {})", success));
         const auto parse_fail_after = hw_stat(cs, "parse-verification-failure-total");
         CHECK(parse_fail_after == parse_fail_before + 2,
               std::format("parse-verification-failure-total bumped +2 (1+1 lookup) ({} -> {})",
@@ -193,8 +181,7 @@ int main() {
     {
         std::println("\n--- AC5: (query:eda-hw-stats) shape ---");
         auto h = cs.eval("(query:eda-hw-stats)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "(query:eda-hw-stats) returns a hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "(query:eda-hw-stats) returns a hash");
         const auto load_ok = hw_stat(cs, "load-sv-total");
         const auto load_fail = hw_stat(cs, "load-sv-failure-total");
         const auto parse_ok = hw_stat(cs, "parse-verification-result-total");
@@ -203,8 +190,10 @@ int main() {
         const auto parse_rate = hw_stat(cs, "parse-verification-success-rate");
         CHECK(load_ok >= 1, std::format("load-sv-total >= 1 (got {})", load_ok));
         CHECK(load_fail >= 1, std::format("load-sv-failure-total >= 1 (got {})", load_fail));
-        CHECK(parse_ok >= 1, std::format("parse-verification-result-total >= 1 (got {})", parse_ok));
-        CHECK(parse_fail >= 1, std::format("parse-verification-failure-total >= 1 (got {})", parse_fail));
+        CHECK(parse_ok >= 1,
+              std::format("parse-verification-result-total >= 1 (got {})", parse_ok));
+        CHECK(parse_fail >= 1,
+              std::format("parse-verification-failure-total >= 1 (got {})", parse_fail));
         CHECK(load_rate >= 0 && load_rate <= 100,
               std::format("load-sv-success-rate in [0,100] (got {})", load_rate));
         CHECK(parse_rate >= 0 && parse_rate <= 100,
@@ -231,7 +220,8 @@ int main() {
         auto worker_parse = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(eda:parse-verification-result \"tests/fixtures/issue_616/cov.json\")");
+                auto r = cs.eval(
+                    "(eda:parse-verification-result \"tests/fixtures/issue_616/cov.json\")");
                 if (r && aura::compiler::types::is_hash(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
@@ -243,11 +233,10 @@ int main() {
         const auto load_ok_after = hw_stat(cs, "load-sv-total");
         const auto parse_ok_after = hw_stat(cs, "parse-verification-result-total");
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned hash",
-                          ok_count.load(), k_iters * 2));
+              std::format("concurrent: {} / {} calls returned hash", ok_count.load(), k_iters * 2));
         CHECK(load_ok_after == load_ok_before + k_iters,
-              std::format("load-sv-total bumped +{} under concurrency ({} -> {})",
-                          k_iters, load_ok_before, load_ok_after));
+              std::format("load-sv-total bumped +{} under concurrency ({} -> {})", k_iters,
+                          load_ok_before, load_ok_after));
         CHECK(parse_ok_after == parse_ok_before + k_iters,
               std::format("parse-verification-result-total bumped +{} under concurrency ({} -> {})",
                           k_iters, parse_ok_before, parse_ok_after));

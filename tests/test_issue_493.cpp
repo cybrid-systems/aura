@@ -82,8 +82,7 @@ int main() {
         CHECK(eval_flat_after > eval_flat_before,
               std::format("eval-flat-calls grew ({} -> {})", eval_flat_before, eval_flat_after));
         CHECK(lowering_after >= lowering_before,
-              std::format("lowering-calls monotonic ({} -> {})", lowering_before,
-                          lowering_after));
+              std::format("lowering-calls monotonic ({} -> {})", lowering_before, lowering_after));
         const auto mr = cs.typed_mutate("(mutate:rebind \"base\" \"99\")");
         CHECK(mr.success, "typed_mutate rebind");
         CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");

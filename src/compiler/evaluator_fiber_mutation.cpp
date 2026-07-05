@@ -201,13 +201,13 @@ thread_local aura::compiler::Evaluator* g_query_evaluator = nullptr;
 std::atomic<aura::compiler::Evaluator*> g_scheduler_stats_evaluator{nullptr};
 
 namespace {
-aura::compiler::Evaluator* evaluator_for_scheduler_hooks() noexcept {
-    if (auto* ev = aura::compiler::Evaluator::yield_hook_evaluator())
-        return ev;
-    if (auto* ev = aura::compiler::Evaluator::get_query_evaluator())
-        return ev;
-    return g_scheduler_stats_evaluator.load(std::memory_order_acquire);
-}
+    aura::compiler::Evaluator* evaluator_for_scheduler_hooks() noexcept {
+        if (auto* ev = aura::compiler::Evaluator::yield_hook_evaluator())
+            return ev;
+        if (auto* ev = aura::compiler::Evaluator::get_query_evaluator())
+            return ev;
+        return g_scheduler_stats_evaluator.load(std::memory_order_acquire);
+    }
 } // namespace
 
 // Implementation of active_mutation_stack() — the

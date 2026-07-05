@@ -45,8 +45,8 @@ static std::int64_t eval_int(aura::compiler::CompilerService& cs, std::string_vi
 }
 
 static std::int64_t steal_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:scheduler-stealbudget-adaptive-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:scheduler-stealbudget-adaptive-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -106,8 +106,8 @@ int main() {
         io.join();
         const auto fms_after = eval_int(cs, "(query:fiber-migration-stats)");
         CHECK(fms_after > fms_before,
-              std::format("fiber-migration-stats grew on resume migration ({} -> {})",
-                          fms_before, fms_after));
+              std::format("fiber-migration-stats grew on resume migration ({} -> {})", fms_before,
+                          fms_after));
     }
 
     // AC3: deferred steal violation counters wired
@@ -119,8 +119,8 @@ int main() {
         CHECK(mcs_after > mcs_before,
               std::format("mutation-coordination-stats grew ({} -> {})", mcs_before, mcs_after));
         CHECK(fms_after > fms_before,
-              std::format("fiber-migration-stats grew on boundary violation ({} -> {})",
-                          fms_before, fms_after));
+              std::format("fiber-migration-stats grew on boundary violation ({} -> {})", fms_before,
+                          fms_after));
 
         Scheduler sched(8);
         std::atomic<int> done{0};

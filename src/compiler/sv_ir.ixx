@@ -320,8 +320,8 @@ export std::optional<PropertyIR> map_assert_node_to_ir(const aura::ast::FlatAST&
 
 // Issue #496: AST tag → ConstraintIR / ClassIR mappers.
 export std::optional<ConstraintIR> map_constraint_node_to_ir(const aura::ast::FlatAST& flat,
-                                                               const aura::ast::StringPool& pool,
-                                                               aura::ast::NodeId id);
+                                                             const aura::ast::StringPool& pool,
+                                                             aura::ast::NodeId id);
 
 export std::optional<ClassIR> map_class_node_to_ir(const aura::ast::FlatAST& flat,
                                                    const aura::ast::StringPool& pool,

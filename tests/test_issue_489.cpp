@@ -72,10 +72,9 @@ int main() {
         CHECK(lit && aura::compiler::types::is_int(*lit), "LiteralInt node id found");
         if (lit && aura::compiler::types::is_int(*lit)) {
             const auto nid = aura::compiler::types::as_int(*lit);
-            auto ok = cs.eval(std::format(
-                "(let ((sref (query:as-stable-ref {})))"
-                "  (mutate:replace-value sref 11 \"stable-ref bump\"))",
-                nid));
+            auto ok = cs.eval(std::format("(let ((sref (query:as-stable-ref {})))"
+                                          "  (mutate:replace-value sref 11 \"stable-ref bump\"))",
+                                          nid));
             CHECK(ok.has_value(), "mutate:replace-value accepts stable-ref pair");
             CHECK(cs.eval("(eval-current)").has_value(), "eval-current after stable-ref mutate");
         }
@@ -88,11 +87,11 @@ int main() {
         auto lit = cs.eval("(car (query:node-type \"LiteralInt\"))");
         if (lit && aura::compiler::types::is_int(*lit)) {
             const auto nid = aura::compiler::types::as_int(*lit);
-            auto stale_attempt = cs.eval(std::format(
-                "(let ((sref (query:as-stable-ref {})))"
-                "  (mutate:rebind \"base\" \"20\" \"bump gen\")"
-                "  (mutate:replace-value sref 12 \"should fail\"))",
-                nid));
+            auto stale_attempt =
+                cs.eval(std::format("(let ((sref (query:as-stable-ref {})))"
+                                    "  (mutate:rebind \"base\" \"20\" \"bump gen\")"
+                                    "  (mutate:replace-value sref 12 \"should fail\"))",
+                                    nid));
             CHECK(!stale_attempt.has_value() ||
                       (stale_attempt && aura::compiler::types::is_pair(*stale_attempt)),
                   "stale stable-ref mutate surfaces error under Strict");
@@ -120,13 +119,12 @@ int main() {
         const auto validated_after = cs.evaluator().get_stable_ref_validated_in_primitives_count();
         CHECK(raw_after > raw_before,
               std::format("raw_nodeid_usage grew ({} -> {})", raw_before, raw_after));
-        CHECK(validated_after > validated_before,
-              std::format("stable_ref_validated grew ({} -> {})", validated_before,
-                          validated_after));
+        CHECK(
+            validated_after > validated_before,
+            std::format("stable_ref_validated grew ({} -> {})", validated_before, validated_after));
         CHECK(snap_stat(cs, "raw-nodeid-usage") == static_cast<std::int64_t>(raw_after),
               "hash raw-nodeid-usage matches evaluator counter");
-        CHECK(snap_stat(cs, "stable-ref-validated") ==
-                  static_cast<std::int64_t>(validated_after),
+        CHECK(snap_stat(cs, "stable-ref-validated") == static_cast<std::int64_t>(validated_after),
               "hash stable-ref-validated matches evaluator counter");
     }
 
@@ -138,7 +136,8 @@ int main() {
         auto sref = cs.eval("(query:as-stable-ref 2)");
         auto stale = cs.eval("(query:stale-ref-stats)");
         CHECK(srs && aura::compiler::types::is_int(*srs), "query:stable-ref-stats regression");
-        CHECK(srh && aura::compiler::types::is_hash(*srh), "query:stable-ref-stats-hash regression");
+        CHECK(srh && aura::compiler::types::is_hash(*srh),
+              "query:stable-ref-stats-hash regression");
         CHECK(sref && aura::compiler::types::is_pair(*sref), "query:as-stable-ref regression");
         CHECK(stale && aura::compiler::types::is_int(*stale), "query:stale-ref-stats regression");
     }

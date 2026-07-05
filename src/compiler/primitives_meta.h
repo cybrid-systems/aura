@@ -100,12 +100,13 @@ inline PrimitiveSkeleton generate_primitive_skeleton(std::string_view descriptio
 
     if (prim_name == "eda:update-constraint") {
         sk.spec = "(constraint-id expr-string) -> bool";
-        sk.cpp_lambda = "add_mutate(\"eda:update-constraint\", [&ev](const auto& a) -> EvalValue {\n"
-                        "    bool ok = true;\n"
-                        "    MutationBoundaryGuard guard(ev, &ok);\n"
-                        "    ws->append_param(cid, pool->intern(expr));\n"
-                        "    return make_bool(true);\n"
-                        "});";
+        sk.cpp_lambda =
+            "add_mutate(\"eda:update-constraint\", [&ev](const auto& a) -> EvalValue {\n"
+            "    bool ok = true;\n"
+            "    MutationBoundaryGuard guard(ev, &ok);\n"
+            "    ws->append_param(cid, pool->intern(expr));\n"
+            "    return make_bool(true);\n"
+            "});";
         sk.test_snippet = "(eda:update-constraint <constraint-id> \"val < 128;\")";
         sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
                           "\"Append constraint expr on native Constraint node.\", "
