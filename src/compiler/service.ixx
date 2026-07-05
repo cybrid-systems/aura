@@ -529,6 +529,8 @@ public:
         // Issue #492: stability loss / invalidate → JIT eviction +
         // fiber refresh (closes ShapeProfiler → JIT hot-swap loop).
         shape::set_shape_deopt_hook(&CompilerService::shape_deopt_hook_trampoline);
+        // Issue #494: yield between pass-pipeline stages when running on a fiber.
+        aura::compiler::set_pipeline_yield_hook(&CompilerService::pipeline_yield_trampoline);
         evaluator_.set_type_registry(&type_registry_);
         // Issue #252: wire the shared CompilerMetrics to the
         // Evaluator. apply_closure increments the closure_*
@@ -2244,6 +2246,11 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        const std::uint64_t pipeline_epoch =
+            mutation_epoch_.load(std::memory_order_relaxed);
+        ts.set_pipeline_epoch(pipeline_epoch);
+        ar.set_pipeline_epoch(pipeline_epoch);
+        cf.set_pipeline_epoch(pipeline_epoch);
 
         std::println(std::cerr, "PM: running {}->{}->{}->{}", ts.name(), ck.name(), ar.name(),
                      cf.name());
@@ -2429,6 +2436,11 @@ public:
             aura::compiler::ComputeKindWrap ck;
             aura::compiler::ArityWrap ar;
             aura::compiler::ConstantFoldingWrap cf;
+            const std::uint64_t pipeline_epoch =
+                mutation_epoch_.load(std::memory_order_relaxed);
+            ts.set_pipeline_epoch(pipeline_epoch);
+            ar.set_pipeline_epoch(pipeline_epoch);
+            cf.set_pipeline_epoch(pipeline_epoch);
             // Issue #163: run_pipeline (Pass concept fold) replaces
             // the 4 individual *.run() calls.
             aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
@@ -4616,6 +4628,11 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        const std::uint64_t pipeline_epoch =
+            mutation_epoch_.load(std::memory_order_relaxed);
+        ts.set_pipeline_epoch(pipeline_epoch);
+        ar.set_pipeline_epoch(pipeline_epoch);
+        cf.set_pipeline_epoch(pipeline_epoch);
         // Issue #163: run_pipeline (Pass concept fold) replaces
         // the 4 individual *.run() calls.
         aura::compiler::run_pipeline(*last_ir_mod_, ts, ck, ar, cf);
@@ -6681,6 +6698,10 @@ private:
         mod.functions.push_back(func);
         aura::compiler::TypeSpecializationWrap ts(&type_registry_);
         aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
+        const std::uint64_t pipeline_epoch =
+            mutation_epoch_.load(std::memory_order_relaxed);
+        ts.set_pipeline_epoch(pipeline_epoch);
+        dce.set_pipeline_epoch(pipeline_epoch);
         ts.run(mod);
         const bool dirty_dce =
             !dirty_blocks.empty() && dirty_blocks.size() == mod.functions[0].blocks.size();
@@ -8385,6 +8406,14 @@ public:
         return shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
     }
     void bump_shape_fiber_refresh() noexcept { shape::record_shape_fiber_refresh(); }
+
+    // Issue #494: yield between pass-pipeline stages when on a fiber.
+    static bool pipeline_yield_trampoline() noexcept {
+        if (!aura::serve::g_current_fiber)
+            return false;
+        aura::serve::Fiber::yield(aura::serve::YieldReason::PassPipeline);
+        return true;
+    }
 
     // Issue #492: ShapeProfiler deopt hook trampoline (C fn ptr).
     static void shape_deopt_hook_trampoline(shape::FnKey fn_key, std::uint64_t version,

@@ -348,6 +348,9 @@ void Fiber::yield(YieldReason reason) {
         case YieldReason::OperationBoundary:
             fb->bump_yield_operation_boundary();
             break;
+        case YieldReason::PassPipeline:
+            fb->bump_yield_explicit();
+            break;
     }
 
     // If blocking IO, set state to Waiting (IO thread will wake via epoll)

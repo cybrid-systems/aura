@@ -2852,6 +2852,10 @@ add_dependencies(all_test_issue_targets test_issue_492)
 aura_add_issue_test(test_issue_493)
 aura_issue_test_link_llvm_jit(test_issue_493)
 add_dependencies(all_test_issue_targets test_issue_493)
+# Issue #494: Pass pipeline JIT/incremental concepts + yield + stats hash.
+aura_add_issue_test(test_issue_494)
+aura_issue_test_link_llvm_jit(test_issue_494)
+add_dependencies(all_test_issue_targets test_issue_494)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

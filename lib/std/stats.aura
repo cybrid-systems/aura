@@ -93,6 +93,8 @@
     "query:shape-profiler-stats"
     ; ── Issue #493 — EDSL hot-path bottleneck observability ──
     "query:hotpath-bottleneck-stats"
+    ; ── Issue #494 — Pass pipeline yield + dirty short-circuit observability ──
+    "query:pass-pipeline-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
