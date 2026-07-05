@@ -1965,6 +1965,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Pre-existing (Issue #288, #391, #447, #457, #459)
             "query:query-stats",
             "query:stale-ref-stats",
+            // Issue #489 — StableNodeRef enforcement in mutate/query hot paths
+            "query:stability-stats",
             "query:atomic-batch-stats",
             "query:stable-ref-stats",
             // Issue #470 — StableNodeRef 4-field hash
@@ -2132,8 +2134,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 86 entries as of #488 ship (85 from #486 + query:mutation-impact-snapshot).
-        return make_int(86);
+        // 87 entries as of #489 ship (86 from #488 + query:stability-stats).
+        return make_int(87);
     });
 }
 
