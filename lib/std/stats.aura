@@ -42,6 +42,8 @@
     "query:incremental-production-relower-stats"
     ; ── Issue #532 — JIT opcode coverage + IR consistency + hot-swap safety ──
     "query:jit-consistency-stats"
+    ; ── Issue #533 — children_ columnar + IR SoA hot-path production tracker ──
+    "query:soa-production-columnar-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
