@@ -52,6 +52,8 @@
     "query:prompt6-memory-safety-stats"
     ; ── Issue #519 — EDSL/EDA/SV verification closed-loop tracker ──
     "query:edsl-eda-sv-closedloop-stats"
+    ; ── Issue #521 — Multi-fiber orchestration + MutationBoundary safety ──
+    "query:multi-fiber-orchestration-stats"
     ; ── Issue #570 — ShapeProfiler stability + deopt ──
     "query:shape-stability-stats"
     ; ── Issue #571 — EvalValue v2 dispatch + contracts ──
