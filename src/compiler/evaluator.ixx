@@ -4095,6 +4095,9 @@ public:
     }
 
     // Issue #456: mutation-impact observability accessors.
+    [[nodiscard]] std::uint64_t get_mutation_impact_ring_seq() const noexcept {
+        return mutation_impact_ring_seq_.load(std::memory_order_acquire);
+    }
     [[nodiscard]] std::uint64_t get_mutation_impact_count() const noexcept {
         return mutation_impact_count_.load(std::memory_order_relaxed);
     }

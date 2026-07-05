@@ -2889,6 +2889,10 @@ add_dependencies(all_test_issue_targets test_issue_502)
 aura_add_issue_test(test_issue_503)
 aura_issue_test_link_llvm_jit(test_issue_503)
 add_dependencies(all_test_issue_targets test_issue_503)
+# Issue #504: MutationBoundaryGuard impact log + query primitive.
+aura_add_issue_test(test_issue_504)
+aura_issue_test_link_llvm_jit(test_issue_504)
+add_dependencies(all_test_issue_targets test_issue_504)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

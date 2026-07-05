@@ -299,6 +299,82 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #504: query:mutation-boundary-log. Consolidated Guard impact
+    // log for AI self-evolution loops (non-duplicative with #488
+    // mutation-impact-snapshot single-entry view and #417 invariant sum):
+    //   - latest ring entry: epoch-after/delta, nodes-changed, reasons-mask
+    //   - impact-snapshots, mutation-impacts, dirty-nodes, macro-markers
+    //   - boundary-depth, guard-epoch, ring-seq, ring-capacity
+    //   - boundary-log-total, boundary-log-recommendation
+    add("query:mutation-boundary-log",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto entry = ev->get_latest_mutation_impact_entry();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+            const std::uint64_t impacts = ev->get_mutation_impact_count();
+            const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
+            const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
+            const std::uint64_t ring_seq = ev->get_mutation_impact_ring_seq();
+            const std::uint64_t total =
+                snapshots + impacts + entry.epoch_delta + entry.nodes_changed + dirty;
+            std::int64_t recommendation = 0;
+            if (!ev->get_last_schema_validation_ok())
+                recommendation = 3;
+            else if (entry.nodes_changed > 20)
+                recommendation = 2;
+            else if (dirty > 10)
+                recommendation = 1;
+            insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
+            insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
+            insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
+            insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
+            insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
+            insert_kv("mutation-impacts", static_cast<std::int64_t>(impacts));
+            insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("boundary-depth",
+                      static_cast<std::int64_t>(Evaluator::mutation_boundary_depth()));
+            insert_kv("guard-epoch", static_cast<std::int64_t>(ev->get_guard_dirty_epoch_count()));
+            insert_kv("ring-seq", static_cast<std::int64_t>(ring_seq));
+            insert_kv("ring-capacity", 8); // Evaluator::kMutationImpactRingSize
+            insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
+            insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
+            insert_kv("boundary-log-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #489: query:stability-stats. Hash view of StableNodeRef
     // enforcement counters for EDSL mutate/query hot paths.
     add("query:stability-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {

@@ -111,6 +111,8 @@
     "query:mutation-impact-snapshot"
     ; ── Issue #503 — query:pattern subtree marker/hygiene stats ──
     "query:pattern-marker-stats"
+    ; ── Issue #504 — MutationBoundaryGuard impact log for AI loops ──
+    "query:mutation-boundary-log"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
