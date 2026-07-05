@@ -2840,6 +2840,10 @@ add_dependencies(all_test_issue_targets test_issue_489)
 aura_add_issue_test(test_issue_490)
 aura_issue_test_link_llvm_jit(test_issue_490)
 add_dependencies(all_test_issue_targets test_issue_490)
+# Issue #491: JIT opcode coverage + hot-swap safety + jit-stats-hash.
+aura_add_issue_test(test_issue_491)
+aura_issue_test_link_llvm_jit(test_issue_491)
+add_dependencies(all_test_issue_targets test_issue_491)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

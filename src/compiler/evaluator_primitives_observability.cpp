@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "compiler/aura_jit_bridge.h"
 #include "observability_metrics.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
@@ -1306,6 +1307,104 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sidx);
     });
 
+    // Issue #491: query:jit-stats-hash — structured JIT production-readiness
+    // view for AI self-monitoring (opcode coverage, fallback, hot-swap safety).
+    add("query:jit-stats-hash", [&ev](const auto&) -> EvalValue {
+        std::uint64_t compiles = 0;
+        std::uint64_t hot_swaps = 0;
+        std::uint64_t cached_fns = 0;
+        std::uint64_t unhandled = 0;
+        std::uint64_t fallback = aura_jit_fallback_count_v_read();
+        std::uint64_t consistency = 0;
+        std::uint64_t intrinsics = 0;
+        if (ev.get_jit_stats_fn_) {
+            const char* s = ev.get_jit_stats_fn_();
+            if (s) {
+                auto parse_u64 = [&](const char* key) -> std::uint64_t {
+                    const char* p = std::strstr(s, key);
+                    if (!p)
+                        return 0;
+                    p += std::strlen(key);
+                    return std::strtoull(p, nullptr, 10);
+                };
+                compiles = parse_u64("compiles=");
+                hot_swaps = parse_u64("hot_swaps=");
+                cached_fns = parse_u64("cached_fns=");
+                unhandled = parse_u64("unhandled_opcode=");
+                fallback = parse_u64("fallback_count=");
+                consistency = parse_u64("consistency_violations=");
+                intrinsics = parse_u64("intrinsics=");
+            }
+        }
+        std::uint64_t jit_cache_evictions = 0;
+        std::uint64_t invalidate_calls = 0;
+        std::uint64_t hotswap_invalidate = 0;
+        std::uint64_t epoch_mismatch = 0;
+        std::uint64_t mutation_epoch = 0;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            jit_cache_evictions = m->jit_cache_evictions.load(std::memory_order_relaxed);
+            invalidate_calls = m->invalidate_function_calls.load(std::memory_order_relaxed);
+            hotswap_invalidate = m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed);
+            epoch_mismatch =
+                m->compiler_closure_epoch_mismatch_hits.load(std::memory_order_relaxed);
+        }
+        if (ev.get_incremental_stats_fn_) {
+            const auto packed = ev.get_incremental_stats_fn_();
+            mutation_epoch = (packed >> 16) & 0xFFFFu;
+        }
+        constexpr std::int64_t k_opcode_total = 53; // IROpcode::Nop..TopCellLoad
+        const std::int64_t coverage_pct =
+            unhandled == 0 && fallback == 0
+                ? 100
+                : std::max<std::int64_t>(
+                      0, 100 - static_cast<std::int64_t>((unhandled + fallback) * 100 /
+                                                         std::max<std::uint64_t>(1, compiles)));
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("compiles", static_cast<std::int64_t>(compiles));
+        insert_kv("hot-swaps", static_cast<std::int64_t>(hot_swaps));
+        insert_kv("cached-fns", static_cast<std::int64_t>(cached_fns));
+        insert_kv("unhandled-opcode", static_cast<std::int64_t>(unhandled));
+        insert_kv("fallback-count", static_cast<std::int64_t>(fallback));
+        insert_kv("consistency-violations", static_cast<std::int64_t>(consistency));
+        insert_kv("intrinsics", static_cast<std::int64_t>(intrinsics));
+        insert_kv("opcode-total", k_opcode_total);
+        insert_kv("opcode-coverage-pct", coverage_pct);
+        insert_kv("jit-cache-evictions", static_cast<std::int64_t>(jit_cache_evictions));
+        insert_kv("invalidate-function-calls", static_cast<std::int64_t>(invalidate_calls));
+        insert_kv("hotswap-invalidate-total", static_cast<std::int64_t>(hotswap_invalidate));
+        insert_kv("epoch-mismatch-hits", static_cast<std::int64_t>(epoch_mismatch));
+        insert_kv("mutation-epoch", static_cast<std::int64_t>(mutation_epoch));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // (query:soa-dirty-stats) — Issue #429: live SoA
     // dirty state aggregate. Returns a hash with 8 fields
     // computed in one pass over ir_cache_v2_:
@@ -1986,6 +2085,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "compile:compiler-incremental-stats",
             "compile:typecheck-stats",
             "compile:jit-stats",
+            // Issue #491 — JIT opcode coverage + hot-swap safety hash
+            "query:jit-stats-hash",
             "compile:arena-stats",
             "compile:dead-coercion-stats",
             // Issue #574 — coercion elimination summary
@@ -2136,8 +2237,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 88 entries as of #490 ship (87 from #489 + query:pattern-index-rebuild-stats).
-        return make_int(88);
+        // 89 entries as of #491 ship (88 from #490 + query:jit-stats-hash).
+        return make_int(89);
     });
 }
 
