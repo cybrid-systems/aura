@@ -2119,6 +2119,131 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #532: query:jit-consistency-stats. Commercial P0 hash view of JIT
+    // opcode coverage completeness, IRInterpreter execution consistency, and
+    // GuardShape/Linear/hot-swap safety — non-duplicative synthesis of #491
+    // jit-stats-hash, #601 jit-hotswap-closure-stats, #513/#522 AOT reload
+    // themes, and #516 prompt6-memory-safety linear/bridge slices; avoids
+    // repeating the per-field jit-stats-hash surface verbatim:
+    //   P1 Opcode coverage: unhandled-count, fallback-count,
+    //      consistency-violations, opcode-coverage-pct
+    //   P2 Deopt parity: deopt-count, deopt-rate-pct
+    //   P3 Hot-swap safety: hotswap-invalidate, live-closure-refreshed,
+    //      forced-deopt, hotswap-success-rate-pct
+    //   P4 Linear/bridge: linear-check-hits, bridge-epoch-hits,
+    //      epoch-mismatch-hits, safe-fallbacks
+    //   - jit-consistency-total / jit-consistency-recommendation
+    add("query:jit-consistency-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev)
+            return make_void();
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        std::uint64_t compiles = 0;
+        std::uint64_t unhandled = 0;
+        std::uint64_t fallback = aura_jit_fallback_count_v_read();
+        std::uint64_t consistency = 0;
+        if (ev->get_jit_stats_fn_) {
+            const char* s = ev->get_jit_stats_fn_();
+            if (s) {
+                auto parse_u64 = [&](const char* key) -> std::uint64_t {
+                    const char* p = std::strstr(s, key);
+                    if (!p)
+                        return 0;
+                    p += std::strlen(key);
+                    return std::strtoull(p, nullptr, 10);
+                };
+                compiles = parse_u64("compiles=");
+                unhandled = parse_u64("unhandled_opcode=");
+                fallback = parse_u64("fallback_count=");
+                consistency = parse_u64("consistency_violations=");
+            }
+        }
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t deopt = m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t hotswap_invalidate =
+            m ? m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t refreshed =
+            m ? m->jit_hotswap_live_closure_refreshed_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t forced_deopt =
+            m ? m->jit_hotswap_forced_deopt_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t linear_hits =
+            m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t bridge_hits =
+            m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t epoch_mismatch =
+            m ? m->compiler_closure_epoch_mismatch_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t safe_fallbacks =
+            m ? m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed) : 0;
+        const std::int64_t deopt_rate_pct =
+            compiles > 0 ? static_cast<std::int64_t>((deopt * 100) / compiles) : 0;
+        const std::int64_t coverage_pct =
+            unhandled == 0 && fallback == 0
+                ? 100
+                : std::max<std::int64_t>(
+                      0, 100 - static_cast<std::int64_t>((unhandled + fallback) * 100 /
+                                                         std::max<std::uint64_t>(1, compiles)));
+        const std::uint64_t hotswap_work = refreshed + forced_deopt + 1;
+        const std::int64_t hotswap_success_pct =
+            static_cast<std::int64_t>((refreshed * 100) / hotswap_work);
+        const std::uint64_t total = unhandled + fallback + consistency + compiles + deopt +
+                                    hotswap_invalidate + refreshed + forced_deopt + linear_hits +
+                                    bridge_hits + epoch_mismatch + safe_fallbacks;
+        std::int64_t recommendation = 0;
+        if (unhandled > 0 || consistency > 0)
+            recommendation = 3;
+        else if (deopt_rate_pct > 10 || forced_deopt > refreshed)
+            recommendation = 2;
+        else if (hotswap_invalidate > 0 || bridge_hits > 0)
+            recommendation = 1;
+        insert_kv("unhandled-count", static_cast<std::int64_t>(unhandled));
+        insert_kv("fallback-count", static_cast<std::int64_t>(fallback));
+        insert_kv("consistency-violations", static_cast<std::int64_t>(consistency));
+        insert_kv("compiles", static_cast<std::int64_t>(compiles));
+        insert_kv("opcode-coverage-pct", coverage_pct);
+        insert_kv("deopt-count", static_cast<std::int64_t>(deopt));
+        insert_kv("deopt-rate-pct", deopt_rate_pct);
+        insert_kv("hotswap-invalidate-count", static_cast<std::int64_t>(hotswap_invalidate));
+        insert_kv("live-closure-refreshed", static_cast<std::int64_t>(refreshed));
+        insert_kv("forced-deopt-total", static_cast<std::int64_t>(forced_deopt));
+        insert_kv("hotswap-success-rate-pct", hotswap_success_pct);
+        insert_kv("linear-check-hits", static_cast<std::int64_t>(linear_hits));
+        insert_kv("bridge-epoch-hits", static_cast<std::int64_t>(bridge_hits));
+        insert_kv("epoch-mismatch-hits", static_cast<std::int64_t>(epoch_mismatch));
+        insert_kv("safe-fallbacks", static_cast<std::int64_t>(safe_fallbacks));
+        insert_kv("jit-consistency-total", static_cast<std::int64_t>(total));
+        insert_kv("jit-consistency-recommendation", recommendation);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
@@ -4872,129 +4997,115 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     });
 
     // Issue #626: query:contracts-hotpath-stats-hash — Agent-
-// discoverable structured companion to the existing
-// query:task4-hotpath-contracts (10-field hash with the per-
-// site constants) + query:pass-pipeline-incremental-stats-hash
-// (6-field hash with contracts-checked + zero-overhead stats from
-// #625) + query:pass-contracts-stats (#406, int-sum-of-7) +
-// query:dead-coercion-zerooverhead-stats (#508, zerooverhead-wins).
-// This primitive specifically covers AC5 from the issue body
-// — the Contracts + consteval + hot-path zero-overhead dashboard
-// the Agent reads to confirm production hot paths are wired.
-// 8 fields:
-//   - contracts-checked        derived (same synthetic as in
-//                              #625: zerooverhead_wins /
-//                              (zerooverhead_wins + dispatch_miss
-//                              + 1) * 100)
-//   - violations-in-debug      shape::value_contract_violation_count
-//                              (existing #406 counter)
-//   - consteval-hits           k_shape_value_consteval_hits
-//                              (existing task4-hotpath-contracts
-//                              inventory)
-//   - zero-overhead-savings     aura::coercion_zerooverhead_win_total
-//                              sum (existing #508/#574 counter)
-//   - pass-pipeline-runs        pass_pipeline_runs_total (existing
-//                              #625 counter)
-//   - arena-auto-triggers       auto_alloc_trigger_count (existing
-//                              #604 counter)
-//   - dirty-blocks-skipped      aura::compiler::passes_skipped_
-//                              dirty_pipeline (existing #494)
-//   - schema == 626             sentinel for Agent drift
-//                              detection (mirrors #618+#620+
-//                              #621+#622+#623+#624+#625)
-//
-// Discovery before this PR (preserved, not duplicated): the C++
-// side already exposes the full Contracts + consteval + zero-
-// overhead + dirty short-circuit counter surface via
-// value_contract_violation_count + zerooverhead_win_total +
-// shape::k_shape_value_consteval_hits + pipeline_yield_count +
-// passes_skipped_dirty_pipeline + auto_alloc_trigger_count
-// counters (added by #406 / #508 / #605 / #686 / #494 / #606).
-// The single NEW contribution is the structured primitive the
-// issue body AC5 lists by name.
-//
-// The remaining #626 AC work (post/requires on Arena allocate_raw,
-// ShapeProfiler record_shape, mark_dirty_*, IRInstructionView
-// accessors; consteval on shape tag dispatch + Value v2 bias
-// ranges; wire to Pass short-circuit) is invasive C++ + hot-
-// path C++26-Contracts additions that need benchmarking + perf
-// regression coverage alongside the JIT/hot-swap work in
-// #601/#491. Separate follow-ups.
-add("query:contracts-hotpath-stats-hash",
-    [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        const std::uint64_t zero_wins =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(
-                      ev.compiler_metrics())
-                      ->coercion_zerooverhead_win_total.load(
-                          std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t dispatch_miss =
-            types::value_dispatch_miss_count.load(std::memory_order_relaxed);
-        const std::uint64_t contracts_denom = zero_wins + dispatch_miss + 1;
-        const std::int64_t contracts_checked =
-            static_cast<std::int64_t>(
-                (zero_wins * 100) / contracts_denom);
-        const std::uint64_t violations =
-            types::value_contract_violation_count.load(
-                std::memory_order_relaxed);
-        const std::uint64_t consteval_hits =
-            shape::k_shape_value_consteval_hits;
-        const std::uint64_t pipeline_runs =
-            pass_pipeline_runs_total.load(std::memory_order_relaxed);
-        const std::uint64_t arena_triggers =
-            ev.arena_group().auto_compact_trigger_count();
-        const std::uint64_t dirty_skipped =
-            aura::compiler::passes_skipped_dirty_pipeline.load(
-                std::memory_order_relaxed);
-        const std::uint64_t zero_overhead_savings =
-            zero_wins + dispatch_miss;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    // discoverable structured companion to the existing
+    // query:task4-hotpath-contracts (10-field hash with the per-
+    // site constants) + query:pass-pipeline-incremental-stats-hash
+    // (6-field hash with contracts-checked + zero-overhead stats from
+    // #625) + query:pass-contracts-stats (#406, int-sum-of-7) +
+    // query:dead-coercion-zerooverhead-stats (#508, zerooverhead-wins).
+    // This primitive specifically covers AC5 from the issue body
+    // — the Contracts + consteval + hot-path zero-overhead dashboard
+    // the Agent reads to confirm production hot paths are wired.
+    // 8 fields:
+    //   - contracts-checked        derived (same synthetic as in
+    //                              #625: zerooverhead_wins /
+    //                              (zerooverhead_wins + dispatch_miss
+    //                              + 1) * 100)
+    //   - violations-in-debug      shape::value_contract_violation_count
+    //                              (existing #406 counter)
+    //   - consteval-hits           k_shape_value_consteval_hits
+    //                              (existing task4-hotpath-contracts
+    //                              inventory)
+    //   - zero-overhead-savings     aura::coercion_zerooverhead_win_total
+    //                              sum (existing #508/#574 counter)
+    //   - pass-pipeline-runs        pass_pipeline_runs_total (existing
+    //                              #625 counter)
+    //   - arena-auto-triggers       auto_alloc_trigger_count (existing
+    //                              #604 counter)
+    //   - dirty-blocks-skipped      aura::compiler::passes_skipped_
+    //                              dirty_pipeline (existing #494)
+    //   - schema == 626             sentinel for Agent drift
+    //                              detection (mirrors #618+#620+
+    //                              #621+#622+#623+#624+#625)
+    //
+    // Discovery before this PR (preserved, not duplicated): the C++
+    // side already exposes the full Contracts + consteval + zero-
+    // overhead + dirty short-circuit counter surface via
+    // value_contract_violation_count + zerooverhead_win_total +
+    // shape::k_shape_value_consteval_hits + pipeline_yield_count +
+    // passes_skipped_dirty_pipeline + auto_alloc_trigger_count
+    // counters (added by #406 / #508 / #605 / #686 / #494 / #606).
+    // The single NEW contribution is the structured primitive the
+    // issue body AC5 lists by name.
+    //
+    // The remaining #626 AC work (post/requires on Arena allocate_raw,
+    // ShapeProfiler record_shape, mark_dirty_*, IRInstructionView
+    // accessors; consteval on shape tag dispatch + Value v2 bias
+    // ranges; wire to Pass short-circuit) is invasive C++ + hot-
+    // path C++26-Contracts additions that need benchmarking + perf
+    // regression coverage alongside the JIT/hot-swap work in
+    // #601/#491. Separate follow-ups.
+    add("query:contracts-hotpath-stats-hash",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const std::uint64_t zero_wins =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->coercion_zerooverhead_win_total.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t dispatch_miss =
+                types::value_dispatch_miss_count.load(std::memory_order_relaxed);
+            const std::uint64_t contracts_denom = zero_wins + dispatch_miss + 1;
+            const std::int64_t contracts_checked =
+                static_cast<std::int64_t>((zero_wins * 100) / contracts_denom);
+            const std::uint64_t violations =
+                types::value_contract_violation_count.load(std::memory_order_relaxed);
+            const std::uint64_t consteval_hits = shape::k_shape_value_consteval_hits;
+            const std::uint64_t pipeline_runs =
+                pass_pipeline_runs_total.load(std::memory_order_relaxed);
+            const std::uint64_t arena_triggers = ev.arena_group().auto_compact_trigger_count();
+            const std::uint64_t dirty_skipped =
+                aura::compiler::passes_skipped_dirty_pipeline.load(std::memory_order_relaxed);
+            const std::uint64_t zero_overhead_savings = zero_wins + dispatch_miss;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("contracts-checked", contracts_checked);
-        insert_kv("violations-in-debug",
-                  static_cast<std::int64_t>(violations));
-        insert_kv("consteval-hits",
-                  static_cast<std::int64_t>(consteval_hits));
-        insert_kv("zero-overhead-savings",
-                  static_cast<std::int64_t>(zero_overhead_savings));
-        insert_kv("pass-pipeline-runs",
-                  static_cast<std::int64_t>(pipeline_runs));
-        insert_kv("arena-auto-triggers",
-                  static_cast<std::int64_t>(arena_triggers));
-        insert_kv("dirty-blocks-skipped",
-                  static_cast<std::int64_t>(dirty_skipped));
-        insert_kv("schema", 626);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("contracts-checked", contracts_checked);
+            insert_kv("violations-in-debug", static_cast<std::int64_t>(violations));
+            insert_kv("consteval-hits", static_cast<std::int64_t>(consteval_hits));
+            insert_kv("zero-overhead-savings", static_cast<std::int64_t>(zero_overhead_savings));
+            insert_kv("pass-pipeline-runs", static_cast<std::int64_t>(pipeline_runs));
+            insert_kv("arena-auto-triggers", static_cast<std::int64_t>(arena_triggers));
+            insert_kv("dirty-blocks-skipped", static_cast<std::int64_t>(dirty_skipped));
+            insert_kv("schema", 626);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
