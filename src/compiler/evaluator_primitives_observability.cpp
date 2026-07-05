@@ -6,6 +6,8 @@ module;
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
 #include "observability_metrics.h"
+#include "compiler/shape.h"
+#include "compiler/value_tags.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 
@@ -1405,6 +1407,88 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #493: query:hotpath-bottleneck-stats — structured EDSL
+    // hot-path breakdown for AI mutate→eval tuning.
+    add("query:hotpath-bottleneck-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m =
+            static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t eval_flat =
+            m ? m->hotpath_eval_flat_calls.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t lowering =
+            m ? m->hotpath_lowering_calls.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t soa_dual =
+            m ? m->hotpath_soa_dual_emit_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t soa_instr =
+            m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t soa_funcs =
+            m ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t soa_wired =
+            m ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
+        auto* ws = ev.workspace_flat();
+        const std::uint64_t dirty_up = ws ? ws->mark_dirty_upward_call_count() : 0;
+        const std::uint64_t dirty_early = ws ? ws->mark_dirty_early_exit_count() : 0;
+        const std::uint64_t dirty_nodes = ws ? ws->mark_dirty_total_nodes() : 0;
+        const std::uint64_t passes_skip = ev.get_passes_skipped_type_dirty();
+        const std::uint64_t shape_dispatch =
+            shape::inline_shape_ref_dispatch_count.load(std::memory_order_relaxed);
+        const std::uint64_t value_dispatch =
+            types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+        std::uint64_t arena_triggers = 0;
+        if (ev.arena_) {
+            arena_triggers = ev.arena_->stats().auto_alloc_trigger_count;
+        }
+        if (ev.arena_group_) {
+            arena_triggers += ev.arena_group_->auto_compact_trigger_count();
+        }
+        const std::uint64_t bottleneck_total =
+            eval_flat + lowering + soa_dual + dirty_up + dirty_early + passes_skip +
+            shape_dispatch + value_dispatch + arena_triggers;
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("eval-flat-calls", static_cast<std::int64_t>(eval_flat));
+        insert_kv("lowering-calls", static_cast<std::int64_t>(lowering));
+        insert_kv("soa-dual-emit-hits", static_cast<std::int64_t>(soa_dual));
+        insert_kv("soa-instr-emitted", static_cast<std::int64_t>(soa_instr));
+        insert_kv("soa-func-emitted", static_cast<std::int64_t>(soa_funcs));
+        insert_kv("soa-wired-hits", static_cast<std::int64_t>(soa_wired));
+        insert_kv("dirty-upward-calls", static_cast<std::int64_t>(dirty_up));
+        insert_kv("dirty-early-exit", static_cast<std::int64_t>(dirty_early));
+        insert_kv("dirty-total-nodes", static_cast<std::int64_t>(dirty_nodes));
+        insert_kv("passes-skipped-dirty", static_cast<std::int64_t>(passes_skip));
+        insert_kv("shape-dispatch", static_cast<std::int64_t>(shape_dispatch));
+        insert_kv("value-dispatch-hits", static_cast<std::int64_t>(value_dispatch));
+        insert_kv("arena-alloc-triggers", static_cast<std::int64_t>(arena_triggers));
+        insert_kv("bottleneck-total", static_cast<std::int64_t>(bottleneck_total));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // (query:soa-dirty-stats) — Issue #429: live SoA
     // dirty state aggregate. Returns a hash with 8 fields
     // computed in one pass over ir_cache_v2_:
@@ -2028,6 +2112,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:shape-stability-stats",
             // Issue #492 — ShapeProfiler structured deopt/stability hash
             "query:shape-profiler-stats",
+            // Issue #493 — EDSL hot-path bottleneck breakdown hash
+            "query:hotpath-bottleneck-stats",
             // Issue #571 — EvalValue v2 dispatch + contracts
             "query:value-dispatch-stats",
             // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
@@ -2239,8 +2325,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 90 entries as of #492 ship (89 from #491 + query:shape-profiler-stats).
-        return make_int(90);
+        // 91 entries as of #493 ship (90 from #492 + query:hotpath-bottleneck-stats).
+        return make_int(91);
     });
 }
 

@@ -35,6 +35,11 @@ struct CompilerMetrics {
     // Issue #491: AuraJIT::invalidate / invalidate_prefix calls from
     // invalidate_function + hot-swap paths (hot-swap safety wiring).
     std::atomic<std::uint64_t> jit_hotswap_invalidate_total{0};
+    // Issue #493: EDSL hot-path bottleneck measurement (evaluator_eval_flat /
+    // lowering_impl call sites).
+    std::atomic<std::uint64_t> hotpath_eval_flat_calls{0};
+    std::atomic<std::uint64_t> hotpath_lowering_calls{0};
+    std::atomic<std::uint64_t> hotpath_soa_dual_emit_hits{0};
     // --emit-binary
     std::atomic<std::uint64_t> aot_emits{0};
     std::atomic<std::uint64_t> aot_fallbacks{0};

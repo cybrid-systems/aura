@@ -1471,7 +1471,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
         summary, aura::ast::MutationStatus::Committed, 0,
         static_cast<std::uint64_t>(old_value_node), static_cast<std::uint64_t>(new_value), true);
     flat.set_child(old_define, 0, new_value);
-    flat.mark_dirty_upward(old_define);
+    // Issue #493: fast dirty path (early-exit fixed point, #471).
+    flat.mark_dirty_upward_fast(old_define);
     return make_int(static_cast<std::int64_t>(mid));
 }
 
@@ -1599,6 +1600,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                 aura::ast::NodeId id, const Env& env) {
+    if (compiler_metrics_) {
+        static_cast<CompilerMetrics*>(compiler_metrics_)
+            ->hotpath_eval_flat_calls.fetch_add(1, std::memory_order_relaxed);
+    }
     // Catch bad_variant_access and return friendly error instead of crash.
     // This happens when user code passes wrong argument types to primitives.
     try {

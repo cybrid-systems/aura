@@ -91,6 +91,8 @@
     "query:jit-stats-hash"
     ; ── Issue #492 — ShapeProfiler deopt/stability observability ──
     "query:shape-profiler-stats"
+    ; ── Issue #493 — EDSL hot-path bottleneck observability ──
+    "query:hotpath-bottleneck-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
