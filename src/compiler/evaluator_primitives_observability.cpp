@@ -2646,6 +2646,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
             "query:mutation-impact-snapshot",
+            // Issue #504 — Guard impact log for AI decision loops
+            "query:mutation-boundary-log",
             // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
             "query:self-evolution-loop-stats",
             // Issue #415 — DirtyReason verification categories +
@@ -2901,8 +2903,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 100 entries as of #503 ship (99 from #502 + query:pattern-marker-stats).
-        return make_int(100);
+        // 101 entries as of #504 ship (100 from #503 + query:mutation-boundary-log).
+        return make_int(101);
     });
 }
 
