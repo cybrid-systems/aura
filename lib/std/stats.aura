@@ -46,6 +46,8 @@
     "query:soa-production-columnar-stats"
     ; ── Issue #534 — Arena auto-compaction + defrag safepoint coordination ──
     "query:arena-production-compaction-stats"
+    ; ── Issue #535 — C++26 Contracts + consteval hot-path production tracker ──
+    "query:contracts-production-hotpath-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
