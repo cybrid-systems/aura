@@ -1362,8 +1362,8 @@ void register_workspace_query_primitives(
         if (a.empty())
             return mev("bad-arg",
                        "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                       " [:allow-macro-introduced [#t]] [:nested-arity [#t|#f]]"
-                       " [:strict-arity [#t]] [:with-markers [#t]])");
+                       " [:allow-macro-introduced [#t]] [:respect-hygiene [#t|#f]]"
+                       " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
 

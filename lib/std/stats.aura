@@ -109,6 +109,8 @@
     "query:ir-hygiene-stats"
     ; ── Issue #502 — Post-mutate reflect validation + impact snapshot ──
     "query:mutation-impact-snapshot"
+    ; ── Issue #503 — query:pattern subtree marker/hygiene stats ──
+    "query:pattern-marker-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
