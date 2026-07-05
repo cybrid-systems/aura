@@ -97,6 +97,8 @@
     "query:pass-pipeline-stats"
     ; ── Issue #496 — Native SV NodeTag census + mutate observability ──
     "query:sv-node-stats"
+    ; ── Issue #497 — Long-session StableRef lifecycle observability ──
+    "query:stable-ref-lifecycle-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"

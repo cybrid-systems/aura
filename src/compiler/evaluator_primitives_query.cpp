@@ -469,6 +469,83 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #497: query:stable-ref-lifecycle-stats — long-session
+    // generation/compaction/refresh observability for AI loops.
+    add("query:stable-ref-lifecycle-stats",
+        [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            std::uint64_t wraps = 0;
+            std::uint64_t invalidations = 0;
+            std::uint64_t stale = 0;
+            std::uint64_t soft_compact = 0;
+            std::uint64_t auto_refresh = 0;
+            std::uint64_t bump_gen = 0;
+            std::uint64_t compact_total = 0;
+            std::uint32_t wrap_epoch = 0;
+            std::uint16_t cur_gen = 0;
+            if (auto* ws = ev.workspace_flat()) {
+                wraps = ws->generation_wrap_count();
+                invalidations = ws->stable_ref_invalidations();
+                stale = ws->node_gen_stale_access_count();
+                soft_compact = ws->soft_compact_count();
+                auto_refresh = ws->stale_ref_auto_refresh_count();
+                bump_gen = ws->bump_generation_count();
+                compact_total = ws->node_compact_total();
+                wrap_epoch = ws->wrap_epoch();
+                cur_gen = ws->current_generation();
+            }
+            std::int64_t recommendation = 0;
+            if (wraps > 0)
+                recommendation = 1;
+            else if (invalidations >= 10)
+                recommendation = 2;
+            else if (cur_gen > 60000)
+                recommendation = 3;
+            const std::uint64_t lifecycle_total =
+                wraps + invalidations + stale + soft_compact + auto_refresh + bump_gen;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_int(recommendation);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("generation-wrap-count", static_cast<std::int64_t>(wraps));
+            insert_kv("wrap-epoch", static_cast<std::int64_t>(wrap_epoch));
+            insert_kv("current-generation", static_cast<std::int64_t>(cur_gen));
+            insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
+            insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
+            insert_kv("soft-compact-count", static_cast<std::int64_t>(soft_compact));
+            insert_kv("stale-ref-auto-refresh-count", static_cast<std::int64_t>(auto_refresh));
+            insert_kv("bump-generation-count", static_cast<std::int64_t>(bump_gen));
+            insert_kv("node-compact-total", static_cast<std::int64_t>(compact_total));
+            insert_kv("lifecycle-recommendation", recommendation);
+            insert_kv("lifecycle-total", static_cast<std::int64_t>(lifecycle_total));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #438: query:fiber-migration-stats. Returns
     // the sum of the 2 fiber-migration + work-stealing
     // observability counters:
