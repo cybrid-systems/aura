@@ -2799,6 +2799,141 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // bound is too low (and the eviction counter is
     // firing).
     //
+
+    // Issue #630: query:sv-verification-closedloop-stats-hash
+    // — Agent-discoverable structured dashboard for the
+    // verify-feedback → structured-mutate → re-emit → re-verify
+    // closed loop. Specifically covers AC4 from the issue body.
+    //
+    // Fields (6):
+    //   - feedback-to-mutate-cycles  lifetime feedback-mutate
+    //                                hits (feedback_mutate_hits_total
+    //                                CompilerMetrics counter, bumped
+    //                                by #579 + #630 wire-up).
+    //   - stable-ref-captures-in-sv  lifetime verify-tool stable-
+    //                                ref captures inside the Guard
+    //                                (get_verify_tool_stable_ref_
+    //                                hits_total).
+    //   - verification-dirty-propagations
+    //                                lifetime verify-tool dirty
+    //                                propagations
+    //                                (get_verify_tool_dirty_
+    //                                propagations_total).
+    //   - reverify-success          lifetime successful re-emit
+    //                                + re-verify closed-loop
+    //                                completions
+    //                                (verification_loop_success_
+    //                                total).
+    //   - rollback-on-partial        lifetime partial rollback
+    //                                events (sv_emit_parse_fail_
+    //                                total — every parse fail is
+    //                                a partial-emit rollback).
+    //   - ppa-savings-total          lifetime hardware-backend
+    //                                ppa-savings bytes reclaimed
+    //                                during re-emit (existing
+    //                                #579 surface).
+    //   - schema == 630              sentinel for Agent drift
+    //                                detection (mirrors #618+
+    //                                #620+#621+#622+#623+#624+
+    //                                #625+#626 sentinels).
+    //
+    // Discovery before this PR (no duplication): the full
+    // closed-loop logic + ALL the underlying counters already
+    // exist in the C++ side via `eda:run-verification-feedback`
+    // (#579), which bumps feedback_mutate_hits_total /
+    // hardware_backend_hook_calls_total / commercial_reemits_total /
+    // verification_loop_success_total / sv_emit_parse_fail_total /
+    // ppa_savings_total / verify_tool_guard_captures_total_ /
+    // verify_tool_dirty_propagations_total_ /
+    // verify_tool_stable_ref_hits_total_ /
+    // verify_tool_feedback_mutate_success_total_ (Evaluator).
+    // The single NEW contribution is the structured primitive the
+    // issue body AC4 lists by exact name.
+    //
+    // The remaining #630 AC1 + AC2 + AC3 work (eda:apply-verification-
+    // feedback parser, Guard StableRef capture inside SV mutate
+    // paths, hardware_backend hook on verification-related dirty)
+    // is invasive C++ + hot-path EDA work that needs benchmarking
+    // alongside the #579/#499 EDA scaffold — separate follow-up.
+    add("query:sv-verification-closedloop-stats-hash",
+        [&ev](const auto&) -> EvalValue {
+            const std::uint64_t feedback_cycles =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->feedback_mutate_hits_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t stable_ref =
+                ev.get_verify_tool_stable_ref_hits_total();
+            const std::uint64_t dirty_props =
+                ev.get_verify_tool_dirty_propagations_total();
+            const std::uint64_t reverify =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->verification_loop_success_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t rollback =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->sv_emit_parse_fail_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t ppa_savings =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->ppa_savings_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto& string_heap = ev.string_heap_mut();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("feedback-to-mutate-cycles",
+                      static_cast<std::int64_t>(feedback_cycles));
+            insert_kv("stable-ref-captures-in-sv",
+                      static_cast<std::int64_t>(stable_ref));
+            insert_kv("verification-dirty-propagations",
+                      static_cast<std::int64_t>(dirty_props));
+            insert_kv("reverify-success",
+                      static_cast<std::int64_t>(reverify));
+            insert_kv("rollback-on-partial",
+                      static_cast<std::int64_t>(rollback));
+            insert_kv("ppa-savings-total",
+                      static_cast<std::int64_t>(ppa_savings));
+            insert_kv("schema", 630);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #340 follow-up: the predicate_memo_
     // stats aren't currently wired into the
     // get_narrowing_refresh_count_fn_ hook (that

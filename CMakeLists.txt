@@ -3096,6 +3096,20 @@ add_dependencies(all_test_issue_targets test_issue_625)
 aura_add_issue_test(test_issue_626)
 aura_issue_test_link_llvm_jit(test_issue_626)
 add_dependencies(all_test_issue_targets test_issue_626)
+# Issue #630: SV verification feedback closed-loop observability —
+# 1 new Aura primitive (query:sv-verification-closedloop-stats-hash)
+# that the issue body AC4 specifies by name. 6-field hash with all
+# 6 fields read from existing C++ counters (no new atoms):
+#   - feedback-to-mutate-cycles        (feedback_mutate_hits_total)
+#   - stable-ref-captures-in-sv        (Evaluator::get_verify_tool_stable_ref_hits_total)
+#   - verification-dirty-propagations  (Evaluator::get_verify_tool_dirty_propagations_total)
+#   - reverify-success                  (verification_loop_success_total)
+#   - rollback-on-partial                (sv_emit_parse_fail_total)
+#   - ppa-savings-total                  (ppa_savings_total)
+# Builds on #499 / #579 / #616 existing primitives + counters.
+aura_add_issue_test(test_issue_630)
+aura_issue_test_link_llvm_jit(test_issue_630)
+add_dependencies(all_test_issue_targets test_issue_630)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
