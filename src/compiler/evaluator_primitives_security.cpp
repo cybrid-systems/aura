@@ -640,6 +640,95 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #567: Primitive registry governance + stdlib layering closing metrics.
+    add("query:primitives-governance-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t slots = ev.primitives_.slot_count();
+        const std::uint64_t documented = ev.primitives_.documented_meta_count();
+        const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
+        const std::int64_t doc_coverage_pct =
+            slots > 0 ? static_cast<std::int64_t>((documented * 100) / slots) : 100;
+        const std::uint64_t capture_viol =
+            m ? m->primitive_capture_violations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t fastpath_hits =
+            m ? m->primitive_fastpath_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t errors = ev.get_primitive_error_count();
+        const std::uint64_t describes = ev.get_primitive_describe_count();
+        const std::uint64_t list_meta = ev.get_primitive_list_meta_count();
+        const std::uint64_t skeletons =
+            m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t eda_total = ev.primitives_.category_meta_count("eda") +
+                                        ev.primitives_.category_meta_count("sva") +
+                                        ev.primitives_.category_meta_count("verification");
+        const std::uint64_t total = slots + documented + schema_doc + capture_viol + fastpath_hits +
+                                    errors + describes + list_meta + skeletons + eda_total;
+        std::int64_t recommendation = 0;
+        if (capture_viol > 0 || errors > 0)
+            recommendation = 3;
+        else if (doc_coverage_pct < 50)
+            recommendation = 2;
+        else if (describes > 0 || fastpath_hits > 0 || skeletons > 0)
+            recommendation = 1;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
+            {"documented-meta-count", make_int(static_cast<std::int64_t>(documented))},
+            {"schema-documented-count", make_int(static_cast<std::int64_t>(schema_doc))},
+            {"documentation-coverage-pct", make_int(doc_coverage_pct)},
+            {"capture-violations", make_int(static_cast<std::int64_t>(capture_viol))},
+            {"fastpath-hits", make_int(static_cast<std::int64_t>(fastpath_hits))},
+            {"primitive-errors", make_int(static_cast<std::int64_t>(errors))},
+            {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
+            {"list-meta-calls", make_int(static_cast<std::int64_t>(list_meta))},
+            {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
+            {"eda-category-total", make_int(static_cast<std::int64_t>(eda_total))},
+            {"extension-kit-version",
+             make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
+            {"governance-schema", make_int(567)},
+            {"primitives-governance-total", make_int(static_cast<std::int64_t>(total))},
+            {"primitives-governance-recommendation", make_int(recommendation)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #710: verify_tool/diagnostic Guard + StableRef + dirty propagation stats.
     add("query:verify-tool-guard-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

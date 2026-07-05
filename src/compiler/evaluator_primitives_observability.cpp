@@ -3089,6 +3089,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:pattern-sv-verification-stats",
             // Issue #557 — Top 5 commercial test-coverage cluster tracker
             "query:top5-commercial-coverage-stats",
+            // Issue #567 — Primitive governance + stdlib layering closing metrics
+            "query:primitives-governance-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3129,10 +3131,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 135 entries as of #557 ship (134 from #541 + 1 top5-commercial-
-        // coverage observability hash primitive from #557:
-        // query:top5-commercial-coverage-stats).
-        return make_int(135);
+        // 136 entries as of #567 ship (135 from #557 + 1 primitives-governance
+        // observability hash primitive from #567:
+        // query:primitives-governance-stats).
+        return make_int(136);
     });
 }
 
