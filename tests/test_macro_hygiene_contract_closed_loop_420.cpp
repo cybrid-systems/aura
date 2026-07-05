@@ -31,6 +31,7 @@ namespace aura_420_detail {
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t macro_hygiene_contract_stats(CompilerService& cs) {
@@ -107,7 +108,7 @@ static void run_matrix(CompilerService& cs) {
     auto phs = cs.eval("(query:pattern-hygiene-stats)");
     auto ihs = cs.eval("(query:ir-hygiene-stats)");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
-    CHECK(ihs && is_int(*ihs), "ir-hygiene-stats regression");
+    CHECK(ihs && is_hash(*ihs), "ir-hygiene-stats regression");
 }
 
 } // namespace aura_420_detail

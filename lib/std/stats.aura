@@ -105,6 +105,8 @@
     "query:eda-foundation-stats"
     ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
     "query:work-steal-stats"
+    ; ── Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering) ──
+    "query:ir-hygiene-stats"
     "compile:arena-stats"
     "compile:dead-coercion-stats"
     "compile:per-defuse-index-stats"
