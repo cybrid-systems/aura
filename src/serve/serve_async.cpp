@@ -435,6 +435,11 @@ void run_serve_async(int num_workers) {
         if (auto* gc = tls_gc_collector)
             gc->record_alloc();
     });
+    // Issue #604: let ASTArena::compact()/defrag() detect a fiber
+    // context so a compaction requested from inside a fiber bumps
+    // the yield-check counter and cooperates with the GC safepoint.
+    aura::gc_hooks::g_fiber_active.store(
+        +[]() noexcept { return aura::serve::g_current_fiber != nullptr; });
     sched.gc_collector()->register_sweep_fn(
         [&sched](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
             auto* svc = static_cast<aura::compiler::CompilerService*>(

@@ -357,6 +357,15 @@ public:
     //
     // Returns the number of bytes reclaimed.
     [[nodiscard]] std::size_t compact() noexcept {
+        // Issue #604: fiber-context coordination. When compact()
+        // runs inside a scheduled fiber, bump the yield-check
+        // counter and hit the GC safepoint so a long compaction
+        // cooperates with the scheduler/GC instead of trimming
+        // the buffer with no chance for the collector to run.
+        if (aura::gc_hooks::fiber_active()) {
+            stats_.compaction_yield_checks++;
+            aura::gc_hooks::safepoint_check();
+        }
         std::size_t before = buffer_.size();
         std::size_t u = stats_.used;
         if (u == 0) {
@@ -410,6 +419,11 @@ public:
     //
     // Returns the number of bytes reclaimed (same as compact()).
     [[nodiscard]] std::size_t defrag() noexcept {
+        // Issue #604: same fiber-context coordination as compact().
+        if (aura::gc_hooks::fiber_active()) {
+            stats_.compaction_yield_checks++;
+            aura::gc_hooks::safepoint_check();
+        }
         // Issue #300 Phase 3: clear the request flag at the start
         // of the defrag. A subsequent request can set it again if
         // needed. The clear happens before the buffer mutation so
