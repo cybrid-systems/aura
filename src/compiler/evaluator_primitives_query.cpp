@@ -1723,6 +1723,92 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #524: query:macro-production-hygiene-stats. Commercial P0 hash view
+    // of MacroIntroduced marker propagation + hygiene closed-loop (clone_macro_body
+    // → query:pattern → IR InlinePass) — non-duplicative synthesis of #501
+    // ir-hygiene-stats, #503 pattern-marker-stats, #547 pattern-hygiene-stats,
+    // and #486 macro-hygiene-stats; avoids #597 macro-reflect-self-evo-stats
+    // reflect/validation bundle and #420 macro-hygiene-contract-stats int-sum:
+    //   - root-skips / recursive-skips: query:pattern hygiene filter surface
+    //   - hygiene-violations / filter-violations: matcher + filter contract
+    //   - macro-markers: workspace SyntaxMarker::MacroIntroduced tally
+    //   - inline-hygiene-skipped / respect-macro-hygiene: IR InlinePass policy
+    //   - contract-violations / macro-expansion-dirty: clone_macro_body path
+    //   - hygiene-filter-rate-pct: (root+recursive) / markers * 100
+    //   - macro-production-hygiene-total / macro-production-hygiene-recommendation
+    add("query:macro-production-hygiene-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t violations = ev->get_hygiene_violation_count();
+            const std::uint64_t filter_violations = ev->get_pattern_macro_filter_violations();
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+            const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
+            const bool respects = InlinePass::get_respect_macro_hygiene();
+            const std::uint64_t contract = ev->get_macro_hygiene_contract_violations();
+            const std::uint64_t macro_dirty = ws ? ws->macro_expansion_dirty_total() : 0;
+            const std::uint64_t filter_checks = root_skips + recursive_skips;
+            const std::int64_t filter_rate_pct =
+                markers > 0 ? static_cast<std::int64_t>((filter_checks * 100) / markers) : 0;
+            const std::uint64_t total = root_skips + recursive_skips + violations +
+                                        filter_violations + markers + inline_skipped + contract +
+                                        macro_dirty;
+            std::int64_t recommendation = 0;
+            if (violations > 0 || filter_violations > 0 || contract > 0)
+                recommendation = 3;
+            else if (inline_skipped > 0 && !respects)
+                recommendation = 2;
+            else if (root_skips + recursive_skips > 0)
+                recommendation = 1;
+            insert_kv("root-skips", static_cast<std::int64_t>(root_skips));
+            insert_kv("recursive-skips", static_cast<std::int64_t>(recursive_skips));
+            insert_kv("hygiene-violations", static_cast<std::int64_t>(violations));
+            insert_kv("filter-violations", static_cast<std::int64_t>(filter_violations));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("inline-hygiene-skipped", static_cast<std::int64_t>(inline_skipped));
+            insert_kv("respect-macro-hygiene", respects ? 1 : 0);
+            insert_kv("contract-violations", static_cast<std::int64_t>(contract));
+            insert_kv("macro-expansion-dirty", static_cast<std::int64_t>(macro_dirty));
+            insert_kv("hygiene-filter-rate-pct", filter_rate_pct);
+            insert_kv("macro-production-hygiene-total", static_cast<std::int64_t>(total));
+            insert_kv("macro-production-hygiene-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
@@ -5675,28 +5761,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t passes_run =
                 pass_pipeline_runs_total.load(std::memory_order_relaxed);
             const std::uint64_t dirty_blocks_skipped =
-                aura::compiler::passes_skipped_dirty_pipeline.load(
-                    std::memory_order_relaxed);
+                aura::compiler::passes_skipped_dirty_pipeline.load(std::memory_order_relaxed);
             const std::uint64_t shortcircuit_savings =
                 dirty_blocks_skipped +
                 (ev.compiler_metrics()
-                     ? static_cast<aura::compiler::CompilerMetrics*>(
-                           ev.compiler_metrics())
+                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                            ->module_dirty_skips.load(std::memory_order_relaxed)
                      : 0);
             const std::uint64_t zero_wins =
                 ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(
-                          ev.compiler_metrics())
-                          ->coercion_zerooverhead_win_total.load(
-                              std::memory_order_relaxed)
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->coercion_zerooverhead_win_total.load(std::memory_order_relaxed)
                     : 0;
             const std::uint64_t dispatch_miss =
                 types::value_dispatch_miss_count.load(std::memory_order_relaxed);
             const std::uint64_t contracts_denom = zero_wins + dispatch_miss + 1;
             const std::int64_t contracts_checked =
-                static_cast<std::int64_t>(
-                    (zero_wins * 100) / contracts_denom);
+                static_cast<std::int64_t>((zero_wins * 100) / contracts_denom);
             const std::uint64_t pure_delegation =
                 aura::compiler::ShapeWrap::pure_delegation_hits() +
                 aura::compiler::LinearOwnershipWrap::pure_delegation_hits();
@@ -5729,12 +5810,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
             insert_kv("passes-run", static_cast<std::int64_t>(passes_run));
             insert_kv("contracts-checked", contracts_checked);
-            insert_kv("pure-delegation-hits",
-                      static_cast<std::int64_t>(pure_delegation));
-            insert_kv("shortcircuit-savings",
-                      static_cast<std::int64_t>(shortcircuit_savings));
-            insert_kv("dirty-blocks-skipped",
-                      static_cast<std::int64_t>(dirty_blocks_skipped));
+            insert_kv("pure-delegation-hits", static_cast<std::int64_t>(pure_delegation));
+            insert_kv("shortcircuit-savings", static_cast<std::int64_t>(shortcircuit_savings));
+            insert_kv("dirty-blocks-skipped", static_cast<std::int64_t>(dirty_blocks_skipped));
             insert_kv("schema", 625);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

@@ -3065,6 +3065,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:aot-production-reload-stats",
             // Issue #523 — EnvFrame dual-path production safety tracker
             "query:envframe-production-safety-stats",
+            // Issue #524 — Macro+hygiene production closed-loop tracker
+            "query:macro-production-hygiene-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3105,10 +3107,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 120 entries as of #625 ship (119 from #523 + 1 pass-pipeline-
-        // incremental-stats hash primitive from #625:
-        // query:pass-pipeline-incremental-stats-hash).
-        return make_int(120);
+        // 121 entries as of #524 ship (120 from #625 + 1 macro-production-
+        // hygiene observability hash primitive from #524:
+        // query:macro-production-hygiene-stats).
+        return make_int(121);
     });
 }
 
