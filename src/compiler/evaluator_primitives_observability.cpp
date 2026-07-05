@@ -3453,6 +3453,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:sv-structured-edsl-stats",
             // Issue #579 — Verification feedback → structured mutate closed-loop
             "query:verification-feedback-loop-stats",
+            // Issue #580 — Hardware backend emit maturity + commercial interop
+            "query:hardware-backend-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3493,10 +3495,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 144 entries as of #579 ship (143 from #578 + 1 verification-feedback-
-        // loop observability hash primitive from #579:
-        // query:verification-feedback-loop-stats).
-        return make_int(144);
+        // 145 entries as of #580 ship (144 from #579 + 1 hardware-backend
+        // observability hash primitive from #580:
+        // query:hardware-backend-stats).
+        return make_int(145);
     });
 }
 
