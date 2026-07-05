@@ -3130,6 +3130,19 @@ add_dependencies(all_test_issue_targets test_issue_626)
 aura_add_issue_test(test_issue_630)
 aura_issue_test_link_llvm_jit(test_issue_630)
 add_dependencies(all_test_issue_targets test_issue_630)
+# Issue #631: StableNodeRef SV provenance cross-fiber/multi-agent
+# observability — 1 new Aura primitive
+# (query:stable-ref-provenance-sv-stats-hash) + 2 new atomics
+# (cross_fiber_violations_total + safe_resolves_total). Primitive
+# has 5 fields: 2 verbatim (provenance-mismatches-on-sv /
+# total-stable-ref-invalidations, both from existing
+# stable_ref_invalidations counter) + 2 from the new atomics
+# (cross-fiber-violations + safe-resolves, currently 0 until
+# AC1+AC2 enforcement work bumps them) + schema sentinel.
+# Builds on #313/#368/#457/#620/#497 existing infrastructure.
+aura_add_issue_test(test_issue_631)
+aura_issue_test_link_llvm_jit(test_issue_631)
+add_dependencies(all_test_issue_targets test_issue_631)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

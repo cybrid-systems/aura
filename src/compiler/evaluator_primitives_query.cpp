@@ -722,6 +722,129 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #631: query:stable-ref-provenance-sv-stats-hash —
+    // Agent-discoverable structured dashboard for StableNodeRef
+    // cross-fiber + multi-agent SV provenance, specifically
+    // covering AC3 from the issue body. Pairs with the existing
+    // query:stable-ref-provenance (#620, per-ref fields) and
+    // query:stable-ref-stats-hash (#457, lifetime aggregate).
+    //
+    // Fields (4):
+    //   - cross-fiber-violations          new cross_fiber_violations_
+    //                                    total counter (foundation for
+    //                                    AC1 enforcement; bumped when
+    //                                    ref.fiber_id != current in
+    //                                    query:/mutate: paths).
+    //                                    Value is 0 until the
+    //                                    enforcement work ships
+    //                                    (AC1 follow-up).
+    //   - provenance-mismatches-on-sv    existing stable_ref_invalidations
+    //                                    counter (#620/#368/#313/#437
+    //                                    — bumped on every invalidate()
+    //                                    + on every boundary mismatch
+    //                                    from validate_with_provenance).
+    //                                    Synthetic same source — 0
+    //                                    until enforcement wires
+    //                                    distinct counters per
+    //                                    source. Marked derived in
+    //                                    the field name via the
+    //                                    -on-sv suffix.
+    //   - safe-resolves                  new safe_resolves_total
+    //                                    counter (foundation for
+    //                                    AC2 — auto-refresh
+    //                                    provenance on capture +
+    //                                    WorkspaceTree fallback).
+    //                                    Value is 0 until AC2 wires.
+    //   - total-stable-ref-invalidations  existing stable_ref_
+    //                                    invalidations lifetime count
+    //                                    (same as -mismatches-on-sv
+    //                                    above; tracked separately so
+    //                                    the Agent can see if the
+    //                                    future split allocates).
+    //   - schema == 631                  sentinel for Agent drift
+    //                                    detection (mirrors the
+    //                                    #618+#620+#621+#622+
+    //                                    #623+#624+#625+#626+
+    //                                    #630 chain).
+    //
+    // Discovery before this PR (no duplication): the C++ side
+    // already exposes stable_ref_invalidations atomics on both
+    // CompilerMetrics and FlatAST (added by #313/#368/#620).
+    // The 2 new atomics (cross_fiber_violations_total +
+    // safe_resolves_total) are foundation scaffolding for the
+    // AC1 + AC2 enforcement work which is invasive C++ +
+    // multi-fiber Guard wire-up that needs benchmarking + perf
+    // regression coverage alongside the JIT/hot-swap work in
+    // #601/#491.
+    //
+    // The single NEW contribution is the structured primitive
+    // the issue body AC3 lists by exact name +
+    // (query:stable-ref-provenance-sv-stats).
+    add("query:stable-ref-provenance-sv-stats-hash",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const std::uint64_t cross_fiber =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->cross_fiber_violations_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t safe_resolves =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->safe_resolves_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t mismatches =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->stable_ref_invalidations.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("cross-fiber-violations",
+                      static_cast<std::int64_t>(cross_fiber));
+            insert_kv("provenance-mismatches-on-sv",
+                      static_cast<std::int64_t>(mismatches));
+            insert_kv("safe-resolves",
+                      static_cast<std::int64_t>(safe_resolves));
+            insert_kv("total-stable-ref-invalidations",
+                      static_cast<std::int64_t>(mismatches));
+            insert_kv("schema", 631);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #438: query:fiber-migration-stats. Returns
     // the sum of the 2 fiber-migration + work-stealing
     // observability counters:

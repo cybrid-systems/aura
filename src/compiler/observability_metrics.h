@@ -619,6 +619,17 @@ struct CompilerMetrics {
     // runs vs how often the dirty short-circuit short-circuits
     // each pass.
     std::atomic<std::uint64_t> pass_pipeline_runs_total{0};
+    // Issue #631: StableNodeRef cross-fiber / multi-agent SV
+    // provenance counters. These are foundation scaffolding for the
+    // future enforcement work (AC1 + AC2 from the issue body) —
+    // the actual bumps happen inside the StableNodeRef
+    // validate_with_provenance + Guard dtor wire-up (follow-up).
+    // P0 ships the counters + the agent-visible
+    // (query:stable-ref-provenance-sv-stats-hash) primitive so
+    // the Agent has a dashboard today; the values are 0 until
+    // the enforcement work ships.
+    std::atomic<std::uint64_t> cross_fiber_violations_total{0};
+    std::atomic<std::uint64_t> safe_resolves_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
