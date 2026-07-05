@@ -29,6 +29,8 @@
   (list
     ; ── Issue #543 — EnvFrame dual-path ──
     "query:envframe-dualpath-stats"
+    ; ── Issue #523 — EnvFrame dual-path production safety tracker ──
+    "query:envframe-production-safety-stats"
     ; ── Issue #547 — Pattern + MacroIntroduced hygiene ──
     "query:pattern-index-stats"
     ; ── Issue #490 — pattern-index lazy/eager rebuild observability ──
