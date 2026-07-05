@@ -2860,6 +2860,11 @@ add_dependencies(all_test_issue_targets test_issue_494)
 aura_add_issue_test(test_issue_496)
 aura_issue_test_link_llvm_jit(test_issue_496)
 add_dependencies(all_test_issue_targets test_issue_496)
+# Issue #601: JIT hot-swap / invalidate safety for live closures —
+# bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
+aura_add_issue_test(test_issue_601)
+aura_issue_test_link_llvm_jit(test_issue_601)
+add_dependencies(all_test_issue_targets test_issue_601)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
