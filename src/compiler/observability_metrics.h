@@ -612,6 +612,13 @@ struct CompilerMetrics {
     // threshold is being tuned at runtime (unusual in steady-state;
     // bursts indicate a memory-pressure watchdog is reacting).
     std::atomic<std::uint64_t> arena_auto_compact_threshold_set_total{0};
+    // Issue #625: pass-pipeline run counter. Bumped once per full
+    // pass_pipeline() invocation (not per-pass; not per-block).
+    // Pairs with the dirty-block short-circuit counters from
+    // #494/#606 so the Agent can see how often the full pipeline
+    // runs vs how often the dirty short-circuit short-circuits
+    // each pass.
+    std::atomic<std::uint64_t> pass_pipeline_runs_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

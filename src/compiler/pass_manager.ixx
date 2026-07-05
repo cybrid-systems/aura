@@ -93,6 +93,11 @@ export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, 
 export using PipelineYieldHook = bool (*)() noexcept;
 export inline std::atomic<std::uint64_t> pipeline_yield_count{0};
 export inline std::atomic<std::uint64_t> passes_skipped_dirty_pipeline{0};
+// Issue #625: lifetime # of full run_pipeline() invocations.
+// Bumped once per full pipeline run (NOT per-pass). Pairs with
+// passes_skipped_dirty_pipeline so the Agent can compute the
+// short-circuit ratio (skips / runs * average-fns-per-run).
+export inline std::atomic<std::uint64_t> pass_pipeline_runs_total{0};
 
 namespace pass_pipeline_detail {
     inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
@@ -116,6 +121,14 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 // template still works as before.
 export template <Pass... Passes>
 bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Passes) > 0) {
+    // Issue #625: bump the pass-pipeline-runs counter once per
+    // full invocation (NOT per-pass). Pairs with the dirty-block
+    // short-circuit counters from #494/#606 so the Agent can see
+    // how often the full pipeline runs vs how often the dirty
+    // short-circuit short-circuits each pass. Bumped unconditionally
+    // here (NOT gated on dirty awareness) so it captures the
+    // whole-pipeline-run rate including compact / pure-run cases.
+    pass_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
     return (run_one(mod, passes) && ...);
 }
 
