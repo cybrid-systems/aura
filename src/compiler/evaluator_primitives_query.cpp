@@ -1639,6 +1639,90 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #523: query:envframe-production-safety-stats. Commercial P0 hash view
+    // of SoA EnvFrame/EnvId dual-path consistency + version stamping + stale
+    // detection + GC safety — non-duplicative synthesis of #543
+    // envframe-dualpath-stats, #418 envframe-dualpath-stale-stats, and #505
+    // closure-env-safety envframe themes; avoids #516 prompt6-memory-safety-stats
+    // broad Prompt6 matrix and #512 runtime-orchestration steal/GC pillars:
+    //   - dual-path-desync / dual-path-sync-count: bindings_ vs bindings_symid_
+    //   - stale-refresh-count / version-mismatch-in-walk: materialize + walk paths
+    //   - gc-walk-safe-skips / gc-envframe-stale-skipped: GCEnvWalkFn hardening
+    //   - post-rollback-invalidations: MutationBoundary checkpoint rollback
+    //   - defuse-version: live epoch snapshot for version stamping
+    //   - dual-path-sync-rate-pct: sync / (sync + desync) * 100
+    //   - envframe-production-safety-total / envframe-production-safety-recommendation
+    add("query:envframe-production-safety-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t desync = ev->get_envframe_desync_detected();
+            const std::uint64_t dual_sync = ev->get_bindings_dual_sync_count();
+            const std::uint64_t stale_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t version_mismatch = ev->get_envframe_version_mismatch_in_walk();
+            const std::uint64_t gc_walk_skips = ev->get_envframe_gc_walk_safe_skips();
+            const std::uint64_t gc_stale =
+                m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t post_rollback = ev->get_envframe_post_rollback_invalidations();
+            const std::uint64_t defuse_ver = ev->current_defuse_version();
+            const std::uint64_t dual_checks = dual_sync + desync;
+            const std::int64_t sync_rate_pct =
+                dual_checks > 0 ? static_cast<std::int64_t>((dual_sync * 100) / dual_checks) : 100;
+            const std::uint64_t total = desync + dual_sync + stale_refresh + version_mismatch +
+                                        gc_walk_skips + gc_stale + post_rollback;
+            std::int64_t recommendation = 0;
+            if (desync > 0)
+                recommendation = 3;
+            else if (gc_stale > 0 && version_mismatch > stale_refresh)
+                recommendation = 2;
+            else if (version_mismatch > 0 || stale_refresh > 0)
+                recommendation = 1;
+            insert_kv("dual-path-desync", static_cast<std::int64_t>(desync));
+            insert_kv("dual-path-sync-count", static_cast<std::int64_t>(dual_sync));
+            insert_kv("stale-refresh-count", static_cast<std::int64_t>(stale_refresh));
+            insert_kv("version-mismatch-in-walk", static_cast<std::int64_t>(version_mismatch));
+            insert_kv("gc-walk-safe-skips", static_cast<std::int64_t>(gc_walk_skips));
+            insert_kv("gc-envframe-stale-skipped", static_cast<std::int64_t>(gc_stale));
+            insert_kv("post-rollback-invalidations", static_cast<std::int64_t>(post_rollback));
+            insert_kv("defuse-version", static_cast<std::int64_t>(defuse_ver));
+            insert_kv("dual-path-sync-rate-pct", sync_rate_pct);
+            insert_kv("envframe-production-safety-total", static_cast<std::int64_t>(total));
+            insert_kv("envframe-production-safety-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
