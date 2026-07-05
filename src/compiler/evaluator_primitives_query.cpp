@@ -2891,6 +2891,133 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_hash(hidx);
     });
 
+    // Issue #541: query:pattern-sv-verification-stats. Commercial P0 hash
+    // view of query:pattern + DefUseIndex + tag_arity_index incremental
+    // maintenance + MacroIntroduced hygiene for large-scale SV SoC AI
+    // verification loops — non-duplicative synthesis of #528
+    // pattern-production-index-stats, #547 pattern-index/hygiene-stats,
+    // #503 pattern-marker-stats, and #519 edsl-eda-sv-closedloop-stats;
+    // avoids repeating the per-field #528 hash surface verbatim:
+    //   P1 DefUseIndex: defuse-index-used/visited/walk-fallback, defuse-version
+    //   P2 Incremental index: tag-arity-delta-hits, dirty-marks, rebuild-time-us,
+    //      structural-index-hits/misses
+    //   P3 Hygiene: hygiene-skips, recursive-hygiene-skips, hygiene-violations,
+    //      macro-marker-count
+    //   P4 SV verification loop: sv-node-count, verification-dirty-count
+    //   - incremental-hit-rate-pct / pattern-sv-verification-total / recommendation
+    add("query:pattern-sv-verification-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t defuse_used =
+                m ? m->per_defuse_index_used_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t defuse_visited =
+                m ? m->per_defuse_index_visited_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t defuse_fallback =
+                m ? m->per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t defuse_version = ev->get_defuse_version();
+            const std::uint64_t delta_hits = ws ? ws->tag_arity_index_delta_hits() : 0;
+            const std::uint64_t dirty_marks = ws ? ws->tag_arity_index_dirty_marks() : 0;
+            const std::uint64_t rebuild_time_us = ws ? ws->tag_arity_index_rebuild_time_us() : 0;
+            const std::uint64_t rebuilds = ws ? ws->tag_arity_index_rebuilds() : 0;
+            const std::uint64_t structural_hits = ev->get_pattern_structural_index_hits();
+            const std::uint64_t structural_misses = ev->get_pattern_structural_index_misses();
+            const std::uint64_t hygiene_skips = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t violations = ev->get_hygiene_violation_count();
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+            std::uint64_t sv_node_count = 0;
+            std::uint64_t verification_dirty_count = 0;
+            if (ws) {
+                for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                    switch (ws->get(id).tag) {
+                        case aura::ast::NodeTag::Interface:
+                        case aura::ast::NodeTag::Modport:
+                        case aura::ast::NodeTag::Property:
+                        case aura::ast::NodeTag::Sequence:
+                        case aura::ast::NodeTag::Assert:
+                        case aura::ast::NodeTag::Covergroup:
+                        case aura::ast::NodeTag::Coverpoint:
+                        case aura::ast::NodeTag::Constraint:
+                            ++sv_node_count;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (ws->verification_dirty(id) != 0)
+                        ++verification_dirty_count;
+                }
+            }
+            const std::uint64_t delta_denom = delta_hits + rebuilds;
+            const std::int64_t incremental_hit_rate_pct =
+                delta_denom == 0 ? 0 : static_cast<std::int64_t>((delta_hits * 100) / delta_denom);
+            const std::uint64_t total =
+                defuse_used + defuse_visited + defuse_fallback + delta_hits + dirty_marks +
+                rebuild_time_us + structural_hits + structural_misses + hygiene_skips +
+                recursive_skips + violations + markers + sv_node_count + verification_dirty_count;
+            std::int64_t recommendation = 0;
+            if (violations > 0)
+                recommendation = 3;
+            else if (rebuilds > 0 &&
+                     rebuild_time_us > static_cast<std::uint64_t>(delta_hits + 1) * 100)
+                recommendation = 2;
+            else if (hygiene_skips + recursive_skips > 0 || delta_hits > 0)
+                recommendation = 1;
+            insert_kv("defuse-index-used", static_cast<std::int64_t>(defuse_used));
+            insert_kv("defuse-index-visited", static_cast<std::int64_t>(defuse_visited));
+            insert_kv("defuse-index-walk-fallback", static_cast<std::int64_t>(defuse_fallback));
+            insert_kv("defuse-version", static_cast<std::int64_t>(defuse_version));
+            insert_kv("tag-arity-delta-hits", static_cast<std::int64_t>(delta_hits));
+            insert_kv("tag-arity-dirty-marks", static_cast<std::int64_t>(dirty_marks));
+            insert_kv("tag-arity-rebuild-time-us", static_cast<std::int64_t>(rebuild_time_us));
+            insert_kv("structural-index-hits", static_cast<std::int64_t>(structural_hits));
+            insert_kv("structural-index-misses", static_cast<std::int64_t>(structural_misses));
+            insert_kv("hygiene-skips", static_cast<std::int64_t>(hygiene_skips));
+            insert_kv("recursive-hygiene-skips", static_cast<std::int64_t>(recursive_skips));
+            insert_kv("hygiene-violations", static_cast<std::int64_t>(violations));
+            insert_kv("macro-marker-count", static_cast<std::int64_t>(markers));
+            insert_kv("sv-node-count", static_cast<std::int64_t>(sv_node_count));
+            insert_kv("verification-dirty-count",
+                      static_cast<std::int64_t>(verification_dirty_count));
+            insert_kv("incremental-hit-rate-pct", incremental_hit_rate_pct);
+            insert_kv("pattern-sv-verification-total", static_cast<std::int64_t>(total));
+            insert_kv("pattern-sv-verification-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
