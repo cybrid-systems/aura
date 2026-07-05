@@ -35,6 +35,25 @@ struct CompilerMetrics {
     // Issue #491: AuraJIT::invalidate / invalidate_prefix calls from
     // invalidate_function + hot-swap paths (hot-swap safety wiring).
     std::atomic<std::uint64_t> jit_hotswap_invalidate_total{0};
+    // Issue #601: live IRClosure refresh / forced-deopt walk on
+    // invalidate_function. Counts the proactive walk that runs
+    // AFTER jit_hotswap_invalidate_total so closures about to be
+    // applied don't trip the post-call `closure_needs_safe_fallback`
+    // path; instead they're refreshed or force-deopt'd in place.
+    //   - jit_hotswap_live_closure_refreshed_total: closure's
+    //     bridge_epoch was successfully updated to the current epoch
+    //     (the closure can safely continue executing).
+    //   - jit_hotswap_forced_deopt_total: closure's bridge_epoch
+    //     was reset to 0 (legacy / stale sentinel) so future
+    //     apply_closure calls hit `closure_needs_safe_fallback`
+    //     and deopt to bridge/interpreter; the closure cannot
+    //     continue under the old func_id's bridge.
+    //   - jit_hotswap_epoch_mismatch_prevented_total: union of the
+    //     above (closures that had a stale bridge_epoch caught
+    //     proactively before a stale apply could occur).
+    std::atomic<std::uint64_t> jit_hotswap_live_closure_refreshed_total{0};
+    std::atomic<std::uint64_t> jit_hotswap_forced_deopt_total{0};
+    std::atomic<std::uint64_t> jit_hotswap_epoch_mismatch_prevented_total{0};
     // Issue #493: EDSL hot-path bottleneck measurement (evaluator_eval_flat /
     // lowering_impl call sites).
     std::atomic<std::uint64_t> hotpath_eval_flat_calls{0};

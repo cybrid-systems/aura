@@ -219,6 +219,25 @@ public:
     void collect_active_gc_roots(std::vector<std::int64_t>& closure_roots_out,
                                  std::uint64_t current_bridge_epoch) const;
 
+    // Issue #601: live-closure walk for proactive refresh on
+    // invalidate_function. Iterates every entry in runtime_closures_
+    // and invokes `cb(closure_id, IRClosure&)` so the caller can
+    // inspect / mutate bridge_epoch in place. Returns the number of
+    // closures visited. Same data-race contract as collect_active_gc_roots
+    // / list_closures (uint64_t-aligned reads/writes are atomic on the
+    // supported targets; the closure object mutation is best-effort
+    // with respect to concurrent apply_closure — same as the
+    // existing list_closures path).
+    template <typename F>
+    std::size_t walk_runtime_closures(F&& cb) {
+        std::size_t visited = 0;
+        for (auto& entry : runtime_closures_) {
+            cb(entry.first, entry.second);
+            ++visited;
+        }
+        return visited;
+    }
+
 private:
     // Result of run_function: either an EvalResult (Return/error) or PendingCall (need to push
     // frame)

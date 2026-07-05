@@ -7314,6 +7314,47 @@ private:
             invalidate_bridge_for(dep_name);
         }
 
+        // Issue #601: live IRClosure walk — refresh closures whose
+        // bridge_epoch is stale (captured before the mutation_epoch_
+        // bump above) so they can continue executing without tripping
+        // `closure_needs_safe_fallback` on their next apply. Runs
+        // AFTER invalidate_bridge_for (so bridge data is fresh) and
+        // BEFORE clear_ir_define_env_binding (so the interpreter +
+        // its runtime_closures_ are still reachable). Best-effort:
+        // any closure mutated while a fiber concurrently reads its
+        // bridge_epoch has the same data-race contract as the
+        // existing collect_active_gc_roots / list_closures paths.
+        {
+            const std::uint64_t cur_epoch = bridge_epoch();
+            const auto live_walk_one = [&]([[maybe_unused]] const std::string& affected_name) {
+                for (auto& [bname, binding] : ir_define_env_bindings_) {
+                    (void)bname;
+                    if (!binding || !binding->interpreter)
+                        continue;
+                    binding->interpreter->walk_runtime_closures(
+                        [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                            if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
+                                return;
+                            // Refresh: align the closure's bridge_epoch
+                            // with the current epoch so subsequent apply
+                            // passes the pre-call stale check. The next
+                            // apply will re-bridge from body_source via
+                            // closure_bridge_ (already wired in
+                            // evaluator_eval_flat.cpp) if the captured
+                            // flat*/pool* are dangling.
+                            cl.bridge_epoch = cur_epoch;
+                            metrics_.jit_hotswap_live_closure_refreshed_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        });
+                }
+            };
+            live_walk_one(name);
+            for (auto& dep_name : dependents)
+                live_walk_one(dep_name);
+        }
+
         // Issue #272 Cycle 2: drop stale IR define env bindings before re-bind.
         clear_ir_define_env_binding(name);
         for (auto& dep_name : dependents)

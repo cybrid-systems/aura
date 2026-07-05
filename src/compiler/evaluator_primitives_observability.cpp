@@ -1408,6 +1408,66 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #601: query:jit-hotswap-closure-stats — live IRClosure
+    // refresh / forced-deopt counters from invalidate_function's
+    // proactive walk. Bumped after jit_hotswap_invalidate_total so
+    // an AI agent can observe: "for the last invalidation, how many
+    // closures were refreshable vs forced-deopt vs left stale?".
+    // Forced-deopt is reserved at 0 in this foundation layer — the
+    // func_id-scoped deopt decision (closure.func_id no longer in
+    // current module) is a follow-up.
+    add("query:jit-hotswap-closure-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t refreshed = 0;
+        std::uint64_t forced_deopt = 0;
+        std::uint64_t mismatch_prevented = 0;
+        std::uint64_t hotswap_invalidate = 0;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            refreshed = m->jit_hotswap_live_closure_refreshed_total.load(
+                std::memory_order_relaxed);
+            forced_deopt = m->jit_hotswap_forced_deopt_total.load(std::memory_order_relaxed);
+            mismatch_prevented = m->jit_hotswap_epoch_mismatch_prevented_total.load(
+                std::memory_order_relaxed);
+            hotswap_invalidate = m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed);
+        }
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("live-closure-refreshed-total",
+                  static_cast<std::int64_t>(refreshed));
+        insert_kv("forced-deopt-total", static_cast<std::int64_t>(forced_deopt));
+        insert_kv("epoch-mismatch-prevented-total",
+                  static_cast<std::int64_t>(mismatch_prevented));
+        insert_kv("hotswap-invalidate-total",
+                  static_cast<std::int64_t>(hotswap_invalidate));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #493: query:hotpath-bottleneck-stats — structured EDSL
     // hot-path breakdown for AI mutate→eval tuning.
     add("query:hotpath-bottleneck-stats", [&ev](const auto&) -> EvalValue {
