@@ -2903,6 +2903,17 @@ add_dependencies(all_test_issue_targets test_issue_606)
 aura_add_issue_test(test_issue_614)
 aura_issue_test_link_llvm_jit(test_issue_614)
 add_dependencies(all_test_issue_targets test_issue_614)
+# Issue #615: PRIM_ERROR macro + math.cpp regex unification + silent-swallow
+# audit. PRIM_ERROR in primitives_detail.h wraps make_primitive_error with
+# default capture names; 4 math.cpp call sites (regex-match?/find/replace/
+# split) consolidated to use it; 11 defensive silent catches in agent/ast/
+# compile/query_workspace/types/pair/workspace carry [SILENCE-PRIM-#615]
+# comments documenting why each is intentionally silent. (query:primitive-
+# error-stats) shape unchanged from #478; by_kind / recovery_attempts
+# enhancement is a follow-up.
+aura_add_issue_test(test_issue_615)
+aura_issue_test_link_llvm_jit(test_issue_615)
+add_dependencies(all_test_issue_targets test_issue_615)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

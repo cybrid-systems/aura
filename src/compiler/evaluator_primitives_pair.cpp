@@ -472,6 +472,10 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return make_float(std::stod(s));
             return make_int(static_cast<std::int64_t>(std::stoll(s, nullptr, radix)));
         } catch (...) {
+            // [SILENCE-PRIM-#615] string-to-int/float parse failure —
+            // (#) returns #f on parse failure per the documented pair
+            // primitive contract; raising would break every existing
+            // caller that relies on #f as the parse-failure sentinel.
             return make_bool(false);
         }
     });

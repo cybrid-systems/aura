@@ -846,6 +846,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         try {
             result = (*eval_fn)({make_string(idx)});
         } catch (...) {
+            // [SILENCE-PRIM-#615] eval primitive exception — the
+            // downstream `is_error(result) || is_void(result)` branch
+            // already restores via ast:restore, so the void fallback
+            // here triggers the documented post-eval rollback.
             result = make_void();
         }
         if (types::is_error(result) || types::is_void(result)) {

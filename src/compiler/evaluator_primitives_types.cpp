@@ -392,6 +392,10 @@ void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
         try {
             ok = ev.hot_swap_fn_(name, new_source);
         } catch (...) {
+            // [SILENCE-PRIM-#615] hot_swap_fn_ is a user-supplied
+            // callback; swallowing ensures a misbehaving callback
+            // can't crash the host. ok=false is the documented
+            // failure signal returned to the caller.
             ok = false;
         }
         return make_bool(ok);
