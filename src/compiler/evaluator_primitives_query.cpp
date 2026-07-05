@@ -2244,6 +2244,130 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_hash(hidx);
     });
 
+    // Issue #533: query:soa-production-columnar-stats. Commercial P0 hash view
+    // of children_ columnar migration + IRModuleV2 / IRInstructionView hot-path
+    // adoption + DirtyAwarePass block_dirty_ short-circuit — non-duplicative
+    // synthesis of #463 soa-adoption-stats, #506 soa-hotpath-adoption int-sum,
+    // #404 ir-soa-incremental-stats, #429 soa-dirty-stats, #530 incremental-
+    // production-relower-stats, and #684 irsoa-incremental-stats hash slices:
+    //   P1 AST children columnar: children-call/safe-view, mark-dirty upward
+    //   P2 IR SoA adoption: soa-functions/instructions-visited, view-cache,
+    //      irsoa-wired-hits, ir-soa-instr/func-emitted
+    //   P3 block_dirty short-circuit: block-dirty-hits, blocks-saved,
+    //      passes-skipped-type-dirty, passes-skipped-dirty-pipeline
+    //   - dirty-skip-rate-pct / columnar-locality-pct
+    //   - soa-production-columnar-total / soa-production-columnar-recommendation
+    add("query:soa-production-columnar-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t children_calls = ws ? ws->children_call_count() : 0;
+            const std::uint64_t children_safe = ws ? ws->children_safe_view_count() : 0;
+            const std::uint64_t dirty_up = ws ? ws->mark_dirty_upward_call_count() : 0;
+            const std::uint64_t dirty_nodes = ws ? ws->mark_dirty_total_nodes() : 0;
+            const std::uint64_t fast_fixed = ws ? ws->dirty_upward_fast_fixed_point_count() : 0;
+            const std::uint64_t soa_funcs =
+                m ? m->soa_functions_visited.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t soa_instr =
+                m ? m->soa_instructions_visited.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t aos_views =
+                m ? m->aos_view_built_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t view_cache =
+                m ? m->ir_soa_view_cache_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t wired = m ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t block_dirty_hits =
+                m ? m->ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t blocks_saved =
+                m ? m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t passes_skip_type = ev->get_passes_skipped_type_dirty();
+            const std::uint64_t passes_skip_pipeline =
+                aura::compiler::passes_skipped_dirty_pipeline.load(std::memory_order_relaxed);
+            const std::uint64_t ir_instr_emitted =
+                m ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t ir_func_emitted =
+                m ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_full =
+                m ? m->relower_full_called_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_per_fn =
+                m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_work = relower_full + relower_per_fn + passes_skip_type + 1;
+            const std::int64_t dirty_skip_rate_pct =
+                static_cast<std::int64_t>((passes_skip_type * 100) / relower_work);
+            const std::uint64_t columnar_denom = children_calls + children_safe + 1;
+            const std::int64_t columnar_locality_pct =
+                static_cast<std::int64_t>((children_safe * 100) / columnar_denom);
+            Evaluator::SoaDirtyStats soa;
+            if (ev->get_soa_dirty_stats_fn_)
+                soa = ev->get_soa_dirty_stats_fn_();
+            const std::uint64_t total = children_calls + children_safe + dirty_up + dirty_nodes +
+                                        fast_fixed + soa_funcs + soa_instr + aos_views +
+                                        view_cache + wired + block_dirty_hits + blocks_saved +
+                                        passes_skip_type + passes_skip_pipeline + ir_instr_emitted +
+                                        ir_func_emitted + soa.dirty_blocks;
+            std::int64_t recommendation = 0;
+            if (soa.dirty_block_pct > 50 && blocks_saved == 0)
+                recommendation = 3;
+            else if (passes_skip_type == 0 && relower_full > 0)
+                recommendation = 2;
+            else if (blocks_saved > 0 || passes_skip_type > 0 || wired > 0)
+                recommendation = 1;
+            insert_kv("children-call-count", static_cast<std::int64_t>(children_calls));
+            insert_kv("children-safe-view-count", static_cast<std::int64_t>(children_safe));
+            insert_kv("mark-dirty-upward-calls", static_cast<std::int64_t>(dirty_up));
+            insert_kv("mark-dirty-total-nodes", static_cast<std::int64_t>(dirty_nodes));
+            insert_kv("dirty-fast-fixed-point-hits", static_cast<std::int64_t>(fast_fixed));
+            insert_kv("soa-functions-visited", static_cast<std::int64_t>(soa_funcs));
+            insert_kv("soa-instructions-visited", static_cast<std::int64_t>(soa_instr));
+            insert_kv("aos-view-built-count", static_cast<std::int64_t>(aos_views));
+            insert_kv("ir-soa-view-cache-hits", static_cast<std::int64_t>(view_cache));
+            insert_kv("irsoa-wired-hits", static_cast<std::int64_t>(wired));
+            insert_kv("ir-soa-block-dirty-hits", static_cast<std::int64_t>(block_dirty_hits));
+            insert_kv("blocks-saved", static_cast<std::int64_t>(blocks_saved));
+            insert_kv("passes-skipped-type-dirty", static_cast<std::int64_t>(passes_skip_type));
+            insert_kv("passes-skipped-dirty-pipeline",
+                      static_cast<std::int64_t>(passes_skip_pipeline));
+            insert_kv("ir-soa-instr-emitted", static_cast<std::int64_t>(ir_instr_emitted));
+            insert_kv("ir-soa-func-emitted", static_cast<std::int64_t>(ir_func_emitted));
+            insert_kv("dirty-skip-rate-pct", dirty_skip_rate_pct);
+            insert_kv("columnar-locality-pct", columnar_locality_pct);
+            insert_kv("soa-production-columnar-total", static_cast<std::int64_t>(total));
+            insert_kv("soa-production-columnar-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
     // consolidated Top 5 P0 production-readiness pillars (non-duplicative
     // synthesis of #511/#510/#506/#505/#512 hash slices; avoids #514 Task6
