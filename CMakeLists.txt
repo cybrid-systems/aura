@@ -2877,6 +2877,10 @@ add_dependencies(all_test_issue_targets test_issue_499)
 aura_add_issue_test(test_issue_500)
 aura_issue_test_link_llvm_jit(test_issue_500)
 add_dependencies(all_test_issue_targets test_issue_500)
+# Issue #501: IR MacroIntroduced hygiene (InlinePass + lowering).
+aura_add_issue_test(test_issue_501_hygiene)
+aura_issue_test_link_llvm_jit(test_issue_501_hygiene)
+add_dependencies(all_test_issue_targets test_issue_501_hygiene)
 # Issue #601: JIT hot-swap / invalidate safety for live closures —
 # bridge_epoch refresh + (query:jit-hotswap-closure-stats) observability.
 aura_add_issue_test(test_issue_601)

@@ -15,6 +15,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.type;
+import aura.compiler.pass_manager;
 import aura.compiler.value;
 
 namespace aura::compiler::primitives_detail {
@@ -32,19 +33,24 @@ static bool validate_code_against_schema_simple(const std::string& code,
                                                 std::string& violation_reason,
                                                 std::string& violation_field);
 
-// Issue #514: count MacroIntroduced nodes in the workspace marker column.
+// Issue #514 / #501: count MacroIntroduced nodes in the workspace marker column.
 static std::uint64_t workspace_marker_macro_introduced(Evaluator* ev) {
     if (!ev)
         return 0;
-    auto* ws = ev->workspace_flat();
-    if (!ws)
-        return 0;
+    const std::uint64_t snapshot = ev->get_macro_markers_in_snapshot();
+    ev->lock_workspace_shared();
     std::uint64_t count = 0;
-    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
-        if (ws->is_macro_introduced(id))
-            ++count;
+    if (auto* ws = ev->workspace_flat()) {
+        const auto& markers = ws->marker_column();
+        if (!markers.empty()) {
+            for (auto m : markers) {
+                if (m == aura::ast::SyntaxMarker::MacroIntroduced)
+                    ++count;
+            }
+        }
     }
-    return count;
+    ev->unlock_workspace_shared();
+    return count > 0 ? count : snapshot;
 }
 
 static std::uint64_t ir_inline_hygiene_skipped(Evaluator* ev) {
@@ -1446,20 +1452,66 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(pass + fail + snapshots + impact + guard_epoch));
     });
 
-    // Issue #514: query:ir-hygiene-stats. Returns the sum of IR-level
-    // macro-hygiene observability counters (Top 1 — AST→IR propagation):
-    //   - InlinePass macro_hygiene_skipped_ (call sites skipped because
-    //     source_marker == MacroIntroduced && respect_macro_hygiene_)
-    //   - marker_macro_introduced_count (workspace SyntaxMarker column)
-    add("query:ir-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
-        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-        return make_int(static_cast<std::int64_t>(inline_skipped + markers));
-    });
+    // Issue #501 / #514: query:ir-hygiene-stats. Hash view of IR-level
+    // MacroIntroduced hygiene (AST→IR propagation + InlinePass policy):
+    //   - inline-hygiene-skipped: InlinePass macro_hygiene_skipped_
+    //   - macro-markers: workspace SyntaxMarker::MacroIntroduced tally
+    //   - respect-macro-hygiene: InlinePass::respect_macro_hygiene_ (1=on)
+    //   - ir-hygiene-total: inline_skipped + macro_markers
+    //   - ir-hygiene-recommendation: 0=ok, 1=review skips, 2=markers w/o policy
+    add("query:ir-hygiene-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+            const std::uint64_t total = inline_skipped + markers;
+            const bool respects = InlinePass::get_respect_macro_hygiene();
+            std::int64_t recommendation = 0;
+            if (inline_skipped > 0 && !respects)
+                recommendation = 3;
+            else if (inline_skipped > 5)
+                recommendation = 2;
+            else if (markers > 0 && inline_skipped == 0 && respects)
+                recommendation = 1;
+            insert_kv("inline-hygiene-skipped", static_cast<std::int64_t>(inline_skipped));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("respect-macro-hygiene", respects ? 1 : 0);
+            insert_kv("ir-hygiene-total", static_cast<std::int64_t>(total));
+            insert_kv("ir-hygiene-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #514: query:pattern-marker-stats. Returns the sum of
     // query-side marker/hygiene counters (Top 1 — query matcher):

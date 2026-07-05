@@ -29,7 +29,15 @@ namespace aura_514_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+
+static std::int64_t ir_hygiene_total(CompilerService& cs) {
+    auto r = cs.eval("(hash-ref (query:ir-hygiene-stats) 'ir-hygiene-total')");
+    if (!r || !is_int(*r))
+        return 0;
+    return as_int(*r);
+}
 
 static std::int64_t prod_stats(CompilerService& cs) {
     auto r = cs.eval("(query:task6-production-readiness-stats)");
@@ -62,9 +70,10 @@ static void run_matrix(CompilerService& cs) {
     auto irs = cs.eval("(query:ir-hygiene-stats)");
     auto pms = cs.eval("(query:pattern-marker-stats)");
     std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker={}", skips0, skips1,
-                 irs && is_int(*irs) ? as_int(*irs) : 0, pms && is_int(*pms) ? as_int(*pms) : 0);
+                 irs && is_hash(*irs) ? ir_hygiene_total(cs) : 0,
+                 pms && is_int(*pms) ? as_int(*pms) : 0);
     CHECK(skips1 > skips0, "MacroIntroduced filtered in query:pattern");
-    CHECK(irs && is_int(*irs), "query:ir-hygiene-stats returns int");
+    CHECK(irs && is_hash(*irs), "query:ir-hygiene-stats returns hash");
     CHECK(pms && is_int(*pms), "query:pattern-marker-stats returns int");
     CHECK(as_int(*pms) >= skips1, "pattern-marker includes query skips");
 
@@ -85,7 +94,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC5: query:ir-hygiene-stats ---");
     auto ir0 = cs.eval("(query:ir-hygiene-stats)");
-    CHECK(ir0 && is_int(*ir0) && as_int(*ir0) >= 0, "ir-hygiene-stats non-negative");
+    CHECK(ir0 && is_hash(*ir0) && ir_hygiene_total(cs) >= 0, "ir-hygiene-stats non-negative");
 
     std::println("\n--- AC6: query:pattern-marker-stats ---");
     auto pm0 = cs.eval("(query:pattern-marker-stats)");

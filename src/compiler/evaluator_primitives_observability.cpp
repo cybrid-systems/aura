@@ -2810,8 +2810,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 97 entries as of #500 ship (96 from #499 + query:work-steal-stats).
-        return make_int(97);
+        // 98 entries as of #501 ship (97 from #500 + query:ir-hygiene-stats in stats.aura).
+        return make_int(98);
     });
 }
 
