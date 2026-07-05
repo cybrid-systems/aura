@@ -2993,6 +2993,14 @@ add_dependencies(all_test_issue_targets test_issue_618)
 aura_add_issue_test(test_issue_620)
 aura_issue_test_link_llvm_jit(test_issue_620)
 add_dependencies(all_test_issue_targets test_issue_620)
+# Issue #621: query:pattern-index-stats-hash — Agent-discoverable
+# structured observability for the tag_arity_index lifecycle.
+# 10-field hash with derived metrics (arity-accuracy, delta-hit-rate,
+# linear-fallbacks, recommendation). No new C++ atomics — all
+# derived inline. Builds on #547/#554/#490/#503 index counters.
+aura_add_issue_test(test_issue_621)
+aura_issue_test_link_llvm_jit(test_issue_621)
+add_dependencies(all_test_issue_targets test_issue_621)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
