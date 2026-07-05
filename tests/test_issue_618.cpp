@@ -84,16 +84,13 @@ int main() {
         const auto schema = coord_int(cs, "schema");
         CHECK(gc_pauses >= 0,
               std::format("gc-pauses-attributed-to-mutation >= 0 (got {})", gc_pauses));
-        CHECK(depth >= 0,
-              std::format("mutation-boundary-depth >= 0 (got {})", depth));
-        CHECK(fiber_id >= 0,
-              std::format("current-fiber-id >= 0 (got {})", fiber_id));
+        CHECK(depth >= 0, std::format("mutation-boundary-depth >= 0 (got {})", depth));
+        CHECK(fiber_id >= 0, std::format("current-fiber-id >= 0 (got {})", fiber_id));
         CHECK(active == 0 || active == 1,
               std::format("is-fibers-active in {{0, 1}} (got {})", active));
         CHECK(ratio >= 0 && ratio <= 100,
               std::format("gc-frequency-tune-ratio in [0,100] (got {})", ratio));
-        CHECK(schema == 618,
-              std::format("schema == 618 (got {})", schema));
+        CHECK(schema == 618, std::format("schema == 618 (got {})", schema));
         // Backward compat: legacy JSON-string primitive still works.
         auto legacy = cs.eval("(query:orchestration-metrics)");
         CHECK(legacy && aura::compiler::types::is_string(*legacy),
@@ -106,8 +103,7 @@ int main() {
     {
         std::println("\n--- AC2: tune-gc-frequency readback (default = 50) ---");
         auto r = cs.eval("(orchestration:tune-gc-frequency)");
-        CHECK(r && aura::compiler::types::is_int(*r),
-              "tune-gc-frequency read returns an int");
+        CHECK(r && aura::compiler::types::is_int(*r), "tune-gc-frequency read returns an int");
         const auto prev_ratio = aura::compiler::types::as_int(*r);
         // Default is 50 — but a previous test run might have set it,
         // so accept anything in [0,100] and confirm the value
@@ -116,8 +112,7 @@ int main() {
               std::format("read ratio in [0,100] (got {})", prev_ratio));
         const auto from_stats = coord_int(cs, "gc-frequency-tune-ratio");
         CHECK(prev_ratio == from_stats,
-              std::format("read value == coord-stats value ({} == {})",
-                          prev_ratio, from_stats));
+              std::format("read value == coord-stats value ({} == {})", prev_ratio, from_stats));
     }
 
     // AC3: (orchestration:tune-gc-frequency ratio) sets the value
@@ -125,14 +120,14 @@ int main() {
     {
         std::println("\n--- AC3: tune-gc-frequency setter + clamping ---");
         // Set to 75; should return the previous value.
-        const auto before_set = aura::compiler::types::as_int(*cs.eval("(orchestration:tune-gc-frequency)"));
+        const auto before_set =
+            aura::compiler::types::as_int(*cs.eval("(orchestration:tune-gc-frequency)"));
         auto r = cs.eval("(orchestration:tune-gc-frequency 75)");
-        CHECK(r && aura::compiler::types::is_int(*r),
-              "setter returns an int (previous value)");
+        CHECK(r && aura::compiler::types::is_int(*r), "setter returns an int (previous value)");
         const auto returned_prev = aura::compiler::types::as_int(*r);
         CHECK(returned_prev == before_set,
-              std::format("setter returned previous value (expected {}, got {})",
-                          before_set, returned_prev));
+              std::format("setter returned previous value (expected {}, got {})", before_set,
+                          returned_prev));
         // Readback should be 75.
         auto after = cs.eval("(orchestration:tune-gc-frequency)");
         CHECK(aura::compiler::types::as_int(*after) == 75,
@@ -140,8 +135,7 @@ int main() {
                           aura::compiler::types::as_int(*after)));
         // coord-stats should also reflect the new value.
         const auto from_stats = coord_int(cs, "gc-frequency-tune-ratio");
-        CHECK(from_stats == 75,
-              std::format("coord-stats reflects new value (got {})", from_stats));
+        CHECK(from_stats == 75, std::format("coord-stats reflects new value (got {})", from_stats));
         // Clamping: -5 -> 0.
         (void)cs.eval("(orchestration:tune-gc-frequency -5)");
         CHECK(aura::compiler::types::as_int(*cs.eval("(orchestration:tune-gc-frequency)")) == 0,
@@ -161,8 +155,7 @@ int main() {
         (void)cs.eval("(orchestration:tune-gc-frequency 25)");
         const auto before = coord_int(cs, "gc-frequency-tune-ratio");
         auto r = cs.eval("(orchestration:tune-gc-frequency \"not-a-number\")");
-        CHECK(r && aura::compiler::types::is_int(*r),
-              "non-int arg returns an int (current value)");
+        CHECK(r && aura::compiler::types::is_int(*r), "non-int arg returns an int (current value)");
         const auto after = coord_int(cs, "gc-frequency-tune-ratio");
         CHECK(after == before,
               std::format("non-int arg left ratio unchanged ({} -> {})", before, after));
@@ -194,12 +187,10 @@ int main() {
         t2.join();
         const auto after = coord_int(cs, "gc-frequency-tune-ratio");
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} reads returned int",
-                          ok_count.load(), k_iters * 2));
+              std::format("concurrent: {} / {} reads returned int", ok_count.load(), k_iters * 2));
         // The 8 reads shouldn't have changed the ratio (no-arg = read),
         // and concurrent reads under the eval lock should all see 60.
-        CHECK(after == before,
-              std::format("concurrent reads unchanged ({} -> {})", before, after));
+        CHECK(after == before, std::format("concurrent reads unchanged ({} -> {})", before, after));
         // Restore default.
         (void)cs.eval("(orchestration:tune-gc-frequency 50)");
     }
