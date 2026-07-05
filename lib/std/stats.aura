@@ -58,6 +58,8 @@
     "query:top5-commercial-coverage-stats"
     ; ── Issue #567 — Primitive governance + stdlib layering closing metrics ──
     "query:primitives-governance-stats"
+    ; ── Issue #568 — FlatAST children_ columnar SoA migration completion ──
+    "query:soa-children-columnar-migration-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

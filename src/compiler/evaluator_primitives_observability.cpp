@@ -3091,6 +3091,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:top5-commercial-coverage-stats",
             // Issue #567 — Primitive governance + stdlib layering closing metrics
             "query:primitives-governance-stats",
+            // Issue #568 — FlatAST children_ columnar SoA migration completion
+            "query:soa-children-columnar-migration-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -3131,10 +3133,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 136 entries as of #567 ship (135 from #557 + 1 primitives-governance
-        // observability hash primitive from #567:
-        // query:primitives-governance-stats).
-        return make_int(136);
+        // 137 entries as of #568 ship (136 from #567 + 1 soa-children-columnar-
+        // migration observability hash primitive from #568:
+        // query:soa-children-columnar-migration-stats).
+        return make_int(137);
     });
 }
 
