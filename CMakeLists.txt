@@ -1261,6 +1261,9 @@ aura_issue_test_link_llvm_jit(test_issue_579_observability)
 # Issue #580 slice: hardware-backend-stats hash observability.
 aura_add_issue_test(test_issue_580_observability)
 aura_issue_test_link_llvm_jit(test_issue_580_observability)
+# Issue #581 slice: stable-ref-sv-scale-stats hash observability.
+aura_add_issue_test(test_issue_581_observability)
+aura_issue_test_link_llvm_jit(test_issue_581_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +

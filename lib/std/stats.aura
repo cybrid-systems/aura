@@ -70,6 +70,8 @@
     "query:verification-feedback-loop-stats"
     ; ── Issue #580 — Hardware backend emit maturity + commercial interop ──
     "query:hardware-backend-stats"
+    ; ── Issue #581 — StableNodeRef + dirty propagation SV SoC scalability ──
+    "query:stable-ref-sv-scale-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
