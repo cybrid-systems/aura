@@ -62,8 +62,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:stable-ref-provenance-sv-stats-hash) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:stable-ref-provenance-sv-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -73,7 +73,8 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 int main() {
     using namespace aura_issue_631_detail;
-    std::println("=== Issue #631: query:stable-ref-provenance-sv-stats-hash structured companion ===");
+    std::println(
+        "=== Issue #631: query:stable-ref-provenance-sv-stats-hash structured companion ===");
 
     aura::compiler::CompilerService cs;
 
@@ -88,22 +89,17 @@ int main() {
         const auto safe = hash_int(cs, "safe-resolves");
         const auto total = hash_int(cs, "total-stable-ref-invalidations");
         const auto schema = hash_int(cs, "schema");
-        CHECK(cross >= 0,
-              std::format("cross-fiber-violations >= 0 (got {})", cross));
+        CHECK(cross >= 0, std::format("cross-fiber-violations >= 0 (got {})", cross));
         CHECK(mismatches >= 0,
               std::format("provenance-mismatches-on-sv >= 0 (got {})", mismatches));
-        CHECK(safe >= 0,
-              std::format("safe-resolves >= 0 (got {})", safe));
-        CHECK(total >= 0,
-              std::format("total-stable-ref-invalidations >= 0 (got {})", total));
-        CHECK(schema == 631,
-              std::format("schema == 631 (got {})", schema));
+        CHECK(safe >= 0, std::format("safe-resolves >= 0 (got {})", safe));
+        CHECK(total >= 0, std::format("total-stable-ref-invalidations >= 0 (got {})", total));
+        CHECK(schema == 631, std::format("schema == 631 (got {})", schema));
         // Invariant: provenance-mismatches and total should be the
         // same (both read from the same underlying counter until
         // future enforcement work splits them). Document the link.
         CHECK(mismatches == total,
-              std::format("mismatches == total invariant ({} == {})",
-                          mismatches, total));
+              std::format("mismatches == total invariant ({} == {})", mismatches, total));
     }
 
     // AC2: existing primitives remain reachable
@@ -117,8 +113,7 @@ int main() {
         // hash. We test "reachable" not "hash" — the primitive
         // is not removed/regressed.
         auto s_prov = cs.eval("(query:stable-ref-provenance 0)");
-        CHECK(s_prov.has_value(),
-              "(query:stable-ref-provenance) reachable (#620 back-compat)");
+        CHECK(s_prov.has_value(), "(query:stable-ref-provenance) reachable (#620 back-compat)");
         auto s_stat = cs.eval("(query:stable-ref-stats-hash)");
         CHECK(s_stat && aura::compiler::types::is_hash(*s_stat),
               "(query:stable-ref-stats-hash) returns a hash (#457 back-compat)");
@@ -126,8 +121,7 @@ int main() {
         CHECK(s_life.has_value(),
               "(query:stable-ref-lifecycle-stats) reachable (#497 back-compat)");
         auto s_mig = cs.eval("(query:fiber-migration-stats)");
-        CHECK(s_mig.has_value(),
-              "(query:fiber-migration-stats) reachable (#438 back-compat)");
+        CHECK(s_mig.has_value(), "(query:fiber-migration-stats) reachable (#438 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -136,19 +130,15 @@ int main() {
         std::println("\n--- AC3: derived-metric invariants on fresh service ---");
         const auto cross = hash_int(cs, "cross-fiber-violations");
         const auto safe = hash_int(cs, "safe-resolves");
-        CHECK(cross == 0,
-              std::format("fresh-service cross-fiber-violations == 0 (got {})",
-                          cross));
-        CHECK(safe == 0,
-              std::format("fresh-service safe-resolves == 0 (got {})", safe));
+        CHECK(cross == 0, std::format("fresh-service cross-fiber-violations == 0 (got {})", cross));
+        CHECK(safe == 0, std::format("fresh-service safe-resolves == 0 (got {})", safe));
     }
 
     // AC4: schema sentinel is exactly 631 (not 622/623/624/625/626/630).
     {
         std::println("\n--- AC4: schema sentinel ===");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 631,
-              std::format("schema == 631 (got {})", schema));
+        CHECK(schema == 631, std::format("schema == 631 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -171,9 +161,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
