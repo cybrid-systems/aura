@@ -1233,29 +1233,76 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(runs + total + unknown + int_width));
     });
 
-    // Issue #468: query:dead-coercion-zerooverhead-stats. Returns
-    // the sum of 4 DeadCoercionEliminationPass zero-overhead
-    // lifetime counters (refines #433 observability):
-    //   - dead_coercion_eliminated_total (identity/no-op elisions)
-    //   - dead_coercion_elapsed_us_total (pass pipeline time)
-    //   - coercion_type_prop_hits_total (Rule 1 type_id identity)
-    //   - coercion_zerooverhead_win_total (per-run pipeline wins)
-    add("query:dead-coercion-zerooverhead-stats", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
-        if (!m)
-            return make_int(0);
-        const std::uint64_t eliminated =
-            m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
-        const std::uint64_t elapsed =
-            m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
-        const std::uint64_t type_prop =
-            m->coercion_type_prop_hits_total.load(std::memory_order_relaxed);
-        const std::uint64_t win =
-            m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(eliminated + elapsed + type_prop + win));
-    });
+    // Issue #508 / #468: query:dead-coercion-zerooverhead-stats. Hash view
+    // of DeadCoercionEliminationPass zero-overhead lifetime counters:
+    //   - eliminated: dead_coercion_eliminated_total
+    //   - elapsed-us: dead_coercion_elapsed_us_total (#508 timing)
+    //   - kept-for-debug: dead_coercion_kept_for_debug_total (#508 blame)
+    //   - type-prop-hits: coercion_type_prop_hits_total (Rule 1)
+    //   - zerooverhead-wins: coercion_zerooverhead_win_total
+    //   - dead-coercion-total: sum of the 5 counters
+    //   - dead-coercion-recommendation: 0=ok, 1=review elapsed, 2=debug kept
+    add("query:dead-coercion-zerooverhead-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(12);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t eliminated =
+                m ? m->dead_coercion_eliminated_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t elapsed =
+                m ? m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t kept =
+                m ? m->dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t type_prop =
+                m ? m->coercion_type_prop_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t win =
+                m ? m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t total = eliminated + elapsed + kept + type_prop + win;
+            std::int64_t recommendation = 0;
+            if (kept > 0)
+                recommendation = 2;
+            else if (elapsed > 10000)
+                recommendation = 1;
+            insert_kv("eliminated", static_cast<std::int64_t>(eliminated));
+            insert_kv("elapsed-us", static_cast<std::int64_t>(elapsed));
+            insert_kv("kept-for-debug", static_cast<std::int64_t>(kept));
+            insert_kv("type-prop-hits", static_cast<std::int64_t>(type_prop));
+            insert_kv("zerooverhead-wins", static_cast<std::int64_t>(win));
+            insert_kv("dead-coercion-total", static_cast<std::int64_t>(total));
+            insert_kv("dead-coercion-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #629: query:coercion-zerooverhead-stats. Returns the
     // sum of the 4 zero-overhead coercion lifetime counters:
