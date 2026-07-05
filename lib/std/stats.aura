@@ -105,6 +105,8 @@
     "query:eda-foundation-stats"
     ; ── Issue #510 — EDA verification interop + feedback observability ──
     "query:eda-verification-stats"
+    ; ── Issue #511 — Workspace snapshot + checkpoint persistence ──
+    "query:workspace-snapshot-stats"
     ; ── Issue #500 — Work-stealing + MutationBoundary depth observability ──
     "query:work-steal-stats"
     ; ── Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering) ──

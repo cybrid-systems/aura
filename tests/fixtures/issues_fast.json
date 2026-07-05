@@ -28,6 +28,7 @@
     "test_issue_505",
     "test_issue_507",
     "test_issue_508_observability",
-    "test_issue_510_observability"
+    "test_issue_510_observability",
+    "test_issue_511_observability"
   ]
 }

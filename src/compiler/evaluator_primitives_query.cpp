@@ -1180,6 +1180,88 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(save + restore + commit + rollback_success));
     });
 
+    // Issue #511: query:workspace-snapshot-stats. Hash view of workspace
+    // persistence + panic-checkpoint snapshot observability for long-session
+    // AI Agent resume (non-duplicative with #548 int-sum
+    // panic-checkpoint-lifecycle-stats and #497 stable-ref-lifecycle hash):
+    //   - workspace-size: live FlatAST node count
+    //   - gen-age: current FlatAST generation_
+    //   - wrap-epoch: generation wrap epoch for resume safety
+    //   - stable-ref-invalidations: stale ref detections since session start
+    //   - checkpoint-save / checkpoint-restore / checkpoint-commit /
+    //     checkpoint-transfer: panic checkpoint lifecycle counters
+    //   - rollback-success: successful panic restores
+    //   - panic-safe-source-len: bytes in last checkpoint source snapshot
+    //   - workspace-snapshot-total: sum of primary counters
+    //   - workspace-snapshot-recommendation: 0=ok, 1=checkpoint stale, 2=high restore
+    add("query:workspace-snapshot-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t workspace_size = ws ? ws->size() : 0;
+            const std::uint64_t gen_age = ws ? ws->current_generation() : 0;
+            const std::uint64_t wrap_epoch = ws ? ws->wrap_epoch() : 0;
+            const std::uint64_t ref_inval = ws ? ws->stable_ref_invalidations() : 0;
+            const std::uint64_t save = ev->get_panic_checkpoint_save_count();
+            const std::uint64_t restore = ev->get_panic_checkpoint_restore_count();
+            const std::uint64_t commit = ev->get_panic_checkpoint_commit_count();
+            const std::uint64_t transfer = ev->get_panic_checkpoint_transfer_count();
+            const std::uint64_t rollback_success = ev->get_rollback_success_on_panic();
+            const std::uint64_t source_len = ev->panic_safe_source().size();
+            const std::uint64_t total =
+                workspace_size + gen_age + save + restore + commit + transfer + rollback_success;
+            std::int64_t recommendation = 0;
+            if (save > 0 && restore > save)
+                recommendation = 2;
+            else if (save > 0 && source_len == 0)
+                recommendation = 1;
+            insert_kv("workspace-size", static_cast<std::int64_t>(workspace_size));
+            insert_kv("gen-age", static_cast<std::int64_t>(gen_age));
+            insert_kv("wrap-epoch", static_cast<std::int64_t>(wrap_epoch));
+            insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(ref_inval));
+            insert_kv("checkpoint-save", static_cast<std::int64_t>(save));
+            insert_kv("checkpoint-restore", static_cast<std::int64_t>(restore));
+            insert_kv("checkpoint-commit", static_cast<std::int64_t>(commit));
+            insert_kv("checkpoint-transfer", static_cast<std::int64_t>(transfer));
+            insert_kv("rollback-success", static_cast<std::int64_t>(rollback_success));
+            insert_kv("panic-safe-source-len", static_cast<std::int64_t>(source_len));
+            insert_kv("workspace-snapshot-total", static_cast<std::int64_t>(total));
+            insert_kv("workspace-snapshot-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #549: query:self-evolution-stability-stats.
     // Returns the sum of the 4 self-evolution observability
     // counters:
