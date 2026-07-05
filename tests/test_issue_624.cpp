@@ -60,8 +60,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:shape-stability-jit-stats-hash) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:shape-stability-jit-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -88,18 +87,13 @@ int main() {
         const auto wrong_opt = hash_int(cs, "wrong-opt-prevented");
         const auto schema = hash_int(cs, "schema");
         CHECK(post_mutate >= 0 && post_mutate <= 100,
-              std::format("stability-ratio-post-mutate in [0,100] (got {})",
-                          post_mutate));
+              std::format("stability-ratio-post-mutate in [0,100] (got {})", post_mutate));
         CHECK(deopt >= 0 && deopt <= 100,
               std::format("deopt-on-instability in [0,100] (got {})", deopt));
-        CHECK(bumps >= 0,
-              std::format("version-bumps >= 0 (got {})", bumps));
-        CHECK(jit_miss >= 0,
-              std::format("jit-shape-miss >= 0 (got {})", jit_miss));
-        CHECK(wrong_opt >= 0,
-              std::format("wrong-opt-prevented >= 0 (got {})", wrong_opt));
-        CHECK(schema == 624,
-              std::format("schema == 624 (got {})", schema));
+        CHECK(bumps >= 0, std::format("version-bumps >= 0 (got {})", bumps));
+        CHECK(jit_miss >= 0, std::format("jit-shape-miss >= 0 (got {})", jit_miss));
+        CHECK(wrong_opt >= 0, std::format("wrong-opt-prevented >= 0 (got {})", wrong_opt));
+        CHECK(schema == 624, std::format("schema == 624 (got {})", schema));
     }
 
     // AC2: existing shape-related primitives remain reachable
@@ -117,12 +111,12 @@ int main() {
         // JIT-related — (query:jit-stats) returns a string dump;
         // (query:jit-stats-hash) returns a hash. Both reachable.
         auto s_jit = cs.eval("(query:jit-stats)");
-        CHECK(s_jit.has_value() && !s_jit.has_value() ? false
-              : s_jit && aura::compiler::types::is_string(*s_jit),
+        CHECK(s_jit.has_value() && !s_jit.has_value()
+                  ? false
+                  : s_jit && aura::compiler::types::is_string(*s_jit),
               "(query:jit-stats) returns a string (#427 back-compat)");
         auto s_jit_h = cs.eval("(query:jit-stats-hash)");
-        CHECK(s_jit_h.has_value(),
-              "(query:jit-stats-hash) reachable (#491 back-compat)");
+        CHECK(s_jit_h.has_value(), "(query:jit-stats-hash) reachable (#491 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -137,8 +131,7 @@ int main() {
         const auto churn_count = hash_int(cs, "jit-shape-miss");
         if (bumps == 0 && churn_count == 0) {
             CHECK(deopt == 0,
-                  std::format("fresh-service deopt-on-instability == 0 (got {})",
-                              deopt));
+                  std::format("fresh-service deopt-on-instability == 0 (got {})", deopt));
         }
         // stability-ratio-post-mutate may also be 0 (churn==0).
         CHECK(churn >= 0,
@@ -150,8 +143,7 @@ int main() {
     {
         std::println("\n--- AC4: schema sentinel ===");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 624,
-              std::format("schema == 624 (got {})", schema));
+        CHECK(schema == 624, std::format("schema == 624 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -173,9 +165,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

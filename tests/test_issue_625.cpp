@@ -67,8 +67,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:pass-pipeline-incremental-stats-hash) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:pass-pipeline-incremental-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -78,7 +78,8 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 int main() {
     using namespace aura_issue_625_detail;
-    std::println("=== Issue #625: query:pass-pipeline-incremental-stats-hash structured companion ===");
+    std::println(
+        "=== Issue #625: query:pass-pipeline-incremental-stats-hash structured companion ===");
 
     aura::compiler::CompilerService cs;
 
@@ -94,18 +95,13 @@ int main() {
         const auto shortcircuit = hash_int(cs, "shortcircuit-savings");
         const auto dirty_blocks = hash_int(cs, "dirty-blocks-skipped");
         const auto schema = hash_int(cs, "schema");
-        CHECK(passes_run >= 0,
-              std::format("passes-run >= 0 (got {})", passes_run));
+        CHECK(passes_run >= 0, std::format("passes-run >= 0 (got {})", passes_run));
         CHECK(contracts >= 0 && contracts <= 100,
               std::format("contracts-checked in [0,100] (got {})", contracts));
-        CHECK(pure >= 0,
-              std::format("pure-delegation-hits >= 0 (got {})", pure));
-        CHECK(shortcircuit >= 0,
-              std::format("shortcircuit-savings >= 0 (got {})", shortcircuit));
-        CHECK(dirty_blocks >= 0,
-              std::format("dirty-blocks-skipped >= 0 (got {})", dirty_blocks));
-        CHECK(schema == 625,
-              std::format("schema == 625 (got {})", schema));
+        CHECK(pure >= 0, std::format("pure-delegation-hits >= 0 (got {})", pure));
+        CHECK(shortcircuit >= 0, std::format("shortcircuit-savings >= 0 (got {})", shortcircuit));
+        CHECK(dirty_blocks >= 0, std::format("dirty-blocks-skipped >= 0 (got {})", dirty_blocks));
+        CHECK(schema == 625, std::format("schema == 625 (got {})", schema));
     }
 
     // AC2: existing pass-pipeline + contracts primitives remain
@@ -119,8 +115,7 @@ int main() {
         CHECK(s_cont && aura::compiler::types::is_int(*s_cont),
               "(query:pass-contracts-stats) returns an int (#406 back-compat)");
         auto s_soa = cs.eval("(query:soa-dirty-stats)");
-        CHECK(s_soa.has_value(),
-              "(query:soa-dirty-stats) reachable (#600 back-compat)");
+        CHECK(s_soa.has_value(), "(query:soa-dirty-stats) reachable (#600 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -132,10 +127,8 @@ int main() {
         const auto pure = hash_int(cs, "pure-delegation-hits");
         const auto shortcircuit = hash_int(cs, "shortcircuit-savings");
         const auto dirty_blocks = hash_int(cs, "dirty-blocks-skipped");
-        CHECK(passes_run == 0,
-              std::format("fresh-service passes-run == 0 (got {})", passes_run));
-        CHECK(pure == 0,
-              std::format("fresh-service pure-delegation-hits == 0 (got {})", pure));
+        CHECK(passes_run == 0, std::format("fresh-service passes-run == 0 (got {})", passes_run));
+        CHECK(pure == 0, std::format("fresh-service pure-delegation-hits == 0 (got {})", pure));
         CHECK(shortcircuit == 0,
               std::format("fresh-service shortcircuit-savings == 0 (got {})", shortcircuit));
         CHECK(dirty_blocks == 0,
@@ -146,8 +139,7 @@ int main() {
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 625,
-              std::format("schema == 625 (got {})", schema));
+        CHECK(schema == 625, std::format("schema == 625 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -170,9 +162,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
