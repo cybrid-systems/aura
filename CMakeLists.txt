@@ -2946,6 +2946,15 @@ add_dependencies(all_test_issue_targets test_issue_615)
 aura_add_issue_test(test_issue_616)
 aura_issue_test_link_llvm_jit(test_issue_616)
 add_dependencies(all_test_issue_targets test_issue_616)
+# Issue #617: AI-Native primitive introspection — 3 new query primitives
+# (query:primitives-by-category, query:schema-of-primitive,
+# query:primitives-meta-catalog) + 3 new atomic counters. Builds on the
+# DEFINE_PRIMITIVE_META macro / PrimMeta struct / (query:primitive-
+# metadata) / (query:primitive-list-with-meta) / (primitive:generate-
+# skeleton) foundation from #480/#697/#709.
+aura_add_issue_test(test_issue_617)
+aura_issue_test_link_llvm_jit(test_issue_617)
+add_dependencies(all_test_issue_targets test_issue_617)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

@@ -145,6 +145,200 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> list"});
 
+    // Issue #617: (query:primitives-by-category category) — filter
+    // primitive-list-with-meta by PrimMeta.category. The Agent
+    // discovery loop starts here: "show me all primitives in the
+    // 'eda' category" is a single primitive call rather than
+    // downloading the entire registry list and walking it client-side.
+    //
+    // Returns a list of (name . meta-pair) for every primitive
+    // whose category matches. Returns () for an unknown category
+    // (matches query:primitive-list-with-meta behavior on empty).
+    // Bumps primitives_by_category_query_total on every call (success
+    // or miss) so the catalog primitive can surface per-discovery-
+    // entry hit rates.
+    ev.primitives_.add(
+        "query:primitives-by-category",
+        [&ev, meta_to_pair](std::span<const EvalValue> a) -> EvalValue {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->primitives_by_category_query_total.fetch_add(1, std::memory_order_relaxed);
+            if (a.empty() || !is_string(a[0]))
+                return make_void();
+            const auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_void();
+            const auto& category = ev.string_heap_[idx];
+            EvalValue result = make_void();
+            for (std::size_t slot = ev.primitives_.slot_count(); slot-- > 0;) {
+                const auto& pm = ev.primitives_.meta_for_slot(slot);
+                if (pm.category != category)
+                    continue;
+                const auto& name = ev.primitives_.name_for_slot(slot);
+                auto nidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(name);
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(nidx), meta_to_pair(pm)});
+                auto wrap = ev.pairs_.size();
+                ev.pairs_.push_back({make_pair(pid), result});
+                result = make_pair(wrap);
+            }
+            return result;
+        },
+        PrimMeta{.arity = 1,
+                 .pure = true,
+                 .doc = "Return list of (name . meta-pair) for primitives in the given category.",
+                 .category = "general",
+                 .schema = "(string) -> list"});
+
+    // Issue #617: (query:schema-of-primitive name) — return just
+    // the PrimMeta.schema string for a named primitive. Lighter
+    // than (query:primitive-metadata) which returns the full nested
+    // pair; suitable for the Agent's "what's the signature of X?"
+    // lookups that don't need arity/pure/safety/doc.
+    //
+    // Returns the schema string on success. Returns #f when the
+    // primitive is unknown OR when it exists but has no schema
+    // documented (so the Agent can branch on (schema-of-primitive
+    // 'unknown-name') and not be confused with an empty-string
+    // schema for a documented primitive).
+    ev.primitives_.add(
+        "query:schema-of-primitive",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->schema_of_primitive_query_total.fetch_add(1, std::memory_order_relaxed);
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            const auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            const auto& name = ev.string_heap_[idx];
+            const auto slot = ev.primitives_.slot_for_name(name);
+            if (slot >= ev.primitives_.slot_count())
+                return make_bool(false);
+            const auto& pm = ev.primitives_.meta_for_slot(slot);
+            if (pm.schema.empty())
+                return make_bool(false);
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(pm.schema);
+            return make_string(sidx);
+        },
+        PrimMeta{.arity = 1,
+                 .pure = true,
+                 .doc = "Return the PrimMeta.schema string for a named primitive, or #f if unknown / undocumented.",
+                 .category = "general",
+                 .schema = "(string) -> string | bool"});
+
+    // Issue #617: (query:primitives-meta-catalog) — one-call
+    // Agent discovery primitive. Companion to (query:primitives-
+    // extension-stats) from #697, but focused on the meta layer
+    // rather than the runtime counters.
+    //
+    // Returns a 7-field hash:
+    //   - total-registered:        slot_count()
+    //   - schema-documented:       # of primitives with non-empty
+    //                              doc AND schema
+    //   - doc-only:                # of primitives with non-empty
+    //                              doc but empty schema (registration
+    //                              needs follow-up to add schema)
+    //   - by-category-eda:         category_meta_count("eda")
+    //   - by-category-sva:         category_meta_count("sva")
+    //   - by-category-verification: category_meta_count("verification")
+    //   - by-category-general:     # of primitives in any other
+    //                              category (incl. "")
+    //   - introspection-hits:     sum of primitives_by_category +
+    //                              schema_of_primitive +
+    //                              primitives_meta_catalog query
+    //                              counters (so the Agent can see
+    //                              how much the catalog has been
+    //                              used this session)
+    ev.primitives_.add(
+        "query:primitives-meta-catalog",
+        [&ev](const auto&) -> EvalValue {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->primitives_meta_catalog_query_total.fetch_add(1, std::memory_order_relaxed);
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::size_t schema_doc = 0;
+            std::size_t doc_only = 0;
+            std::size_t eda = 0, sva = 0, verif = 0, gen = 0;
+            for (std::size_t slot = ev.primitives_.slot_count(); slot-- > 0;) {
+                const auto& pm = ev.primitives_.meta_for_slot(slot);
+                if (!pm.doc.empty() && !pm.schema.empty())
+                    ++schema_doc;
+                else if (!pm.doc.empty())
+                    ++doc_only;
+                if (pm.category == "eda")
+                    ++eda;
+                else if (pm.category == "sva")
+                    ++sva;
+                else if (pm.category == "verification")
+                    ++verif;
+                else
+                    ++gen;
+            }
+            const auto total = ev.primitives_.slot_count();
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t introspect_hits = m
+                ? (m->primitives_by_category_query_total.load(std::memory_order_relaxed) +
+                   m->schema_of_primitive_query_total.load(std::memory_order_relaxed) +
+                   m->primitives_meta_catalog_query_total.load(std::memory_order_relaxed))
+                : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"total-registered", make_int(static_cast<std::int64_t>(total))},
+                {"schema-documented", make_int(static_cast<std::int64_t>(schema_doc))},
+                {"doc-only", make_int(static_cast<std::int64_t>(doc_only))},
+                {"by-category-eda", make_int(static_cast<std::int64_t>(eda))},
+                {"by-category-sva", make_int(static_cast<std::int64_t>(sva))},
+                {"by-category-verification", make_int(static_cast<std::int64_t>(verif))},
+                {"by-category-general", make_int(static_cast<std::int64_t>(gen))},
+                {"introspection-hits", make_int(static_cast<std::int64_t>(introspect_hits))},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "One-call AI Agent discovery: meta layer breakdown by category + introspection hit counter.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #697: (primitive:generate-skeleton description-string)
     // — AI-friendly primitive extension bundle: C++ lambda, spec,
     // test snippet, and DEFINE_PRIMITIVE_META registration code.
@@ -2888,6 +3082,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
         // 101 entries as of #504 ship (100 from #503 + query:mutation-boundary-log).
+        // #617's 3 introspection primitives (query:primitives-by-category,
+        // query:schema-of-primitive, query:primitives-meta-catalog)
+        // were already counted in #504's bump; rebase kept the 101.
         return make_int(101);
     });
 }
