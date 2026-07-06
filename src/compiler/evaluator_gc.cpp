@@ -222,6 +222,12 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     std::atomic<std::uint64_t>* site = m ? &m->linear_steal_enforced : nullptr;
     record_linear_gc_probe(*this, violation, site);
+    // Issue #673: cross-module correlation — when the steal
+    // probe actually caught a violation, bump the
+    // "ownership-violation-during-steal" correlation counter.
+    // Safe to call with compiler_metrics_ == nullptr (no-op).
+    if (violation)
+        bump_runtime_observability_steal_ownership_violation_correlated();
 }
 
 void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,

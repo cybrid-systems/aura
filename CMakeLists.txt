@@ -1760,6 +1760,17 @@ aura_issue_test_link_llvm_jit(test_edsl_self_evolution_marker_dirty_guard_task6)
 # (panic checkpoint matrix), #594 (reflection-selfmod), #548 (lifecycle).
 aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)
 aura_issue_test_link_llvm_jit(test_guard_panic_reflect_fiber_resume_task6)
+# Issue #673: Unified Runtime Observability Layer (P1) cross-module
+# correlation primitive (production review / monitoring foundation).
+# 7 ACs: runtime-observability-correlated-stats (schema 673),
+# steal-attempts-correlated baseline, steal-deferred-correlated,
+# steal-ownership-violation-correlated, correlated-events-total sum,
+# multi-round monotonic, 4 module-local query regressions. Non-duplicative
+# with #591 (scheduler-mutation-coord), #438 (fiber-migration),
+# #448 (mutation-coordination), #599 (compiler-root), #592 (panic-fiber),
+# #596 (guard-panic-reflect).
+aura_add_issue_test(test_runtime_observability_correlated_stats_673)
+aura_issue_test_link_llvm_jit(test_runtime_observability_correlated_stats_673)
 # Issue #514: Task6 Top 3 production-readiness closed loop (meta).
 # 8 ACs: ir-hygiene + pattern-marker + production-readiness stats,
 # macro→query hygiene → Guard mutate → dirty/type incremental,

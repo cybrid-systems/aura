@@ -1236,6 +1236,25 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_core_linear_metadata_flow_total{0};
     std::atomic<std::uint64_t> compiler_core_quote_fallback_refresh_total{0};
 
+    // Issue #673: Unified Runtime Observability Layer (P1) — cross-module
+    // correlation atomics for end-to-end production monitoring.
+    //
+    // The other observability primitives cover single-module stats;
+    // #673 ships the FIRST dedicated correlation counters that resolve
+    // cross-module events to a single signal:
+    //   - runtime_observability_steal_attempt_correlated_total:
+    //       Each fiber scheduler steal attempt (worker.cpp) that runs
+    //       through aura_evaluator_bump_mutation_steal_attempt().
+    //   - runtime_observability_steal_deferred_correlated_total:
+    //       Each steal DEFERRED at an active MutationBoundary.
+    //   - runtime_observability_steal_ownership_violation_correlated_total:
+    //       Each linear ownership violation caught during steal.
+    //
+    // Non-duplicative with #591/#438/#448/#599/#592/#596.
+    std::atomic<std::uint64_t> runtime_observability_steal_attempt_correlated_total{0};
+    std::atomic<std::uint64_t> runtime_observability_steal_deferred_correlated_total{0};
+    std::atomic<std::uint64_t> runtime_observability_steal_ownership_violation_correlated_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers
