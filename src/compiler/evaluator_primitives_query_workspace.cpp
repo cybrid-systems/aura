@@ -1668,6 +1668,8 @@ void register_workspace_query_primitives(
                 if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                     // Issue #458: hygiene-skip stats.
                     ev.bump_macro_introduced_skipped_in_query();
+                    if (flat.provenance(id) != 0)
+                        ev.bump_macro_hygiene_provenance_violation();
                     continue;
                 }
                 // Issue #289: fresh per-match state. Captures
@@ -1706,6 +1708,8 @@ void register_workspace_query_primitives(
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                 if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                     ev.bump_macro_introduced_skipped_in_query();
+                    if (flat.provenance(id) != 0)
+                        ev.bump_macro_hygiene_provenance_violation();
                     continue;
                 }
                 // Issue #484: skip orphan nodes (parent_ == NULL

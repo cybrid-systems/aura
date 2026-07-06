@@ -2983,6 +2983,13 @@ add_dependencies(all_test_issue_targets test_issue_708)
 aura_add_issue_test(test_aot_bridge_checkpoint_version_steal)
 aura_issue_test_link_llvm_jit(test_aot_bridge_checkpoint_version_steal)
 add_dependencies(all_test_issue_targets test_aot_bridge_checkpoint_version_steal)
+# Issue #654: Macro+reflect+self-evo hygiene vs fiber/panic/AOT/SoA gaps.
+# 7 ACs: macro-hygiene-fiber-panic-stats (schema 654), 5 gap counters,
+# macro expand+Guard+query matrix, fiber yield + regression.
+# Non-duplicative with #593/#596/#597/#600/#653.
+aura_add_issue_test(test_macro_hygiene_fiber_panic_aot_soa_self_evo)
+aura_issue_test_link_llvm_jit(test_macro_hygiene_fiber_panic_aot_soa_self_evo)
+add_dependencies(all_test_issue_targets test_macro_hygiene_fiber_panic_aot_soa_self_evo)
 # Issue #709: Primitives registry fast dispatch + capture discipline + EDA.
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)

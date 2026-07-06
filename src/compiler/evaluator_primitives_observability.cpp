@@ -2887,6 +2887,79 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #654: query:macro-hygiene-fiber-panic-stats — 5 cross-cutting
+    // macro+reflect+self-evo hygiene gaps vs fiber/panic/AOT/SoA runtime
+    // (non-duplicative with #593 pattern-ir-hygiene-closed-loop,
+    // #596 guard-panic-reflect, #597 macro-reflect-self-evo-stats).
+    //
+    // Fields (5 + sentinel):
+    //   - hygiene-panic-restamp      macro_hygiene_panic_restamp_total
+    //   - provenance-violations      macro_hygiene_provenance_violations_total
+    //   - macro-expand-checkpoints   macro_expand_checkpoint_saves_total
+    //   - reflect-hygiene-validation macro_reflect_hygiene_validation_total
+    //   - hygiene-dirty-impact       macro_hygiene_dirty_impact_total
+    //   - schema == 654
+    add("query:macro-hygiene-fiber-panic-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t panic_restamp =
+            m ? static_cast<std::int64_t>(
+                    m->macro_hygiene_panic_restamp_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t provenance_violations =
+            m ? static_cast<std::int64_t>(
+                    m->macro_hygiene_provenance_violations_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t expand_checkpoints =
+            m ? static_cast<std::int64_t>(
+                    m->macro_expand_checkpoint_saves_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t reflect_validation =
+            m ? static_cast<std::int64_t>(
+                    m->macro_reflect_hygiene_validation_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dirty_impact =
+            m ? static_cast<std::int64_t>(
+                    m->macro_hygiene_dirty_impact_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("hygiene-panic-restamp", panic_restamp);
+        insert_kv("provenance-violations", provenance_violations);
+        insert_kv("macro-expand-checkpoints", expand_checkpoints);
+        insert_kv("reflect-hygiene-validation", reflect_validation);
+        insert_kv("hygiene-dirty-impact", dirty_impact);
+        insert_kv("schema", 654);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5515,6 +5588,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:compiler-root-stats",
             // Issue #600 — Per-block dirty + impact scope + closure bridge synergy
             "query:incremental-closure-stats",
+            // Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps
+            "query:macro-hygiene-fiber-panic-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -5852,9 +5927,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 172 entries as of #600 ship (171 from #599 + 1 incremental-closure-stats
-        // registration from #600).
-        return make_int(172);
+        // 173 entries as of #654 ship (172 from #600 + 1 macro-hygiene-fiber-panic-stats
+        // registration from #654).
+        return make_int(173);
     });
 }
 
