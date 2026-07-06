@@ -2273,7 +2273,10 @@ public:
         }
 
         if (cf.folded_count() > 0) {
-            std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+            // Debug print removed (#63723): was polluting
+            // test framework stream redirect for tests like
+            // edsl-ir-cache:cascade-after-mutate. The folded
+            // count is already in metrics_ via cf_pass metrics.
         }
 
         // ── Run escape analysis pass ───────────────────────
@@ -7421,8 +7424,10 @@ private:
                     ck_pass.compute_function(func);
                     auto nf = cf_pass.fold_function(func);
                     if (nf > 0) {
-                        std::println(std::cerr, "PM: folded {} instructions in function '{}'", nf,
-                                     func.name);
+                        // Debug print removed (#63723): was polluting
+                        // test framework stream redirect for tests like
+                        // edsl-ir-cache:cascade-after-mutate. The folded
+                        // count is already in metrics_ via cf_pass metrics.
                     }
                 }
             }
