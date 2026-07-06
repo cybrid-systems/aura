@@ -1027,6 +1027,43 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> yield_transfer_with_restamp_total{0};
     std::atomic<std::uint64_t> yield_size_mismatch_caught_total{0};
     std::atomic<std::uint64_t> yield_cross_steal_invalidation_total{0};
+    // Issue #650: StealBudget in WorkerThread to Use fiber
+    // yield_classification() + Outermost Mutation Depth for
+    // Adaptive Bias counters (P0 Runtime-Gap + Scheduler
+    // production-readiness foundation — non-duplicative to
+    // #645).
+    // These are scaffolding for the future AC1 + AC2 + AC4
+    // enforcement work — the bumps happen when
+    // try_steal_from / should_steal query victim
+    // yield_classification() or is_at_mutation_boundary_safe
+    // (depth==0); outermost Mutation or Explicit → increase
+    // steal priority / reduce sleep threshold (#650 AC1),
+    // when high steal_deferred_mutation_boundary_count
+    // temporarily raises max_before_sleep or biases LIFO
+    // local (#650 AC2), and when unit test mocks are wired
+    // to StealBudget + Fiber yield reasons (#650 AC4). P0
+    // ships the counters + the agent-visible
+    // (query:scheduler-stealbudget-yield-class-stats)
+    // primitive so the Agent has a dashboard today; values
+    // are 0 until the enforcement work ships.
+    //   - stealbudget_outermost_bias_total: AC1 — count of
+    //     StealBudget bias hits preferring outermost Mutation
+    //     fibers (depth==0). High rate = scheduler is
+    //     successfully preferring stealable fibers under LLM
+    //     bottleneck.
+    //   - stealbudget_explicit_bias_total: AC1 — count of
+    //     StealBudget bias hits preferring Explicit yield
+    //     reason fibers (OperationBoundary / Explicit
+    //     yields that don't hold MutationBoundary).
+    //   - stealbudget_max_before_sleep_raised_total: AC2 —
+    //     count of times StealBudget raised max_before_sleep
+    //     due to high steal_deferred_mutation_boundary_count.
+    //     Ratio (this / total StealBudget decisions) = how
+    //     often contention pressure forced the budget
+    //     expansion.
+    std::atomic<std::uint64_t> stealbudget_outermost_bias_total{0};
+    std::atomic<std::uint64_t> stealbudget_explicit_bias_total{0};
+    std::atomic<std::uint64_t> stealbudget_max_before_sleep_raised_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

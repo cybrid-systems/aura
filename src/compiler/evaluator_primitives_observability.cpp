@@ -2048,6 +2048,141 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #650: query:scheduler-stealbudget-yield-class-stats —
+    // Agent-discoverable structured dashboard for the
+    // StealBudget in WorkerThread to Use fiber
+    // yield_classification() + Outermost Mutation Depth for
+    // Adaptive Bias (P0 Runtime-Gap + Scheduler production-
+    // readiness surface — non-duplicative to #645).
+    //
+    // Note the naming distinction from #706:
+    //   - (query:scheduler-stealbudget-adaptive-stats) (#706)
+    //     — 5-field adaptive bias summary (already covers
+    //     mutation-bias-hits + outermost-preferred +
+    //     llm-tail-reductions + deferred-pressure-boosts +
+    //     global-deferred-mutation-total — the AC3
+    //     surface)
+    //   - (query:scheduler-steal-bias-stats) (#645) —
+    //     per-steal LIFO/FIFO + mutation-deferred counters
+    //     (lower-level enforcement layer)
+    //   - (query:scheduler-stealbudget-yield-class-stats)
+    //     (#650, this primitive) — *yield-class-bias-track*
+    //     companion that focuses on the AC1+AC2 enforcement
+    //     counters for StealBudget consultation of victim
+    //     yield_classification() + outermost mutation depth
+    //     + max_before_sleep raised on contention.
+    //
+    // Fields (3 + sentinel):
+    //   - outermost-bias       new stealbudget_outermost_bias_
+    //                          total atomic (foundation for
+    //                          AC1 bias hits preferring
+    //                          outermost Mutation fibers).
+    //                          Value is 0 until AC1 wire-up.
+    //   - explicit-bias        new stealbudget_explicit_bias_
+    //                          total atomic (foundation for
+    //                          AC1 bias hits preferring
+    //                          Explicit yield reason fibers).
+    //                          Value is 0 until AC1 wire-up.
+    //   - max-sleep-raised     new stealbudget_max_before_sleep_
+    //                          raised_total atomic (foundation
+    //                          for AC2 max_before_sleep raised
+    //                          on contention). Value is 0
+    //                          until AC2 wire-up.
+    //   - schema == 650         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640+#641+
+    //                          #642+#643+#644+#645+#646+
+    //                          #647+#648+#649 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // StealBudget adaptive bias surface:
+    //   - (query:scheduler-stealbudget-adaptive-stats) (#706)
+    //     — 5-field adaptive bias summary (the AC3 surface
+    //     listed in #650 body)
+    //   - (query:scheduler-steal-bias-stats) (#645) — per-
+    //     steal LIFO/FIFO + mutation-deferred
+    //   - #618 per-fiber yield_reason classification +
+    //     is_at_mutation_boundary_safe + outermost depth
+    //     probe
+    //   - #588 per-fiber stack + StealBudget WINDOW_SIZE=10
+    //     thresholds 50%/30%/10%
+    //   - #451 work-stealing deque LIFO local + FIFO steal
+    // What the issue body AC3 specifies by **exact name +
+    // fields** — `query:scheduler-stealbudget-adaptive-stats`
+    // already ships the AC3 fields. #650 ships the AC1+AC2
+    // enforcement-layer companion with a distinct name
+    // (`-yield-class-` midfix).
+    //
+    // The remaining #650 AC1 (try_steal_from / should_steal
+    // query yield_classification + outermost depth) + AC2
+    // (high steal_deferred_mutation_boundary_count raises
+    // max_before_sleep) + AC4 (unit test mock Fiber yield
+    // reasons) work is invasive C++ on worker.cpp/h +
+    // StealBudget + needs the LLM latency + mixed yield
+    // reasons matrix + 20 fibers + TSan coverage from the
+    // issue body — separate follow-ups.
+    add("query:scheduler-stealbudget-yield-class-stats", [&ev](const auto&) -> EvalValue {
+        // outermost-bias: new foundation atomic
+        // (0 until AC1 outermost bias wire-up).
+        const std::uint64_t outermost_bias =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->stealbudget_outermost_bias_total.load(std::memory_order_relaxed)
+                : 0;
+        // explicit-bias: new foundation atomic
+        // (0 until AC1 explicit bias wire-up).
+        const std::uint64_t explicit_bias =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->stealbudget_explicit_bias_total.load(std::memory_order_relaxed)
+                : 0;
+        // max-sleep-raised: new foundation atomic
+        // (0 until AC2 max_before_sleep raise wire-up).
+        const std::uint64_t max_sleep_raised =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->stealbudget_max_before_sleep_raised_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("outermost-bias", static_cast<std::int64_t>(outermost_bias));
+        insert_kv("explicit-bias", static_cast<std::int64_t>(explicit_bias));
+        insert_kv("max-sleep-raised", static_cast<std::int64_t>(max_sleep_raised));
+        insert_kv("schema", 650);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5003,10 +5138,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 163 entries as of #649 ship (162 from #648 + 1 yield-
-        // checkpoint-panic observability stats primitive from
-        // #649: query:yield-checkpoint-panic-stats).
-        return make_int(163);
+        // 164 entries as of #650 ship (163 from #649 + 1 scheduler-
+        // stealbudget-yield-class observability stats primitive
+        // from #650: query:scheduler-stealbudget-yield-class-stats).
+        return make_int(164);
     });
 }
 

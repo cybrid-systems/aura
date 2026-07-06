@@ -3416,6 +3416,25 @@ add_dependencies(all_test_issue_targets test_issue_648)
 aura_add_issue_test(test_issue_649)
 aura_issue_test_link_llvm_jit(test_issue_649)
 add_dependencies(all_test_issue_targets test_issue_649)
+# Issue #650: query:scheduler-stealbudget-yield-class-stats —
+# P0 Runtime-Gap + Scheduler StealBudget to Use fiber
+# yield_classification() + Outermost Mutation Depth for
+# Adaptive Bias foundation — 1 new Aura primitive
+# (query:scheduler-stealbudget-yield-class-stats, distinct
+# from #706 query:scheduler-stealbudget-adaptive-stats via
+# the `-yield-class-` midfix — focus on yield-class bias
+# enforcement layer rather than 5-field adaptive bias
+# summary) + 3 new atomics (stealbudget_outermost_bias_total
+# + stealbudget_explicit_bias_total +
+# stealbudget_max_before_sleep_raised_total). Primitive has
+# 4 fields: 3 from the new atomics (all foundation
+# scaffolding for AC1+AC2+AC4 enforcement, currently 0) +
+# schema sentinel. Builds on #706 + #645 existing
+# scheduler / StealBudget infrastructure.
+# Non-duplicative to #645 (see issue body).
+aura_add_issue_test(test_issue_650)
+aura_issue_test_link_llvm_jit(test_issue_650)
+add_dependencies(all_test_issue_targets test_issue_650)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
