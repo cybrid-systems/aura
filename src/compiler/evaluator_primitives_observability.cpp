@@ -3181,6 +3181,80 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #659: query:typesystem-typed-mutate-stats — 5 type system gaps for
+    // AI multi-round typed mutation (solve_delta reverify, dead coercion elim,
+    // linear ownership post-mutate, occurrence provenance refresh, coercion map
+    // incremental). Non-duplicative with #656 Lambda param recheck, #657
+    // compiler-core-incremental, #690 constraint-typed-mutate-stats.
+    //
+    // Fields (5 + sentinel):
+    //   - delta-reverify-scans           delta_conflict_reverify_total
+    //   - dead-coercion-eliminated       dead_coercion_eliminated_total
+    //   - linear-post-mutate-revalidations linear_post_mutate_revalidations_total
+    //   - narrowing-provenance-refresh   narrowing_provenance_total
+    //   - coercion-incremental-wins      coercion_zerooverhead_win_total
+    //   - schema == 659
+    add("query:typesystem-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t reverify =
+            m ? static_cast<std::int64_t>(
+                    m->delta_conflict_reverify_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dce =
+            m ? static_cast<std::int64_t>(
+                    m->dead_coercion_eliminated_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t linear =
+            m ? static_cast<std::int64_t>(
+                    m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t provenance =
+            m ? static_cast<std::int64_t>(
+                    m->narrowing_provenance_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t coercion =
+            m ? static_cast<std::int64_t>(
+                    m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("delta-reverify-scans", reverify);
+        insert_kv("dead-coercion-eliminated", dce);
+        insert_kv("linear-post-mutate-revalidations", linear);
+        insert_kv("narrowing-provenance-refresh", provenance);
+        insert_kv("coercion-incremental-wins", coercion);
+        insert_kv("schema", 659);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5817,6 +5891,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:compiler-core-incremental-stats",
             // Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps
             "query:highperf-cpp26-stats",
+            // Issue #659 — Type system typed-mutate incremental gaps
+            "query:typesystem-typed-mutate-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -6154,9 +6230,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 176 entries as of #658 ship (175 from #657 + 1 highperf-cpp26-stats
-        // registration from #658).
-        return make_int(176);
+        // 177 entries as of #659 ship (176 from #658 + 1 typesystem-typed-mutate-stats
+        // registration from #659).
+        return make_int(177);
     });
 }
 

@@ -3011,6 +3011,13 @@ add_dependencies(all_test_issue_targets test_compiler_core_incremental_selfmod_g
 aura_add_issue_test(test_highperf_cpp26_gaps_arena_soa_value_shape_pass)
 aura_issue_test_link_llvm_jit(test_highperf_cpp26_gaps_arena_soa_value_shape_pass)
 add_dependencies(all_test_issue_targets test_highperf_cpp26_gaps_arena_soa_value_shape_pass)
+# Issue #659: Type system typed-mutate gaps — solve_delta reverify, dead coercion
+# elim, linear ownership, occurrence provenance, coercion map incremental. 7 ACs:
+# typesystem-typed-mutate-stats (schema 659), predicate/linear/mutate matrix + regression.
+# Non-duplicative with #656/#657/#690/#508.
+aura_add_issue_test(test_typesystem_typed_mutate_incremental_gaps)
+aura_issue_test_link_llvm_jit(test_typesystem_typed_mutate_incremental_gaps)
+add_dependencies(all_test_issue_targets test_typesystem_typed_mutate_incremental_gaps)
 # Issue #709: Primitives registry fast dispatch + capture discipline + EDA.
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)
