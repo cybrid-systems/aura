@@ -2183,6 +2183,153 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #651: query:gc-panic-deferral-stats — Agent-
+    // discoverable structured dashboard for the Actual GC
+    // Deferral/Block Logic in
+    // block_gc_for_pending_checkpoint_trampoline + Request
+    // Shim (P0 Runtime-Gap + GC production-readiness surface —
+    // fills TODO in evaluator_fiber_mutation.cpp, non-
+    // duplicative to #646 #648).
+    //
+    // Note the relationship to existing primitives:
+    //   - (query:gc-safepoint-stats) — base GC safepoint
+    //     primitive (no deferral/panic breakdown)
+    //   - (query:gc-safepoint-deferral-stats) (#646) —
+    //     deferral + backoff for outermost-vs-inner
+    //     MutationBoundary (no panic-specific breakdown)
+    //   - (query:panic-checkpoint-fiber-stats) (#648) —
+    //     fiber resume panic transfer (no GC-deferral
+    //     wire-up)
+    //   - (query:gc-panic-deferral-stats) (#651, this
+    //     primitive) — *GC-panic coordination* companion that
+    //     focuses on the AC1+AC2+AC3 counters for
+    //     block_gc trampoline deferral + GC request blocked
+    //     by panic + panic/GC conflict resolution.
+    //
+    // Fields (3 + sentinel):
+    //   - pending-panic-deferral
+    //                            new gc_panic_pending_deferral_
+    //                            total atomic (foundation for
+    //                            AC1 pending panic checkpoint
+    //                            deferral triggered in
+    //                            block_gc trampoline). Value
+    //                            is 0 until AC1 wire-up.
+    //   - gc-blocked-by-panic   new gc_blocked_by_panic_total
+    //                            atomic (foundation for AC2 GC
+    //                            safepoint request blocked
+    //                            due to pending panic +
+    //                            depth > 0). Value is 0 until
+    //                            AC2 wire-up.
+    //   - conflicts-resolved    new gc_panic_conflict_resolved_
+    //                            total atomic (foundation for
+    //                            AC3 panic + GC conflict
+    //                            resolved without root
+    //                            inconsistency). Value is 0
+    //                            until AC3 wire-up.
+    //   - schema == 651           sentinel for Agent drift
+    //                            detection (mirrors the full
+    //                            chain through
+    //                            #618+#620+#621+#622+#623+
+    //                            #624+#625+#626+#630+#631+
+    //                            #632+#633+#637+#640+#641+
+    //                            #642+#643+#644+#645+#646+
+    //                            #647+#648+#649+#650
+    //                            sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // GC + panic observability surface:
+    //   - (query:gc-safepoint-stats) — base GC safepoint
+    //   - (query:gc-safepoint-deferral-stats) (#646) —
+    //     deferral + backoff for outermost-vs-inner
+    //     MutationBoundary
+    //   - (query:panic-checkpoint-fiber-stats) (#648) —
+    //     fiber resume panic transfer
+    //   - (query:panic-checkpoint-lifecycle-stats) —
+    //     high-level panic lifecycle
+    //   - block_gc_for_pending_checkpoint_trampoline +
+    //     g_block_gc_for_pending_checkpoint exist but with
+    //     "actual GC deferral is out of scope for the current
+    //     ship (TODO)" comment
+    //   - aura_evaluator_request_gc_safepoint forwards but
+    //     only records request (no pending panic check)
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:gc-panic-deferral-stats` with
+    // AC1+AC2+AC3-specific counters — was *not* shipped
+    // under that exact name. So #651 ships ONE new Aura
+    // primitive + 3 new foundation atomics.
+    //
+    // The remaining #651 AC1 (block_gc trampoline real
+    // deferral + gc_state phase integration) + AC2
+    // (aura_evaluator_request_gc_safepoint pending panic +
+    // depth > 0 check + defer/yield/retry) + AC3 (fiber
+    // check_gc_safepoint + scheduler wait_for_safepoint
+    // pending-panic awareness) work is invasive C++ on
+    // evaluator_fiber_mutation.cpp +
+    // block_gc_for_pending_checkpoint_trampoline +
+    // aura_evaluator_request_gc_safepoint + fiber
+    // check_gc_safepoint + scheduler wait_for_safepoint +
+    // needs the panic during MutationBoundary + concurrent
+    // GC + steal matrix + TSan coverage from the issue body
+    // — separate follow-ups.
+    add("query:gc-panic-deferral-stats", [&ev](const auto&) -> EvalValue {
+        // pending-panic-deferral: new foundation atomic
+        // (0 until AC1 block_gc trampoline wire-up).
+        const std::uint64_t pending_panic_deferral =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->gc_panic_pending_deferral_total.load(std::memory_order_relaxed)
+                : 0;
+        // gc-blocked-by-panic: new foundation atomic
+        // (0 until AC2 aura_evaluator_request_gc_safepoint wire-up).
+        const std::uint64_t gc_blocked_by_panic =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->gc_blocked_by_panic_total.load(std::memory_order_relaxed)
+                : 0;
+        // conflicts-resolved: new foundation atomic
+        // (0 until AC3 panic + GC conflict resolution wire-up).
+        const std::uint64_t conflicts_resolved =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->gc_panic_conflict_resolved_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("pending-panic-deferral", static_cast<std::int64_t>(pending_panic_deferral));
+        insert_kv("gc-blocked-by-panic", static_cast<std::int64_t>(gc_blocked_by_panic));
+        insert_kv("conflicts-resolved", static_cast<std::int64_t>(conflicts_resolved));
+        insert_kv("schema", 651);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5138,10 +5285,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 164 entries as of #650 ship (163 from #649 + 1 scheduler-
-        // stealbudget-yield-class observability stats primitive
-        // from #650: query:scheduler-stealbudget-yield-class-stats).
-        return make_int(164);
+        // 165 entries as of #651 ship (164 from #650 + 1 gc-panic-
+        // deferral observability stats primitive from #651:
+        // query:gc-panic-deferral-stats).
+        return make_int(165);
     });
 }
 
