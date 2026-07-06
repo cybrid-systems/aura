@@ -106,6 +106,8 @@
     "query:compiler-core-incremental-stats"
     ; ── Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps ──
     "query:highperf-cpp26-stats"
+    ; ── Issue #659 — Type system typed-mutate incremental gaps ──
+    "query:typesystem-typed-mutate-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
