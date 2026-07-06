@@ -102,6 +102,8 @@
     "query:macro-hygiene-fiber-panic-stats"
     ; ── Issue #655 — EDSL core stability COW/atomic/query/mutate gaps ──
     "query:edsl-core-stability-stats"
+    ; ── Issue #657 — Compiler core incremental self-mod gaps ──
+    "query:compiler-core-incremental-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

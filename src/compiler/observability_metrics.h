@@ -1227,6 +1227,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> edsl_nested_atomic_rollback_total{0};
     std::atomic<std::uint64_t> edsl_mutate_invalidate_precision_total{0};
 
+    // Issue #657: compiler core incremental self-mod gaps — cache bridge
+    // epoch sync, impact-scope partial re-lower, JIT unhandled deopt,
+    // linear metadata flow, quote fallback refresh (non-duplicative with
+    // #600 incremental-closure, #680 impact_scope, #530 production-reloader).
+    std::atomic<std::uint64_t> compiler_core_bridge_epoch_sync_total{0};
+    std::atomic<std::uint64_t> compiler_core_jit_unhandled_invalidate_total{0};
+    std::atomic<std::uint64_t> compiler_core_linear_metadata_flow_total{0};
+    std::atomic<std::uint64_t> compiler_core_quote_fallback_refresh_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

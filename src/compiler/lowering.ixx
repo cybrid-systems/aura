@@ -26,6 +26,14 @@ struct Binding {
     std::uint32_t slot;
 };
 
+// Issue #657: optional hooks for compiler-core incremental observability
+// during lowering (bridge epoch sync + linear metadata flow).
+export struct LoweringObservabilityHooks {
+    std::uint64_t bridge_epoch_capture = 0;
+    void (*on_bridge_epoch_sync)() noexcept = nullptr;
+    void (*on_linear_metadata_flow)() noexcept = nullptr;
+};
+
 // ── LoweringState — all mutable lowering state ────────────────
 // Issue #133: exported so the new lowering_linear_types
 // module (and future extracted lowering modules) can
@@ -146,15 +154,7 @@ export struct LoweringState {
     void emit_with_metadata(aura::ir::IROpcode op, std::uint32_t tid, std::uint8_t linear_state,
                             std::uint32_t adt_variant, std::uint32_t narrow_evidence,
                             std::uint32_t op0, std::uint32_t op1 = 0, std::uint32_t op2 = 0,
-                            std::uint32_t op3 = 0) {
-        emit_with_type(op, tid, op0, op1, op2, op3);
-        if (cur_func && cur_block < cur_func->blocks.size()) {
-            auto& last = cur_func->blocks[cur_block].instructions.back();
-            last.linear_ownership_state = linear_state;
-            last.adt_variant_id = adt_variant;
-            last.narrow_evidence = narrow_evidence;
-        }
-    }
+                            std::uint32_t op3 = 0);
 
     void emit(aura::ir::IROpcode op, std::uint32_t op0, std::uint32_t op1 = 0,
               std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
@@ -271,6 +271,11 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
     const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
     std::uint32_t narrowing_evidence = 0);
+
+// Issue #657: install/clear lowering observability hooks (bridge epoch +
+// linear metadata flow). Called by CompilerService before lowering.
+export void set_lowering_observability_hooks(LoweringObservabilityHooks hooks) noexcept;
+export void clear_lowering_observability_hooks() noexcept;
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat, const ast::StringPool& pool,
