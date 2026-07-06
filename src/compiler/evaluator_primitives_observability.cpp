@@ -974,6 +974,143 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #642: query:arena-auto-compaction-stats —
+    // Agent-discoverable structured dashboard for the Arena
+    // Auto-Compaction + Fiber/GC Safepoint Coordination
+    // (P0 Prompt6-MemorySafety + commercial reliability
+    // surface).
+    //
+    // Note the naming distinction from existing primitives:
+    //   - (query:arena-auto-compact-stats) — earlier
+    //     primitive focused on the auto-compact trigger only
+    //   - (query:arena-auto-compact-defrag-stats) (#569) —
+    //     extended version with defrag breakdown
+    //   - (query:arena-auto-compaction-stats) (#642, this
+    //     primitive) — *enforcement-track* companion that
+    //     focuses on the auto-compaction + fiber/GC
+    //     safepoint coordination counters for AC1+AC2+AC3
+    //     and uses the issue-specified exact name from #642's
+    //     AC4 (`-compaction` with the `-ion` suffix, NOT
+    //     `-compact`).
+    //
+    // Fields (3 + sentinel):
+    //   - auto-trigger        new arena_auto_compact_trigger_
+    //                          total atomic (foundation for
+    //                          AC1 allocate_raw auto-trigger
+    //                          compact on fragmentation >
+    //                          threshold + fiber safepoint
+    //                          coordination). Value is 0
+    //                          until AC1 wire-up.
+    //   - live-move-yield     new arena_live_move_yield_total
+    //                          atomic (foundation for AC2
+    //                          compact/defrag enhanced with
+    //                          live move + yield support).
+    //                          Value is 0 until AC2 wire-up.
+    //   - guard-defrag        new arena_guard_request_defrag_
+    //                          total atomic (foundation for
+    //                          AC3 Guard/invalidate → request_
+    //                          defrag wiring). Value is 0
+    //                          until AC3 wire-up.
+    //   - schema == 642         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640+#641
+    //                          sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers ~70% of the
+    // auto-compaction observability surface:
+    //   - (query:arena-auto-stats) — broader arena stats
+    //   - (query:arena-auto-compact-stats) — earlier
+    //     auto-compact trigger primitive
+    //   - (query:arena-auto-compact-defrag-stats) (#569) —
+    //     defrag breakdown primitive
+    //   - (query:arena-compaction-stats) — base compaction
+    //     summary primitive
+    //   - (query:arena-fragmentation-snapshot) — snapshot
+    //     primitive
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:arena-auto-compaction-stats` (`-ion`
+    // suffix, not `-compact`) with AC1+AC2+AC3-specific
+    // counters — was *not* shipped under that exact name.
+    // So #642 ships ONE new Aura primitive + 3 new foundation
+    // atomics.
+    //
+    // The remaining #642 AC1 + AC2 + AC3 work is invasive
+    // C++ on the allocate_raw + compact/defrag + Guard hot
+    // path + needs the 10k+ mutate + 20+ fibers + TSan/ASan
+    // coverage from the issue body — separate follow-ups.
+    add("query:arena-auto-compaction-stats",
+        [&ev](const auto&) -> EvalValue {
+            // auto-trigger: new foundation atomic
+            // (0 until AC1 allocate_raw auto-trigger wire-up).
+            const std::uint64_t auto_trigger =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->arena_auto_compact_trigger_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // live-move-yield: new foundation atomic
+            // (0 until AC2 live move + yield wire-up).
+            const std::uint64_t live_move_yield =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->arena_live_move_yield_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // guard-defrag: new foundation atomic
+            // (0 until AC3 Guard/invalidate → request_defrag
+            // wire-up).
+            const std::uint64_t guard_defrag =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->arena_guard_request_defrag_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("auto-trigger",
+                      static_cast<std::int64_t>(auto_trigger));
+            insert_kv("live-move-yield",
+                      static_cast<std::int64_t>(live_move_yield));
+            insert_kv("guard-defrag",
+                      static_cast<std::int64_t>(guard_defrag));
+            insert_kv("schema", 642);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -3929,10 +4066,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 155 entries as of #641 ship (154 from #640 + 1 stable-ref-
-        // provenance-sv observability stats primitive from #641:
-        // query:stable-ref-provenance-sv-stats).
-        return make_int(155);
+        // 156 entries as of #642 ship (155 from #641 + 1 arena-auto-
+        // compaction observability stats primitive from #642:
+        // query:arena-auto-compaction-stats).
+        return make_int(156);
     });
 }
 

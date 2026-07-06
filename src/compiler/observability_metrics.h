@@ -744,6 +744,37 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stable_ref_fiber_provenance_check_total{0};
     std::atomic<std::uint64_t> stable_ref_provenance_auto_refresh_total{0};
     std::atomic<std::uint64_t> stable_ref_sv_feedback_wired_total{0};
+    // Issue #642: Arena Auto-Compaction + Fiber/GC Safepoint
+    // Coordination counters (P0 Prompt6-MemorySafety foundation).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when allocate_raw
+    // auto-triggers compact on fragmentation > threshold +
+    // coordinates fiber safepoint (#642 AC1), when compact/
+    // defrag is enhanced with live move + yield support
+    // (#642 AC2), and when Guard/invalidate paths wire
+    // request_defrag (#642 AC3). P0 ships the counters +
+    // the agent-visible (query:arena-auto-compaction-stats)
+    // primitive so the Agent has a dashboard today; values
+    // are 0 until the enforcement work ships.
+    //   - arena_auto_compact_trigger_total: AC1 — count of
+    //     allocate_raw auto-trigger fires when fragmentation
+    //     crosses the threshold + fiber safepoint was
+    //     successfully coordinated. High trigger rate on
+    //     long-running Agent sessions = memory pressure is
+    //     real; 0 triggers under 10k mutate rounds = the
+    //     threshold is too lax.
+    //   - arena_live_move_yield_total: AC2 — count of live
+    //     move + yield events during compact/defrag. High
+    //     count = safe live moves happened (no stop-the-
+    //     world pauses); 0 = everything was stop-the-world
+    //     (latency risk under fiber load).
+    //   - arena_guard_request_defrag_total: AC3 — count of
+    //     Guard/invalidate paths that triggered
+    //     request_defrag. 1.0 ratio = every Guard success
+    //     led to a defrag request (no orphaned fragments).
+    std::atomic<std::uint64_t> arena_auto_compact_trigger_total{0};
+    std::atomic<std::uint64_t> arena_live_move_yield_total{0};
+    std::atomic<std::uint64_t> arena_guard_request_defrag_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

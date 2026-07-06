@@ -3272,6 +3272,23 @@ add_dependencies(all_test_issue_targets test_issue_640)
 aura_add_issue_test(test_issue_641)
 aura_issue_test_link_llvm_jit(test_issue_641)
 add_dependencies(all_test_issue_targets test_issue_641)
+# Issue #642: query:arena-auto-compaction-stats — P0
+# Prompt6-MemorySafety Arena Auto-Compaction + Fiber/GC
+# Safepoint Coordination foundation — 1 new Aura primitive
+# (query:arena-auto-compaction-stats, NOTE `-compaction` with
+# `-ion` suffix — distinct from existing `-compact-stats` /
+# `-compact-defrag-stats`) + 3 new atomics
+# (arena_auto_compact_trigger_total +
+# arena_live_move_yield_total +
+# arena_guard_request_defrag_total). Primitive has 4 fields:
+# 3 from the new atomics (all foundation scaffolding for
+# AC1+AC2+AC3 enforcement, currently 0) + schema sentinel.
+# Builds on #569 arena-auto-compact-defrag-stats +
+# earlier arena-auto-compact-stats + arena-auto-stats +
+# arena-compaction-stats existing primitives.
+aura_add_issue_test(test_issue_642)
+aura_issue_test_link_llvm_jit(test_issue_642)
+add_dependencies(all_test_issue_targets test_issue_642)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
