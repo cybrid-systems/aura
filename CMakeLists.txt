@@ -1740,6 +1740,14 @@ aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_closed_loop_task6_foll
 # monotonic + regression. Non-duplicative with #597/#619/#547/#525.
 aura_add_issue_test(test_edsl_self_evolution_marker_dirty_guard_task6)
 aura_issue_test_link_llvm_jit(test_edsl_self_evolution_marker_dirty_guard_task6)
+# Issue #596: Guard + panic checkpoint + reflect/schema validation +
+# fiber resume safety closed loop (P0 Task6 production review).
+# 7 ACs: guard-panic-reflect-stats (schema 596), Guard validate+commit,
+# panic restore observability, fiber yield/resume depth, inner-guard steal
+# defer, multi-round monotonic + regression. Non-duplicative with #592
+# (panic checkpoint matrix), #594 (reflection-selfmod), #548 (lifecycle).
+aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)
+aura_issue_test_link_llvm_jit(test_guard_panic_reflect_fiber_resume_task6)
 # Issue #514: Task6 Top 3 production-readiness closed loop (meta).
 # 8 ACs: ir-hygiene + pattern-marker + production-readiness stats,
 # macro→query hygiene → Guard mutate → dirty/type incremental,

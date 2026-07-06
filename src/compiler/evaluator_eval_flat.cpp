@@ -3833,6 +3833,7 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
 
 // Issue #488: post-mutate reflect validation hook for Guard success path.
 bool Evaluator::post_mutation_reflect_validate() const noexcept {
+    bump_guard_panic_reflect_validate_hook();
     auto* ws = workspace_flat_;
     if (!ws || ws->size() == 0) {
         bump_schema_validation_fail_count();

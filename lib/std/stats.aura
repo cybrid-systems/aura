@@ -88,6 +88,8 @@
     "query:scheduler-mutation-coord-stats"
     ; ── Issue #593 — AST→query→IR MacroIntroduced hygiene closed loop ──
     "query:pattern-ir-hygiene-closed-loop-stats"
+    ; ── Issue #596 — Guard + panic checkpoint + reflect/schema validation closed loop ──
+    "query:guard-panic-reflect-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

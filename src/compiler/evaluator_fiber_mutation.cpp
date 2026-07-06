@@ -318,6 +318,7 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         version_drift = true;
     if (thread_migrated || version_drift || depth_mismatch || size_mismatch) {
         cross_fiber_rollback_count_.fetch_add(1, std::memory_order_relaxed);
+        bump_guard_panic_reflect_boundary_violation_prevented();
         if (outermost_mutation_success_flag_)
             *outermost_mutation_success_flag_ = false;
         return false;
@@ -358,6 +359,7 @@ namespace {
         if (aura_aot_probe_checkpoint_version(ver, bridge))
             aura_aot_record_deopt_on_steal();
         (void)g_yield_hook_evaluator->restore_post_yield_or_rollback();
+        g_yield_hook_evaluator->restore_panic_checkpoint_on_fiber_resume_if_needed();
     }
     void fiber_sync_mutation_stack_impl(void* per_fiber_stack) {
         Evaluator::sync_per_fiber_mutation_stack(per_fiber_stack);
@@ -682,6 +684,7 @@ extern "C" void aura_evaluator_bump_steal_deferred_violation() {
         return;
     ev->bump_mutation_steal_violation_count();
     ev->bump_boundary_violation_count();
+    ev->bump_guard_panic_reflect_boundary_violation_prevented();
 }
 
 // Issue #500: log scheduler steal attempts in evaluator metrics.
