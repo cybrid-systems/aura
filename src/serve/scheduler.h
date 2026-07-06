@@ -159,6 +159,22 @@ private:
     std::unordered_map<int, Fiber*> wait_map_;
     mutable std::mutex wait_map_mutex_;
 
+    // Issue #63723: helper to check if a Fiber* is still
+    // owned by owned_fibers_ (source of truth for live
+    // fibers). Used by Scheduler::run's event-dispatch to
+    // skip stale events whose Fiber* has been corrupted or
+    // whose atomic load would SIGSEGV (the underlying
+    // corruption that produces these stale entries is a
+    // separate root-cause investigation; this is a minimal
+    // defensive guard).
+    bool owned_fibers_end_contains(const Fiber* fiber) const {
+        for (const auto& f : owned_fibers_) {
+            if (f.get() == fiber)
+                return true;
+        }
+        return false;
+    }
+
     // Issue #119: joiner map — target fiber ID → set of joiner
     // fibers. When a target fiber completes, all its joiners
     // are woken via their eventfds (one write per joiner; the
