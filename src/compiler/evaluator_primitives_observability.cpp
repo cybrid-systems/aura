@@ -3255,6 +3255,85 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #673: query:runtime-observability-correlated-stats — Unified
+    // Runtime Observability Layer (P1) cross-module correlation primitive.
+    //
+    // The other observability primitives (#527, #529, #506, #480, #598,
+    // #548, #599, #592, #593, #596, #591, #438, #448 et al.) each cover
+    // a single module's stats. #673 ships the FIRST dedicated
+    // correlation counters that resolve cross-module events to a single
+    // signal: "mutation during steal" / "ownership violation rate during
+    // steal" / "GC deferred by boundary" (3 of the 4 concrete gaps
+    // identified in the issue body).
+    //
+    // Fields (4 + sentinel):
+    //   - steal-attempts-correlated
+    //       runtime_observability_steal_attempt_correlated_total
+    //       (any steal attempt; baseline denominator)
+    //   - steal-deferred-correlated
+    //       runtime_observability_steal_deferred_correlated_total
+    //       (steal deferred at an active MutationBoundary — the
+    //       "mutation during steal" correlation)
+    //   - steal-ownership-violation-correlated
+    //       runtime_observability_steal_ownership_violation_correlated_total
+    //       (linear ownership violation caught during steal probe —
+    //       the "ownership violation rate during steal" correlation)
+    //   - correlated-events-total
+    //       Sum of the 3 correlated counters above (per-call derivation,
+    //       not a separate atomic). Lets dashboards show overall
+    //       correlated-event volume at a glance.
+    //   - schema == 673
+    //
+    // Non-duplicative with #591 scheduler-mutation-coord-stats,
+    // #438 fiber-migration-stats, #448 mutation-coordination-stats,
+    // #599 compiler-root-stats, #592 panic-checkpoint-fiber-stats,
+    // #596 guard-panic-reflect-stats — each of those exposes its own
+    // module-local view; this primitive is the FIRST unified view.
+    add("query:runtime-observability-correlated-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t steal_attempts =
+            static_cast<std::int64_t>(ev.get_runtime_observability_steal_attempt_correlated());
+        const std::int64_t steal_deferred =
+            static_cast<std::int64_t>(ev.get_runtime_observability_steal_deferred_correlated());
+        const std::int64_t ownership_violation = static_cast<std::int64_t>(
+            ev.get_runtime_observability_steal_ownership_violation_correlated());
+        const std::int64_t correlated_total = steal_attempts + steal_deferred + ownership_violation;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("steal-attempts-correlated", steal_attempts);
+        insert_kv("steal-deferred-correlated", steal_deferred);
+        insert_kv("steal-ownership-violation-correlated", ownership_violation);
+        insert_kv("correlated-events-total", correlated_total);
+        insert_kv("schema", 673);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5893,6 +5972,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:highperf-cpp26-stats",
             // Issue #659 — Type system typed-mutate incremental gaps
             "query:typesystem-typed-mutate-stats",
+            // Issue #673 — Unified Runtime Observability Layer (P1)
+            // cross-module correlation primitive
+            "query:runtime-observability-correlated-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash

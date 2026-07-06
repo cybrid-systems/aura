@@ -727,6 +727,10 @@ extern "C" void aura_evaluator_bump_steal_deferred_violation() {
     ev->bump_mutation_steal_violation_count();
     ev->bump_boundary_violation_count();
     ev->bump_guard_panic_reflect_boundary_violation_prevented();
+    // Issue #673: cross-module correlation — also bump the
+    // "steal-deferred-during-mutation" correlation counter
+    // so query:runtime-observability-correlated-stats reports it.
+    ev->bump_runtime_observability_steal_deferred_correlated();
 }
 
 // Issue #500: log scheduler steal attempts in evaluator metrics.
@@ -735,6 +739,11 @@ extern "C" void aura_evaluator_bump_mutation_steal_attempt() {
     if (!ev)
         return;
     ev->bump_mutation_steal_attempt();
+    // Issue #673: baseline correlation counter — every steal
+    // attempt bumped, so the primitive's denominator is the
+    // global steal-attempt rate. Per-correlation counters
+    // (deferred / ownership) are subsets of this.
+    ev->bump_runtime_observability_steal_attempt_correlated();
 }
 
 // Issue #485: transfer mutation stack on Fiber::resume.

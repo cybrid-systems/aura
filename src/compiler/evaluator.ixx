@@ -3564,6 +3564,61 @@ public:
             m->compiler_core_quote_fallback_refresh_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #673: Unified Runtime Observability Layer (P1) — cross-module
+    // correlation atomics. Bumped from the existing
+    // aura_evaluator_bump_mutation_steal_attempt /
+    // aura_evaluator_bump_steal_deferred_violation / and from
+    // probe_linear_ownership_on_fiber_steal (when violation == true).
+    // All three are no-ops when compiler_metrics_ is null (early startup
+    // / test fixtures without metrics backing).
+    void bump_runtime_observability_steal_attempt_correlated() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->runtime_observability_steal_attempt_correlated_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_runtime_observability_steal_deferred_correlated() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->runtime_observability_steal_deferred_correlated_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_runtime_observability_steal_ownership_violation_correlated() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->runtime_observability_steal_ownership_violation_correlated_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t
+    get_runtime_observability_steal_attempt_correlated() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->runtime_observability_steal_attempt_correlated_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t
+    get_runtime_observability_steal_deferred_correlated() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->runtime_observability_steal_deferred_correlated_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t
+    get_runtime_observability_steal_ownership_violation_correlated() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->runtime_observability_steal_ownership_violation_correlated_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
