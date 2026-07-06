@@ -434,6 +434,33 @@ Evaluator* Evaluator::get_query_evaluator() noexcept {
     return g_query_evaluator;
 }
 
+// Issue #63723: clear all per-thread/process-wide Evaluator
+// pointers that point at this dying instance. Without this,
+// when the closure that owned this Evaluator returns, the
+// worker thread's g_query_evaluator (thread_local) and
+// g_scheduler_stats_evaluator (std::atomic) still point at
+// the dead stack — and the next
+// aura_evaluator_bump_mutation_steal_attempt() /
+// aura_evaluator_bump_mutation_steal_violation() /
+// aura_evaluator_resume_fiber_migration() path dereferences
+// a use-after-return (verified by ASan:
+// stack-use-after-return in bump_mutation_steal_attempt at
+// evaluator.ixx:3130). This is what caused test_issue_226 to
+// hang on t.join() — the worker's steal code called
+// bump_mutation_steal_attempt on a dead Evaluator and
+// crashed/hung inside the atomic fetch_add.
+//
+// Use CAS for the atomic so we don't clobber a freshly-stored
+// pointer from a different CompilerService that was constructed
+// after this Evaluator's ~Evaluator started running.
+void Evaluator::unbind_query_evaluator() noexcept {
+    if (g_query_evaluator == this)
+        g_query_evaluator = nullptr;
+    Evaluator* expected = this;
+    g_scheduler_stats_evaluator.compare_exchange_strong(
+        expected, nullptr, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
 void Evaluator::unbind_yield_hook_evaluator() {
     if (g_yield_hook_evaluator == this)
         g_yield_hook_evaluator = nullptr;
