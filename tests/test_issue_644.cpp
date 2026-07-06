@@ -68,8 +68,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:aot-reload-func-table-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:aot-reload-func-table-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -93,14 +92,10 @@ int main() {
         const auto ref_dec = hash_int(cs, "ref-decrement");
         const auto region_reapply = hash_int(cs, "region-reapply");
         const auto schema = hash_int(cs, "schema");
-        CHECK(ref_bump >= 0,
-              std::format("ref-bump >= 0 (got {})", ref_bump));
-        CHECK(ref_dec >= 0,
-              std::format("ref-decrement >= 0 (got {})", ref_dec));
-        CHECK(region_reapply >= 0,
-              std::format("region-reapply >= 0 (got {})", region_reapply));
-        CHECK(schema == 644,
-              std::format("schema == 644 (got {})", schema));
+        CHECK(ref_bump >= 0, std::format("ref-bump >= 0 (got {})", ref_bump));
+        CHECK(ref_dec >= 0, std::format("ref-decrement >= 0 (got {})", ref_dec));
+        CHECK(region_reapply >= 0, std::format("region-reapply >= 0 (got {})", region_reapply));
+        CHECK(schema == 644, std::format("schema == 644 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -114,11 +109,9 @@ int main() {
         CHECK(s_708c.has_value(),
               "(query:aot-checkpoint-version-stats) reachable (#708 back-compat)");
         auto s_358 = cs.eval("(query:aot-hot-reload-stats)");
-        CHECK(s_358.has_value(),
-              "(query:aot-hot-reload-stats) reachable (#358/#452 back-compat)");
+        CHECK(s_358.has_value(), "(query:aot-hot-reload-stats) reachable (#358/#452 back-compat)");
         auto s_643 = cs.eval("(query:primitives-meta)");
-        CHECK(s_643.has_value(),
-              "(query:primitives-meta) reachable (#643 back-compat)");
+        CHECK(s_643.has_value(), "(query:primitives-meta) reachable (#643 back-compat)");
         auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
         CHECK(s_642.has_value(),
               "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
@@ -138,21 +131,17 @@ int main() {
         const auto ref_bump = hash_int(cs, "ref-bump");
         const auto ref_dec = hash_int(cs, "ref-decrement");
         const auto region_reapply = hash_int(cs, "region-reapply");
-        CHECK(ref_bump == 0,
-              std::format("fresh-service ref-bump == 0 (got {})", ref_bump));
-        CHECK(ref_dec == 0,
-              std::format("fresh-service ref-decrement == 0 (got {})", ref_dec));
+        CHECK(ref_bump == 0, std::format("fresh-service ref-bump == 0 (got {})", ref_bump));
+        CHECK(ref_dec == 0, std::format("fresh-service ref-decrement == 0 (got {})", ref_dec));
         CHECK(region_reapply == 0,
-              std::format("fresh-service region-reapply == 0 (got {})",
-                          region_reapply));
+              std::format("fresh-service region-reapply == 0 (got {})", region_reapply));
     }
 
     // AC4: schema sentinel is exactly 644 (not 643/642/641/640).
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 644,
-              std::format("schema == 644 (got {})", schema));
+        CHECK(schema == 644, std::format("schema == 644 (got {})", schema));
     }
 
     // AC5: naming distinction — the new primitive name uses
@@ -172,22 +161,18 @@ int main() {
         // should NOT collide on name OR field set.
         const auto new_schema = hash_int(cs, "schema");
         // #708 uses `reload-attempts` instead of `schema`.
-        auto old_field_r = cs.eval(
-            "(hash-ref (query:aot-reload-stats) 'reload-attempts)");
-        CHECK(old_field_r.has_value() &&
-                  aura::compiler::types::is_int(*old_field_r),
-              "#708 primitive 'reload-attempts' field reachable (no `schema` field — uses 'reload-attempts' as primary sentinel)");
+        auto old_field_r = cs.eval("(hash-ref (query:aot-reload-stats) 'reload-attempts)");
+        CHECK(old_field_r.has_value() && aura::compiler::types::is_int(*old_field_r),
+              "#708 primitive 'reload-attempts' field reachable (no `schema` field — uses "
+              "'reload-attempts' as primary sentinel)");
         // The new primitive should NOT have the #708 field set
         // (it uses different field names). Verify by checking
         // the new primitive's expected fields are all reachable
         // via the typed hash_int helper (defined at top of file
         // — returns -1 on missing key, so we check for >= 0).
-        CHECK(hash_int(cs, "schema") == 644,
-              "new primitive 'schema' field == 644");
-        CHECK(hash_int(cs, "ref-bump") >= 0,
-              "new primitive 'ref-bump' field reachable");
-        CHECK(hash_int(cs, "ref-decrement") >= 0,
-              "new primitive 'ref-decrement' field reachable");
+        CHECK(hash_int(cs, "schema") == 644, "new primitive 'schema' field == 644");
+        CHECK(hash_int(cs, "ref-bump") >= 0, "new primitive 'ref-bump' field reachable");
+        CHECK(hash_int(cs, "ref-decrement") >= 0, "new primitive 'ref-decrement' field reachable");
         CHECK(hash_int(cs, "region-reapply") >= 0,
               "new primitive 'region-reapply' field reachable");
         // Distinct field set from #708: #708 has
@@ -196,8 +181,7 @@ int main() {
         // distinction is structural via field name + schema
         // sentinel — no need to invoke hash-ref on missing keys,
         // which would hit Aura's hash-table error path.)
-        CHECK(new_schema == 644,
-              std::format("new primitive schema == 644 (got {})", new_schema));
+        CHECK(new_schema == 644, std::format("new primitive schema == 644 (got {})", new_schema));
     }
 
     // AC6: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -220,9 +204,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

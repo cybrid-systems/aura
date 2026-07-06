@@ -62,8 +62,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:arena-auto-compaction-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:arena-auto-compaction-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -87,14 +86,10 @@ int main() {
         const auto live_move = hash_int(cs, "live-move-yield");
         const auto guard_defrag = hash_int(cs, "guard-defrag");
         const auto schema = hash_int(cs, "schema");
-        CHECK(auto_trigger >= 0,
-              std::format("auto-trigger >= 0 (got {})", auto_trigger));
-        CHECK(live_move >= 0,
-              std::format("live-move-yield >= 0 (got {})", live_move));
-        CHECK(guard_defrag >= 0,
-              std::format("guard-defrag >= 0 (got {})", guard_defrag));
-        CHECK(schema == 642,
-              std::format("schema == 642 (got {})", schema));
+        CHECK(auto_trigger >= 0, std::format("auto-trigger >= 0 (got {})", auto_trigger));
+        CHECK(live_move >= 0, std::format("live-move-yield >= 0 (got {})", live_move));
+        CHECK(guard_defrag >= 0, std::format("guard-defrag >= 0 (got {})", guard_defrag));
+        CHECK(schema == 642, std::format("schema == 642 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -105,8 +100,8 @@ int main() {
         CHECK(s_acd.has_value(),
               "(query:arena-auto-compact-defrag-stats) reachable (#569 back-compat)");
         auto s_ac = cs.eval("(query:arena-auto-compact-stats)");
-        CHECK(s_ac.has_value(),
-              "(query:arena-auto-compact-stats) reachable (earlier auto-compact primitive back-compat)");
+        CHECK(s_ac.has_value(), "(query:arena-auto-compact-stats) reachable (earlier auto-compact "
+                                "primitive back-compat)");
         auto s_as = cs.eval("(query:arena-auto-stats)");
         CHECK(s_as.has_value(),
               "(query:arena-auto-stats) reachable (broader arena stats back-compat)");
@@ -144,8 +139,7 @@ int main() {
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 642,
-              std::format("schema == 642 (got {})", schema));
+        CHECK(schema == 642, std::format("schema == 642 (got {})", schema));
     }
 
     // AC5: naming distinction — the new primitive name uses
@@ -157,8 +151,9 @@ int main() {
         auto new_p = cs.eval("(query:arena-auto-compaction-stats)");
         auto old_compact = cs.eval("(query:arena-auto-compact-stats)");
         auto old_defrag = cs.eval("(query:arena-auto-compact-defrag-stats)");
-        CHECK(new_p.has_value(),
-              "new primitive (query:arena-auto-compaction-stats) reachable (-compaction with -ion)");
+        CHECK(
+            new_p.has_value(),
+            "new primitive (query:arena-auto-compaction-stats) reachable (-compaction with -ion)");
         CHECK(old_compact.has_value(),
               "existing (query:arena-auto-compact-stats) still reachable (-compact, no -ion)");
         CHECK(old_defrag.has_value(),
@@ -191,9 +186,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

@@ -68,8 +68,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:sv-verification-closedloop-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:sv-verification-closedloop-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -93,14 +92,10 @@ int main() {
         const auto g_reemit = hash_int(cs, "guard-reemit");
         const auto sr_strict = hash_int(cs, "stable-ref-strict");
         const auto schema = hash_int(cs, "schema");
-        CHECK(fb_apply >= 0,
-              std::format("feedback-apply >= 0 (got {})", fb_apply));
-        CHECK(g_reemit >= 0,
-              std::format("guard-reemit >= 0 (got {})", g_reemit));
-        CHECK(sr_strict >= 0,
-              std::format("stable-ref-strict >= 0 (got {})", sr_strict));
-        CHECK(schema == 640,
-              std::format("schema == 640 (got {})", schema));
+        CHECK(fb_apply >= 0, std::format("feedback-apply >= 0 (got {})", fb_apply));
+        CHECK(g_reemit >= 0, std::format("guard-reemit >= 0 (got {})", g_reemit));
+        CHECK(sr_strict >= 0, std::format("stable-ref-strict >= 0 (got {})", sr_strict));
+        CHECK(schema == 640, std::format("schema == 640 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -111,8 +106,8 @@ int main() {
         CHECK(s_579.has_value(),
               "(query:verification-feedback-loop-stats) reachable (#579 back-compat)");
         auto s_630 = cs.eval("(query:sv-verification-closedloop-stats-hash)");
-        CHECK(s_630.has_value(),
-              "(query:sv-verification-closedloop-stats-hash) reachable (#630 back-compat — historical hash primitive)");
+        CHECK(s_630.has_value(), "(query:sv-verification-closedloop-stats-hash) reachable (#630 "
+                                 "back-compat — historical hash primitive)");
         auto s_637 = cs.eval("(query:closure-bridge-safety-stats-hash)");
         CHECK(s_637.has_value(),
               "(query:closure-bridge-safety-stats-hash) reachable (#637 back-compat)");
@@ -120,8 +115,7 @@ int main() {
         CHECK(s_633.has_value(),
               "(query:stdlib-compiler-demands-stats-hash) reachable (#633 back-compat)");
         auto s_632 = cs.eval("(query:atomic-batch-sv-stats-hash)");
-        CHECK(s_632.has_value(),
-              "(query:atomic-batch-sv-stats-hash) reachable (#632 back-compat)");
+        CHECK(s_632.has_value(), "(query:atomic-batch-sv-stats-hash) reachable (#632 back-compat)");
         auto s_631 = cs.eval("(query:stable-ref-provenance-sv-stats-hash)");
         CHECK(s_631.has_value(),
               "(query:stable-ref-provenance-sv-stats-hash) reachable (#631 back-compat)");
@@ -139,10 +133,8 @@ int main() {
         const auto fb_apply = hash_int(cs, "feedback-apply");
         const auto g_reemit = hash_int(cs, "guard-reemit");
         const auto sr_strict = hash_int(cs, "stable-ref-strict");
-        CHECK(fb_apply == 0,
-              std::format("fresh-service feedback-apply == 0 (got {})", fb_apply));
-        CHECK(g_reemit == 0,
-              std::format("fresh-service guard-reemit == 0 (got {})", g_reemit));
+        CHECK(fb_apply == 0, std::format("fresh-service feedback-apply == 0 (got {})", fb_apply));
+        CHECK(g_reemit == 0, std::format("fresh-service guard-reemit == 0 (got {})", g_reemit));
         CHECK(sr_strict == 0,
               std::format("fresh-service stable-ref-strict == 0 (got {})", sr_strict));
     }
@@ -151,8 +143,7 @@ int main() {
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 640,
-              std::format("schema == 640 (got {})", schema));
+        CHECK(schema == 640, std::format("schema == 640 (got {})", schema));
     }
 
     // AC5: naming distinction — the new primitive name has NO
@@ -169,15 +160,13 @@ int main() {
         // The new primitive's schema sentinel is 640; the
         // historical one's is 630 — they should NOT collide.
         const auto new_schema = hash_int(cs, "schema");
-        auto old_schema_r = cs.eval(
-            "(hash-ref (query:sv-verification-closedloop-stats-hash) 'schema')");
-        CHECK(old_schema_r.has_value() &&
-                  aura::compiler::types::is_int(*old_schema_r) &&
+        auto old_schema_r =
+            cs.eval("(hash-ref (query:sv-verification-closedloop-stats-hash) 'schema')");
+        CHECK(old_schema_r.has_value() && aura::compiler::types::is_int(*old_schema_r) &&
                   aura::compiler::types::as_int(*old_schema_r) == 630,
               std::format("#630 primitive schema == 630 (got {})",
-                          old_schema_r.has_value()
-                              ? aura::compiler::types::as_int(*old_schema_r)
-                              : -1));
+                          old_schema_r.has_value() ? aura::compiler::types::as_int(*old_schema_r)
+                                                   : -1));
         CHECK(new_schema == 640,
               std::format("new primitive schema != 630 collision (new={})", new_schema));
     }
@@ -202,9 +191,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

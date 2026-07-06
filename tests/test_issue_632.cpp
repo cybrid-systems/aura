@@ -61,8 +61,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:atomic-batch-sv-stats-hash) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:atomic-batch-sv-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -80,8 +79,7 @@ int main() {
     {
         std::println("\n--- AC1: (query:atomic-batch-sv-stats-hash) shape ---");
         auto h = cs.eval("(query:atomic-batch-sv-stats-hash)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "atomic-batch-sv-stats-hash returns a hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "atomic-batch-sv-stats-hash returns a hash");
         const auto active = hash_int(cs, "active-sv-batches");
         const auto suppressed = hash_int(cs, "suppressed-bumps-on-sv");
         const auto rollback = hash_int(cs, "rollback-success-sv");
@@ -89,14 +87,10 @@ int main() {
         const auto schema = hash_int(cs, "schema");
         CHECK(active == 0 || active == 1,
               std::format("active-sv-batches in {{0,1}} (got {})", active));
-        CHECK(suppressed >= 0,
-              std::format("suppressed-bumps-on-sv >= 0 (got {})", suppressed));
-        CHECK(rollback >= 0,
-              std::format("rollback-success-sv >= 0 (got {})", rollback));
-        CHECK(impact >= 0,
-              std::format("batch-impact-sv-nodes >= 0 (got {})", impact));
-        CHECK(schema == 632,
-              std::format("schema == 632 (got {})", schema));
+        CHECK(suppressed >= 0, std::format("suppressed-bumps-on-sv >= 0 (got {})", suppressed));
+        CHECK(rollback >= 0, std::format("rollback-success-sv >= 0 (got {})", rollback));
+        CHECK(impact >= 0, std::format("batch-impact-sv-nodes >= 0 (got {})", impact));
+        CHECK(schema == 632, std::format("schema == 632 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -104,8 +98,7 @@ int main() {
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
         auto s_stats = cs.eval("(atomic-batch:stats)");
-        CHECK(s_stats.has_value(),
-              "(atomic-batch:stats) reachable (#192 back-compat)");
+        CHECK(s_stats.has_value(), "(atomic-batch:stats) reachable (#192 back-compat)");
         auto s_st = cs.eval("(query:atomic-batch-stats)");
         CHECK(s_st && aura::compiler::types::is_int(*s_st),
               "(query:atomic-batch-stats) returns an int (#437 back-compat)");
@@ -126,26 +119,20 @@ int main() {
         const auto suppressed = hash_int(cs, "suppressed-bumps-on-sv");
         const auto rollback = hash_int(cs, "rollback-success-sv");
         const auto impact = hash_int(cs, "batch-impact-sv-nodes");
-        CHECK(active == 0,
-              std::format("fresh-service active-sv-batches == 0 (got {})",
-                          active));
+        CHECK(active == 0, std::format("fresh-service active-sv-batches == 0 (got {})", active));
         CHECK(suppressed == 0,
-              std::format("fresh-service suppressed-bumps-on-sv == 0 (got {})",
-                          suppressed));
+              std::format("fresh-service suppressed-bumps-on-sv == 0 (got {})", suppressed));
         CHECK(rollback == 0,
-              std::format("fresh-service rollback-success-sv == 0 (got {})",
-                          rollback));
+              std::format("fresh-service rollback-success-sv == 0 (got {})", rollback));
         CHECK(impact == 0,
-              std::format("fresh-service batch-impact-sv-nodes == 0 (got {})",
-                          impact));
+              std::format("fresh-service batch-impact-sv-nodes == 0 (got {})", impact));
     }
 
     // AC4: schema sentinel is exactly 632 (not 622/630/631).
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 632,
-              std::format("schema == 632 (got {})", schema));
+        CHECK(schema == 632, std::format("schema == 632 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -168,9 +155,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

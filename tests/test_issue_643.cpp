@@ -86,19 +86,13 @@ int main() {
     {
         std::println("\n--- AC1: (query:primitives-meta) no-arg form ---");
         auto h = cs.eval("(query:primitives-meta)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "primitives-meta (no-arg) returns a hash");
-        const auto define_used =
-            hash_int(cs, "(query:primitives-meta)", "define-macro-used");
-        const auto err_unified =
-            hash_int(cs, "(query:primitives-meta)", "prim-error-unified");
+        CHECK(h && aura::compiler::types::is_hash(*h), "primitives-meta (no-arg) returns a hash");
+        const auto define_used = hash_int(cs, "(query:primitives-meta)", "define-macro-used");
+        const auto err_unified = hash_int(cs, "(query:primitives-meta)", "prim-error-unified");
         const auto schema = hash_int(cs, "(query:primitives-meta)", "schema");
-        CHECK(define_used >= 0,
-              std::format("define-macro-used >= 0 (got {})", define_used));
-        CHECK(err_unified >= 0,
-              std::format("prim-error-unified >= 0 (got {})", err_unified));
-        CHECK(schema == 643,
-              std::format("schema == 643 (got {})", schema));
+        CHECK(define_used >= 0, std::format("define-macro-used >= 0 (got {})", define_used));
+        CHECK(err_unified >= 0, std::format("prim-error-unified >= 0 (got {})", err_unified));
+        CHECK(schema == 643, std::format("schema == 643 (got {})", schema));
     }
 
     // AC2: (query:primitives-meta 'name) — per-primitive lookup
@@ -107,21 +101,16 @@ int main() {
     {
         std::println("\n--- AC2: (query:primitives-meta [name]) lookup form ---");
         auto h = cs.eval("(query:primitives-meta 'foo)");
-        CHECK(h && aura::compiler::types::is_hash(*h),
-              "primitives-meta ['foo] returns a hash");
+        CHECK(h && aura::compiler::types::is_hash(*h), "primitives-meta ['foo] returns a hash");
         const auto schema = hash_int(cs, "(query:primitives-meta 'foo)", "schema");
         const auto arity = hash_int(cs, "(query:primitives-meta 'foo)", "arity");
         const auto has_fn = hash_int(cs, "(query:primitives-meta 'foo)", "has-fn");
-        CHECK(schema == 643,
-              std::format("per-name schema == 643 (got {})", schema));
-        CHECK(arity >= 0,
-              std::format("per-name arity >= 0 (got {})", arity));
-        CHECK(has_fn >= 0,
-              std::format("per-name has-fn >= 0 (got {})", has_fn));
+        CHECK(schema == 643, std::format("per-name schema == 643 (got {})", schema));
+        CHECK(arity >= 0, std::format("per-name arity >= 0 (got {})", arity));
+        CHECK(has_fn >= 0, std::format("per-name has-fn >= 0 (got {})", has_fn));
         // The name field is a string — verify it's the requested name.
         auto name_r = cs.eval("(hash-ref (query:primitives-meta 'foo) 'name)");
-        CHECK(name_r.has_value() &&
-                  aura::compiler::types::is_string(*name_r),
+        CHECK(name_r.has_value() && aura::compiler::types::is_string(*name_r),
               "per-name 'name' field is a string");
     }
 
@@ -136,8 +125,8 @@ int main() {
         CHECK(s_617.has_value(),
               "(query:primitives-meta-catalog) reachable (#617 back-compat — catalog form)");
         auto s_by_cat = cs.eval("(query:primitives-by-category 'core)");
-        CHECK(s_by_cat.has_value(),
-              "(query:primitives-by-category 'core) reachable (existing category filter back-compat)");
+        CHECK(s_by_cat.has_value(), "(query:primitives-by-category 'core) reachable (existing "
+                                    "category filter back-compat)");
         auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
         CHECK(s_642.has_value(),
               "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
@@ -156,27 +145,21 @@ int main() {
     // PRIM_ERROR unification).
     {
         std::println("\n--- AC4: derived-metric invariants on fresh service ---");
-        const auto define_used =
-            hash_int(cs, "(query:primitives-meta)", "define-macro-used");
-        const auto err_unified =
-            hash_int(cs, "(query:primitives-meta)", "prim-error-unified");
+        const auto define_used = hash_int(cs, "(query:primitives-meta)", "define-macro-used");
+        const auto err_unified = hash_int(cs, "(query:primitives-meta)", "prim-error-unified");
         CHECK(define_used == 0,
-              std::format("fresh-service define-macro-used == 0 (got {})",
-                          define_used));
+              std::format("fresh-service define-macro-used == 0 (got {})", define_used));
         CHECK(err_unified == 0,
-              std::format("fresh-service prim-error-unified == 0 (got {})",
-                          err_unified));
+              std::format("fresh-service prim-error-unified == 0 (got {})", err_unified));
     }
 
     // AC5: schema sentinel is exactly 643 (not 642/641/640/637).
     {
         std::println("\n--- AC5: schema sentinel ---");
         const auto schema = hash_int(cs, "(query:primitives-meta)", "schema");
-        CHECK(schema == 643,
-              std::format("no-arg schema == 643 (got {})", schema));
+        CHECK(schema == 643, std::format("no-arg schema == 643 (got {})", schema));
         const auto name_schema = hash_int(cs, "(query:primitives-meta 'foo)", "schema");
-        CHECK(name_schema == 643,
-              std::format("per-name schema == 643 (got {})", name_schema));
+        CHECK(name_schema == 643, std::format("per-name schema == 643 (got {})", name_schema));
     }
 
     // AC6: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -199,9 +182,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
