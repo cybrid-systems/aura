@@ -1218,6 +1218,7 @@ public:
     void bump_impact_scope_calls(std::uint64_t affected_blocks = 1) noexcept {
         impact_scope_calls_.fetch_add(1, std::memory_order_relaxed);
         total_affected_blocks_.fetch_add(affected_blocks, std::memory_order_relaxed);
+        bump_incremental_closure_blocks_relowered(affected_blocks);
     }
 
     // Issue #240: per-node occurrence-dirty bit hooks.
@@ -3449,6 +3450,25 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->compiler_root_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #600: incremental per-block re-lower + closure bridge synergy.
+    void bump_incremental_closure_blocks_relowered(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_closure_blocks_relowered_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_closure_min_scope_win(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_closure_min_scope_win_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_closure_jit_sync() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_closure_jit_sync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     void bump_total_query_calls() noexcept {

@@ -4087,9 +4087,11 @@ public:
             std::size_t total_blocks_saved = 0;
             for (const auto& fb : it->second.block_dirty_per_func_)
                 total_blocks_saved += fb.size();
-            if (total_blocks_saved > 0)
+            if (total_blocks_saved > 0) {
                 metrics_.ir_soa_relower_blocks_saved_total.fetch_add(total_blocks_saved,
                                                                      std::memory_order_relaxed);
+                evaluator_.bump_incremental_closure_min_scope_win(total_blocks_saved);
+            }
             return true;
         }
         // Issue #224 cycle 3: detect single-function-dirty
@@ -7349,10 +7351,12 @@ private:
         jit_.invalidate(name.c_str());
         jit_.invalidate_prefix(name.c_str());
         metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        evaluator_.bump_incremental_closure_jit_sync();
         for (auto& dep_name : dependents) {
             jit_.invalidate(dep_name.c_str());
             jit_.invalidate_prefix(dep_name.c_str());
             metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            evaluator_.bump_incremental_closure_jit_sync();
         }
 
         // Issue #225 cycle 3: invalidate bridge data for
@@ -8571,6 +8575,7 @@ public:
             jit_.invalidate(name.c_str());
             jit_.invalidate_prefix(name.c_str());
             metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            evaluator_.bump_incremental_closure_jit_sync();
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
                 if (jit_cache_.erase(name) > 0)

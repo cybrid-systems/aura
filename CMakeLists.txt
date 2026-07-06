@@ -1453,6 +1453,12 @@ aura_issue_test_link_llvm_jit(test_linear_ownership_runtime_enforcement_post_mut
 # Non-duplicative with #531 (closure-env-safety), #598 (linear-runtime).
 aura_add_issue_test(test_compiler_root_epoch_gc_safety_post_invalidate)
 aura_issue_test_link_llvm_jit(test_compiler_root_epoch_gc_safety_post_invalidate)
+# Issue #600: Per-block dirty + impact scope + closure bridge synergy for
+# minimal re-lower in AI self-mod. 7 ACs: incremental-closure-stats
+# (schema 600), blocks-relowered/bridge-hits/min-scope-win/jit-sync,
+# multi-round monotonic + regression. Non-duplicative with #530/#429/#531.
+aura_add_issue_test(test_incremental_perblock_closure_bridge_safety)
+aura_issue_test_link_llvm_jit(test_incremental_perblock_closure_bridge_safety)
 # Issue #575: Task2 PerDefUse incremental linear ownership post-mutate.
 aura_add_issue_test(test_linear_ownership_incremental_post_mutate_task2)
 aura_issue_test_link_llvm_jit(test_linear_ownership_incremental_post_mutate_task2)
