@@ -1901,6 +1901,153 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #649: query:yield-checkpoint-panic-stats —
+    // Agent-discoverable structured dashboard for the Full
+    // Per-Fiber YieldCheckpointStorage Re-Stamp + Size
+    // Validation on Panic Transfer + Cross-Steal (P0
+    // Runtime-Gap + Panic production-readiness surface —
+    // non-duplicative to #648 #264).
+    //
+    // Note the naming distinction from #648:
+    //   - (query:panic-checkpoint-fiber-stats) (#648) —
+    //     fiber resume panic checkpoint transfer +
+    //     INVALID_VERSION GC + concurrent panic/GC
+    //     conflict (transport layer)
+    //   - (query:yield-checkpoint-panic-stats) (#649, this
+    //     primitive) — *yield-checkpoint storage lifecycle*
+    //     companion that focuses on the AC1+AC2+AC3
+    //     counters for yield_checkpoint re-stamp +
+    //     size validation + cross-steal invalidation
+    //     (storage lifecycle layer that #648 doesn't cover).
+    //
+    // Fields (3 + sentinel):
+    //   - transfer-with-restamp   new yield_transfer_with_
+    //                              restamp_total atomic
+    //                              (foundation for AC1 panic
+    //                              transfer triggering yield_
+    //                              checkpoint re-stamp).
+    //                              Value is 0 until AC1
+    //                              wire-up.
+    //   - size-mismatch-caught    new yield_size_mismatch_
+    //                              caught_total atomic
+    //                              (foundation for AC2
+    //                              yield_checkpoint stack
+    //                              size + top-entry version
+    //                              mismatch caught in
+    //                              restore_post_yield_or_
+    //                              rollback). Value is 0
+    //                              until AC2 wire-up.
+    //   - cross-steal-invalidation
+    //                              new yield_cross_steal_
+    //                              invalidation_total
+    //                              atomic (foundation for
+    //                              AC3 cross-steal
+    //                              invalidation of pending
+    //                              yield checkpoints).
+    //                              Value is 0 until AC3
+    //                              wire-up.
+    //   - schema == 649             sentinel for Agent drift
+    //                              detection (mirrors the
+    //                              full chain through
+    //                              #618+#620+#621+#622+
+    //                              #623+#624+#625+#626+
+    //                              #630+#631+#632+#633+
+    //                              #637+#640+#641+#642+
+    //                              #643+#644+#645+#646+
+    //                              #647+#648 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // yield checkpoint + panic observability surface:
+    //   - (query:panic-checkpoint-fiber-stats) (#648) —
+    //     fiber resume panic transfer (transport layer)
+    //   - (query:panic-checkpoint-lifecycle-stats) —
+    //     high-level panic checkpoint lifecycle summary
+    //   - #264 yield checkpoint foundation
+    //   - #356 INVALID_VERSION + post-rollback frames
+    //   - #588 per-fiber stack + yield_checkpoint_storage_
+    //   - transfer_panic_checkpoint_trampoline + bump metric
+    //   - restore_post_yield_or_rollback validates
+    //     thread/version/depth but no yield_checkpoint
+    //     re-stamp or size check
+    //   - g_fiber_yield_checkpoint_deleter_ exists but no
+    //     panic-state re-stamp coordination
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:yield-checkpoint-panic-stats` with
+    // AC1+AC2+AC3-specific counters as a structured hash —
+    // was *not* shipped under that exact name. So #649 ships
+    // ONE new Aura primitive + 3 new foundation atomics.
+    //
+    // The remaining #649 AC1 (transfer_panic_checkpoint_
+    // trampoline + fiber resume after hook call re-stamp or
+    // resize yield_checkpoint_storage_) + AC2 (restore_post_
+    // yield_or_rollback adds yield_checkpoint stack size +
+    // top-entry version check) + AC3 (g_fiber_yield_checkpoint_
+    // coordinates with pending_panic_checkpoint under
+    // MutationBoundary) work is invasive C++ on
+    // transfer_panic_checkpoint_trampoline + fiber resume +
+    // restore_post_yield_or_rollback + g_fiber_yield_checkpoint_
+    // + needs the panic during deep yield-boundary + steal +
+    // resume matrix + TSan coverage from the issue body —
+    // separate follow-ups.
+    add("query:yield-checkpoint-panic-stats", [&ev](const auto&) -> EvalValue {
+        // transfer-with-restamp: new foundation atomic
+        // (0 until AC1 panic transfer wire-up).
+        const std::uint64_t transfer_with_restamp =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->yield_transfer_with_restamp_total.load(std::memory_order_relaxed)
+                : 0;
+        // size-mismatch-caught: new foundation atomic
+        // (0 until AC2 yield_checkpoint stack size wire-up).
+        const std::uint64_t size_mismatch_caught =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->yield_size_mismatch_caught_total.load(std::memory_order_relaxed)
+                : 0;
+        // cross-steal-invalidation: new foundation atomic
+        // (0 until AC3 cross-steal invalidation wire-up).
+        const std::uint64_t cross_steal_invalidation =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->yield_cross_steal_invalidation_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("transfer-with-restamp", static_cast<std::int64_t>(transfer_with_restamp));
+        insert_kv("size-mismatch-caught", static_cast<std::int64_t>(size_mismatch_caught));
+        insert_kv("cross-steal-invalidation", static_cast<std::int64_t>(cross_steal_invalidation));
+        insert_kv("schema", 649);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4856,10 +5003,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 162 entries as of #648 ship (161 from #647 + 1 panic-
-        // checkpoint-fiber observability stats primitive from
-        // #648: query:panic-checkpoint-fiber-stats).
-        return make_int(162);
+        // 163 entries as of #649 ship (162 from #648 + 1 yield-
+        // checkpoint-panic observability stats primitive from
+        // #649: query:yield-checkpoint-panic-stats).
+        return make_int(163);
     });
 }
 

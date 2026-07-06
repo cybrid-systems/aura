@@ -990,6 +990,43 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> panic_transfer_on_resume_total{0};
     std::atomic<std::uint64_t> panic_invalid_frames_skipped_total{0};
     std::atomic<std::uint64_t> panic_concurrent_gc_conflict_total{0};
+    // Issue #649: Full Per-Fiber YieldCheckpointStorage
+    // Re-Stamp + Size Validation on Panic Transfer +
+    // Cross-Steal counters (P0 Runtime-Gap + Panic
+    // production-readiness foundation — non-duplicative to
+    // #648 #264).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when
+    // transfer_panic_checkpoint_trampoline + fiber resume
+    // after hook call re-stamp or resize
+    // yield_checkpoint_storage_ to match current panic
+    // Guard state (#649 AC1), when restore_post_yield_or_
+    // rollback adds yield_checkpoint stack size + top-entry
+    // version check (#649 AC2), and when g_fiber_yield_
+    // checkpoint_ coordinates with pending_panic_checkpoint
+    // under MutationBoundary (#649 AC3). P0 ships the
+    // counters + the agent-visible
+    // (query:yield-checkpoint-panic-stats) primitive so the
+    // Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - yield_transfer_with_restamp_total: AC1 — count of
+    //     panic transfers that triggered a yield_checkpoint
+    //     storage re-stamp/resize. Ratio (this / panic
+    //     transfer_on_resume_total from #648) = how often
+    //     panic transfer path needed the re-stamp.
+    //   - yield_size_mismatch_caught_total: AC2 — count of
+    //     yield_checkpoint stack size mismatches caught in
+    //     restore_post_yield_or_rollback. High rate = long-
+    //     running fibers are accumulating unbounded yield
+    //     checkpoints (storage growth risk).
+    //   - yield_cross_steal_invalidation_total: AC3 — count
+    //     of cross-steal invalidations of pending yield
+    //     checkpoints (per-AC3 coordination). High rate =
+    //     production fiber fleet is doing frequent steal +
+    //     yield + panic path — the AC3 wire-up needs to land.
+    std::atomic<std::uint64_t> yield_transfer_with_restamp_total{0};
+    std::atomic<std::uint64_t> yield_size_mismatch_caught_total{0};
+    std::atomic<std::uint64_t> yield_cross_steal_invalidation_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
