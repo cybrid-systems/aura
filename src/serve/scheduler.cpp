@@ -326,8 +326,17 @@ Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
 
 bool Scheduler::has_waiting_fibers() const {
     std::lock_guard<std::mutex> lock(wait_map_mutex_);
+    // Issue #63723: skip entries whose Fiber* is not currently
+    // owned by this scheduler (defensive — the underlying
+    // corruption that produces such entries is a separate
+    // root-cause investigation; this prevents the worker
+    // from SIGSEGV'ing on a stale entry).
     for (auto& [evfd, fiber] : wait_map_) {
-        if (fiber && fiber->state() == FiberState::Waiting)
+        if (!fiber)
+            continue;
+        if (!owned_fibers_end_contains(fiber))
+            continue;
+        if (fiber->state() == FiberState::Waiting)
             return true;
     }
     return false;
@@ -445,7 +454,16 @@ void Scheduler::run() {
                 {
                     std::lock_guard<std::mutex> lock(wait_map_mutex_);
                     for (auto& [evfd, fiber] : wait_map_) {
-                        if (fiber && fiber->state() == FiberState::Waiting) {
+                        // Issue #63723: same defensive guard as
+                        // in has_waiting_fibers() — skip entries
+                        // whose Fiber* is not currently owned by
+                        // this scheduler (stale/corrupt entries
+                        // that would crash on fiber->state()).
+                        if (!fiber)
+                            continue;
+                        if (!owned_fibers_end_contains(fiber))
+                            continue;
+                        if (fiber->state() == FiberState::Waiting) {
                             int wid;
                             if (fiber->affinity() >= 0) {
                                 wid = std::min(fiber->affinity(),
@@ -462,7 +480,25 @@ void Scheduler::run() {
             } else {
                 // Fiber eventfd event
                 auto* fiber = static_cast<Fiber*>(events[i].data.ptr);
-                if (!fiber || fiber->is_done())
+                // Issue #63723: defensive guard against corrupted
+                // Fiber* pointers (test_issue_226 crash). If the
+                // fiber is not currently owned by this scheduler,
+                // skip the event rather than dereference a stale
+                // pointer. The eventfd may have been left in
+                // epoll after a fiber was completed and removed
+                // from wait_map_; the spurious wakeup is harmless
+                // once we drop the event.
+                if (!fiber)
+                    continue;
+                if (!owned_fibers_end_contains(fiber)) {
+                    // Drop the event. Drain the eventfd so it
+                    // doesn't re-fire (EFD_NONBLOCK on fiber
+                    // eventfds).
+                    uint64_t val;
+                    ::read(fiber->eventfd(), &val, sizeof(val));
+                    continue;
+                }
+                if (fiber->is_done())
                     continue;
 
                 // Drain the eventfd (read the 8-byte counter)
