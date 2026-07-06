@@ -952,6 +952,44 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_cross_fiber_stale_total{0};
     std::atomic<std::uint64_t> envframe_version_mismatch_post_steal_total{0};
     std::atomic<std::uint64_t> envframe_dualpath_repair_total{0};
+    // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
+    // Lifecycle + INVALID_VERSION Frame Handling in Fiber
+    // Resume + Concurrent GC counters (P0 Runtime-Gap +
+    // Panic production-readiness foundation — non-duplicative
+    // to #637 #356 #264).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when fiber
+    // resume() after transfer hook validates/syncs
+    // per-fiber yield_checkpoint_storage_ with current Guard
+    // panic state (#648 AC1), when GCEnvWalkFn + compact
+    // explicitly handle INVALID_VERSION frames (skip/count)
+    // even during panic restore paths (#648 AC2), and when
+    // g_fiber_yield_checkpoint_ + resume_validate_ coordinate
+    // with panic checkpoint under MutationBoundary
+    // (#648 AC3). P0 ships the counters + the agent-visible
+    // (query:panic-checkpoint-fiber-stats) primitive so the
+    // Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - panic_transfer_on_resume_total: AC1 — count of panic
+    //     checkpoint transfers on fiber resume. High rate
+    //     on multi-agent fleets = panic injection is real
+    //     production path (not a hot path under steady
+    //     state).
+    //   - panic_invalid_frames_skipped_total: AC2 — count of
+    //     INVALID_VERSION frames skipped during GC walk /
+    //     compact (post-rollback #356 frames). Ratio
+    //     (skipped / total walk frames) = how much of the
+    //     env_frames_ arena is in the post-rollback
+    //     INVALID_VERSION state.
+    //   - panic_concurrent_gc_conflict_total: AC3 — count
+    //     of concurrent panic + GC conflict events where
+    //     panic checkpoint + GC safepoint race. High rate
+    //     = production memory/GC instability under panic
+    //     path (signal that AC3 coordination wire-up is
+    //     needed).
+    std::atomic<std::uint64_t> panic_transfer_on_resume_total{0};
+    std::atomic<std::uint64_t> panic_invalid_frames_skipped_total{0};
+    std::atomic<std::uint64_t> panic_concurrent_gc_conflict_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

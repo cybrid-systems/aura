@@ -3374,6 +3374,27 @@ add_dependencies(all_test_issue_targets test_issue_646)
 aura_add_issue_test(test_issue_647)
 aura_issue_test_link_llvm_jit(test_issue_647)
 add_dependencies(all_test_issue_targets test_issue_647)
+# Issue #648: query:panic-checkpoint-fiber-stats — P0
+# Runtime-Gap + Panic Checkpoint + Yield Storage Lifecycle +
+# INVALID_VERSION Frame Handling in Fiber Resume +
+# Concurrent GC foundation — 1 new Aura primitive
+# (query:panic-checkpoint-fiber-stats, distinct from
+# existing query:panic-checkpoint-lifecycle-stats via
+# the `-fiber-` midfix) + 3 new atomics
+# (panic_transfer_on_resume_total +
+# panic_invalid_frames_skipped_total +
+# panic_concurrent_gc_conflict_total). Primitive has 4
+# fields: 3 from the new atomics (all foundation scaffolding
+# for AC1+AC2+AC3 enforcement, currently 0) + schema
+# sentinel. Builds on existing
+# query:panic-checkpoint-lifecycle-stats + #264 yield
+# checkpoint + #356 INVALID_VERSION + #637 IRClosure/EnvFrame
+# versioning + #588 per-fiber stack + #591 GC pause
+# attribution. Non-duplicative to #637/#356/#264 (see issue
+# body).
+aura_add_issue_test(test_issue_648)
+aura_issue_test_link_llvm_jit(test_issue_648)
+add_dependencies(all_test_issue_targets test_issue_648)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

@@ -116,8 +116,8 @@ int main() {
         std::println("\n--- AC5: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 161,
-              "stats:count == 161");
+                  aura::compiler::types::as_int(*count) == 162,
+              "stats:count == 162");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
