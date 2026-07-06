@@ -4461,6 +4461,23 @@ public:
             // eval-current which uses its own env.
             (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name,
                                /*bind_in_env=*/false);
+            // Issue #63723: ALSO run the IR-defined value through
+            // bind_value_define_via_ir so the cell-id of the cached
+            // value is recorded in ir_value_cell_bindings_. Without
+            // this, the lowering's Variable case (state.value_cells)
+            // sees nothing for the define, falls through to the
+            // function-cache path, and emits MakeClosure — which
+            // gives the user a closure (cell 0 when used in
+            // arithmetic) instead of the actual value 1. This
+            // manifested as `(set-code "(define a 1)") (eval-current)
+            // (+ a 2)` returning 2 (a silently 0) instead of 3.
+            //
+            // The cost is one extra lower + IRInterpreter run per
+            // define per set-code. For the long-running-agent
+            // fleet, this is amortized over many subsequent
+            // eval-ir calls that would otherwise fail. For the
+            // benchmark suite, this is negligible.
+            (void)bind_value_define_via_ir(*tmp_flat, *tmp_pool, pr.root, name);
             // Mirror cache_define output into v2 (dep_graph populate may have
             // left a source-only shell that previously blocked heavy populate).
             if (auto cit = ir_cache_.find(name); cit != ir_cache_.end()) {
