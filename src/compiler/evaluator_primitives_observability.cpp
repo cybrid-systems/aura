@@ -3115,6 +3115,72 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #658: query:highperf-cpp26-stats — 5 high-perf integration gaps
+    // (Arena tier fallback + IRSoA dirty cascade + Value v2 classify +
+    // ShapeProfiler history jitter + Pass DirtyAware short-circuit).
+    // Non-duplicative with #657 compiler-core-incremental, #642 arena
+    // auto-compact, #571 value-dispatch, #570 shape-stability, #494 pass-pipeline.
+    //
+    // Fields (5 + sentinel):
+    //   - arena-tier-fallbacks      arena_small_tier_fallback_total
+    //   - soa-dirty-cascades        irsoa_dirty_cascade_savings
+    //   - value-classify-calls      value_classify_call_count
+    //   - shape-history-jitter-wins history_jitter_reduction_count
+    //   - pass-dirty-skips          passes_skipped_dirty_pipeline
+    //   - schema == 658
+    add("query:highperf-cpp26-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t arena_fallback = static_cast<std::int64_t>(
+            aura::ast::arena_small_tier_fallback_total.load(std::memory_order_relaxed));
+        const std::int64_t soa_cascade =
+            m ? static_cast<std::int64_t>(
+                    m->irsoa_dirty_cascade_savings.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t classify_calls = static_cast<std::int64_t>(
+            types::value_classify_call_count.load(std::memory_order_relaxed));
+        const std::int64_t jitter_wins = static_cast<std::int64_t>(
+            shape::history_jitter_reduction_count.load(std::memory_order_relaxed));
+        const std::int64_t dirty_skips = static_cast<std::int64_t>(
+            passes_skipped_dirty_pipeline.load(std::memory_order_relaxed));
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("arena-tier-fallbacks", arena_fallback);
+        insert_kv("soa-dirty-cascades", soa_cascade);
+        insert_kv("value-classify-calls", classify_calls);
+        insert_kv("shape-history-jitter-wins", jitter_wins);
+        insert_kv("pass-dirty-skips", dirty_skips);
+        insert_kv("schema", 658);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5749,6 +5815,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:edsl-core-stability-stats",
             // Issue #657 — Compiler core incremental self-mod gaps
             "query:compiler-core-incremental-stats",
+            // Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps
+            "query:highperf-cpp26-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -6086,9 +6154,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 175 entries as of #657 ship (174 from #655 + 1 compiler-core-incremental-stats
-        // registration from #657).
-        return make_int(175);
+        // 176 entries as of #658 ship (175 from #657 + 1 highperf-cpp26-stats
+        // registration from #658).
+        return make_int(176);
     });
 }
 

@@ -104,6 +104,8 @@
     "query:edsl-core-stability-stats"
     ; ── Issue #657 — Compiler core incremental self-mod gaps ──
     "query:compiler-core-incremental-stats"
+    ; ── Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps ──
+    "query:highperf-cpp26-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

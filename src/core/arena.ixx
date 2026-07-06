@@ -16,6 +16,9 @@ import std;
 
 namespace aura::ast {
 
+// Issue #658: small-object tier exhaustion fallbacks to main pmr arena.
+export inline std::atomic<std::uint64_t> arena_small_tier_fallback_total{0};
+
 // ── ArenaStats — per-arena memory accounting ─────────────────────
 export struct ArenaStats {
     std::size_t capacity = 0;         // total buffer size
@@ -555,7 +558,8 @@ private:
                 maybe_auto_compact_on_alloc();
                 return ptr;
             }
-            // Small-object tier exhausted — fall through to main arena
+            // Issue #658: tier exhausted — fall through to main pmr arena.
+            arena_small_tier_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
 
         // Allocate from main pmr buffer

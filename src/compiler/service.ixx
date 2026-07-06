@@ -3988,6 +3988,7 @@ public:
             return true;
         }
         entry.mark_block_dirty(func_idx, block_idx);
+        metrics_.ir_soa_block_dirty_hits_total.fetch_add(1, std::memory_order_relaxed);
         if (func_idx < entry.irs.size() && block_idx < entry.irs[func_idx].blocks.size()) {
             metrics_.irsoa_dirty_cascade_savings.fetch_add(
                 entry.irs[func_idx].blocks[block_idx].instructions.size(),
