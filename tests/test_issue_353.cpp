@@ -12,8 +12,11 @@
 //   AC #4: ok=false + panic_auto_rollback_=false → leave alive
 //   AC #5: nested guards — only outermost owns checkpoint
 //   AC #6: multi-fiber stress (no deadlock, no crash)
+//   AC #7: fiber yield/resume with active checkpoint (Issue #592)
+//   AC #8: post-restore arena size invariant (Issue #592)
 
 #include "serve/fiber.h"
+#include "serve/scheduler.h"
 
 #include <atomic>
 #include <chrono>
@@ -27,6 +30,7 @@
 import std;
 import aura.core.ast;
 import aura.compiler.evaluator;
+import aura.compiler.value;
 import aura.compiler.service;
 
 namespace aura_353_detail {
@@ -190,6 +194,55 @@ bool test_multi_fiber_stress() {
     return true;
 }
 
+// ── AC #7: fiber yield/resume with active checkpoint (#592) ──
+bool test_fiber_yield_resume_with_checkpoint() {
+    std::println("\n--- AC #7: fiber yield/resume with active checkpoint ---");
+    CompilerService cs;
+    (void)cs.eval("(set-code \"(define f 1)\")");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(panic-checkpoint)");
+    CHECK(cs.evaluator().has_panic_checkpoint(),
+          "checkpoint active before fiber yield/resume load");
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> done{0};
+    sched.spawn([&]() {
+        for (int i = 0; i < 8; ++i)
+            aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+        done.fetch_add(1);
+    });
+    std::thread io([&sched]() { sched.run(); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (done.load() < 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    sched.stop();
+    io.join();
+    CHECK(done.load() == 1, "fiber yield/resume completed under active checkpoint");
+    (void)cs.eval("(panic-restore)");
+    CHECK(!cs.evaluator().has_panic_checkpoint(),
+          "checkpoint cleared after restore post fiber load");
+    return true;
+}
+
+// ── AC #8: post-restore arena size invariant (#592) ──
+bool test_post_restore_arena_size_invariant() {
+    std::println("\n--- AC #8: post-restore arena size invariant ---");
+    CompilerService cs;
+    (void)cs.eval("(set-code \"(define x 1)\")");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(panic-checkpoint)");
+    const auto mismatch0 = cs.evaluator().get_panic_checkpoint_size_mismatch();
+    (void)cs.eval("(mutate:replace-value (define x 77) (define x 77))");
+    auto rr = cs.eval("(panic-restore)");
+    CHECK(rr.has_value() && aura::compiler::types::is_bool(*rr),
+          "(panic-restore) returned after mutate");
+    const auto mismatch1 = cs.evaluator().get_panic_checkpoint_size_mismatch();
+    std::println("  size_mismatch: {} -> {}", mismatch0, mismatch1);
+    CHECK(mismatch1 == mismatch0,
+          "no new arena size mismatch after successful post-mutate restore");
+    return true;
+}
+
 } // namespace aura_353_detail
 
 int main() {
@@ -200,6 +253,8 @@ int main() {
     test_ok_false_no_rollback_leaves_alive();
     test_nested_guards_only_outermost_owns();
     test_multi_fiber_stress();
+    test_fiber_yield_resume_with_checkpoint();
+    test_post_restore_arena_size_invariant();
     std::println("\n--- Results ---");
     std::println("  PASSED: {}", g_passed);
     std::println("  FAILED: {}", g_failed);
@@ -207,6 +262,6 @@ int main() {
         std::println("  OVERALL: FAIL");
         return 1;
     }
-    std::println("  OVERALL: PASS — 6/6 ACs pass");
+    std::println("  OVERALL: PASS — 8/8 ACs pass");
     return 0;
 }
