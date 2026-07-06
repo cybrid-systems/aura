@@ -1307,6 +1307,143 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #644: query:aot-reload-func-table-stats —
+    // Agent-discoverable structured dashboard for the AOT
+    // Hot-Reload func_table Refcount + Per-Region Isolation
+    // (P0 Runtime-Gap + AOT production-readiness surface —
+    // non-duplicative to #624 #601 #358).
+    //
+    // Note the naming distinction from #708:
+    //   - (query:aot-reload-stats) (#708) — 5-field primitive
+    //     focused on the high-level reload attempt / success /
+    //     stale / refcount_swaps / region_violations summary
+    //   - (query:aot-reload-func-table-stats) (#644, this
+    //     primitive) — *enforcement-track* companion that
+    //     focuses on the func_table refcount bump/decrement
+    //     protocol + region filter re-apply wire-up
+    //     (the AC1+AC2+AC4 enforcement counters that #708
+    //     did not surface as a separate primitive).
+    //
+    // Fields (3 + sentinel):
+    //   - ref-bump            new aot_func_table_ref_bump_total
+    //                          atomic (foundation for AC1
+    //                          atomic refcount bumps on new
+    //                          func_table entry install).
+    //                          Value is 0 until AC1 wire-up.
+    //   - ref-decrement       new aot_func_table_ref_decrement_
+    //                          total atomic (foundation for AC1
+    //                          atomic refcount decrements on
+    //                          old entry retirement after grace
+    //                          period / epoch check). Value is
+    //                          0 until AC1 wire-up.
+    //   - region-reapply      new aot_region_filter_reapply_
+    //                          total atomic (foundation for AC2
+    //                          region filtering re-applied on
+    //                          reload per agent/workspace).
+    //                          Value is 0 until AC2 wire-up.
+    //   - schema == 644         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640+#641+
+    //                          #642+#643 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level AOT
+    // reload observability surface:
+    //   - (query:aot-reload-stats) (#708) — 5-field reload
+    //     summary (attempts / success / stale / swaps /
+    //     region_violations)
+    //   - (query:aot-hot-reload-stats) (#358/#452) — earlier
+    //     AOT hot-reload summary
+    //   - (query:aot-checkpoint-version-stats) (#708) —
+    //     checkpoint version tracking
+    //   - aot_reload_attempts_ + aot_hot_update_success_ +
+    //     aot_stale_reject_count_ + aot_refcount_swaps_ +
+    //     aot_region_mismatch_ (#708) — high-level counters
+    // What the issue body specifies by **exact enforcement
+    // layer** — granular func_table refcount bump/decrement
+    // + per-region filter re-apply counters for AC1+AC2+AC4
+    // — was *not* shipped under that exact enforcement layer.
+    // So #644 ships ONE new Aura primitive + 3 new foundation
+    // atomics.
+    //
+    // The remaining #644 AC1 (func_table refcount swap
+    // protocol) + AC2 (region filtering re-apply) + AC4
+    // (MutationBoundaryGuard + fiber yield wire-up) work is
+    // invasive C++ on aura_jit_bridge.cpp + hot-swap hooks +
+    // service.ixx invalidate + needs the 1000+ reload cycles
+    // + concurrent apply_closure + TSan coverage from the
+    // issue body — separate follow-ups.
+    add("query:aot-reload-func-table-stats",
+        [&ev](const auto&) -> EvalValue {
+            // ref-bump: new foundation atomic
+            // (0 until AC1 atomic refcount bumps wire-up).
+            const std::uint64_t ref_bump =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->aot_func_table_ref_bump_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // ref-decrement: new foundation atomic
+            // (0 until AC1 atomic refcount decrements wire-up).
+            const std::uint64_t ref_decrement =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->aot_func_table_ref_decrement_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // region-reapply: new foundation atomic
+            // (0 until AC2 region filtering re-apply wire-up).
+            const std::uint64_t region_reapply =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->aot_region_filter_reapply_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("ref-bump",
+                      static_cast<std::int64_t>(ref_bump));
+            insert_kv("ref-decrement",
+                      static_cast<std::int64_t>(ref_decrement));
+            insert_kv("region-reapply",
+                      static_cast<std::int64_t>(region_reapply));
+            insert_kv("schema", 644);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4262,10 +4399,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 157 entries as of #643 ship (156 from #642 + 1 primitives-
-        // meta AI-native introspection primitive from #643:
-        // query:primitives-meta).
-        return make_int(157);
+        // 158 entries as of #644 ship (157 from #643 + 1 aot-reload-
+        // func-table observability stats primitive from #644:
+        // query:aot-reload-func-table-stats).
+        return make_int(158);
     });
 }
 
