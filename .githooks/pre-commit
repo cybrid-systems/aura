@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# Aura pre-commit hook — clang-format enforcement (plan B: auto-fix + final check).
+#
+# Why plan B (auto-fix + check) instead of plan A (check-only)?
+#   - Today #637-#644 (6 issues) shipped with clang-format drift because the
+#     commit gate never caught it. Auto-fix at commit time eliminates the
+#     friction entirely.
+#   - Pure whitespace/indent reflow — no semantic risk. `git restore <file>`
+#     can always revert if a specific file is unhappy.
+#   - The final --dry-run --Werror at the end is the same gate CI runs
+#     (`workflows/ci.yml`), so local + CI behavior are identical.
+#
+# Flow:
+#   1. Collect staged C++ files matching the same filter CI uses
+#      (src|tests) + (\.(cpp|ixx|hh|h)$).
+#   2. Run `clang-format -i` on them (auto-fix).
+#   3. `git add` the modified files so the formatted content is what gets
+#      committed (not a separate "format" noise commit).
+#   4. Final `clang-format --dry-run -Werror` — belt-and-suspenders so
+#      the commit message is honest even if `clang-format -i` ever diverges
+#      from `--dry-run`.
+#
+# Exit codes:
+#   0 — all staged files clean (or no C++ files staged)
+#   1 — clang-format missing OR final dry-run failed (shouldn't happen
+#       unless the tool itself is broken)
+
+set -euo pipefail
+
+# Collect staged C++ files using the same filter the CI gate uses
+# (`.github/workflows/ci.yml` line 64-66).
+files=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '\.(cpp|ixx|hh|h)$' \
+    | grep -E '^(src|tests)/' \
+    || true)
+
+if [ -z "$files" ]; then
+    # No C++ files staged — nothing to format.
+    exit 0
+fi
+
+# Defensive: ensure clang-format is on PATH.
+if ! command -v clang-format >/dev/null 2>&1; then
+    echo "❌ pre-commit: clang-format not found on PATH" >&2
+    echo "   install clang-format (CI uses clang-format 22.1.7 from llvm.org)" >&2
+    exit 1
+fi
+
+# Step 1: auto-fix.
+echo "pre-commit: clang-format -i on $(echo "$files" | wc -l) staged C++ file(s)..."
+echo "$files" | xargs clang-format -i
+
+# Step 2: re-stage the formatted content so it lands in the same commit
+# (no separate "format" commit).
+echo "$files" | xargs git add
+
+# Step 3: final check (belt-and-suspenders — should never fire if step 1
+# is correct, but if clang-format -i ever diverges from --dry-run this
+# catches it).
+echo "pre-commit: clang-format --dry-run -Werror (final check)..."
+echo "$files" | xargs clang-format --dry-run -Werror
+
+echo "pre-commit: clang-format clean ✓"
