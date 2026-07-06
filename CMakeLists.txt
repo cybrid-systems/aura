@@ -3395,6 +3395,27 @@ add_dependencies(all_test_issue_targets test_issue_647)
 aura_add_issue_test(test_issue_648)
 aura_issue_test_link_llvm_jit(test_issue_648)
 add_dependencies(all_test_issue_targets test_issue_648)
+# Issue #649: query:yield-checkpoint-panic-stats — P0
+# Runtime-Gap + Panic Full Per-Fiber YieldCheckpointStorage
+# Re-Stamp + Size Validation on Panic Transfer + Cross-Steal
+# foundation — 1 new Aura primitive
+# (query:yield-checkpoint-panic-stats, distinct from #648
+# query:panic-checkpoint-fiber-stats via the `yield-checkpoint-`
+# prefix — focus on yield checkpoint STORAGE LIFECYCLE
+# rather than panic CHECKPOINT TRANSPORT) + 3 new atomics
+# (yield_transfer_with_restamp_total +
+# yield_size_mismatch_caught_total +
+# yield_cross_steal_invalidation_total). Primitive has 4
+# fields: 3 from the new atomics (all foundation scaffolding
+# for AC1+AC2+AC3 enforcement, currently 0) + schema
+# sentinel. Builds on #648 panic-checkpoint-fiber-stats +
+# #264 yield checkpoint + #588 per-fiber stack +
+# transfer_panic_checkpoint_trampoline +
+# restore_post_yield_or_rollback. Non-duplicative to
+# #648/#264 (see issue body).
+aura_add_issue_test(test_issue_649)
+aura_issue_test_link_llvm_jit(test_issue_649)
+add_dependencies(all_test_issue_targets test_issue_649)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

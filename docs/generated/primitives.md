@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**747** registrations scanned from `src/**/*.cpp`.
+**748** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (17%)
 - **core**: 203 primitives (27%)
-- **internal-observable**: 273 primitives (37%)
+- **internal-observable**: 274 primitives (37%)
 - **convenience**: 147 primitives (20%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (273)
+## Query: (274)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -296,6 +296,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:work-steal-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:workspace-snapshot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:yield-checkpoint-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 
 ## Mutate: (3)
 
@@ -1207,7 +1208,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (273)
+### Internal observable (stats/counters) (274)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1482,6 +1483,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:work-steal-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:workspace-snapshot-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 
 ### Convenience (candidates for stdlib migration) (147)
 
