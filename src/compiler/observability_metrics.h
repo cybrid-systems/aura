@@ -914,6 +914,44 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> gc_outermost_deferral_total{0};
     std::atomic<std::uint64_t> gc_inner_proceeded_total{0};
     std::atomic<std::uint64_t> gc_backoff_trigger_total{0};
+    // Issue #647: Dual-Path EnvFrame/Env (parent_id_ vs
+    // parent_, bindings_symid_ vs bindings_) Cross-Fiber
+    // Stale Detection + materialize_call_env After Steal
+    // counters (P0 Runtime-Gap + SoA production-readiness
+    // foundation — non-duplicative to #637 #589 #355).
+    // These are scaffolding for the future AC1 + AC2 + AC4
+    // enforcement work — the bumps happen when
+    // materialize_call_env + lookup paths validate parent_id_
+    // vs current env_frames_ owner after version_ check
+    // (#647 AC1), when fiber resume() / g_fiber_sync_mutation_
+    // stack_ runs the optional dual-path consistency check
+    // or repair for active Env/EnvFrame (#647 AC2), and
+    // when GCEnvWalkFn skips/repairs dual-path inconsistent
+    // frames (#647 AC4). P0 ships the counters + the
+    // agent-visible (query:envframe-dualpath-stale-stats-hash)
+    // primitive so the Agent has a dashboard today; values
+    // are 0 until the enforcement work ships.
+    //   - envframe_cross_fiber_stale_total: AC1 — count of
+    //     cross-fiber stale Env/EnvFrame detected post-steal
+    //     (parent_id_ mismatch against current env_frames_
+    //     owner). High rate on multi-agent fleets = real
+    //     production risk of UAF / stale-env read.
+    //   - envframe_version_mismatch_post_steal_total: AC1 —
+    //     count of version_ stamp mismatches detected
+    //     post-steal (in materialize_call_env or post-resume
+    //     lookup). Ratio (mismatch / total post-steal
+    //     materializes) = how often the version check
+    //     catches stale access.
+    //   - envframe_dualpath_repair_total: AC2 — count of
+    //     dual-path consistency check + repair hits (when
+    //     the parent_id_ / bindings_symid_ SoA path is
+    //     repaired to match the legacy parent_ / bindings_
+    //     pointer view, or vice versa). Ratio (repair /
+    //     stale) = recovery rate — 1.0 = every detected
+    //     stale was successfully repaired.
+    std::atomic<std::uint64_t> envframe_cross_fiber_stale_total{0};
+    std::atomic<std::uint64_t> envframe_version_mismatch_post_steal_total{0};
+    std::atomic<std::uint64_t> envframe_dualpath_repair_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
