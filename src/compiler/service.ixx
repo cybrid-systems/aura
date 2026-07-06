@@ -589,6 +589,25 @@ public:
             this->populate_dep_graph_from_workspace();
             this->populate_ir_cache_v2_from_workspace();
         });
+        // Issue #63723: lightweight dep_graph-only repopulate hook
+        // (called from mutate:rebind / mutate:set-body after the
+        // rebind success). mutate:rebind does NOT call
+        // invalidate_function (it uses mark_define_dirty + the
+        // dep_graph BFS cascade), so the IR cache for `name` is
+        // just marked dirty and re-lower happens lazily on the
+        // next (eval-current). The dep_graph however must be
+        // repopulated eagerly so that subsequent
+        // public_invalidate_function(name) sees the same caller
+        // edges the original (set-code ...) recorded — otherwise
+        // the BFS cascade finds no dependents and silently
+        // evicts only the mutated function itself. This is the
+        // dep_graph integrity contract test_issue_401 AC5
+        // verifies. Skips populate_ir_cache_v2 (heavy lower)
+        // because the lazy re-lower on next (eval-current) is
+        // sufficient and avoids an O(n^2) cost on rebind
+        // storms.
+        evaluator_.set_repopulate_workspace_dep_graph_fn(
+            [this]() { this->populate_dep_graph_from_workspace(); });
         // Phase 3 debugging: expose is_define_dirty + get_dependents.
         evaluator_.set_is_define_dirty_fn([this](const std::string& name) -> bool {
             const auto* entry = this->get_define_v2(name);
