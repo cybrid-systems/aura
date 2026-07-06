@@ -3435,6 +3435,24 @@ add_dependencies(all_test_issue_targets test_issue_649)
 aura_add_issue_test(test_issue_650)
 aura_issue_test_link_llvm_jit(test_issue_650)
 add_dependencies(all_test_issue_targets test_issue_650)
+# Issue #651: query:gc-panic-deferral-stats — P0 Runtime-
+# Gap + GC Actual Deferral/Block Logic in
+# block_gc_for_pending_checkpoint_trampoline + Request
+# Shim (fills TODO in evaluator_fiber_mutation.cpp) —
+# 1 new Aura primitive (query:gc-panic-deferral-stats,
+# distinct from #646 query:gc-safepoint-deferral-stats
+# via the `-panic-` midfix — focus on GC+panic coordination
+# layer that fills the TODO) + 3 new atomics
+# (gc_panic_pending_deferral_total +
+# gc_blocked_by_panic_total +
+# gc_panic_conflict_resolved_total). Primitive has 4 fields:
+# 3 from the new atomics (all foundation scaffolding for
+# AC1+AC2+AC3 enforcement, currently 0) + schema sentinel.
+# Builds on #646 + #648 existing GC + panic observability
+# primitives. Non-duplicative to #646/#648 (see issue body).
+aura_add_issue_test(test_issue_651)
+aura_issue_test_link_llvm_jit(test_issue_651)
+add_dependencies(all_test_issue_targets test_issue_651)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

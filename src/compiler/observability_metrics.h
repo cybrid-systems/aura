@@ -1064,6 +1064,43 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stealbudget_outermost_bias_total{0};
     std::atomic<std::uint64_t> stealbudget_explicit_bias_total{0};
     std::atomic<std::uint64_t> stealbudget_max_before_sleep_raised_total{0};
+    // Issue #651: Actual GC Deferral/Block Logic in
+    // block_gc_for_pending_checkpoint_trampoline + Request
+    // Shim counters (P0 Runtime-Gap + GC production-readiness
+    // foundation — fills TODO in evaluator_fiber_mutation.cpp,
+    // non-duplicative to #646 #648).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when
+    // block_gc_for_pending_checkpoint_trampoline implements
+    // real deferral: if pending, signal scheduler/GC
+    // coordinator to defer phase or wait; integrate with
+    // gc_state phase (#651 AC1), when aura_evaluator_request_
+    // gc_safepoint checks pending_panic_checkpoint() && depth
+    // > 0 and defers request + bumps metric / yield /
+    // retries (#651 AC2), and when fiber check_gc_safepoint
+    // + scheduler wait_for_safepoint wire to pending-panic
+    // awareness (#651 AC3). P0 ships the counters + the
+    // agent-visible (query:gc-panic-deferral-stats) primitive
+    // so the Agent has a dashboard today; values are 0
+    // until the enforcement work ships.
+    //   - gc_panic_pending_deferral_total: AC1 — count of
+    //     pending panic checkpoint deferrals triggered in
+    //     block_gc trampoline. High rate = panic injection
+    //     is real production path (not a hot path under
+    //     steady state).
+    //   - gc_blocked_by_panic_total: AC2 — count of GC
+    //     safepoint requests blocked due to pending panic
+    //     checkpoint + depth > 0. Ratio (blocked / total
+    //     requests) = how often panic path conflicts with
+    //     GC requests.
+    //   - gc_panic_conflict_resolved_total: AC3 — count of
+    //     panic + GC conflict events resolved (deferral
+    //     completed without root inconsistency). High
+    //     resolution rate = panic + GC coordination wire-up
+    //     works under contention.
+    std::atomic<std::uint64_t> gc_panic_pending_deferral_total{0};
+    std::atomic<std::uint64_t> gc_blocked_by_panic_total{0};
+    std::atomic<std::uint64_t> gc_panic_conflict_resolved_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
