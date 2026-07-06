@@ -3485,6 +3485,27 @@ add_dependencies(all_test_issue_targets test_issue_651)
 aura_add_issue_test(test_issue_589)
 aura_issue_test_link_llvm_jit(test_issue_589)
 add_dependencies(all_test_issue_targets test_issue_589)
+# Issue #590: query:aot-hotupdate-stats — P0 Runtime-Review +
+# AOT mangle versioning + region filtering + multi-agent
+# hot-update isolation + closure dispatch stale detection
+# foundation — 1 new Aura primitive
+# (query:aot-hotupdate-stats, distinct from existing
+# query:aot-reload-stats #708 +
+# query:aot-reload-func-table-stats #644 +
+# query:aot-hot-reload-stats #358/#452 via the `-hotupdate-`
+# midfix — focus on multi-agent hot-update isolation
+# enforcement layer) + 3 new atomics
+# (aot_hotupdate_region_isolation_total +
+# aot_hotupdate_dispatch_stale_prevented_total +
+# aot_hotupdate_multi_agent_reload_total). Primitive has 4
+# fields: 3 from the new atomics (all foundation scaffolding
+# for AC1+AC2+AC3 enforcement, currently 0) + schema sentinel
+# (590 matches issue number). Builds on #544 / #323 / #287
+# existing AOT versioning + hot-update infrastructure.
+# Non-duplicative to existing #544/#323/#287 (see issue body).
+aura_add_issue_test(test_issue_590)
+aura_issue_test_link_llvm_jit(test_issue_590)
+add_dependencies(all_test_issue_targets test_issue_590)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
