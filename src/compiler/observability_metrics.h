@@ -809,6 +809,39 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> define_primitive_macro_used_total{0};
     std::atomic<std::uint64_t> prim_error_unified_total{0};
     std::atomic<std::uint64_t> primitives_meta_query_total{0};
+    // Issue #644: AOT Hot-Reload func_table Refcount +
+    // Per-Region Isolation + Metrics counters (P0 Runtime-Gap
+    // + AOT foundation — non-duplicative to #624 #601 #358).
+    // These are scaffolding for the future AC1 + AC2 + AC4
+    // enforcement work — the bumps happen when
+    // aura_reload_aot_module extends func_table update with
+    // atomic refcount (bump new, decrement old after grace
+    // period or epoch check, #644 AC1), when region filtering
+    // is re-applied on reload (re-apply filter or reject if
+    // region mismatch for current agent/workspace, #644 AC2),
+    // and when MutationBoundaryGuard + fiber yield wire-up
+    // provides the safe reload point (#644 AC4). P0 ships the
+    // counters + the agent-visible
+    // (query:aot-reload-func-table-stats) primitive so the
+    // Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - aot_func_table_ref_bump_total: AC1 — count of atomic
+    //     refcount bumps when a new func_table entry is
+    //     installed (every reload attempt that gets past the
+    //     version check). High bumps under multi-agent fleet
+    //     = hot-reload is the active deployment channel.
+    //   - aot_func_table_ref_decrement_total: AC1 — count of
+    //     atomic refcount decrements when old func_table entry
+    //     is retired (after grace period or epoch check).
+    //     Ratio (decrement / bump) ≈ 1.0 = old entries are
+    //     always cleaned up (no leak); < 1.0 = leak risk.
+    //   - aot_region_filter_reapply_total: AC2 — count of
+    //     region filtering re-applied on reload (per
+    //     agent/workspace region check). 1.0 ratio per reload
+    //     = region isolation enforced on every reload.
+    std::atomic<std::uint64_t> aot_func_table_ref_bump_total{0};
+    std::atomic<std::uint64_t> aot_func_table_ref_decrement_total{0};
+    std::atomic<std::uint64_t> aot_region_filter_reapply_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

@@ -3304,6 +3304,23 @@ add_dependencies(all_test_issue_targets test_issue_642)
 aura_add_issue_test(test_issue_643)
 aura_issue_test_link_llvm_jit(test_issue_643)
 add_dependencies(all_test_issue_targets test_issue_643)
+# Issue #644: query:aot-reload-func-table-stats — P0
+# Runtime-Gap + AOT hot-reload func_table Refcount +
+# Per-Region Isolation foundation — 1 new Aura primitive
+# (query:aot-reload-func-table-stats, distinct from #708
+# query:aot-reload-stats via the `-func-table` prefix
+# enforcing-layer focus) + 3 new atomics
+# (aot_func_table_ref_bump_total +
+# aot_func_table_ref_decrement_total +
+# aot_region_filter_reapply_total). Primitive has 4 fields:
+# 3 from the new atomics (all foundation scaffolding for
+# AC1+AC2+AC4 enforcement, currently 0) + schema sentinel.
+# Builds on #358 / #452 / #708 existing primitives +
+# AOT hot-reload infrastructure. Non-duplicative to
+# #624/#601/#358 (see issue body).
+aura_add_issue_test(test_issue_644)
+aura_issue_test_link_llvm_jit(test_issue_644)
+add_dependencies(all_test_issue_targets test_issue_644)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
