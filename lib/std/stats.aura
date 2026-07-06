@@ -92,6 +92,8 @@
     "query:guard-panic-reflect-stats"
     ; ── Issue #599 — Compiler root epoch/version + GC synergy post-invalidate ──
     "query:compiler-root-stats"
+    ; ── Issue #600 — Per-block dirty + impact scope + closure bridge synergy ──
+    "query:incremental-closure-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

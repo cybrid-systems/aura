@@ -2820,6 +2820,73 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #600: query:incremental-closure-stats — per-block dirty + impact
+    // scope + closure bridge synergy for minimal re-lower
+    // (non-duplicative with #530 incremental-production-relower-stats,
+    // #429 soa-dirty-stats, #531 closure-env-safety-stats).
+    //
+    // Fields (4 + sentinel):
+    //   - blocks-relowered     incremental_closure_blocks_relowered_total
+    //   - closure-bridge-hits  bridge_epoch_hit_count_
+    //   - min-scope-win        incremental_closure_min_scope_win_total
+    //   - jit-sync-count       incremental_closure_jit_sync_total
+    //   - schema == 600
+    add("query:incremental-closure-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t blocks_relowered =
+            m ? static_cast<std::int64_t>(
+                    m->incremental_closure_blocks_relowered_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t bridge_hits =
+            m ? static_cast<std::int64_t>(
+                    m->bridge_epoch_hit_count_.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t min_scope_win =
+            m ? static_cast<std::int64_t>(
+                    m->incremental_closure_min_scope_win_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t jit_sync =
+            m ? static_cast<std::int64_t>(
+                    m->incremental_closure_jit_sync_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("blocks-relowered", blocks_relowered);
+        insert_kv("closure-bridge-hits", bridge_hits);
+        insert_kv("min-scope-win", min_scope_win);
+        insert_kv("jit-sync-count", jit_sync);
+        insert_kv("schema", 600);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5446,6 +5513,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:guard-panic-reflect-stats",
             // Issue #599 — Compiler root epoch/version + GC synergy
             "query:compiler-root-stats",
+            // Issue #600 — Per-block dirty + impact scope + closure bridge synergy
+            "query:incremental-closure-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -5783,9 +5852,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 171 entries as of #599 ship (170 from #596 + 1 compiler-root-stats
-        // registration from #599).
-        return make_int(171);
+        // 172 entries as of #600 ship (171 from #599 + 1 incremental-closure-stats
+        // registration from #600).
+        return make_int(172);
     });
 }
 

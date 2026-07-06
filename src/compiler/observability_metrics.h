@@ -1202,6 +1202,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_root_env_version_mismatch_total{0};
     std::atomic<std::uint64_t> compiler_root_dangling_prevented_total{0};
 
+    // Issue #600: per-block dirty + impact scope + closure bridge synergy
+    // for minimal re-lower (non-duplicative with #530 incremental-production-
+    // relower-stats, #429 soa-dirty-stats, #531 closure-env-safety-stats).
+    std::atomic<std::uint64_t> incremental_closure_blocks_relowered_total{0};
+    std::atomic<std::uint64_t> incremental_closure_min_scope_win_total{0};
+    std::atomic<std::uint64_t> incremental_closure_jit_sync_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers
