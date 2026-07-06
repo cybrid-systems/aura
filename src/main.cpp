@@ -1277,8 +1277,11 @@ int main(int argc, char* argv[]) {
                 ck.run(cached_mod);
                 ar.run(cached_mod);
                 cf.run(cached_mod);
-                if (cf.folded_count() > 0)
-                    std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+                // Debug print removed (#63723): was polluting
+                // test framework stream redirect for tests like
+                // edsl-ir-cache:cascade-after-mutate. The folded
+                // count is already in metrics_ via cf_pass metrics.
+                (void)cf.folded_count();
 
                 std::size_t json_size = 0;
                 char* json_data = aura_inspect_ir_json(&cached_mod, &json_size);
@@ -1731,8 +1734,11 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
-            if (cf.folded_count() > 0)
-                std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+            if (false) {
+                // Debug print removed (#63723): was polluting
+                // test framework stream redirect.
+                (void)cf.folded_count();
+            }
 
             // Execute
             aura::compiler::CompilerService cs_tmp;

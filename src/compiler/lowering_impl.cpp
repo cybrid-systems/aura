@@ -147,6 +147,27 @@ static std::uint32_t lower_flat_expr(
                 state.emit(IROpcode::Local, slot, fv->second);
                 return slot;
             }
+            // Issue #63723: top-level value defines bound via IR take
+            // precedence over the function-cache path. Without this,
+            // a value-define like `(define a 1)` is cached as a
+            // closure (NewCell + CellSet + return 1), and the
+            // cache-hit path below would emit MakeClosure — which
+            // when used in arithmetic, coerces to 0 instead of the
+            // actual value 1. The value_cells map (populated by
+            // bind_value_define_via_ir in populate_ir_cache_v2_from_workspace)
+            // records the cell_id holding the literal value; emit
+            // TopCellLoad to fetch it directly. The function cache
+            // is still consulted (for function-define bindings which
+            // DO want a closure); this check just runs first.
+            if (state.value_cells) {
+                auto vc_it = state.value_cells->find(std::string(name));
+                if (vc_it != state.value_cells->end()) {
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::TopCellLoad, slot,
+                               static_cast<std::uint32_t>(vc_it->second));
+                    return slot;
+                }
+            }
             // Check if this variable names a cached define function
             if (cache) {
                 auto cache_it = cache->find(std::string(name));
@@ -228,16 +249,7 @@ static std::uint32_t lower_flat_expr(
                 state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
                 return slot;
             }
-            // Issue #272 Cycle 3: top-level value defines bound via IR.
-            if (state.value_cells) {
-                auto vc_it = state.value_cells->find(std::string(name));
-                if (vc_it != state.value_cells->end()) {
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::TopCellLoad, slot,
-                               static_cast<std::uint32_t>(vc_it->second));
-                    return slot;
-                }
-            }
+            // (value_cells check was moved earlier — see Issue #63723.)
             auto slot = state.alloc_local();
             state.emit(IROpcode::ConstI64, slot, 0, 0);
             return slot;
