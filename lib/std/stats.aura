@@ -84,6 +84,8 @@
     "query:eda-primitives-stats"
     ; ── Issue #587 — AI-native primitives development support observability ──
     "query:primitives-ai-native-stats"
+    ; ── Issue #591 — Scheduler steal/GC safepoint mutation coordination observability ──
+    "query:scheduler-mutation-coord-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

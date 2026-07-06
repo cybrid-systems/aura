@@ -1282,6 +1282,9 @@ aura_issue_test_link_llvm_jit(test_issue_586_observability)
 # Issue #587 slice: primitives-ai-native-stats development observability.
 aura_add_issue_test(test_issue_587_observability)
 aura_issue_test_link_llvm_jit(test_issue_587_observability)
+# Issue #591 slice: scheduler-mutation-coord-stats steal/GC observability.
+aura_add_issue_test(test_issue_591_observability)
+aura_issue_test_link_llvm_jit(test_issue_591_observability)
 # Issue #401: invalidate_function BFS determinism + dep_graph_
 # integrity (vector-as-stack → std::deque, sort dependents).
 # Uses CompilerService::public_invalidate_function +
