@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**750** registrations scanned from `src/**/*.cpp`.
+**751** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (17%)
 - **core**: 203 primitives (27%)
-- **internal-observable**: 276 primitives (37%)
+- **internal-observable**: 277 primitives (37%)
 - **convenience**: 147 primitives (20%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (276)
+## Query: (277)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -102,6 +102,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:edsl-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:edsl-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:envframe-dualpath-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:envframe-dualpath-stale-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:envframe-dualpath-stale-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:envframe-dualpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1210,7 +1211,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (276)
+### Internal observable (stats/counters) (277)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1291,6 +1292,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:edsl-readiness` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:edsl-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:envframe-dualpath-enforce-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:envframe-dualpath-stale-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:envframe-dualpath-stale-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:envframe-dualpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
