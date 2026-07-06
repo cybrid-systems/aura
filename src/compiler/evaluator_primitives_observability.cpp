@@ -5830,7 +5830,7 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:hardware-backend-commercial-stats",
             // Issue #706 — Scheduler StealBudget adaptive bias
             "query:scheduler-stealbudget-adaptive-stats",
-            // Issue #707 — Per-fiber stack/checkpoint pool
+            // Issue #652 / #707 — Per-fiber stack/checkpoint pool
             "query:per-fiber-stack-pool-stats",
             // Issue #708 — AOT hot-reload refcount + checkpoint version
             "query:aot-reload-stats",

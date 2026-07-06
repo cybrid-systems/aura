@@ -27,11 +27,12 @@ namespace fiber_stack_pool_detail {
         return aura::serve::metrics::per_fiber_stack_pool_stats();
     }
 
-    // Issue #707: bounded scheduler-local vector pool for per-fiber stacks.
+    // Issue #652 / #707: bounded scheduler-local vector pool for per-fiber stacks.
     template <typename T> class BoundedVectorPool {
     public:
         static constexpr std::size_t kInitialCapacity = 12;
         static constexpr std::size_t kGrowthThreshold = 32;
+        static constexpr std::size_t kMaxStackDepth = 64;
         static constexpr std::size_t kMaxPooled = 128;
 
         T* acquire() {
@@ -67,10 +68,13 @@ namespace fiber_stack_pool_detail {
         }
 
         void track_depth(std::size_t depth) {
+            if (depth > kMaxStackDepth)
+                pool_stats().growth_warnings.fetch_add(1, std::memory_order_relaxed);
             auto& max_d = pool_stats().max_depth;
             std::uint64_t cur = max_d.load(std::memory_order_relaxed);
-            while (depth > cur &&
-                   !max_d.compare_exchange_weak(cur, depth, std::memory_order_relaxed,
+            const std::uint64_t capped = std::min(depth, kMaxStackDepth);
+            while (capped > cur &&
+                   !max_d.compare_exchange_weak(cur, capped, std::memory_order_relaxed,
                                                 std::memory_order_relaxed)) {
             }
         }
