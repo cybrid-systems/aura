@@ -2291,7 +2291,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
-    // Issue #708: AOT checkpoint / bridge_epoch version drift stats.
+    // Issue #653 / #708: AOT checkpoint / bridge_epoch version drift stats.
+    // Fields: checkpoint-version-drifts, bridge-epoch-mismatches,
+    // deopt-on-steal, func-table-epoch-swaps, schema == 653.
     add("query:aot-checkpoint-version-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
@@ -2335,12 +2337,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t drifts =
             m ? m->aot_checkpoint_version_drifts_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t bridge_mismatch =
+            m ? m->aot_bridge_epoch_mismatches_.load(std::memory_order_relaxed) : 0;
         const std::uint64_t deopt = m ? m->aot_deopt_on_steal_.load(std::memory_order_relaxed) : 0;
         const std::uint64_t swaps = m ? m->aot_refcount_swaps_.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"checkpoint-version-drifts", make_int(static_cast<std::int64_t>(drifts))},
+            {"bridge-epoch-mismatches", make_int(static_cast<std::int64_t>(bridge_mismatch))},
             {"deopt-on-steal", make_int(static_cast<std::int64_t>(deopt))},
             {"func-table-epoch-swaps", make_int(static_cast<std::int64_t>(swaps))},
+            {"schema", make_int(653)},
         };
         return build_hash(kv);
     });

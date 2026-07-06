@@ -318,8 +318,10 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     if (!cp.had_active_boundary)
         return true;
     bool version_drift = !is_version_current(cp.defuse_version);
-    if (aura_aot_probe_checkpoint_version(cp.defuse_version, current_bridge_epoch()))
+    if (aura_aot_probe_checkpoint_version(cp.defuse_version, current_bridge_epoch())) {
         version_drift = true;
+        aura_aot_record_deopt_on_steal();
+    }
     if (thread_migrated || version_drift || depth_mismatch || size_mismatch) {
         cross_fiber_rollback_count_.fetch_add(1, std::memory_order_relaxed);
         bump_guard_panic_reflect_boundary_violation_prevented();

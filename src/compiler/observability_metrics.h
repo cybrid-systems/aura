@@ -1730,6 +1730,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_deopt_on_steal_{0};
     std::atomic<std::uint64_t> aot_concurrent_safe_reloads_{0};
     std::atomic<std::uint64_t> aot_checkpoint_version_drifts_{0};
+    // Issue #653: bridge_epoch vs func-table epoch mismatch on
+    // restore_post_yield_or_rollback / fiber resume validate.
+    std::atomic<std::uint64_t> aot_bridge_epoch_mismatches_{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

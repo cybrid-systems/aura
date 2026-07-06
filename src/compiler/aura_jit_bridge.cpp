@@ -291,11 +291,20 @@ extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
                                                   std::uint64_t bridge_epoch) {
     const std::uint64_t emit_ver = g_aot_defuse_version;
     const std::uint64_t table_epoch = g_aot_table_epoch.load(std::memory_order_relaxed);
-    const bool drift = (defuse_version != 0 && emit_ver != 0 && defuse_version != emit_ver) ||
-                       (bridge_epoch != 0 && bridge_epoch != table_epoch);
-    if (drift && g_aot_metrics)
+    const bool defuse_drift =
+        (defuse_version != 0 && emit_ver != 0 && defuse_version != emit_ver);
+    const bool bridge_mismatch = (bridge_epoch != 0 && bridge_epoch != table_epoch);
+    if (defuse_drift && g_aot_metrics)
         g_aot_metrics->aot_checkpoint_version_drifts_.fetch_add(1, std::memory_order_relaxed);
-    return drift;
+    if (bridge_mismatch && g_aot_metrics)
+        g_aot_metrics->aot_bridge_epoch_mismatches_.fetch_add(1, std::memory_order_relaxed);
+    return defuse_drift || bridge_mismatch;
+}
+
+extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {
+    return g_aot_metrics
+               ? g_aot_metrics->aot_bridge_epoch_mismatches_.load(std::memory_order_relaxed)
+               : 0;
 }
 
 extern "C" void aura_aot_record_deopt_on_steal() {

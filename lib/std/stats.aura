@@ -96,6 +96,8 @@
     "query:incremental-closure-stats"
     ; ── Issue #652 — Bounded per-fiber MutationStack / YieldCheckpoint pool ──
     "query:per-fiber-stack-pool-stats"
+    ; ── Issue #653 — AOT checkpoint / bridge_epoch version drift ──
+    "query:aot-checkpoint-version-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
