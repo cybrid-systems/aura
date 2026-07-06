@@ -839,6 +839,141 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #641: query:stable-ref-provenance-sv-stats —
+    // Agent-discoverable structured dashboard for the
+    // StableNodeRef Cross-Fiber Provenance Enforcement in
+    // Multi-Agent Orchestration (P0 EDSL-Review + commercial
+    // reliability surface).
+    //
+    // Note the naming distinction from #631:
+    //   - (query:stable-ref-provenance-sv-stats-hash) (#631)
+    //     is the historical hash primitive from the
+    //     pre-enforcement era (5 fields, provenance summary
+    //     before fiber_id/workspace_id enforcement).
+    //   - (query:stable-ref-provenance-sv-stats) (#641, this
+    //     primitive) is the *enforcement-track* companion that
+    //     focuses on the cross-fiber / multi-agent
+    //     provenance enforcement counters for AC1+AC2+AC4
+    //     and uses the issue-specified exact name from #641's
+    //     AC3 (no `-hash` suffix).
+    //
+    // Fields (3 + sentinel):
+    //   - fiber-check         new stable_ref_fiber_provenance_
+    //                          check_total atomic (foundation
+    //                          for AC1 fiber_id / workspace_id
+    //                          match enforcement in query:/
+    //                          mutate: + Guard dtor). Value
+    //                          is 0 until AC1 wire-up.
+    //   - auto-refresh        new stable_ref_provenance_auto_
+    //                          refresh_total atomic (foundation
+    //                          for AC2 Guard success →
+    //                          auto-refresh provenance stamp).
+    //                          Value is 0 until AC2 wire-up.
+    //   - sv-feedback-wired   new stable_ref_sv_feedback_wired_
+    //                          total atomic (foundation for AC4
+    //                          provenance-checked SV feedback
+    //                          path wire-up).
+    //                          Value is 0 until AC4 wire-up.
+    //   - schema == 641         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers ~70% of the
+    // cross-fiber provenance observability surface:
+    //   - (query:stable-ref-provenance) (#604) — base
+    //     provenance summary primitive (no SV-specific track)
+    //   - (query:stable-ref-provenance-sv-stats-hash) (#631)
+    //     — historical hash primitive
+    //   - stable_ref_provenance_query_total (#631) + cross_
+    //     fiber_violations_total (#631) + safe_resolves_total
+    //     (#631) — cross-fiber / multi-agent SV provenance
+    //     counters
+    // What the issue body AC3 specifies by **exact name +
+    // fields** — `query:stable-ref-provenance-sv-stats` (no
+    // `-hash` suffix) with AC1+AC2+AC4-specific counters —
+    // was *not* shipped under that exact name. So #641 ships
+    // ONE new Aura primitive + 3 new foundation atomics.
+    //
+    // The remaining #641 AC1 + AC2 + AC4 work is invasive C++
+    // on the StableNodeRef validate_with_provenance +
+    // Guard dtor + SV feedback hot path + needs the
+    // multi-fiber steal + SV sequences + TSan coverage from
+    // the issue body — separate follow-ups.
+    add("query:stable-ref-provenance-sv-stats",
+        [&ev](const auto&) -> EvalValue {
+            // fiber-check: new foundation atomic
+            // (0 until AC1 fiber_id / workspace_id match
+            // enforcement wire-up).
+            const std::uint64_t fiber_check =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->stable_ref_fiber_provenance_check_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // auto-refresh: new foundation atomic
+            // (0 until AC2 Guard success →
+            // auto-refresh provenance stamp wire-up).
+            const std::uint64_t auto_refresh =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->stable_ref_provenance_auto_refresh_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // sv-feedback-wired: new foundation atomic
+            // (0 until AC4 provenance-checked SV feedback
+            // path wire-up).
+            const std::uint64_t sv_feedback_wired =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->stable_ref_sv_feedback_wired_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("fiber-check",
+                      static_cast<std::int64_t>(fiber_check));
+            insert_kv("auto-refresh",
+                      static_cast<std::int64_t>(auto_refresh));
+            insert_kv("sv-feedback-wired",
+                      static_cast<std::int64_t>(sv_feedback_wired));
+            insert_kv("schema", 641);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -3794,10 +3929,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 154 entries as of #640 ship (153 from #637 + 1 sv-verification-
-        // closedloop observability stats primitive from #640:
-        // query:sv-verification-closedloop-stats).
-        return make_int(154);
+        // 155 entries as of #641 ship (154 from #640 + 1 stable-ref-
+        // provenance-sv observability stats primitive from #641:
+        // query:stable-ref-provenance-sv-stats).
+        return make_int(155);
     });
 }
 
