@@ -1458,35 +1458,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (ev.mark_define_dirty_fn_)
             ev.mark_define_dirty_fn_(name);
 
-        // Issue #63723: re-populate the dep_graph so subsequent
-        // public_invalidate_function(name) sees the same caller
-        // edges the original (set-code ...) recorded. Without
-        // this, post-rebind dep_graph_contains(name) returns
-        // false because the BFS cascade walks an empty graph.
-        // Lightweight (just walks the AST + records edges, no
-        // IR lowering). The original (set-code ...) path uses
-        // pre_cache_workspace_defines_fn_ which does both
-        // populate_dep_graph + populate_ir_cache_v2; we use
-        // the dep_graph-only variant to avoid the O(n^2)
-        // re-lower cost on rebind storms (mark_define_dirty
-        // already makes the IR cache dirty, so the next
-        // (eval-current) will lazily re-lower once).
-        if (ev.repopulate_workspace_dep_graph_fn_)
-            ev.repopulate_workspace_dep_graph_fn_();
-
         // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
-        // Pass run_full_invalidate=false: mutate:rebind uses
-        // mark_define_dirty (not invalidate_function) per the
-        // test_issue_401 AC5 contract. The closure-heavy precision
-        // invalidation is still applied via
-        // mark_dirty_upward + define_impact_scope_fn_ above, so
-        // the impact scope is correct. The next
-        // (eval-current) will re-lower lazily. Increment
-        // invalidate_function_calls would have falsely
-        // signaled "rebind is a hard invalidate" — which is
-        // not the design contract.
-        ev.finalize_define_mutate_invalidation(flat, name, old_define,
-                                               /*run_full_invalidate=*/false);
+        ev.finalize_define_mutate_invalidation(flat, name, old_define);
 
         // ── Auto-typecheck (Issue #107 / #526) ──────────────
         // Selective infer_flat_partial when the mutation log
