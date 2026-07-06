@@ -3004,6 +3004,13 @@ add_dependencies(all_test_issue_targets test_edsl_core_stability_cow_atomic_quer
 aura_add_issue_test(test_compiler_core_incremental_selfmod_gaps)
 aura_issue_test_link_llvm_jit(test_compiler_core_incremental_selfmod_gaps)
 add_dependencies(all_test_issue_targets test_compiler_core_incremental_selfmod_gaps)
+# Issue #658: High-perf C++26 gaps — Arena tier fallback, IRSoA dirty cascade,
+# Value v2 classify, Shape history jitter, Pass DirtyAware. 7 ACs:
+# highperf-cpp26-stats (schema 658), heavy mutate matrix + regression.
+# Non-duplicative with #657/#642/#571/#570/#494.
+aura_add_issue_test(test_highperf_cpp26_gaps_arena_soa_value_shape_pass)
+aura_issue_test_link_llvm_jit(test_highperf_cpp26_gaps_arena_soa_value_shape_pass)
+add_dependencies(all_test_issue_targets test_highperf_cpp26_gaps_arena_soa_value_shape_pass)
 # Issue #709: Primitives registry fast dispatch + capture discipline + EDA.
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)
