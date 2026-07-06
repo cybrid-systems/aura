@@ -1769,6 +1769,138 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #648: query:panic-checkpoint-fiber-stats —
+    // Agent-discoverable structured dashboard for the Panic
+    // Checkpoint + Yield Checkpoint Storage Lifecycle +
+    // INVALID_VERSION Frame Handling in Fiber Resume +
+    // Concurrent GC (P0 Runtime-Gap + Panic production-
+    // readiness surface — non-duplicative to #637 #356 #264).
+    //
+    // Note the naming distinction from existing primitives:
+    //   - (query:panic-checkpoint-lifecycle-stats) — existing
+    //     high-level panic checkpoint lifecycle summary
+    //   - (query:panic-checkpoint-fiber-stats) (#648, this
+    //     primitive) — *enforcement-track* companion that
+    //     focuses on the AC1+AC2+AC3 counters for fiber
+    //     resume transfer + INVALID_VERSION frame handling
+    //     in GC + concurrent panic/GC conflict.
+    //
+    // Fields (3 + sentinel):
+    //   - transfer-on-resume    new panic_transfer_on_resume_
+    //                            total atomic (foundation for
+    //                            AC1 fiber resume panic
+    //                            checkpoint transfer).
+    //                            Value is 0 until AC1 wire-up.
+    //   - invalid-frames-skipped
+    //                            new panic_invalid_frames_
+    //                            skipped_total atomic
+    //                            (foundation for AC2
+    //                            INVALID_VERSION frame
+    //                            skip/count in GC walk /
+    //                            compact). Value is 0 until
+    //                            AC2 wire-up.
+    //   - concurrent-gc-conflict
+    //                            new panic_concurrent_gc_
+    //                            conflict_total atomic
+    //                            (foundation for AC3
+    //                            concurrent panic + GC
+    //                            conflict coordination).
+    //                            Value is 0 until AC3 wire-up.
+    //   - schema == 648           sentinel for Agent drift
+    //                            detection (mirrors the full
+    //                            chain through
+    //                            #618+#620+#621+#622+#623+
+    //                            #624+#625+#626+#630+#631+
+    //                            #632+#633+#637+#640+#641+
+    //                            #642+#643+#644+#645+#646+
+    //                            #647 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // panic checkpoint lifecycle observability surface:
+    //   - (query:panic-checkpoint-lifecycle-stats) —
+    //     high-level panic checkpoint lifecycle summary
+    //   - #264 yield checkpoint foundation
+    //   - #356 INVALID_VERSION env_frames_ sentinel +
+    //     post-rollback frames
+    //   - #637 IRClosure + EnvFrame versioning + bridge
+    //     invalidate protocol
+    //   - #588 per-fiber stack + yield_checkpoint_storage_
+    //   - #591 GC pause attribution
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:panic-checkpoint-fiber-stats` with
+    // AC1+AC2+AC3-specific counters as a structured hash —
+    // was *not* shipped under that exact name. So #648 ships
+    // ONE new Aura primitive + 3 new foundation atomics.
+    //
+    // The remaining #648 AC1 (fiber resume validate/sync
+    // per-fiber yield_checkpoint_storage_) + AC2 (GCEnvWalkFn
+    // + compact handle INVALID_VERSION frames) + AC3
+    // (g_fiber_yield_checkpoint_ + resume_validate_ coordinate
+    // with panic checkpoint under MutationBoundary) work is
+    // invasive C++ on fiber.cpp resume() + GCEnvWalkFn +
+    // compact + Guard panic state + needs the panic during
+    // deep mutate + steal + GC matrix + rollback +
+    // INVALID_VERSION cases + TSan coverage from the issue
+    // body — separate follow-ups.
+    add("query:panic-checkpoint-fiber-stats", [&ev](const auto&) -> EvalValue {
+        // transfer-on-resume: new foundation atomic
+        // (0 until AC1 fiber resume wire-up).
+        const std::uint64_t transfer_on_resume =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->panic_transfer_on_resume_total.load(std::memory_order_relaxed)
+                : 0;
+        // invalid-frames-skipped: new foundation atomic
+        // (0 until AC2 GC walk/compact wire-up).
+        const std::uint64_t invalid_frames_skipped =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->panic_invalid_frames_skipped_total.load(std::memory_order_relaxed)
+                : 0;
+        // concurrent-gc-conflict: new foundation atomic
+        // (0 until AC3 concurrent panic + GC wire-up).
+        const std::uint64_t concurrent_gc_conflict =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->panic_concurrent_gc_conflict_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("transfer-on-resume", static_cast<std::int64_t>(transfer_on_resume));
+        insert_kv("invalid-frames-skipped", static_cast<std::int64_t>(invalid_frames_skipped));
+        insert_kv("concurrent-gc-conflict", static_cast<std::int64_t>(concurrent_gc_conflict));
+        insert_kv("schema", 648);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4724,10 +4856,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 161 entries as of #647 ship (160 from #646 + 1 envframe-
-        // dualpath-stale observability stats hash primitive from
-        // #647: query:envframe-dualpath-stale-stats-hash).
-        return make_int(161);
+        // 162 entries as of #648 ship (161 from #647 + 1 panic-
+        // checkpoint-fiber observability stats primitive from
+        // #648: query:panic-checkpoint-fiber-stats).
+        return make_int(162);
     });
 }
 
