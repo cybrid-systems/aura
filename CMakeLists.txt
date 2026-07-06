@@ -2990,6 +2990,13 @@ add_dependencies(all_test_issue_targets test_aot_bridge_checkpoint_version_steal
 aura_add_issue_test(test_macro_hygiene_fiber_panic_aot_soa_self_evo)
 aura_issue_test_link_llvm_jit(test_macro_hygiene_fiber_panic_aot_soa_self_evo)
 add_dependencies(all_test_issue_targets test_macro_hygiene_fiber_panic_aot_soa_self_evo)
+# Issue #655: EDSL core stability — StableNodeRef COW + tag_arity delta +
+# nested atomic rollback + children safe view + mutate invalidation. 7 ACs:
+# edsl-core-stability-stats (schema 655), query/mutate matrix + regression.
+# Non-duplicative with #527/#552/#622/#654.
+aura_add_issue_test(test_edsl_core_stability_cow_atomic_query_mutate)
+aura_issue_test_link_llvm_jit(test_edsl_core_stability_cow_atomic_query_mutate)
+add_dependencies(all_test_issue_targets test_edsl_core_stability_cow_atomic_query_mutate)
 # Issue #709: Primitives registry fast dispatch + capture discipline + EDA.
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)

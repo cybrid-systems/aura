@@ -2779,6 +2779,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_->rollback_since(initial_log_size);
                 ev.workspace_flat_->rollback_atomic_batch();
                 ev.atomic_batch_rollbacks_++;
+                ev.bump_edsl_nested_atomic_rollback();
                 guard_ok = false;
                 return ev.make_merr(
                     "batch-unsupported-op",
@@ -2802,6 +2803,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ev.workspace_flat_->rollback_since(initial_log_size);
             ev.workspace_flat_->rollback_atomic_batch();
             ev.atomic_batch_rollbacks_++;
+            ev.bump_edsl_nested_atomic_rollback();
             guard_ok = false;
             // Issue #250 / regression fix: the previous
             // `make_bool(false)` return made the failure

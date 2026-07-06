@@ -2960,6 +2960,79 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
+    // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
+    // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,
+    // #622 atomic-batch, #654 macro-hygiene-fiber-panic).
+    //
+    // Fields (5 + sentinel):
+    //   - cow-stable-ref-remaps       edsl_cow_stable_ref_remap_total
+    //   - tag-arity-delta-patches     edsl_tag_arity_delta_patch_total
+    //   - nested-atomic-rollbacks     edsl_nested_atomic_rollback_total
+    //   - children-safe-views         FlatAST children_safe_view_count_
+    //   - mutate-invalidate-precision edsl_mutate_invalidate_precision_total
+    //   - schema == 655
+    add("query:edsl-core-stability-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t cow_remap =
+            m ? static_cast<std::int64_t>(
+                    m->edsl_cow_stable_ref_remap_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t delta_patch =
+            m ? static_cast<std::int64_t>(
+                    m->edsl_tag_arity_delta_patch_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t nested_rollback =
+            m ? static_cast<std::int64_t>(
+                    m->edsl_nested_atomic_rollback_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t children_safe =
+            ev.workspace_flat()
+                ? static_cast<std::int64_t>(ev.workspace_flat()->children_safe_view_count())
+                : 0;
+        const std::int64_t invalidate_precision =
+            m ? static_cast<std::int64_t>(
+                    m->edsl_mutate_invalidate_precision_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("cow-stable-ref-remaps", cow_remap);
+        insert_kv("tag-arity-delta-patches", delta_patch);
+        insert_kv("nested-atomic-rollbacks", nested_rollback);
+        insert_kv("children-safe-views", children_safe);
+        insert_kv("mutate-invalidate-precision", invalidate_precision);
+        insert_kv("schema", 655);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5590,6 +5663,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:incremental-closure-stats",
             // Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps
             "query:macro-hygiene-fiber-panic-stats",
+            // Issue #655 — EDSL core stability COW/atomic/query/mutate gaps
+            "query:edsl-core-stability-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -5927,9 +6002,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 173 entries as of #654 ship (172 from #600 + 1 macro-hygiene-fiber-panic-stats
-        // registration from #654).
-        return make_int(173);
+        // 174 entries as of #655 ship (173 from #654 + 1 edsl-core-stability-stats
+        // registration from #655).
+        return make_int(174);
     });
 }
 

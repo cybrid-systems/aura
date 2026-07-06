@@ -100,6 +100,8 @@
     "query:aot-checkpoint-version-stats"
     ; ── Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps ──
     "query:macro-hygiene-fiber-panic-stats"
+    ; ── Issue #655 — EDSL core stability COW/atomic/query/mutate gaps ──
+    "query:edsl-core-stability-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
