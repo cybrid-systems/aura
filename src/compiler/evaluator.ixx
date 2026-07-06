@@ -1032,14 +1032,6 @@ public:
     void set_pre_cache_workspace_defines_fn(std::function<void()> fn) {
         pre_cache_workspace_defines_fn_ = std::move(fn);
     }
-    // Issue #63723: lightweight dep_graph-only repopulate hook
-    // (called from mutate:rebind after the rebind success). See
-    // set_repopulate_workspace_dep_graph_fn in service.ixx for
-    // the rationale.
-    std::function<void()> repopulate_workspace_dep_graph_fn_ = nullptr;
-    void set_repopulate_workspace_dep_graph_fn(std::function<void()> fn) {
-        repopulate_workspace_dep_graph_fn_ = std::move(fn);
-    }
     // Phase 3: read cache entry from outside the module.
     using IsDefineDirtyFn = bool(const std::string&);
     std::function<IsDefineDirtyFn> is_define_dirty_fn_ = nullptr;
