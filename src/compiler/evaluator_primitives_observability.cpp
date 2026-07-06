@@ -695,6 +695,150 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #640: query:sv-verification-closedloop-stats —
+    // Agent-discoverable structured dashboard for the
+    // Verification Feedback → Structured SV Mutate Closed-Loop
+    // (P0 EDA-SV-Review + commercial reliability surface).
+    //
+    // Note the naming distinction from #630:
+    //   - (query:sv-verification-closedloop-stats-hash) (#630)
+    //     is the historical hash primitive from before the
+    //     AC1+AC2+AC3 enforcement work existed (12+ fields,
+    //     predicate-driven coverage / assert / cex summary).
+    //   - (query:sv-verification-closedloop-stats) (#640, this
+    //     primitive) is the *enforcement-track* companion that
+    //     focuses on the closed-loop counters for AC1+AC2+AC3
+    //     and uses the issue-specified exact name from #640's
+    //     AC4 (no `-hash` suffix).
+    //
+    // Fields (3 + sentinel):
+    //   - feedback-apply       new sv_verify_feedback_apply_total
+    //                          atomic (foundation for AC1
+    //                          (eda:apply-verification-feedback
+    //                          report) primitive wire-up —
+    //                          bumped per successful feedback
+    //                          → Guard + StableNodeRef +
+    //                          sv_ir structured mutate).
+    //                          Value is 0 until AC1 wire-up.
+    //   - guard-reemit         new sv_guard_reemit_hook_total
+    //                          atomic (foundation for AC2
+    //                          Guard success → hardware_backend
+    //                          re-emit hook wire-up).
+    //                          Value is 0 until AC2 wire-up.
+    //   - stable-ref-strict    new sv_stable_ref_provenance_
+    //                          strict_total atomic (foundation
+    //                          for AC3 strengthened StableNodeRef
+    //                          provenance check on SV mutate
+    //                          paths). Value is 0 until AC3
+    //                          wire-up.
+    //   - schema == 640         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers ~80% of the closed-
+    // loop observability surface:
+    //   - (query:verification-feedback-loop-stats) (#579) —
+    //     8-field feedback → mutate closed-loop hash
+    //   - (query:sv-verification-closedloop-stats-hash)
+    //     (#630) — historical hash primitive
+    //   - hardware_backend_hook_calls_total (#693) +
+    //     commercial_reemits_total (#693) +
+    //     feedback_mutate_hits_total (#693) +
+    //     ppa_savings_total (#693) +
+    //     verification_loop_success_total (#693)
+    //   - eda_sv_feedback_mutate_success_total (#695) +
+    //     eda_sv_stable_ref_invalidation_total (#695) +
+    //     eda_sv_corruption_detected_total (#695)
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:sv-verification-closedloop-stats`
+    // (no `-hash` suffix) with AC1+AC2+AC3-specific counters
+    // — was *not* shipped under that exact name. So #640
+    // ships ONE new Aura primitive + 3 new foundation
+    // atomics.
+    //
+    // The remaining #640 AC1 + AC2 + AC3 work is invasive
+    // C++ on the verification-feedback hot path
+    // (eda:apply-verification-feedback primitive + Guard +
+    // StableNodeRef capture + sv_ir structured mutate +
+    // hardware_backend re-emit hook + strengthened
+    // StableNodeRef provenance check) + needs the 5000+
+    // fiber stress + TSan coverage from the issue body —
+    // separate follow-ups.
+    add("query:sv-verification-closedloop-stats",
+        [&ev](const auto&) -> EvalValue {
+            // feedback-apply: new foundation atomic
+            // (0 until AC1 eda:apply-verification-feedback
+            // wire-up).
+            const std::uint64_t feedback_apply =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->sv_verify_feedback_apply_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // guard-reemit: new foundation atomic
+            // (0 until AC2 Guard → hardware_backend re-emit
+            // hook wire-up).
+            const std::uint64_t guard_reemit =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->sv_guard_reemit_hook_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // stable-ref-strict: new foundation atomic
+            // (0 until AC3 strengthened StableNodeRef
+            // provenance check wire-up).
+            const std::uint64_t stable_ref_strict =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->sv_stable_ref_provenance_strict_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("feedback-apply",
+                      static_cast<std::int64_t>(feedback_apply));
+            insert_kv("guard-reemit",
+                      static_cast<std::int64_t>(guard_reemit));
+            insert_kv("stable-ref-strict",
+                      static_cast<std::int64_t>(stable_ref_strict));
+            insert_kv("schema", 640);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -3650,10 +3794,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 153 entries as of #637 ship (152 from #587 + 1 closure-bridge-
-        // safety observability hash primitive from #637:
-        // query:closure-bridge-safety-stats-hash).
-        return make_int(153);
+        // 154 entries as of #640 ship (153 from #637 + 1 sv-verification-
+        // closedloop observability stats primitive from #640:
+        // query:sv-verification-closedloop-stats).
+        return make_int(154);
     });
 }
 

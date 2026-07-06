@@ -3241,6 +3241,22 @@ add_dependencies(all_test_issue_targets test_issue_633)
 aura_add_issue_test(test_issue_637)
 aura_issue_test_link_llvm_jit(test_issue_637)
 add_dependencies(all_test_issue_targets test_issue_637)
+# Issue #640: query:sv-verification-closedloop-stats — P0
+# EDA-SV-Review closed-loop foundation — 1 new Aura
+# primitive (query:sv-verification-closedloop-stats, NO
+# `-hash` suffix — distinct from #630 historical hash
+# primitive) + 3 new atomics
+# (sv_verify_feedback_apply_total +
+# sv_guard_reemit_hook_total +
+# sv_stable_ref_provenance_strict_total). Primitive has 4
+# fields: 3 from the new atomics (all foundation scaffolding
+# for AC1+AC2+AC3 enforcement, currently 0) + schema
+# sentinel. Builds on #579 / #630 / #693 / #695 / #697
+# existing counters + verification-feedback-loop-stats +
+# sv-verification-closedloop-stats-hash primitives.
+aura_add_issue_test(test_issue_640)
+aura_issue_test_link_llvm_jit(test_issue_640)
+add_dependencies(all_test_issue_targets test_issue_640)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
