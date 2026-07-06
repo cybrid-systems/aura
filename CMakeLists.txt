@@ -3453,6 +3453,38 @@ add_dependencies(all_test_issue_targets test_issue_650)
 aura_add_issue_test(test_issue_651)
 aura_issue_test_link_llvm_jit(test_issue_651)
 add_dependencies(all_test_issue_targets test_issue_651)
+# Issue #589: query:envframe-dualpath-enforce-stats — P0
+# Runtime-Review + SoA EnvFrame/EnvId dual-path bindings_
+# vs bindings_symid_ consistency + version stamping +
+# stale refresh in materialize_call_env & GCEnvWalkFn
+# foundation — 1 new Aura primitive
+# (query:envframe-dualpath-enforce-stats, distinct from
+# existing flat-int query:envframe-dualpath-stats +
+# query:envframe-dualpath-stale-stats and from #647
+# query:envframe-dualpath-stale-stats-hash via the
+# `-enforce-` midfix — focus on SoA dual-path
+# CONSISTENCY enforcement layer that the existing
+# stale-focused primitives don't cover) + 3 new atomics
+# (envframe_dualpath_mirror_write_total +
+# envframe_dualpath_refresh_total +
+# envframe_dualpath_consistency_violations_total).
+# Primitive has 4 fields: 3 from the new atomics (all
+# foundation scaffolding for AC1+AC2+AC3 enforcement,
+# currently 0) + schema sentinel (matches issue number
+# 589 even though #589 is older than #651). Builds on
+# existing query:envframe-dualpath-stats +
+# query:envframe-dualpath-stale-stats + #647
+# envframe-dualpath-stale-stats-hash + #543 SoA EnvFrame +
+# #568 children SoA + #205 GCEnvWalkFn + the existing
+# envframe_desync_detected_ / envframe_stale_refresh_count_
+# / envframe_post_rollback_invalidations_ +
+# envframe_version_mismatch_in_walk_ +
+# envframe_gc_walk_safe_skips_ + gc_envframe_stale_skipped_
+# counters. Non-duplicative to existing #543/#568/#205
+# (see issue body).
+aura_add_issue_test(test_issue_589)
+aura_issue_test_link_llvm_jit(test_issue_589)
+add_dependencies(all_test_issue_targets test_issue_589)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

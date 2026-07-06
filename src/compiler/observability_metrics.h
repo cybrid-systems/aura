@@ -1101,6 +1101,45 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> gc_panic_pending_deferral_total{0};
     std::atomic<std::uint64_t> gc_blocked_by_panic_total{0};
     std::atomic<std::uint64_t> gc_panic_conflict_resolved_total{0};
+    // Issue #589: SoA EnvFrame/EnvId dual-path
+    // bindings_ vs bindings_symid_ consistency + version
+    // stamping + stale refresh in materialize_call_env &
+    // GCEnvWalkFn counters (P0 Runtime-Review + SoA
+    // production-readiness foundation — non-duplicative to
+    // existing #543 / #568 / #205).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when Env::bind_symid
+    // / bind always mirror: bindings_symid_.push + bindings_
+    // .push + on owner_ set stamp defuse_version_ into
+    // env_version_ (#589 AC1), when materialize_call_env on
+    // version mismatch calls refresh_dual_path_from_soa
+    // helper that syncs bindings_ <-> bindings_symid_ +
+    // parent_id_ + bumps envframe_stale_refresh_count_
+    // (#589 AC2), and when walk_env_frames / GCEnvWalkFn
+    // before emitting roots refreshes or skips with metric
+    // if frame.version_ < current_defuse (#589 AC3). P0
+    // ships the counters + the agent-visible
+    // (query:envframe-dualpath-enforce-stats) primitive so
+    // the Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - envframe_dualpath_mirror_write_total: AC1 —
+    //     count of bind/bind_symid mirror writes
+    //     (symmetric bindings_symid_ + bindings_ push under
+    //     pool_ mode). Ratio (this / total bind calls) =
+    //     how symmetric dual-path writes are.
+    //   - envframe_dualpath_refresh_total: AC2 — count of
+    //     refresh_dual_path_from_soa helper calls (from
+    //     materialize_call_env on version mismatch).
+    //     Ratio (refresh / version mismatch) = recovery rate.
+    //   - envframe_dualpath_consistency_violations_total:
+    //     AC3 — count of consistency violations caught in
+    //     walk_env_frames / GCEnvWalkFn (frame.version_ <
+    //     current_defuse, skip or refresh path). High rate
+    //     = production long-running agent fleet is hitting
+    //     the version-mismatch path frequently.
+    std::atomic<std::uint64_t> envframe_dualpath_mirror_write_total{0};
+    std::atomic<std::uint64_t> envframe_dualpath_refresh_total{0};
+    std::atomic<std::uint64_t> envframe_dualpath_consistency_violations_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

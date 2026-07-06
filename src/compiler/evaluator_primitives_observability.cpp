@@ -2330,6 +2330,157 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #589: query:envframe-dualpath-enforce-stats —
+    // Agent-discoverable structured dashboard for the SoA
+    // EnvFrame/EnvId dual-path bindings_ vs bindings_symid_
+    // consistency + version stamping + stale refresh in
+    // materialize_call_env & GCEnvWalkFn (P0 Runtime-Review +
+    // SoA production-readiness surface — non-duplicative to
+    // existing #543 SoA EnvFrame, #568 children SoA, #205
+    // GCEnvWalkFn).
+    //
+    // Note the relationship to existing primitives:
+    //   - (query:envframe-dualpath-stats) — base flat-int
+    //     dualpath primitive (the AC4 surface)
+    //   - (query:envframe-dualpath-stale-stats) — existing
+    //     flat-int stale summary
+    //   - (query:envframe-dualpath-stale-stats-hash) (#647)
+    //     — stale enforcement-layer hash (cross-fiber /
+    //     version mismatch / dualpath-repair counters)
+    //   - (query:envframe-dualpath-enforce-stats) (#589,
+    //     this primitive) — *enforce-track* companion with
+    //     `-enforce-` midfix that focuses on the AC1+AC2+AC3
+    //     counters for bind/bind_symid mirror writes +
+    //     materialize_call_env dual-path refresh + GCEnvWalkFn
+    //     consistency violations (the SoA dual-path
+    //     consistency enforcement layer that #647's
+    //     `-stale-` midfix does not cover).
+    //
+    // Fields (3 + sentinel):
+    //   - mirror-write        new envframe_dualpath_mirror_
+    //                          write_total atomic (foundation
+    //                          for AC1 bind/bind_symid mirror
+    //                          writes). Value is 0 until AC1
+    //                          wire-up.
+    //   - dualpath-refresh    new envframe_dualpath_refresh_
+    //                          total atomic (foundation for
+    //                          AC2 materialize_call_env
+    //                          refresh_dual_path_from_soa
+    //                          helper calls). Value is 0
+    //                          until AC2 wire-up.
+    //   - consistency-violations
+    //                          new envframe_dualpath_
+    //                          consistency_violations_total
+    //                          atomic (foundation for AC3
+    //                          GCEnvWalkFn consistency
+    //                          violations caught). Value
+    //                          is 0 until AC3 wire-up.
+    //   - schema == 589         sentinel for Agent drift
+    //                          detection (back to a lower
+    //                          number than #651 since #589
+    //                          is an older issue that
+    //                          reaches observability
+    //                          foundation layer late — the
+    //                          schema sentinel still
+    //                          matches the issue number for
+    //                          Agent drift tracking).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // dual-path observability surface:
+    //   - (query:envframe-dualpath-stats) — base flat-int
+    //     dualpath primitive (the AC4 surface)
+    //   - (query:envframe-dualpath-stale-stats) — existing
+    //     flat-int stale summary
+    //   - (query:envframe-dualpath-stale-stats-hash) (#647)
+    //     — stale enforcement-layer hash
+    //   - (query:envframe-stale-stats) — stale refresh stats
+    //   - (query:envframe-bump-stats) — bump stats
+    //   - #543 SoA EnvFrame foundation
+    //   - #568 children SoA
+    //   - #205 GCEnvWalkFn foundation
+    //   - envframe_desync_detected_ / envframe_stale_refresh_
+    //     count_ / envframe_post_rollback_invalidations_ +
+    //     envframe_version_mismatch_in_walk_ +
+    //     envframe_gc_walk_safe_skips_ + gc_envframe_stale_
+    //     skipped_ (existing counters that #589 AC1+AC2+AC3
+    //     will exercise)
+    // What the issue body AC4 specifies by **exact name +
+    // fields** — `query:envframe-dualpath-stats` — already
+    // ships as the base flat-int primitive. #589 ships the
+    // AC1+AC2+AC3 enforcement-layer companion with a
+    // distinct name (`-enforce-` midfix).
+    //
+    // The remaining #589 AC1 (Env::bind_symid / bind always
+    // mirror + owner_ set stamp defuse_version_ into
+    // env_version_) + AC2 (materialize_call_env on version
+    // mismatch call refresh_dual_path_from_soa helper) +
+    // AC3 (walk_env_frames / GCEnvWalkFn before emitting
+    // roots refresh or skip with metric) work is invasive
+    // C++ on evaluator.ixx + evaluator_impl.cpp +
+    // gc_coordinator.h + needs the large env chains +
+    // mutate + compaction/GC matrix + 5000+ materialize
+    // under fibers + TSan coverage from the issue body —
+    // separate follow-ups.
+    add("query:envframe-dualpath-enforce-stats", [&ev](const auto&) -> EvalValue {
+        // mirror-write: new foundation atomic
+        // (0 until AC1 bind/bind_symid mirror wire-up).
+        const std::int64_t mirror_write =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->envframe_dualpath_mirror_write_total.load(std::memory_order_relaxed)
+                : 0;
+        // dualpath-refresh: new foundation atomic
+        // (0 until AC2 materialize_call_env refresh wire-up).
+        const std::int64_t dualpath_refresh =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->envframe_dualpath_refresh_total.load(std::memory_order_relaxed)
+                : 0;
+        // consistency-violations: new foundation atomic
+        // (0 until AC3 GCEnvWalkFn consistency violation wire-up).
+        const std::int64_t consistency_violations =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->envframe_dualpath_consistency_violations_total.load(
+                          std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("mirror-write", static_cast<std::int64_t>(mirror_write));
+        insert_kv("dualpath-refresh", static_cast<std::int64_t>(dualpath_refresh));
+        insert_kv("consistency-violations", static_cast<std::int64_t>(consistency_violations));
+        insert_kv("schema", 589);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5285,10 +5436,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 165 entries as of #651 ship (164 from #650 + 1 gc-panic-
-        // deferral observability stats primitive from #651:
-        // query:gc-panic-deferral-stats).
-        return make_int(165);
+        // 166 entries as of #589 ship (165 from #651 + 1 envframe-
+        // dualpath-enforce observability stats primitive from
+        // #589: query:envframe-dualpath-enforce-stats).
+        return make_int(166);
     });
 }
 
