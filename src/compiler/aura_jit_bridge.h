@@ -56,6 +56,7 @@ void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
 std::uint64_t aura_aot_func_table_epoch(void);
 bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
 void aura_aot_record_deopt_on_steal(void);
+std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 
 // Issue #358 — incremental re-AOT foundation.
 //

@@ -2976,6 +2976,13 @@ add_dependencies(all_test_issue_targets test_per_fiber_stack_pool_high_concurren
 aura_add_issue_test(test_issue_708)
 aura_issue_test_link_llvm_jit(test_issue_708)
 add_dependencies(all_test_issue_targets test_issue_708)
+# Issue #653: AOT bridge_epoch / emit_version in restore_post_yield_or_rollback.
+# 7 ACs: aot-checkpoint-version-stats (schema 653), defuse/bridge drift,
+# deopt-on-steal, multi-fiber steal+reload stress, monotonic + regression.
+# Non-duplicative with #708 (ship), #652, #592.
+aura_add_issue_test(test_aot_bridge_checkpoint_version_steal)
+aura_issue_test_link_llvm_jit(test_aot_bridge_checkpoint_version_steal)
+add_dependencies(all_test_issue_targets test_aot_bridge_checkpoint_version_steal)
 # Issue #709: Primitives registry fast dispatch + capture discipline + EDA.
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)
