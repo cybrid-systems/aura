@@ -3257,6 +3257,21 @@ add_dependencies(all_test_issue_targets test_issue_637)
 aura_add_issue_test(test_issue_640)
 aura_issue_test_link_llvm_jit(test_issue_640)
 add_dependencies(all_test_issue_targets test_issue_640)
+# Issue #641: query:stable-ref-provenance-sv-stats — P0
+# EDSL-Review cross-fiber provenance enforcement foundation
+# — 1 new Aura primitive (query:stable-ref-provenance-sv-stats,
+# NO `-hash` suffix — distinct from #631 historical hash
+# primitive) + 3 new atomics
+# (stable_ref_fiber_provenance_check_total +
+# stable_ref_provenance_auto_refresh_total +
+# stable_ref_sv_feedback_wired_total). Primitive has 4 fields:
+# 3 from the new atomics (all foundation scaffolding for
+# AC1+AC2+AC4 enforcement, currently 0) + schema sentinel.
+# Builds on #604 / #631 / #640 existing primitives +
+# StableNodeRef provenance infrastructure.
+aura_add_issue_test(test_issue_641)
+aura_issue_test_link_llvm_jit(test_issue_641)
+add_dependencies(all_test_issue_targets test_issue_641)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

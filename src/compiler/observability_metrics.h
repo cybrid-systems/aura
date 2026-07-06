@@ -713,6 +713,37 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_verify_feedback_apply_total{0};
     std::atomic<std::uint64_t> sv_guard_reemit_hook_total{0};
     std::atomic<std::uint64_t> sv_stable_ref_provenance_strict_total{0};
+    // Issue #641: StableNodeRef cross-fiber provenance
+    // enforcement counters (P0 EDSL-Review foundation).
+    // These are scaffolding for the future AC1 + AC2 + AC4
+    // enforcement work — the bumps happen when
+    // query:/mutate: + Guard dtor enforce fiber_id /
+    // workspace_id match (after is_valid_in, on mismatch
+    // → boundary violation or safe resolve, #641 AC1),
+    // when Guard success triggers auto-refresh of the
+    // provenance stamp (#641 AC2), and when the
+    // provenance-checked SV feedback path is wired
+    // (#641 AC4). P0 ships the counters + the
+    // agent-visible (query:stable-ref-provenance-sv-stats)
+    // primitive so the Agent has a dashboard today;
+    // values are 0 until the enforcement work ships.
+    //   - stable_ref_fiber_provenance_check_total: AC1 —
+    //     count of fiber_id / workspace_id match checks
+    //     fired in query:/mutate: + Guard dtor. The ratio
+    //     (mismatch_count / check_count) is the
+    //     cross-agent theft rate the safety net caught.
+    //   - stable_ref_provenance_auto_refresh_total: AC2 —
+    //     count of Guard success paths that auto-refreshed
+    //     the provenance stamp (fiber_id / workspace_id /
+    //     mutation_id_at_capture / last_validated_generation).
+    //     1.0 ratio = every Guard success refreshed.
+    //   - stable_ref_sv_feedback_wired_total: AC4 — count
+    //     of provenance-checked SV feedback path
+    //     invocations (StableNodeRef + sv_ir + Guard +
+    //     eda:apply-verification-feedback chain).
+    std::atomic<std::uint64_t> stable_ref_fiber_provenance_check_total{0};
+    std::atomic<std::uint64_t> stable_ref_provenance_auto_refresh_total{0};
+    std::atomic<std::uint64_t> stable_ref_sv_feedback_wired_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
