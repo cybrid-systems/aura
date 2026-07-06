@@ -3539,6 +3539,31 @@ public:
             m->edsl_mutate_invalidate_precision_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #657: compiler core incremental self-mod observability.
+    void bump_compiler_core_bridge_epoch_sync() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_core_bridge_epoch_sync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_core_jit_unhandled_invalidate() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_core_jit_unhandled_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_core_linear_metadata_flow() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_core_linear_metadata_flow_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_core_quote_fallback_refresh() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_core_quote_fallback_refresh_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }

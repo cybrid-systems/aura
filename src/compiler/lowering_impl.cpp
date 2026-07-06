@@ -14,6 +14,32 @@ using namespace aura::ast;
 // Issue #684: thread-local snapshot of the last dual-emit lower.
 static thread_local LowerSoAEmitSnapshot g_last_soa_snapshot;
 
+// Issue #657: compiler-core incremental observability hooks.
+static thread_local LoweringObservabilityHooks g_lowering_hooks{};
+
+void set_lowering_observability_hooks(LoweringObservabilityHooks hooks) noexcept {
+    g_lowering_hooks = hooks;
+}
+
+void clear_lowering_observability_hooks() noexcept {
+    g_lowering_hooks = {};
+}
+
+void LoweringState::emit_with_metadata(aura::ir::IROpcode op, std::uint32_t tid,
+                                      std::uint8_t linear_state, std::uint32_t adt_variant,
+                                      std::uint32_t narrow_evidence, std::uint32_t op0,
+                                      std::uint32_t op1, std::uint32_t op2, std::uint32_t op3) {
+    emit_with_type(op, tid, op0, op1, op2, op3);
+    if (cur_func && cur_block < cur_func->blocks.size()) {
+        auto& last = cur_func->blocks[cur_block].instructions.back();
+        last.linear_ownership_state = linear_state;
+        last.adt_variant_id = adt_variant;
+        last.narrow_evidence = narrow_evidence;
+        if (linear_state != 0 && g_lowering_hooks.on_linear_metadata_flow)
+            g_lowering_hooks.on_linear_metadata_flow();
+    }
+}
+
 const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept {
     return &g_last_soa_snapshot;
 }
@@ -215,9 +241,16 @@ static std::uint32_t lower_flat_expr(
                                 // shared_ptr; we copy it (refcount
                                 // incremented) so the new bridge keeps
                                 // the FlatAST alive independently.
+                                // Issue #657: sync bridge_epoch on cache-hit copy so
+                                // recursive-define closures see current mutation epoch.
+                                std::uint64_t bridge_epoch = bridge_it->second[ci].bridge_epoch;
+                                if (g_lowering_hooks.bridge_epoch_capture != 0)
+                                    bridge_epoch = g_lowering_hooks.bridge_epoch_capture;
                                 state.module.set_closure_bridge_ptr(
                                     new_fid, bridge_it->second[ci].flat, bridge_it->second[ci].pool,
-                                    bridge_it->second[ci].body_id);
+                                    bridge_it->second[ci].body_id, bridge_epoch);
+                                if (g_lowering_hooks.on_bridge_epoch_sync)
+                                    g_lowering_hooks.on_bridge_epoch_sync();
                                 // Copy body_source for bridge fallback re-parse
                                 if (!bridge_it->second[ci].body_source.empty() &&
                                     new_fid < state.module.closure_bridge.size()) {

@@ -83,6 +83,11 @@ int aura_filter_dirty_flat_functions(const void* functions, unsigned int num_fun
 // bare extern "C" declarations.
 std::uint64_t aura_jit_fallback_count_v_read(void);
 
+// Issue #657: JIT unhandled-opcode → compiler invalidate/deopt hook.
+typedef void (*aura_jit_unhandled_invalidate_fn_t)(const char* fn_name);
+void aura_set_jit_unhandled_invalidate_fn(aura_jit_unhandled_invalidate_fn_t fn);
+void aura_notify_jit_unhandled_opcode(const char* fn_name);
+
 } // extern "C"
 
 #endif // AURA_COMPILER_AURA_JIT_BRIDGE_H

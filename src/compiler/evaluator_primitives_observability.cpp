@@ -3033,6 +3033,88 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #657: query:compiler-core-incremental-stats — 5 compiler pipeline
+    // gaps for AI multi-round self-mod + incremental (cache bridge epoch,
+    // impact-scope partial re-lower, JIT unhandled deopt, linear metadata
+    // flow, quote fallback refresh). Non-duplicative with #600
+    // incremental-closure-stats, #680 impact_scope, #530 production-reloader.
+    //
+    // Fields (7 + sentinel):
+    //   - bridge-epoch-cache-syncs   compiler_core_bridge_epoch_sync_total
+    //   - impact-blocks              Evaluator total_affected_blocks_
+    //   - partial-relower-hits       Evaluator partial_relower_count_
+    //   - full-fallbacks             relower_full_called_count
+    //   - jit-unhandled-deopts       compiler_core_jit_unhandled_invalidate_total
+    //   - linear-metadata-flows      compiler_core_linear_metadata_flow_total
+    //   - quote-fallback-refreshes   compiler_core_quote_fallback_refresh_total
+    //   - schema == 657
+    add("query:compiler-core-incremental-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t bridge_sync =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_core_bridge_epoch_sync_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t impact_blocks =
+            static_cast<std::int64_t>(ev.get_total_affected_blocks());
+        const std::int64_t partial_relower =
+            static_cast<std::int64_t>(ev.get_partial_relower_count());
+        const std::int64_t full_fallback =
+            m ? static_cast<std::int64_t>(
+                    m->relower_full_called_count.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t jit_deopt =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_core_jit_unhandled_invalidate_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t linear_flow =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_core_linear_metadata_flow_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t quote_refresh =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_core_quote_fallback_refresh_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("bridge-epoch-cache-syncs", bridge_sync);
+        insert_kv("impact-blocks", impact_blocks);
+        insert_kv("partial-relower-hits", partial_relower);
+        insert_kv("full-fallbacks", full_fallback);
+        insert_kv("jit-unhandled-deopts", jit_deopt);
+        insert_kv("linear-metadata-flows", linear_flow);
+        insert_kv("quote-fallback-refreshes", quote_refresh);
+        insert_kv("schema", 657);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5665,6 +5747,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:macro-hygiene-fiber-panic-stats",
             // Issue #655 — EDSL core stability COW/atomic/query/mutate gaps
             "query:edsl-core-stability-stats",
+            // Issue #657 — Compiler core incremental self-mod gaps
+            "query:compiler-core-incremental-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -6002,9 +6086,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 174 entries as of #655 ship (173 from #654 + 1 edsl-core-stability-stats
-        // registration from #655).
-        return make_int(174);
+        // 175 entries as of #657 ship (174 from #655 + 1 compiler-core-incremental-stats
+        // registration from #657).
+        return make_int(175);
     });
 }
 

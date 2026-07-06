@@ -2,6 +2,7 @@
 // Routes compilation requests to the LLVM-based emit backend in aura_jit.cpp.
 
 #include "aura_jit.h"
+#include "aura_jit_bridge.h"
 #include "aot_mangle.h"            // mangle_aot_name (Issue #136)
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 
@@ -443,6 +444,19 @@ std::atomic<std::uint64_t> aura_jit_fallback_count_v_{0};
 extern "C" std::uint64_t aura_jit_fallback_count_v_read() {
     return aura_jit_fallback_count_v_.load(std::memory_order_relaxed);
 }
+
+// Issue #657: JIT unhandled-opcode invalidate/deopt hook.
+static aura_jit_unhandled_invalidate_fn_t g_jit_unhandled_invalidate_fn = nullptr;
+
+extern "C" void aura_set_jit_unhandled_invalidate_fn(aura_jit_unhandled_invalidate_fn_t fn) {
+    g_jit_unhandled_invalidate_fn = fn;
+}
+
+extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
+    if (g_jit_unhandled_invalidate_fn)
+        g_jit_unhandled_invalidate_fn(fn_name);
+}
+
 extern "C" std::uint64_t aura_jit_fallback_to_interpreter(int64_t* args, uint32_t n_args) {
     aura_jit_fallback_count_v_.fetch_add(1, std::memory_order_relaxed);
     // #461 P0: return a tagged sentinel (different from the

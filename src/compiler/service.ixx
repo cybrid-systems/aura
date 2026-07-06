@@ -26,6 +26,7 @@ module;
 #include <utility>
 #include <vector>
 #include "aura_jit.h"
+#include "aura_jit_bridge.h"
 #include "runtime_shared.h"
 #include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
 #include "observability_metrics.h"
@@ -572,6 +573,10 @@ public:
             [this](const std::string& name) { this->invalidate_function(name); });
         evaluator_.set_define_impact_scope_fn(
             [this](aura::ast::NodeId root) { this->run_define_impact_scope(root); });
+        // Issue #657: compiler-core incremental hooks (lowering bridge epoch +
+        // linear metadata + JIT unhandled invalidate).
+        install_lowering_compiler_core_hooks();
+        aura_set_jit_unhandled_invalidate_fn(&CompilerService::jit_unhandled_invalidate_trampoline);
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
         // Plan A + Follow-up 3: hook calls BOTH the lightweight
@@ -1097,6 +1102,14 @@ public:
         metrics_.needs_tree_walker_fallback_calls.fetch_add(1, std::memory_order_relaxed);
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
+        // Issue #657: quote-containing defines need bridge/fallback refresh.
+        bool flat_has_quote = false;
+        for (aura::ast::NodeId qid = 0; qid < flat.size(); ++qid) {
+            if (flat.get(qid).tag == aura::ast::NodeTag::Quote) {
+                flat_has_quote = true;
+                break;
+            }
+        }
 
         // Issue #402: FAST PATH. When summary_flags_ == 0,
         // no MacroDef / DefineType / DefineModule / Set /
@@ -1122,11 +1135,19 @@ public:
                 auto fast_body_id = fast_root_v.child(0);
                 if (fast_body_id < flat.size()) {
                     auto fast_name = std::string(pool.resolve(fast_root_v.sym_id));
-                    return define_body_needs_tree_walker_fallback(flat, pool, fast_body_id,
-                                                                  fast_name);
+                    const bool needs = define_body_needs_tree_walker_fallback(
+                        flat, pool, fast_body_id, fast_name);
+                    if (flat_has_quote && needs)
+                        metrics_.compiler_core_quote_fallback_refresh_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    return needs;
                 }
             }
-            return subtree_needs_tree_walker_fallback(flat, pool, root);
+            const bool needs = subtree_needs_tree_walker_fallback(flat, pool, root);
+            if (flat_has_quote && needs)
+                metrics_.compiler_core_quote_fallback_refresh_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            return needs;
         }
 
         // Issue #402: SLOW PATH. summary_flags_ != 0 means
@@ -4320,6 +4341,7 @@ public:
         }
         // Bump the per-function re-lower counter.
         metrics_.relower_per_function_called_count.fetch_add(1, std::memory_order_relaxed);
+        evaluator_.bump_partial_relower_count();
         // Replace the function in the v2 cache. Preserve the
         // original func_id so MakeClosure operands in callers
         // (which reference the old func_id) keep working.
@@ -7519,6 +7541,7 @@ private:
         const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
         std::uint32_t narrowing_evidence = 0) {
         metrics_.hotpath_lowering_calls.fetch_add(1, std::memory_order_relaxed);
+        install_lowering_compiler_core_hooks();
         auto mod = aura::compiler::lower_to_ir_with_cache(
             flat, pool, arena_, cache, cache_hits, primitives, cache_bridge, cache_strings,
             self_name, &type_registry_, value_cells, narrowing_evidence);
@@ -8525,6 +8548,37 @@ public:
             return false;
         aura::serve::Fiber::yield(aura::serve::YieldReason::PassPipeline);
         return true;
+    }
+
+    // Issue #657: lowering + JIT compiler-core incremental hooks.
+    void install_lowering_compiler_core_hooks() noexcept {
+        LoweringObservabilityHooks hooks;
+        hooks.bridge_epoch_capture = bridge_epoch();
+        hooks.on_bridge_epoch_sync = &CompilerService::lowering_bridge_sync_trampoline;
+        hooks.on_linear_metadata_flow = &CompilerService::lowering_linear_metadata_trampoline;
+        set_lowering_observability_hooks(hooks);
+    }
+
+    static void lowering_bridge_sync_trampoline() noexcept {
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        static_cast<CompilerService*>(raw)->evaluator_.bump_compiler_core_bridge_epoch_sync();
+    }
+
+    static void lowering_linear_metadata_trampoline() noexcept {
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        static_cast<CompilerService*>(raw)->evaluator_.bump_compiler_core_linear_metadata_flow();
+    }
+
+    static void jit_unhandled_invalidate_trampoline(const char* fn_name) noexcept {
+        (void)fn_name;
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        static_cast<CompilerService*>(raw)->evaluator_.bump_compiler_core_jit_unhandled_invalidate();
     }
 
     // Issue #492: ShapeProfiler deopt hook trampoline (C fn ptr).

@@ -2997,6 +2997,13 @@ add_dependencies(all_test_issue_targets test_macro_hygiene_fiber_panic_aot_soa_s
 aura_add_issue_test(test_edsl_core_stability_cow_atomic_query_mutate)
 aura_issue_test_link_llvm_jit(test_edsl_core_stability_cow_atomic_query_mutate)
 add_dependencies(all_test_issue_targets test_edsl_core_stability_cow_atomic_query_mutate)
+# Issue #657: Compiler core incremental self-mod — cache bridge epoch, impact-scope
+# partial re-lower, JIT unhandled deopt, linear metadata, quote fallback. 7 ACs:
+# compiler-core-incremental-stats (schema 657), recursive/quote/mutate matrix + regression.
+# Non-duplicative with #600/#680/#530/#655.
+aura_add_issue_test(test_compiler_core_incremental_selfmod_gaps)
+aura_issue_test_link_llvm_jit(test_compiler_core_incremental_selfmod_gaps)
+add_dependencies(all_test_issue_targets test_compiler_core_incremental_selfmod_gaps)
 # Issue #709: Primitives registry fast dispatch + capture discipline + EDA.
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)

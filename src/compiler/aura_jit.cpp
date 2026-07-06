@@ -1,5 +1,6 @@
 // aura_jit.cpp — LLVM ORC JIT backend for Aura IR
 #include "aura_jit.h"
+#include "aura_jit_bridge.h"
 #include "value_tags.h"
 
 #if AURA_HAVE_LLVM
@@ -1764,6 +1765,10 @@ struct LLVMBuilder {
                 if (metrics) {
                     metrics->fallback_count.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #657: notify compiler service for unhandled-opcode
+                // deopt / invalidate observability.
+                if (fn.name && fn.name[0] != '\0')
+                    aura_notify_jit_unhandled_opcode(fn.name);
                 // Rate-limited stderr log: log the first occurrence
                 // per JIT instance (one-time warning is enough —
                 // the counter tracks ongoing volume).
