@@ -86,6 +86,8 @@
     "query:primitives-ai-native-stats"
     ; ── Issue #591 — Scheduler steal/GC safepoint mutation coordination observability ──
     "query:scheduler-mutation-coord-stats"
+    ; ── Issue #593 — AST→query→IR MacroIntroduced hygiene closed loop ──
+    "query:pattern-ir-hygiene-closed-loop-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

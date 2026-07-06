@@ -1630,6 +1630,9 @@ void register_workspace_query_primitives(
         // per-workspace (invalidated when ws.workspace_flat is
         // changed via set_workspace_flat).
         if (use_index_fast_path) {
+            // Issue #593: tag_arity delta hits during hygiene query.
+            if (flat.tag_arity_index_dirty())
+                ev.bump_tag_arity_hygiene_query_delta();
             // Index lookup: find all nodes whose (tag, arity)
             // matches the pattern's root.
             //

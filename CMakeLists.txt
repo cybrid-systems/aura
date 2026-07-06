@@ -1700,6 +1700,15 @@ aura_issue_test_link_llvm_jit(test_mutation_boundary_panic_rollback_fiber)
 # sync) + #453 (bridge hooks).
 aura_add_issue_test(test_panic_checkpoint_fiber_resume_safety)
 aura_issue_test_link_llvm_jit(test_panic_checkpoint_fiber_resume_safety)
+# Issue #593: Hygiene + MacroIntroduced propagation in query:pattern
+# + IR InlinePass — AST→query→IR closed-loop (P0 Task6 review).
+# 10 scenarios: macro expand + default hygiene filter + :respect-
+# hygiene alias + mutate safe + IR InlinePass policy + tag_arity
+# dirty hook + query:pattern-ir-hygiene-closed-loop-stats (schema
+# 593) + combined metrics monotonic + 5000-iter fuzz stress +
+# regression. Non-duplicative with #547/#486/#501/#524/#420.
+aura_add_issue_test(test_query_pattern_hygiene_macrointroduced)
+aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_macrointroduced)
 # Issue #547: query:pattern + MacroIntroduced Hygiene Filter
 # + Incremental tag_arity_index + DefUseIndex integration
 # for large-scale self-evolving SV/RTL verification loops

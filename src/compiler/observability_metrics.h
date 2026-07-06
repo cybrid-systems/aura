@@ -1180,6 +1180,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_hotupdate_dispatch_stale_prevented_total{0};
     std::atomic<std::uint64_t> aot_hotupdate_multi_agent_reload_total{0};
 
+    // Issue #593: AST→query→IR MacroIntroduced hygiene closed-loop
+    // foundation atomics (pattern capture prevention, post-mutate
+    // IR violation tally, tag_arity delta hits during hygiene query).
+    std::atomic<std::uint64_t> pattern_ir_capture_prevented_total{0};
+    std::atomic<std::uint64_t> ir_hygiene_post_mutate_violation_total{0};
+    std::atomic<std::uint64_t> tag_arity_hygiene_query_delta_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers
