@@ -3837,6 +3837,8 @@ public:
         const std::uint64_t blocks =
             scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size();
         evaluator_.bump_impact_scope_calls(blocks);
+        if (flat->is_macro_introduced(root))
+            evaluator_.bump_macro_hygiene_dirty_impact();
     }
 
     void mark_define_dirty(const std::string& name) {

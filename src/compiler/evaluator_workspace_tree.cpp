@@ -302,8 +302,10 @@ void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
         return;
     if (!panic_auto_rollback_)
         return;
-    if (restore_panic_checkpoint())
+    if (restore_panic_checkpoint()) {
         bump_guard_panic_reflect_restores_on_resume();
+        bump_macro_hygiene_panic_restamp_from_workspace();
+    }
 }
 
 void Evaluator::update_shared_tree_root() {

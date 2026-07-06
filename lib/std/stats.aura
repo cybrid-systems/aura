@@ -98,6 +98,8 @@
     "query:per-fiber-stack-pool-stats"
     ; ── Issue #653 — AOT checkpoint / bridge_epoch version drift ──
     "query:aot-checkpoint-version-stats"
+    ; ── Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps ──
+    "query:macro-hygiene-fiber-panic-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──

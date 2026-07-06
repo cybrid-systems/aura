@@ -3874,9 +3874,11 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     set_macro_markers_in_snapshot(health.macro_markers);
     const bool ok = health.generation_healthy && health.marker_consistent;
     set_last_schema_validation_ok(ok);
-    if (ok)
+    if (ok) {
         bump_schema_validation_pass_count();
-    else
+        if (health.macro_markers > 0)
+            bump_macro_reflect_hygiene_validation();
+    } else
         bump_schema_validation_fail_count();
     return ok;
 }

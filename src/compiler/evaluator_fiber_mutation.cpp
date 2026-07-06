@@ -595,6 +595,7 @@ namespace {
                                               ev->current_bridge_epoch())) {
             aura_aot_record_deopt_on_steal();
         }
+        ev->bump_macro_hygiene_panic_restamp_from_workspace();
     }
 
     // (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
@@ -680,6 +681,14 @@ void Evaluator::sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept {
 
 // Test seam (#588): push/pop a synthetic checkpoint on the
 // active (per-fiber) mutation stack for steal-safety tests.
+extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (ev)
+        ev->bump_macro_expand_checkpoint_save();
+}
+
 extern "C" void aura_evaluator_test_push_mutation_checkpoint() {
     Evaluator::active_mutation_stack_static().push_back({0, 0});
 }

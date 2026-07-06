@@ -1209,6 +1209,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_closure_min_scope_win_total{0};
     std::atomic<std::uint64_t> incremental_closure_jit_sync_total{0};
 
+    // Issue #654: Macro+reflect+self-evo hygiene vs fiber/panic/AOT/SoA
+    // cross-cutting gaps (non-duplicative with #593 pattern-ir-hygiene,
+    // #596 guard-panic-reflect, #597 macro-reflect-self-evo-stats).
+    std::atomic<std::uint64_t> macro_hygiene_panic_restamp_total{0};
+    std::atomic<std::uint64_t> macro_hygiene_provenance_violations_total{0};
+    std::atomic<std::uint64_t> macro_expand_checkpoint_saves_total{0};
+    std::atomic<std::uint64_t> macro_reflect_hygiene_validation_total{0};
+    std::atomic<std::uint64_t> macro_hygiene_dirty_impact_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

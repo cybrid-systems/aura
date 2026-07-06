@@ -3471,6 +3471,48 @@ public:
             m->incremental_closure_jit_sync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #654: macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps.
+    void bump_macro_hygiene_panic_restamp() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_panic_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_hygiene_provenance_violation() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_provenance_violations_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_expand_checkpoint_save() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_expand_checkpoint_saves_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_reflect_hygiene_validation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_reflect_hygiene_validation_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_hygiene_dirty_impact() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_dirty_impact_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_hygiene_panic_restamp_from_workspace() const noexcept {
+        auto* ws = workspace_flat_;
+        if (!ws)
+            return;
+        for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+            if (ws->is_macro_introduced(id)) {
+                bump_macro_hygiene_panic_restamp();
+                return;
+            }
+        }
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }

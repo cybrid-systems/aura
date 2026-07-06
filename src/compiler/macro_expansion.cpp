@@ -11,6 +11,9 @@ import std;
 import aura.core.ast;
 import aura.compiler.evaluator_pure;
 
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
+
 namespace aura::compiler::macro_exp {
 
 namespace detail {
@@ -385,6 +388,8 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
         // Iterative walk via std::vector stack — no
         // recursion, safe for pathological depth.
         if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
+            if (aura_evaluator_mutation_boundary_depth() > 0)
+                aura_evaluator_bump_macro_expand_checkpoint_save();
             std::vector<aura::ast::NodeId> stack;
             stack.push_back(new_id);
             while (!stack.empty()) {
