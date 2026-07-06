@@ -1218,6 +1218,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_reflect_hygiene_validation_total{0};
     std::atomic<std::uint64_t> macro_hygiene_dirty_impact_total{0};
 
+    // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
+    // delta + nested atomic rollback + children safe view + precise
+    // mutate invalidation (non-duplicative with #527 stable-ref-cow,
+    // #552 edsl-stability, #622 atomic-batch, #654 macro-hygiene).
+    std::atomic<std::uint64_t> edsl_cow_stable_ref_remap_total{0};
+    std::atomic<std::uint64_t> edsl_tag_arity_delta_patch_total{0};
+    std::atomic<std::uint64_t> edsl_nested_atomic_rollback_total{0};
+    std::atomic<std::uint64_t> edsl_mutate_invalidate_precision_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

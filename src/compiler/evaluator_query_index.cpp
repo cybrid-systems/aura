@@ -204,6 +204,8 @@ void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
     }
 
     tag_arity_index_sync_after_mutation(flat);
+    flat.bump_tag_arity_index_delta_hits();
+    bump_edsl_tag_arity_delta_patch();
     bump_pattern_index_rebuild_trigger(trigger);
 }
 

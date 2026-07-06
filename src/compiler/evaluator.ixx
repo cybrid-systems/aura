@@ -2970,6 +2970,7 @@ public:
     }
     void bump_cross_cow_invalidations() const noexcept {
         cross_cow_invalidations_.fetch_add(1, std::memory_order_relaxed);
+        bump_edsl_cow_stable_ref_remap();
     }
     void bump_fiber_stale_ref_count() const noexcept {
         fiber_stale_ref_count_.fetch_add(1, std::memory_order_relaxed);
@@ -3513,6 +3514,31 @@ public:
             }
         }
     }
+    // Issue #655: EDSL core stability observability.
+    void bump_edsl_cow_stable_ref_remap() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_cow_stable_ref_remap_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_edsl_tag_arity_delta_patch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_tag_arity_delta_patch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_edsl_nested_atomic_rollback() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_nested_atomic_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_edsl_mutate_invalidate_precision() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_mutate_invalidate_precision_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -3824,6 +3850,7 @@ public:
         auto& stack = active_mutation_stack();
         if (stack.empty())
             return {0, 0};
+        const bool nested_boundary = stack.size() > 1;
         auto cp = stack.back();
         stack.pop_back();
         if (!success && workspace_flat_) {
@@ -3840,6 +3867,8 @@ public:
             // mutations to undo).
             if (stats.field_records_rolled > 0) {
                 bump_mutation_log_rollback_count();
+                if (nested_boundary)
+                    bump_edsl_nested_atomic_rollback();
             }
             // Issue #221: restore the per-node children_ from the
             // pre-mutation snapshot. The checkpoint's children_snapshot
