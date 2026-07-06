@@ -78,6 +78,8 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    if (stale)
+        ev.bump_compiler_root_stale_closure_detected();
     return stale;
 }
 
@@ -198,6 +200,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             }
             if (metrics)
                 metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+            bump_compiler_root_dangling_prevented();
             return std::nullopt;
         }
         // Issue #145 Phase 2.3 — materialize the call env from

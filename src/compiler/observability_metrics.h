@@ -1195,6 +1195,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> guard_panic_reflect_validate_hook_total{0};
     std::atomic<std::uint64_t> guard_panic_reflect_boundary_violation_prevented_total{0};
 
+    // Issue #599: compiler-managed root epoch/version protocol for live
+    // IRClosure/EnvFrame post-invalidate_function (non-duplicative with
+    // #531 closure-env-safety-stats, #598 linear-ownership-runtime-stats).
+    std::atomic<std::uint64_t> compiler_root_stale_closure_detected_total{0};
+    std::atomic<std::uint64_t> compiler_root_env_version_mismatch_total{0};
+    std::atomic<std::uint64_t> compiler_root_dangling_prevented_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers
