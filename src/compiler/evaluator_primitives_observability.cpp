@@ -2623,6 +2623,67 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #593: query:pattern-ir-hygiene-closed-loop-stats — AST→query→IR
+    // MacroIntroduced hygiene closed-loop companion (non-duplicative with
+    // #524 macro-production-hygiene-stats, #547 pattern-hygiene-stats,
+    // #501 ir-hygiene-stats, #420 macro-hygiene-contract-stats).
+    //
+    // Fields (3 + sentinel):
+    //   - capture-prevented   pattern_ir_capture_prevented_total
+    //   - ir-post-mutate-violation  ir_hygiene_post_mutate_violation_total
+    //   - tag-arity-delta     tag_arity_hygiene_query_delta_total
+    //   - schema == 593
+    add("query:pattern-ir-hygiene-closed-loop-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t capture_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_ir_capture_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t ir_violation =
+            m ? static_cast<std::int64_t>(
+                    m->ir_hygiene_post_mutate_violation_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t tag_delta =
+            m ? static_cast<std::int64_t>(
+                    m->tag_arity_hygiene_query_delta_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("capture-prevented", capture_prevented);
+        insert_kv("ir-post-mutate-violation", ir_violation);
+        insert_kv("tag-arity-delta", tag_delta);
+        insert_kv("schema", 593);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5241,6 +5302,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:reflect-edsl-bridge-stats",
             // Issue #551 — Reflect post-mutate
             "query:reflect-postmutate-stats",
+            // Issue #593 — AST→query→IR MacroIntroduced hygiene closed loop
+            "query:pattern-ir-hygiene-closed-loop-stats",
             // Issue #594 — Static reflection self-mod validation hook
             "query:reflection-selfmod-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
@@ -5580,10 +5643,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 168 entries as of #591 ship (167 from #590 + 1 scheduler-mutation-
-        // coord-stats registration from #591 — extends #618 hash with steal/GC
-        // boundary coordination fields: query:scheduler-mutation-coord-stats).
-        return make_int(168);
+        // 169 entries as of #593 ship (168 from #591 + 1 pattern-ir-hygiene-
+        // closed-loop-stats registration from #593).
+        return make_int(169);
     });
 }
 

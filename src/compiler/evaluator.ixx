@@ -3393,6 +3393,19 @@ public:
     void ensure_hygiene_violation_detection() const noexcept;
     void bump_macro_introduced_skipped_in_query() noexcept {
         macro_introduced_skipped_in_query_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #593: correlate query:pattern hygiene skips with
+        // the AST→IR closed-loop observability surface.
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_ir_capture_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #593: tag_arity delta hits during hygiene-filtered query.
+    void bump_tag_arity_hygiene_query_delta() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->tag_arity_hygiene_query_delta_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
