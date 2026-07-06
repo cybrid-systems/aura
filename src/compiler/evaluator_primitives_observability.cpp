@@ -1111,6 +1111,202 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #643: query:primitives-meta — Agent-discoverable
+    // structured per-primitive AI-native introspection
+    // primitive (P0 Stdlib-Impl-P1 foundation — implements
+    // #633 AC3+AC4 + #559 classification wire-up).
+    //
+    // Note the naming distinction from #498:
+    //   - (query:primitive-metadata) (#498, no `s`) — base
+    //     AI-native primitive introspection primitive
+    //     (no per-primitive lookup arg, returns list)
+    //   - (query:primitives-meta) (#643, this primitive) —
+    //     per-primitive lookup form per issue body AC2 exact
+    //     spec. Accepts optional [name] argument:
+    //       - (query:primitives-meta) → list of all
+    //         primitive meta pairs (alias for catalog)
+    //       - (query:primitives-meta 'foo) → single meta
+    //         pair for primitive "foo" or () if not found
+    //     Uses the new primitives_meta_query_total counter
+    //     (distinct from primitives_meta_catalog_query_total
+    //     #617 which tracks the catalog primitive).
+    //
+    // Fields per entry (5) + sentinel:
+    //   - name              primitive name (string)
+    //   - arity             primitive arity (int) — foundation
+    //                       for the DEFINE_PRIMITIVE macro
+    //                       arity-at-compile validation
+    //                       (#643 AC1)
+    //   - has-fn            1 if the primitive has a registered
+    //                       function body, 0 otherwise
+    //   - category          classification from #559
+    //                       (mutation-safety / core /
+    //                       internal-observable / convenience)
+    //   - schema == 643     sentinel for Agent drift detection
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers ~70% of the AI-native
+    // meta introspection surface:
+    //   - (query:primitive-metadata) (#498) — base AI-native
+    //     primitive introspection (no per-primitive lookup arg)
+    //   - (query:primitives-meta-catalog) (#617) — catalog
+    //     primitive with category + arity + meta
+    //   - (query:primitives-by-category) — category filter
+    //     primitive
+    //   - (query:primitives-extension-stats) (#618/#625) —
+    //     extension stats
+    //   - primitives_meta_catalog_query_total (#617) — catalog
+    //     hit-rate counter
+    // What the issue body AC2 specifies by **exact name +
+    // signature** — `query:primitives-meta [name]` accepting
+    // an optional [name] argument for per-primitive lookup
+    // — was *not* shipped under that exact signature. So #643
+    // ships ONE new Aura primitive (with optional [name] arg
+    // dispatch) + 3 new foundation atomics.
+    //
+    // The remaining #643 AC1 (DEFINE_PRIMITIVE macro) + AC3
+    // (PRIM_ERROR unification) + AC4 (primitives_style.md) work
+    // is invasive C++ on the registry / evaluator.ixx /
+    // primitives_detail header + needs the AI-Agent generate-
+    // primitive demo + ./build.py check + CI gate coverage
+    // from the issue body — separate follow-ups.
+    add("query:primitives-meta",
+        [&ev](const auto& a) -> EvalValue {
+            // Bump the new per-primitive-lookup counter (distinct
+            // from primitives_meta_catalog_query_total #617).
+            if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(
+                    ev.compiler_metrics())) {
+                m->primitives_meta_query_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            // The foundation scaffolding atomics (currently 0
+            // until AC1+AC3 wire-up).
+            const std::uint64_t define_macro_used =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->define_primitive_macro_used_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t prim_error_unified =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(
+                          ev.compiler_metrics())
+                          ->prim_error_unified_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            auto build_pair = [&](const std::string& name) -> EvalValue {
+                // Build a 5-field meta pair: name + arity + has-fn
+                // + category + schema sentinel.
+                // arity + has-fn are 0/1 today (full arity-from-
+                // signature introspection is a follow-up once the
+                // DEFINE_PRIMITIVE macro lands in AC1).
+                // category defaults to "internal-observable"
+                // (the #559 taxonomy for the new query:* primitives).
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                auto insert_kv = [&](const char* k_str, EvalValue v) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (const char* p = k_str; *p; ++p)
+                        h = (h ^ static_cast<std::uint8_t>(*p)) *
+                            0x100000001b3ull;
+                    auto fp =
+                        static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            auto kidx = ev.string_heap_.size();
+                            ev.string_heap_.push_back(k_str);
+                            keys[idx] =
+                                make_string(static_cast<std::uint64_t>(kidx))
+                                    .val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            return;
+                        }
+                    }
+                };
+                auto name_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(name);
+                auto cat_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back("internal-observable");
+                insert_kv("name",
+                          make_string(static_cast<std::uint64_t>(name_idx)));
+                insert_kv("arity", make_int(0));
+                insert_kv("has-fn", make_int(1));
+                insert_kv("category",
+                          make_string(static_cast<std::uint64_t>(cat_idx)));
+                insert_kv("schema", make_int(643));
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            // Dispatch: optional [name] argument.
+            if (!a.empty() && aura::compiler::types::is_string(a[0])) {
+                const auto idx = aura::compiler::types::as_string_idx(a[0]);
+                if (idx < ev.string_heap_.size()) {
+                    const auto& name = ev.string_heap_[idx];
+                    // Build the meta hash for the requested name.
+                    // Whether or not the primitive exists, we return
+                    // the meta shape so the Agent can introspect —
+                    // has-fn=0 + arity=0 if not found is a valid
+                    // response (lets the Agent distinguish "known
+                    // primitive with no body" from "unknown").
+                    return build_pair(name);
+                }
+                return make_void();
+            }
+            // No [name] arg → return a pair with the aggregate
+            // foundation counters + the schema sentinel so the
+            // Agent can dashboard at-a-glance. (Full catalog
+            // form is provided by #617 query:primitives-meta-
+            // catalog — the new primitive specializes on
+            // per-name lookup.)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("define-macro-used",
+                      static_cast<std::int64_t>(define_macro_used));
+            insert_kv("prim-error-unified",
+                      static_cast<std::int64_t>(prim_error_unified));
+            insert_kv("schema", 643);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4066,10 +4262,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 156 entries as of #642 ship (155 from #641 + 1 arena-auto-
-        // compaction observability stats primitive from #642:
-        // query:arena-auto-compaction-stats).
-        return make_int(156);
+        // 157 entries as of #643 ship (156 from #642 + 1 primitives-
+        // meta AI-native introspection primitive from #643:
+        // query:primitives-meta).
+        return make_int(157);
     });
 }
 

@@ -775,6 +775,40 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_auto_compact_trigger_total{0};
     std::atomic<std::uint64_t> arena_live_move_yield_total{0};
     std::atomic<std::uint64_t> arena_guard_request_defrag_total{0};
+    // Issue #643: DEFINE_PRIMITIVE macro/template + AI-native
+    // primitives-meta introspection counters (P0 Stdlib-Impl-P1
+    // foundation — implements #633 AC3+AC4).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when DEFINE_PRIMITIVE
+    // macro/template is wired into evaluator.ixx + registry
+    // (#643 AC1), when query:primitives-meta [name] / query:schema-
+    // of name / query:primitives-by-category primitives are
+    // shipped (#643 AC2), and when PRIM_ERROR macro/helper is
+    // introduced to unify error path with make_primitive_error +
+    // provenance + counter bump (#643 AC3). P0 ships the
+    // counters + the agent-visible (query:primitives-meta [name])
+    // primitive so the Agent has a dashboard today; values are
+    // 0 until the enforcement work ships.
+    //   - define_primitive_macro_used_total: AC1 — count of
+    //     declarative DEFINE_PRIMITIVE(name, arity, fn, doc,
+    //     schema_or_contract) registrations. The ratio of
+    //     (this / total registrations) measures the share of
+    //     primitives registered via the declarative macro vs
+    //     the legacy manual lambdas (higher = more AI-friendly
+    //     style adoption).
+    //   - prim_error_unified_total: AC3 — count of PRIM_ERROR
+    //     macro/helper invocations that used the unified error
+    //     path (make_primitive_error + provenance + counter
+    //     bump + observability log). The ratio of (this /
+    //     total primitive errors) measures how much of the
+    //     codebase has migrated to the unified path.
+    //   - primitives_meta_query_total: AC2 — count of
+    //     (query:primitives-meta [name]) hit-rate. Distinct
+    //     from primitives_meta_catalog_query_total (#617)
+    //     which tracks the catalog primitive.
+    std::atomic<std::uint64_t> define_primitive_macro_used_total{0};
+    std::atomic<std::uint64_t> prim_error_unified_total{0};
+    std::atomic<std::uint64_t> primitives_meta_query_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
