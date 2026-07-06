@@ -263,6 +263,16 @@ bool Evaluator::restore_panic_checkpoint() {
         if (panic_safe_pairs_size_ > pairs_.size()) {
             bump_panic_checkpoint_size_mismatch();
         }
+        // Issue #592: post-restore arena size assert — after a
+        // successful truncate the live arena sizes must match the
+        // checkpoint snapshot (partial state would break hygiene /
+        // reflection invariants on fiber resume).
+        if (panic_safe_cells_size_ > 0 && cells_.size() != panic_safe_cells_size_) {
+            bump_panic_checkpoint_size_mismatch();
+        }
+        if (panic_safe_pairs_size_ > 0 && pairs_.size() != panic_safe_pairs_size_) {
+            bump_panic_checkpoint_size_mismatch();
+        }
         // Issue #356: mark env_frames_ entries allocated during
         // the doomed transaction as INVALID_VERSION. The frames
         // stay allocated (truncating env_frames_ would invalidate

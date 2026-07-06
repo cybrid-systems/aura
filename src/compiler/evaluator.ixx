@@ -2881,6 +2881,10 @@ public:
     [[nodiscard]] std::uint64_t get_rollback_success_on_panic() const noexcept {
         return rollback_success_on_panic_.load(std::memory_order_relaxed);
     }
+    // Issue #592: arena size mismatch counter observable from tests.
+    [[nodiscard]] std::uint64_t get_panic_checkpoint_size_mismatch() const noexcept {
+        return panic_checkpoint_size_mismatch_.load(std::memory_order_relaxed);
+    }
     void bump_panic_checkpoint_save_count() noexcept {
         panic_checkpoint_save_count_.fetch_add(1, std::memory_order_relaxed);
     }

@@ -1688,6 +1688,18 @@ aura_issue_test_link_llvm_jit(test_stable_ref_cow_fiber_closed_loop_527)
 # (single-threaded Guard) + #542 (multi-fiber yield).
 aura_add_issue_test(test_mutation_boundary_panic_rollback_fiber)
 aura_issue_test_link_llvm_jit(test_mutation_boundary_panic_rollback_fiber)
+# Issue #592: Panic checkpoint + arena auto-rollback lifecycle
+# with nested MutationBoundaryGuard + fiber yield/steal/resume
+# safety (P0 Task6 production review). 10 scenarios:
+# nested Guard checkpoint ownership + success/panic restore
+# paths + post-restore arena size invariant + fiber yield/
+# resume depth preservation + steal matrix + bridge transfer
+# + 5000-iter fuzz + 8-fiber concurrent panic+yield stress
+# + regression. Extends #353. Non-duplicative with #548
+# (lifecycle counters) + #546 (arena sizes) + #588 (stack
+# sync) + #453 (bridge hooks).
+aura_add_issue_test(test_panic_checkpoint_fiber_resume_safety)
+aura_issue_test_link_llvm_jit(test_panic_checkpoint_fiber_resume_safety)
 # Issue #547: query:pattern + MacroIntroduced Hygiene Filter
 # + Incremental tag_arity_index + DefUseIndex integration
 # for large-scale self-evolving SV/RTL verification loops
