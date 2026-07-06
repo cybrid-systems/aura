@@ -680,6 +680,39 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> closure_invalidation_post_mutate_total{0};
     std::atomic<std::uint64_t> closure_version_mismatch_caught_total{0};
     std::atomic<std::uint64_t> closure_safe_rebuild_total{0};
+    // Issue #640: Verification feedback → structured SV mutate
+    // closed-loop counters (P0 EDA-SV-Review foundation).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when
+    // eda:apply-verification-feedback is wired to Guard +
+    // StableNodeRef capture + sv_ir structured mutate
+    // (#640 AC1), when Guard success triggers the
+    // hardware_backend re-emit hook (#640 AC2), and when
+    // StableNodeRef provenance check is strengthened on SV
+    // mutate paths (#640 AC3). P0 ships the counters + the
+    // agent-visible (query:sv-verification-closedloop-stats)
+    // primitive so the Agent has a dashboard today; values
+    // are 0 until the enforcement work ships.
+    //   - sv_verify_feedback_apply_total: AC1 — count of
+    //     (eda:apply-verification-feedback report) invocations
+    //     that successfully routed a coverage/assert/cex
+    //     signal through Guard + StableNodeRef + sv_ir
+    //     structured mutate. Ratio of (this / total feedback
+    //     reports) measures how much of the external
+    //     verification loop actually drives SV mutate.
+    //   - sv_guard_reemit_hook_total: AC2 — count of Guard
+    //     success paths that triggered the hardware_backend
+    //     re-emit hook post-SV-mutate. 1.0 ratio = every
+    //     successful SV mutate led to a re-emit (no
+    //     straggler stale-emit risk).
+    //   - sv_stable_ref_provenance_strict_total: AC3 — count
+    //     of strengthened StableNodeRef provenance checks
+    //     that caught a fiber/workspace mismatch on the SV
+    //     mutate path. Each catch prevents a potential
+    //     cross-fiber UAF on the long-lived SV IR.
+    std::atomic<std::uint64_t> sv_verify_feedback_apply_total{0};
+    std::atomic<std::uint64_t> sv_guard_reemit_hook_total{0};
+    std::atomic<std::uint64_t> sv_stable_ref_provenance_strict_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
