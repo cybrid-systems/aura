@@ -1507,6 +1507,127 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #646: query:gc-safepoint-deferral-stats —
+    // Agent-discoverable structured dashboard for the GC
+    // Safepoint Deferral + Backoff Only for Outermost
+    // MutationBoundary + Contention Metrics (P0 Runtime-Gap
+    // + GC production-readiness surface — non-duplicative to
+    // #642 #623 #591).
+    //
+    // Note the naming distinction from existing primitives:
+    //   - (query:gc-safepoint-stats) — base GC safepoint
+    //     primitive (no deferral-specific breakdown)
+    //   - (query:gc-safepoint-deferral-stats) (#646, this
+    //     primitive) — *deferral-track* companion that
+    //     focuses on the outermost-vs-inner deferral +
+    //     backoff contention counters for AC1+AC2+AC4
+    //     enforcement.
+    //
+    // Fields (3 + sentinel):
+    //   - outermost-deferral  new gc_outermost_deferral_total
+    //                          atomic (foundation for AC1
+    //                          outermost MutationBoundary
+    //                          depth==1 full deferral).
+    //                          Value is 0 until AC1 wire-up.
+    //   - inner-proceeded      new gc_inner_proceeded_total
+    //                          atomic (foundation for AC1
+    //                          inner MutationBoundary
+    //                          depth>1 short-yield/proceed).
+    //                          Value is 0 until AC1 wire-up.
+    //   - backoff-trigger      new gc_backoff_trigger_total
+    //                          atomic (foundation for AC2
+    //                          backoff fires under repeated
+    //                          deferral contention). Value
+    //                          is 0 until AC2 wire-up.
+    //   - schema == 646         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640+#641+
+    //                          #642+#643+#644+#645 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the base GC
+    // safepoint observability surface:
+    //   - (query:gc-safepoint-stats) — base GC safepoint
+    //     primitive (no deferral-specific breakdown)
+    //   - #591 gc pause attributed to mutation count
+    //   - #588 per-fiber stack + GC coordination
+    //   - #623 arena + GC safepoint coordination
+    //   - #642 arena auto-compaction + fiber/GC safepoint
+    // What the issue body AC3 specifies by **exact name +
+    // fields** — `query:gc-safepoint-deferral-stats` with
+    // outermost-vs-inner + backoff counters — was *not*
+    // shipped under that exact name. So #646 ships ONE new
+    // Aura primitive + 3 new foundation atomics.
+    //
+    // The remaining #646 AC1 (outermost vs inner check) +
+    // AC2 (backoff retry) + AC4 (wire to scheduler GC phase
+    // + fiber yield_classification) work is invasive C++ on
+    // aura_evaluator_request_gc_safepoint + fiber
+    // check_gc_safepoint + scheduler request_gc_safepoint /
+    // wait_for_safepoint + needs the high-contention matrix
+    // + arena pressure + TSan coverage from the issue body
+    // — separate follow-ups.
+    add("query:gc-safepoint-deferral-stats", [&ev](const auto&) -> EvalValue {
+        // outermost-deferral: new foundation atomic
+        // (0 until AC1 outermost depth==1 wire-up).
+        const std::uint64_t outermost_deferral =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->gc_outermost_deferral_total.load(std::memory_order_relaxed)
+                : 0;
+        // inner-proceeded: new foundation atomic
+        // (0 until AC1 inner depth>1 wire-up).
+        const std::uint64_t inner_proceeded =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->gc_inner_proceeded_total.load(std::memory_order_relaxed)
+                : 0;
+        // backoff-trigger: new foundation atomic
+        // (0 until AC2 backoff wire-up).
+        const std::uint64_t backoff_trigger =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->gc_backoff_trigger_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("outermost-deferral", static_cast<std::int64_t>(outermost_deferral));
+        insert_kv("inner-proceeded", static_cast<std::int64_t>(inner_proceeded));
+        insert_kv("backoff-trigger", static_cast<std::int64_t>(backoff_trigger));
+        insert_kv("schema", 646);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4462,10 +4583,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 159 entries as of #645 ship (158 from #644 + 1 scheduler-
-        // steal-bias observability stats primitive from #645:
-        // query:scheduler-steal-bias-stats).
-        return make_int(159);
+        // 160 entries as of #646 ship (159 from #645 + 1 gc-safepoint-
+        // deferral observability stats primitive from #646:
+        // query:gc-safepoint-deferral-stats).
+        return make_int(160);
     });
 }
 

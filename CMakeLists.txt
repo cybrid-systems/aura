@@ -3338,6 +3338,24 @@ add_dependencies(all_test_issue_targets test_issue_644)
 aura_add_issue_test(test_issue_645)
 aura_issue_test_link_llvm_jit(test_issue_645)
 add_dependencies(all_test_issue_targets test_issue_645)
+# Issue #646: query:gc-safepoint-deferral-stats — P0
+# Runtime-Gap + GC Safepoint Deferral + Backoff Only for
+# Outermost MutationBoundary foundation — 1 new Aura
+# primitive (query:gc-safepoint-deferral-stats, distinct
+# from existing query:gc-safepoint-stats via the
+# `-deferral-` midfix) + 3 new atomics
+# (gc_outermost_deferral_total +
+# gc_inner_proceeded_total +
+# gc_backoff_trigger_total). Primitive has 4 fields: 3
+# from the new atomics (all foundation scaffolding for
+# AC1+AC2+AC4 enforcement, currently 0) + schema sentinel.
+# Builds on existing query:gc-safepoint-stats + #591 gc
+# pause attribution + #588 per-fiber stack + #623 arena +
+# GC safepoint + #642 arena auto-compaction.
+# Non-duplicative to #642/#623/#591 (see issue body).
+aura_add_issue_test(test_issue_646)
+aura_issue_test_link_llvm_jit(test_issue_646)
+add_dependencies(all_test_issue_targets test_issue_646)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
