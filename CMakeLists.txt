@@ -3289,6 +3289,21 @@ add_dependencies(all_test_issue_targets test_issue_641)
 aura_add_issue_test(test_issue_642)
 aura_issue_test_link_llvm_jit(test_issue_642)
 add_dependencies(all_test_issue_targets test_issue_642)
+# Issue #643: query:primitives-meta [name] — P0 Stdlib-Impl-P1
+# AI-native primitives-meta introspection (implements #633
+# AC3+AC4) — 1 new Aura primitive (query:primitives-meta
+# [name], distinct from #498 query:primitive-metadata via
+# the `s` suffix + optional [name] arg dispatch) + 3 new
+# atomics (define_primitive_macro_used_total +
+# prim_error_unified_total + primitives_meta_query_total).
+# Primitive has 2 forms: no-arg (aggregate foundation
+# counters + schema sentinel) + per-name-lookup (name +
+# arity + has-fn + category + schema sentinel). Builds on
+# #498 / #559 / #617 / #618 / #625 existing primitives +
+# primitives_meta_catalog_query_total hit-rate counter.
+aura_add_issue_test(test_issue_643)
+aura_issue_test_link_llvm_jit(test_issue_643)
+add_dependencies(all_test_issue_targets test_issue_643)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
