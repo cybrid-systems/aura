@@ -1628,6 +1628,147 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #647: query:envframe-dualpath-stale-stats-hash —
+    // Agent-discoverable structured dashboard for the
+    // Dual-Path EnvFrame/Env (parent_id_ vs parent_,
+    // bindings_symid_ vs bindings_) Cross-Fiber Stale
+    // Detection + materialize_call_env After Steal
+    // (P0 Runtime-Gap + SoA production-readiness surface —
+    // non-duplicative to #637 #589 #355).
+    //
+    // Note the naming distinction from existing primitives:
+    //   - (query:envframe-dualpath-stale-stats) (#418) —
+    //     existing flat-int primitive (returns a single
+    //     sum of 7 counters — no field breakdown)
+    //   - (query:envframe-dualpath-stats) — existing base
+    //     dualpath primitive
+    //   - (query:envframe-dualpath-stale-stats-hash) (#647,
+    //     this primitive) — *enforcement-track* companion
+    //     with `-hash` suffix (matches the #630 / #641
+    //     hash-vs-int naming convention) that focuses on
+    //     the AC1+AC2+AC4 counters for cross-fiber stale +
+    //     post-steal version mismatch + dual-path repair
+    //     wire-up.
+    //
+    // Fields (3 + sentinel):
+    //   - cross-fiber-stale   new envframe_cross_fiber_stale_
+    //                          total atomic (foundation for
+    //                          AC1 cross-fiber stale detection
+    //                          post-steal — parent_id_
+    //                          mismatch vs env_frames_
+    //                          owner). Value is 0 until AC1
+    //                          wire-up.
+    //   - version-mismatch    new envframe_version_mismatch_
+    //                          post_steal_total atomic
+    //                          (foundation for AC1 version_
+    //                          stamp mismatch detection
+    //                          post-steal). Value is 0 until
+    //                          AC1 wire-up.
+    //   - dualpath-repair     new envframe_dualpath_repair_
+    //                          total atomic (foundation for
+    //                          AC2 dual-path consistency
+    //                          check + repair hits). Value
+    //                          is 0 until AC2 wire-up.
+    //   - schema == 647         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640+#641+
+    //                          #642+#643+#644+#645+#646
+    //                          sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // EnvFrame dual-path observability surface:
+    //   - (query:envframe-dualpath-stale-stats) (#418) —
+    //     flat-int sum of 7 counters (no field breakdown)
+    //   - (query:envframe-dualpath-stats) — base dualpath
+    //     primitive
+    //   - (query:envframe-stale-stats) — stale refresh stats
+    //   - (query:envframe-bump-stats) — bump stats
+    //   - env_frames_ EnvFrame arena (walk + lookup_by_symid_
+    //     chain) with version_ + INVALID_VERSION sentinel #356
+    //   - #637 IRClosure + EnvFrame versioning + bridge
+    //     invalidate protocol
+    //   - #589 / #355 SoA migration (parent_id_ vs parent_,
+    //     bindings_symid_ vs bindings_ dual-path)
+    // What the issue body AC3 specifies by **exact name +
+    // fields** — `query:envframe-dualpath-stale-stats` with
+    // AC1+AC2+AC4-specific counters as a structured hash —
+    // was *not* shipped under that exact hash form. The
+    // existing flat-int primitive ships under the same name
+    // without `-hash` suffix; #647 ships the hash form with
+    // `-hash` suffix (matches #630 / #641 convention for
+    // hash-vs-int naming).
+    //
+    // The remaining #647 AC1 (parent_id_ vs current owner
+    // validation) + AC2 (fiber resume dual-path consistency
+    // check / repair) + AC4 (GCEnvWalkFn skip/repair) work
+    // is invasive C++ on materialize_call_env + lookup paths
+    // + fiber resume + g_fiber_sync_mutation_stack_ +
+    // GCEnvWalkFn + needs the heavy mutate + fiber steal/
+    // yield/resume matrix + INVALID_VERSION post-rollback
+    // + TSan coverage from the issue body — separate
+    // follow-ups.
+    add("query:envframe-dualpath-stale-stats-hash", [&ev](const auto&) -> EvalValue {
+        // cross-fiber-stale: new foundation atomic
+        // (0 until AC1 cross-fiber post-steal wire-up).
+        const std::uint64_t cross_fiber_stale =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->envframe_cross_fiber_stale_total.load(std::memory_order_relaxed)
+                : 0;
+        // version-mismatch: new foundation atomic
+        // (0 until AC1 version_ mismatch post-steal wire-up).
+        const std::uint64_t version_mismatch =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->envframe_version_mismatch_post_steal_total.load(std::memory_order_relaxed)
+                : 0;
+        // dualpath-repair: new foundation atomic
+        // (0 until AC2 dual-path repair wire-up).
+        const std::uint64_t dualpath_repair =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->envframe_dualpath_repair_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("cross-fiber-stale", static_cast<std::int64_t>(cross_fiber_stale));
+        insert_kv("version-mismatch", static_cast<std::int64_t>(version_mismatch));
+        insert_kv("dualpath-repair", static_cast<std::int64_t>(dualpath_repair));
+        insert_kv("schema", 647);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4583,10 +4724,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 160 entries as of #646 ship (159 from #645 + 1 gc-safepoint-
-        // deferral observability stats primitive from #646:
-        // query:gc-safepoint-deferral-stats).
-        return make_int(160);
+        // 161 entries as of #647 ship (160 from #646 + 1 envframe-
+        // dualpath-stale observability stats hash primitive from
+        // #647: query:envframe-dualpath-stale-stats-hash).
+        return make_int(161);
     });
 }
 

@@ -3356,6 +3356,24 @@ add_dependencies(all_test_issue_targets test_issue_645)
 aura_add_issue_test(test_issue_646)
 aura_issue_test_link_llvm_jit(test_issue_646)
 add_dependencies(all_test_issue_targets test_issue_646)
+# Issue #647: query:envframe-dualpath-stale-stats-hash — P0
+# Runtime-Gap + SoA Dual-Path EnvFrame/Env Cross-Fiber Stale
+# Detection + materialize_call_env After Steal foundation —
+# 1 new Aura primitive (query:envframe-dualpath-stale-stats-
+# hash, distinct from existing #418 query:envframe-dualpath-
+# stale-stats flat-int primitive via the `-hash` suffix —
+# matches the #630/#641 hash-vs-int naming convention)
+# + 3 new atomics (envframe_cross_fiber_stale_total +
+# envframe_version_mismatch_post_steal_total +
+# envframe_dualpath_repair_total). Primitive has 4 fields:
+# 3 from the new atomics (all foundation scaffolding for
+# AC1+AC2+AC4 enforcement, currently 0) + schema sentinel.
+# Builds on #418 / #589 / #355 / #637 existing primitives
+# + EnvFrame SoA infrastructure. Non-duplicative to
+# #637/#589/#355 (see issue body).
+aura_add_issue_test(test_issue_647)
+aura_issue_test_link_llvm_jit(test_issue_647)
+add_dependencies(all_test_issue_targets test_issue_647)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
