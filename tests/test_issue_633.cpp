@@ -63,8 +63,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:stdlib-compiler-demands-stats-hash) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:stdlib-compiler-demands-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -74,7 +74,8 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 int main() {
     using namespace aura_issue_633_detail;
-    std::println("=== Issue #633: query:stdlib-compiler-demands-stats-hash structured companion ===");
+    std::println(
+        "=== Issue #633: query:stdlib-compiler-demands-stats-hash structured companion ===");
 
     aura::compiler::CompilerService cs;
 
@@ -90,18 +91,12 @@ int main() {
         const auto ai = hash_int(cs, "ai-native-hits");
         const auto soa = hash_int(cs, "soa-jit-win");
         const auto schema = hash_int(cs, "schema");
-        CHECK(hotpath >= 0,
-              std::format("hotpath-calls >= 0 (got {})", hotpath));
-        CHECK(err >= 0,
-              std::format("error-consistency >= 0 (got {})", err));
-        CHECK(ext >= 0,
-              std::format("extension-count >= 0 (got {})", ext));
-        CHECK(ai >= 0,
-              std::format("ai-native-hits >= 0 (got {})", ai));
-        CHECK(soa >= 0,
-              std::format("soa-jit-win >= 0 (got {})", soa));
-        CHECK(schema == 633,
-              std::format("schema == 633 (got {})", schema));
+        CHECK(hotpath >= 0, std::format("hotpath-calls >= 0 (got {})", hotpath));
+        CHECK(err >= 0, std::format("error-consistency >= 0 (got {})", err));
+        CHECK(ext >= 0, std::format("extension-count >= 0 (got {})", ext));
+        CHECK(ai >= 0, std::format("ai-native-hits >= 0 (got {})", ai));
+        CHECK(soa >= 0, std::format("soa-jit-win >= 0 (got {})", soa));
+        CHECK(schema == 633, std::format("schema == 633 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -109,23 +104,19 @@ int main() {
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
         auto s_schema = cs.eval("(query:schema-of-primitive)");
-        CHECK(s_schema.has_value(),
-              "(query:schema-of-primitive) reachable (#617 back-compat)");
+        CHECK(s_schema.has_value(), "(query:schema-of-primitive) reachable (#617 back-compat)");
         auto s_cat = cs.eval("(query:primitives-meta-catalog)");
-        CHECK(s_cat.has_value(),
-              "(query:primitives-meta-catalog) reachable (#617 back-compat)");
+        CHECK(s_cat.has_value(), "(query:primitives-meta-catalog) reachable (#617 back-compat)");
         auto s_ext = cs.eval("(query:primitives-extension-stats)");
         CHECK(s_ext.has_value(),
               "(query:primitives-extension-stats) reachable (#618/#625 back-compat)");
         auto s_stats = cs.eval("(query:primitives-stats)");
-        CHECK(s_stats.has_value(),
-              "(query:primitives-stats) reachable (#479 back-compat)");
+        CHECK(s_stats.has_value(), "(query:primitives-stats) reachable (#479 back-compat)");
         auto s_hp = cs.eval("(query:primitives-hotpath-stats)");
         CHECK(s_hp.has_value(),
               "(query:primitives-hotpath-stats) reachable (#625/#479 back-compat)");
         auto s_by_cat = cs.eval("(query:primitives-by-category)");
-        CHECK(s_by_cat.has_value(),
-              "(query:primitives-by-category) reachable (#617 back-compat)");
+        CHECK(s_by_cat.has_value(), "(query:primitives-by-category) reachable (#617 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -142,27 +133,20 @@ int main() {
         const auto ai = hash_int(cs, "ai-native-hits");
         const auto soa = hash_int(cs, "soa-jit-win");
         CHECK(hotpath >= 0,
-              std::format("fresh-service hotpath-calls is non-negative (got {})",
-                          hotpath));
-        CHECK(err == 0,
-              std::format("fresh-service error-consistency == 0 (got {})", err));
-        CHECK(ext == 0,
-              std::format("fresh-service extension-count == 0 (got {})", ext));
-        CHECK(ai == 0,
-              std::format("fresh-service ai-native-hits == 0 (got {})", ai));
+              std::format("fresh-service hotpath-calls is non-negative (got {})", hotpath));
+        CHECK(err == 0, std::format("fresh-service error-consistency == 0 (got {})", err));
+        CHECK(ext == 0, std::format("fresh-service extension-count == 0 (got {})", ext));
+        CHECK(ai == 0, std::format("fresh-service ai-native-hits == 0 (got {})", ai));
         // soa-jit-win == fastpath_hits (which can be > 0 in
         // warm-start; assert non-negativity).
-        CHECK(soa >= 0,
-              std::format("fresh-service soa-jit-win is non-negative (got {})",
-                          soa));
+        CHECK(soa >= 0, std::format("fresh-service soa-jit-win is non-negative (got {})", soa));
     }
 
     // AC4: schema sentinel is exactly 633 (not 622/630/631/632).
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 633,
-              std::format("schema == 633 (got {})", schema));
+        CHECK(schema == 633, std::format("schema == 633 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -185,9 +169,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

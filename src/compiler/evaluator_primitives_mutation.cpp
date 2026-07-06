@@ -514,17 +514,13 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         const std::uint64_t rollback_sv =
             ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(
-                      ev.compiler_metrics())
-                      ->atomic_batch_sv_rollback_total.load(
-                          std::memory_order_relaxed)
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed)
                 : 0;
         const std::uint64_t impact_sv =
             ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(
-                      ev.compiler_metrics())
-                      ->atomic_batch_sv_impact_nodes_total.load(
-                          std::memory_order_relaxed)
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->atomic_batch_sv_impact_nodes_total.load(std::memory_order_relaxed)
                 : 0;
         auto* ht = FlatHashTable::create(8);
         if (!ht)
@@ -554,12 +550,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         };
         insert_kv("active-sv-batches", active ? 1 : 0);
-        insert_kv("suppressed-bumps-on-sv",
-                  static_cast<std::int64_t>(bumps_saved));
-        insert_kv("rollback-success-sv",
-                  static_cast<std::int64_t>(rollback_sv));
-        insert_kv("batch-impact-sv-nodes",
-                  static_cast<std::int64_t>(impact_sv));
+        insert_kv("suppressed-bumps-on-sv", static_cast<std::int64_t>(bumps_saved));
+        insert_kv("rollback-success-sv", static_cast<std::int64_t>(rollback_sv));
+        insert_kv("batch-impact-sv-nodes", static_cast<std::int64_t>(impact_sv));
         insert_kv("schema", 632);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);

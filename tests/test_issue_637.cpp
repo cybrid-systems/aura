@@ -63,8 +63,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:closure-bridge-safety-stats-hash) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:closure-bridge-safety-stats-hash) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -88,14 +87,10 @@ int main() {
         const auto ver_mis = hash_int(cs, "version-mismatches-caught");
         const auto rebuilds = hash_int(cs, "safe-rebuilds");
         const auto schema = hash_int(cs, "schema");
-        CHECK(inval_pm >= 0,
-              std::format("invalidations-post-mutate >= 0 (got {})", inval_pm));
-        CHECK(ver_mis >= 0,
-              std::format("version-mismatches-caught >= 0 (got {})", ver_mis));
-        CHECK(rebuilds >= 0,
-              std::format("safe-rebuilds >= 0 (got {})", rebuilds));
-        CHECK(schema == 637,
-              std::format("schema == 637 (got {})", schema));
+        CHECK(inval_pm >= 0, std::format("invalidations-post-mutate >= 0 (got {})", inval_pm));
+        CHECK(ver_mis >= 0, std::format("version-mismatches-caught >= 0 (got {})", ver_mis));
+        CHECK(rebuilds >= 0, std::format("safe-rebuilds >= 0 (got {})", rebuilds));
+        CHECK(schema == 637, std::format("schema == 637 (got {})", schema));
     }
 
     // AC2: existing primitives remain reachable
@@ -106,8 +101,7 @@ int main() {
         CHECK(s_633.has_value(),
               "(query:stdlib-compiler-demands-stats-hash) reachable (#633 back-compat)");
         auto s_632 = cs.eval("(query:atomic-batch-sv-stats-hash)");
-        CHECK(s_632.has_value(),
-              "(query:atomic-batch-sv-stats-hash) reachable (#632 back-compat)");
+        CHECK(s_632.has_value(), "(query:atomic-batch-sv-stats-hash) reachable (#632 back-compat)");
         auto s_631 = cs.eval("(query:stable-ref-provenance-sv-stats-hash)");
         CHECK(s_631.has_value(),
               "(query:stable-ref-provenance-sv-stats-hash) reachable (#631 back-compat)");
@@ -134,22 +128,17 @@ int main() {
         const auto ver_mis = hash_int(cs, "version-mismatches-caught");
         const auto rebuilds = hash_int(cs, "safe-rebuilds");
         CHECK(inval_pm == 0,
-              std::format("fresh-service invalidations-post-mutate == 0 (got {})",
-                          inval_pm));
+              std::format("fresh-service invalidations-post-mutate == 0 (got {})", inval_pm));
         CHECK(ver_mis == 0,
-              std::format("fresh-service version-mismatches-caught == 0 (got {})",
-                          ver_mis));
-        CHECK(rebuilds == 0,
-              std::format("fresh-service safe-rebuilds == 0 (got {})",
-                          rebuilds));
+              std::format("fresh-service version-mismatches-caught == 0 (got {})", ver_mis));
+        CHECK(rebuilds == 0, std::format("fresh-service safe-rebuilds == 0 (got {})", rebuilds));
     }
 
     // AC4: schema sentinel is exactly 637 (not 633/630/631/632).
     {
         std::println("\n--- AC4: schema sentinel ---");
         const auto schema = hash_int(cs, "schema");
-        CHECK(schema == 637,
-              std::format("schema == 637 (got {})", schema));
+        CHECK(schema == 637, std::format("schema == 637 (got {})", schema));
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. Atomicity
@@ -172,9 +161,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() == k_iters * 2,
-              std::format("concurrent: {} / {} calls returned value",
-                          ok_count.load(), k_iters * 2));
+        CHECK(
+            ok_count.load() == k_iters * 2,
+            std::format("concurrent: {} / {} calls returned value", ok_count.load(), k_iters * 2));
     }
 
     // AC6: closure capture + rebind round-trip exercises the
@@ -198,8 +187,7 @@ int main() {
               "closure-bridge-safety-stats-hash still reachable post-closure-activity");
         const auto rebuilds = hash_int(cs, "safe-rebuilds");
         CHECK(rebuilds == 0,
-              std::format("post-closure-activity safe-rebuilds still 0 (got {})",
-                          rebuilds));
+              std::format("post-closure-activity safe-rebuilds still 0 (got {})", rebuilds));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
