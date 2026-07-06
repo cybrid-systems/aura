@@ -1381,6 +1381,132 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #645: query:scheduler-steal-bias-stats —
+    // Agent-discoverable structured dashboard for the
+    // Work-Stealing LIFO/FIFO Adaptive Bias + YieldReason /
+    // outermost Mutation Depth (P0 Runtime-Gap + Scheduler
+    // production-readiness surface — non-duplicative to
+    // #618 #588 #451).
+    //
+    // Note the naming distinction from #706:
+    //   - (query:scheduler-stealbudget-adaptive-stats) (#706)
+    //     is the steal-budget adaptive bias primitive
+    //     (LLM-bottleneck adjustments — higher level
+    //     orchestration tune)
+    //   - (query:scheduler-steal-bias-stats) (#645, this
+    //     primitive) is the *enforcement-track* companion
+    //     that focuses on the per-steal LIFO/FIFO +
+    //     mutation-deferred counters for AC1+AC2+AC4
+    //     enforcement (lower level — what each steal
+    //     decision consults).
+    //
+    // Fields (3 + sentinel):
+    //   - lifo-hits            new scheduler_lifo_hits_total
+    //                          atomic (foundation for AC1
+    //                          LIFO local hits on worker
+    //                          deque). Value is 0 until
+    //                          AC1 wire-up.
+    //   - fifo-steals          new scheduler_fifo_steals_total
+    //                          atomic (foundation for AC1
+    //                          FIFO steals from victim).
+    //                          Value is 0 until AC1 wire-up.
+    //   - mutation-deferred    new scheduler_mutation_deferred_
+    //                          bias_total atomic (foundation
+    //                          for AC1+AC2 deferred-steal
+    //                          from inner-MutationBoundary
+    //                          fibers + the simple adaptive
+    //                          LIFO/FIFO tuning). Value is
+    //                          0 until AC1+AC2 wire-up.
+    //   - schema == 645         sentinel for Agent drift
+    //                          detection (mirrors the full
+    //                          chain through
+    //                          #618+#620+#621+#622+#623+
+    //                          #624+#625+#626+#630+#631+
+    //                          #632+#633+#637+#640+#641+
+    //                          #642+#643+#644 sentinels).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // scheduler adaptive bias surface:
+    //   - (query:scheduler-stealbudget-adaptive-stats) (#706)
+    //     — LLM-bottleneck adjustments (orchestration tune)
+    //   - #618 per-fiber yield_reason classification +
+    //     is_at_mutation_boundary_safe + outermost depth probe
+    //   - #588 per-fiber stack + adaptive hints
+    //   - #451 work-stealing deque LIFO local + FIFO steal +
+    //     request_gc_safepoint
+    // What the issue body AC3 specifies by **exact name +
+    // fields** — `query:scheduler-steal-bias-stats` with
+    // LIFO/FIFO + mutation-deferred counters — was *not*
+    // shipped under that exact name. So #645 ships ONE new
+    // Aura primitive + 3 new foundation atomics.
+    //
+    // The remaining #645 AC1 (steal loop consults
+    // victim->last_yield_reason() + outermost depth) +
+    // AC2 (simple adaptive LIFO/FIFO tuning) + AC4 (wire
+    // to #618 orchestration tune) work is invasive C++
+    // on worker steal loop + scheduler next_worker +
+    // needs the 20+ fibers + LLM-sim latency matrix +
+    // TSan coverage from the issue body — separate
+    // follow-ups.
+    add("query:scheduler-steal-bias-stats", [&ev](const auto&) -> EvalValue {
+        // lifo-hits: new foundation atomic
+        // (0 until AC1 LIFO local hits wire-up).
+        const std::uint64_t lifo_hits =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->scheduler_lifo_hits_total.load(std::memory_order_relaxed)
+                : 0;
+        // fifo-steals: new foundation atomic
+        // (0 until AC1 FIFO steals wire-up).
+        const std::uint64_t fifo_steals =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->scheduler_fifo_steals_total.load(std::memory_order_relaxed)
+                : 0;
+        // mutation-deferred: new foundation atomic
+        // (0 until AC1+AC2 deferred-steal wire-up).
+        const std::uint64_t mutation_deferred =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->scheduler_mutation_deferred_bias_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("lifo-hits", static_cast<std::int64_t>(lifo_hits));
+        insert_kv("fifo-steals", static_cast<std::int64_t>(fifo_steals));
+        insert_kv("mutation-deferred", static_cast<std::int64_t>(mutation_deferred));
+        insert_kv("schema", 645);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -4336,10 +4462,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 158 entries as of #644 ship (157 from #643 + 1 aot-reload-
-        // func-table observability stats primitive from #644:
-        // query:aot-reload-func-table-stats).
-        return make_int(158);
+        // 159 entries as of #645 ship (158 from #644 + 1 scheduler-
+        // steal-bias observability stats primitive from #645:
+        // query:scheduler-steal-bias-stats).
+        return make_int(159);
     });
 }
 
