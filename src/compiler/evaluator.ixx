@@ -4056,6 +4056,16 @@ public:
     static void set_query_evaluator(Evaluator* ev) noexcept;
     static Evaluator* get_query_evaluator() noexcept;
 
+    // Issue #63723: clear per-thread/process-wide
+    // Evaluator* slots that point at this dying
+    // instance. Called by ~Evaluator to prevent
+    // use-after-return on worker threads that read
+    // g_query_evaluator / g_scheduler_stats_evaluator
+    // (e.g. aura_evaluator_bump_mutation_steal_attempt
+    // path). See evaluator_fiber_mutation.cpp for the
+    // implementation + CAS rationale.
+    void unbind_query_evaluator() noexcept;
+
     // Issue #285: getter for the thread-local yield-hook
     // evaluator pointer (set by bind_yield_hook_evaluator).
     // Used by Fiber::yield to find the active evaluator for

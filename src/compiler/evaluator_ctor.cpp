@@ -164,6 +164,27 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
 }
 
 Evaluator::~Evaluator() {
+    // Issue #63723: clear all thread-local Evaluator* slots
+    // that might still point at this dying instance. Without
+    // this, when the fiber's stack frame is reused after the
+    // closure returns, the worker thread's g_yield_hook_evaluator
+    // / g_query_evaluator / g_scheduler_stats_evaluator still
+    // point at the dead stack — and the next
+    // aura_evaluator_bump_mutation_steal_attempt() / work-steal
+    // path dereferences a use-after-return (verified by ASan:
+    // stack-use-after-return in bump_mutation_steal_attempt at
+    // evaluator.ixx:3130). This is what caused test_issue_226
+    // to hang on t.join() — the worker's steal code called
+    // bump_mutation_steal_attempt on a dead Evaluator and
+    // crashed/hung inside the atomic fetch_add.
+    //
+    // Use the public member function unbind_yield_hook_evaluator
+    // for the g_yield_hook_evaluator slot. The other two slots
+    // (g_query_evaluator + g_scheduler_stats_evaluator) are
+    // exposed via a similar helper in evaluator_fiber_mutation.cpp.
+    unbind_yield_hook_evaluator();
+    unbind_query_evaluator();
+
     defuse_index_destroy(&defuse_index_);
     modules_.clear();
     module_cache_.clear();
