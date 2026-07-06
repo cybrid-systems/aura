@@ -1299,6 +1299,10 @@ public:
     // Check if a safe checkpoint exists.
     bool has_panic_checkpoint() const { return !panic_safe_source_.empty(); }
 
+    // Issue #596: on fiber resume, restore a pending panic checkpoint when
+    // the outermost Guard mutation failed (cross-fiber rollback path).
+    void restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept;
+
     // Get the safe checkpoint source (for introspection).
     const std::string& panic_safe_source() const { return panic_safe_source_; }
 
@@ -3405,6 +3409,27 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->tag_arity_hygiene_query_delta_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #596: Guard + panic checkpoint + reflect closed-loop observability.
+    void bump_guard_panic_reflect_restores_on_resume() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_panic_reflect_restores_on_resume_total.fetch_add(1,
+                                                                      std::memory_order_relaxed);
+        }
+    }
+    void bump_guard_panic_reflect_validate_hook() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_panic_reflect_validate_hook_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_guard_panic_reflect_boundary_violation_prevented() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_panic_reflect_boundary_violation_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
     }
     void bump_total_query_calls() noexcept {

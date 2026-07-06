@@ -295,6 +295,17 @@ bool Evaluator::restore_panic_checkpoint() {
     return ok;
 }
 
+void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
+    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
+        return;
+    if (*outermost_mutation_success_flag_)
+        return;
+    if (!panic_auto_rollback_)
+        return;
+    if (restore_panic_checkpoint())
+        bump_guard_panic_reflect_restores_on_resume();
+}
+
 void Evaluator::update_shared_tree_root() {
     if (!workspace_tree_)
         return;

@@ -2684,6 +2684,75 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #596: query:guard-panic-reflect-stats — Guard + panic checkpoint +
+    // reflect/schema validation + fiber resume closed-loop companion
+    // (non-duplicative with #548 panic-checkpoint-lifecycle-stats,
+    // #594 reflection-selfmod-stats, #592 fiber resume safety matrix).
+    //
+    // Fields (5 + sentinel):
+    //   - checkpoints-committed   panic_checkpoint_commit_count_
+    //   - restores-on-resume      guard_panic_reflect_restores_on_resume_total
+    //   - validation-pass         schema_validation_pass_count_
+    //   - validation-fail         schema_validation_fail_count_
+    //   - boundary-violation-prevented
+    //                             guard_panic_reflect_boundary_violation_prevented_total
+    //   - schema == 596
+    add("query:guard-panic-reflect-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t commits =
+            static_cast<std::int64_t>(ev.get_panic_checkpoint_commit_count());
+        const std::int64_t restores_on_resume =
+            m ? static_cast<std::int64_t>(
+                    m->guard_panic_reflect_restores_on_resume_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t validation_pass =
+            static_cast<std::int64_t>(ev.get_schema_validation_pass_count());
+        const std::int64_t validation_fail =
+            static_cast<std::int64_t>(ev.get_schema_validation_fail_count());
+        const std::int64_t boundary_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->guard_panic_reflect_boundary_violation_prevented_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("checkpoints-committed", commits);
+        insert_kv("restores-on-resume", restores_on_resume);
+        insert_kv("validation-pass", validation_pass);
+        insert_kv("validation-fail", validation_fail);
+        insert_kv("boundary-violation-prevented", boundary_prevented);
+        insert_kv("schema", 596);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5306,6 +5375,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:pattern-ir-hygiene-closed-loop-stats",
             // Issue #594 — Static reflection self-mod validation hook
             "query:reflection-selfmod-stats",
+            // Issue #596 — Guard + panic checkpoint + reflect closed loop
+            "query:guard-panic-reflect-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -5643,9 +5714,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 169 entries as of #593 ship (168 from #591 + 1 pattern-ir-hygiene-
-        // closed-loop-stats registration from #593).
-        return make_int(169);
+        // 170 entries as of #596 ship (169 from #593 + 1 guard-panic-reflect-
+        // stats registration from #596).
+        return make_int(170);
     });
 }
 

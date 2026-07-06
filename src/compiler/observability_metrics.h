@@ -1187,6 +1187,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_hygiene_post_mutate_violation_total{0};
     std::atomic<std::uint64_t> tag_arity_hygiene_query_delta_total{0};
 
+    // Issue #596: Guard + panic checkpoint + reflect/schema validation +
+    // fiber resume closed-loop foundation atomics (non-duplicative with
+    // #548 panic-checkpoint-lifecycle-stats, #594 reflection-selfmod-stats,
+    // #592 fiber resume safety matrix).
+    std::atomic<std::uint64_t> guard_panic_reflect_restores_on_resume_total{0};
+    std::atomic<std::uint64_t> guard_panic_reflect_validate_hook_total{0};
+    std::atomic<std::uint64_t> guard_panic_reflect_boundary_violation_prevented_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers
