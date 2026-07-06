@@ -878,6 +878,42 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> scheduler_lifo_hits_total{0};
     std::atomic<std::uint64_t> scheduler_fifo_steals_total{0};
     std::atomic<std::uint64_t> scheduler_mutation_deferred_bias_total{0};
+    // Issue #646: GC Safepoint Deferral + Backoff Only for
+    // Outermost MutationBoundary + Contention Metrics
+    // counters (P0 Runtime-Gap + GC production-readiness
+    // foundation — non-duplicative to #642 #623 #591).
+    // These are scaffolding for the future AC1 + AC2 + AC4
+    // enforcement work — the bumps happen when
+    // aura_evaluator_request_gc_safepoint (or fiber check)
+    // distinguishes outermost vs inner MutationBoundary
+    // (depth==1 outermost → full deferral; inner → short-
+    // yield/proceed, #646 AC1), when backoff fires on
+    // repeated deferral under contention (#646 AC2), and
+    // when the scheduler GC phase + fiber yield_classification
+    // is wired to consume these counters (#646 AC4). P0
+    // ships the counters + the agent-visible
+    // (query:gc-safepoint-deferral-stats) primitive so the
+    // Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - gc_outermost_deferral_total: AC1 — count of full
+    //     deferrals when the GC safepoint request lands
+    //     inside an outermost MutationBoundary (depth==1).
+    //     High rate = GC request blocked on outermost
+    //     mutation stack (production memory/GC pressure
+    //     signal).
+    //   - gc_inner_proceeded_total: AC1 — count of inner
+    //     MutationBoundary (depth>1) where the safepoint
+    //     short-yield/proceeded instead of fully waiting.
+    //     Ratio (proceeded / total inner requests) = how
+    //     often inner bounds don't block GC.
+    //   - gc_backoff_trigger_total: AC2 — count of backoff
+    //     fires under repeated deferral / contention.
+    //     Ratio (backoff / total deferrals) = how often
+    //     contention was severe enough to trigger retry
+    //     mitigation.
+    std::atomic<std::uint64_t> gc_outermost_deferral_total{0};
+    std::atomic<std::uint64_t> gc_inner_proceeded_total{0};
+    std::atomic<std::uint64_t> gc_backoff_trigger_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
