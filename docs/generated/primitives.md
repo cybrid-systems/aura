@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**751** registrations scanned from `src/**/*.cpp`.
+**752** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 124 primitives (17%)
+- **mutation-safety**: 124 primitives (16%)
 - **core**: 203 primitives (27%)
-- **internal-observable**: 277 primitives (37%)
+- **internal-observable**: 278 primitives (37%)
 - **convenience**: 147 primitives (20%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,13 +21,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (277)
+## Query: (278)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-checkpoint-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-hot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-production-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-reload-func-table-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -1211,13 +1212,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (277)
+### Internal observable (stats/counters) (278)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-checkpoint-version-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-hot-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-hotupdate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-production-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`

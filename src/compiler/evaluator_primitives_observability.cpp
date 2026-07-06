@@ -2481,6 +2481,148 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #590: query:aot-hotupdate-stats — Agent-
+    // discoverable structured dashboard for the AOT mangle
+    // versioning + region filtering + multi-agent hot-update
+    // isolation + closure dispatch stale detection (P0
+    // Runtime-Review + AOT production-readiness surface —
+    // non-duplicative to existing #544 / #323 / #287).
+    //
+    // Note the naming distinction from existing primitives:
+    //   - (query:aot-reload-stats) (#708) — 5-field high-level
+    //     reload summary
+    //   - (query:aot-reload-func-table-stats) (#644) —
+    //     func_table refcount + region filter primitive
+    //   - (query:aot-hot-reload-stats) (#358/#452) — earlier
+    //     AOT hot-reload primitive
+    //   - (query:aot-checkpoint-version-stats) (#708) —
+    //     checkpoint version tracking
+    //   - (query:aot-hotupdate-stats) (#590, this primitive)
+    //     — *multi-agent hot-update isolation* companion with
+    //     no `-reload-` midfix that focuses on the AC1+AC2+AC3
+    //     counters for region-isolated reload + dispatch
+    //     stale prevention + multi-agent reload cycles.
+    //
+    // Fields (3 + sentinel):
+    //   - region-isolation     new aot_hotupdate_region_
+    //                          isolation_total atomic
+    //                          (foundation for AC1 region
+    //                          isolation hits — reload only
+    //                          affected target region).
+    //                          Value is 0 until AC1 wire-up.
+    //   - dispatch-stale      new aot_hotupdate_dispatch_
+    //                          stale_prevented_total atomic
+    //                          (foundation for AC3 closure
+    //                          dispatch stale mismatch
+    //                          prevented). Value is 0 until
+    //                          AC3 wire-up.
+    //   - multi-agent-reload  new aot_hotupdate_multi_agent_
+    //                          reload_total atomic
+    //                          (foundation for AC1 successful
+    //                          multi-agent reload cycles).
+    //                          Value is 0 until AC1 wire-up.
+    //   - schema == 590         sentinel for Agent drift
+    //                          detection (matches issue
+    //                          number for Agent drift
+    //                          tracking).
+    //
+    // Discovery before this PR (preserved, not duplication):
+    // the existing infrastructure covers the high-level
+    // AOT hot-update observability surface:
+    //   - (query:aot-reload-stats) (#708) — 5-field
+    //     reload summary
+    //   - (query:aot-reload-func-table-stats) (#644) —
+    //     func_table refcount + region filter primitive
+    //   - (query:aot-hot-reload-stats) (#358/#452) —
+    //     earlier AOT hot-reload primitive
+    //   - (query:aot-checkpoint-version-stats) (#708) —
+    //     checkpoint version tracking
+    //   - aot_emit_version + runtime defuse_version_ +
+    //     aot_reload_attempts_ + aot_hot_update_success_ +
+    //     aot_stale_reject_count_ + aot_refcount_swaps_ +
+    //     aot_region_mismatch_ (#708) — existing counters
+    //   - mangle_aot_name (with emit_version + module_version)
+    //   - aura_reload_aot_module (dlopen + aot_emit_version
+    //     check + g_aot_module_version)
+    // What the issue body AC2 specifies by **exact name +
+    // fields** — `query:aot-hotupdate-stats` (no `-reload-`
+    // midfix) with reload_success + stale_reject +
+    // region_isolation_hits + dispatch_stale_prevented —
+    // was *not* shipped under that exact name. The existing
+    // #708 5-field summary already covers some of these
+    // counters in aggregate; #590 ships the multi-agent
+    // hot-update isolation focused primitive.
+    //
+    // The remaining #590 AC1 (mangle_aot_name +
+    // generate_registration_c add region/agent_id prefix +
+    // reload success iterate func_table rebind matching
+    // version/region with refcounts) + AC2 ((aot:reload-
+    // with-region path version region) primitive wire-up) +
+    // AC3 (closure dispatch version check on func_id
+    // lookup; on mismatch force deopt or error with metric)
+    // work is invasive C++ on aura_jit_bridge.cpp +
+    // mangle_aot_name + generate_registration_c + closure
+    // dispatch path + needs the multi-agent region matrix +
+    // 1000+ reload cycles + concurrent mutate/eval + TSan
+    // coverage from the issue body — separate follow-ups.
+    add("query:aot-hotupdate-stats", [&ev](const auto&) -> EvalValue {
+        // region-isolation: new foundation atomic
+        // (0 until AC1 region isolation wire-up).
+        const std::int64_t region_isolation =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->aot_hotupdate_region_isolation_total.load(std::memory_order_relaxed)
+                : 0;
+        // dispatch-stale: new foundation atomic
+        // (0 until AC3 dispatch stale prevention wire-up).
+        const std::int64_t dispatch_stale =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->aot_hotupdate_dispatch_stale_prevented_total.load(std::memory_order_relaxed)
+                : 0;
+        // multi-agent-reload: new foundation atomic
+        // (0 until AC1 multi-agent reload wire-up).
+        const std::int64_t multi_agent_reload =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->aot_hotupdate_multi_agent_reload_total.load(std::memory_order_relaxed)
+                : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("region-isolation", static_cast<std::int64_t>(region_isolation));
+        insert_kv("dispatch-stale", static_cast<std::int64_t>(dispatch_stale));
+        insert_kv("multi-agent-reload", static_cast<std::int64_t>(multi_agent_reload));
+        insert_kv("schema", 590);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5436,10 +5578,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 166 entries as of #589 ship (165 from #651 + 1 envframe-
-        // dualpath-enforce observability stats primitive from
-        // #589: query:envframe-dualpath-enforce-stats).
-        return make_int(166);
+        // 167 entries as of #590 ship (166 from #589 + 1 aot-
+        // hotupdate observability stats primitive from #590:
+        // query:aot-hotupdate-stats).
+        return make_int(167);
     });
 }
 

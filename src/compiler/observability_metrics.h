@@ -1140,6 +1140,45 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_dualpath_mirror_write_total{0};
     std::atomic<std::uint64_t> envframe_dualpath_refresh_total{0};
     std::atomic<std::uint64_t> envframe_dualpath_consistency_violations_total{0};
+    // Issue #590: AOT mangle versioning + region filtering +
+    // multi-agent hot-update isolation + closure dispatch
+    // stale detection counters (P0 Runtime-Review + AOT
+    // production-readiness foundation — non-duplicative to
+    // existing #544 / #323 / #287).
+    // These are scaffolding for the future AC1 + AC2 + AC3
+    // enforcement work — the bumps happen when
+    // mangle_aot_name / generate_registration_c add optional
+    // region/agent_id prefix to mangled name + reload
+    // success iterates func_table rebinding matching
+    // version/region with refcounts (#590 AC1), when
+    // (aot:reload-with-region path version region) primitive
+    // and (query:aot-hotupdate-stats) primitive ship + the
+    // 4 surface counters get bumped (#590 AC2), and when
+    // closure dispatch (JIT bridge / evaluator) version check
+    // on func_id lookup; on mismatch force deopt or error with
+    // metric (#590 AC3). P0 ships the counters + the
+    // agent-visible (query:aot-hotupdate-stats) primitive so
+    // the Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - aot_hotupdate_region_isolation_total: AC1 — count
+    //     of region isolation hits (reload only affected
+    //     target region, no cross-region pollution). High
+    //     rate = multi-agent fleet is using region-isolated
+    //     hot-swap correctly.
+    //   - aot_hotupdate_dispatch_stale_prevented_total:
+    //     AC3 — count of closure dispatch stale mismatches
+    //     prevented (func_id version mismatch on lookup
+    //     → force deopt or error path). High rate = long-
+    //     running agents are catching potential stale
+    //     dispatch UAF.
+    //   - aot_hotupdate_multi_agent_reload_total: AC1 —
+    //     count of successful multi-agent reload cycles
+    //     (region-prefixed reload + func_table rebind).
+    //     High rate = commercial multi-agent hot-swap is
+    //     actively used in production.
+    std::atomic<std::uint64_t> aot_hotupdate_region_isolation_total{0};
+    std::atomic<std::uint64_t> aot_hotupdate_dispatch_stale_prevented_total{0};
+    std::atomic<std::uint64_t> aot_hotupdate_multi_agent_reload_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
