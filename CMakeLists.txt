@@ -1447,6 +1447,12 @@ aura_issue_test_link_llvm_jit(test_linear_ownership_guardshape_post_mutate)
 # + regression. Non-duplicative with #638/#610/#575.
 aura_add_issue_test(test_linear_ownership_runtime_enforcement_post_mutate)
 aura_issue_test_link_llvm_jit(test_linear_ownership_runtime_enforcement_post_mutate)
+# Issue #599: Compiler root epoch/version + GC synergy post-invalidate_function.
+# 7 ACs: compiler-root-stats (schema 599), root-refresh on invalidate,
+# stale/env-mismatch/dangling counters, multi-round monotonic + regression.
+# Non-duplicative with #531 (closure-env-safety), #598 (linear-runtime).
+aura_add_issue_test(test_compiler_root_epoch_gc_safety_post_invalidate)
+aura_issue_test_link_llvm_jit(test_compiler_root_epoch_gc_safety_post_invalidate)
 # Issue #575: Task2 PerDefUse incremental linear ownership post-mutate.
 aura_add_issue_test(test_linear_ownership_incremental_post_mutate_task2)
 aura_issue_test_link_llvm_jit(test_linear_ownership_incremental_post_mutate_task2)

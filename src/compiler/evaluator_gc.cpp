@@ -229,8 +229,10 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
                                                   std::uint64_t current_bridge_epoch) const {
     std::shared_lock<std::shared_mutex> lock(closures_mtx_);
     for (const auto& [id, cl] : closures_) {
-        if (cl.bridge_epoch != 0 && cl.bridge_epoch != current_bridge_epoch)
+        if (cl.bridge_epoch != 0 && cl.bridge_epoch != current_bridge_epoch) {
+            bump_compiler_root_dangling_prevented();
             continue;
+        }
         closure_roots_out.push_back(static_cast<std::int64_t>(id));
         if (cl.env_id != NULL_ENV_ID && is_valid_env_id(cl.env_id))
             env_roots_out.push_back(static_cast<std::int64_t>(cl.env_id));

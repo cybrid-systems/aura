@@ -3432,6 +3432,25 @@ public:
                 1, std::memory_order_relaxed);
         }
     }
+    // Issue #599: compiler root epoch/version protocol observability.
+    void bump_compiler_root_stale_closure_detected() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_root_stale_closure_detected_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_root_env_version_mismatch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_root_env_version_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_root_dangling_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_root_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -4233,6 +4252,7 @@ public:
     }
     void bump_envframe_version_mismatch_in_walk() const noexcept {
         envframe_version_mismatch_in_walk_.fetch_add(1, std::memory_order_relaxed);
+        bump_compiler_root_env_version_mismatch();
     }
     void bump_envframe_gc_walk_safe_skips() const noexcept {
         envframe_gc_walk_safe_skips_.fetch_add(1, std::memory_order_relaxed);

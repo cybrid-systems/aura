@@ -2753,6 +2753,73 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #599: query:compiler-root-stats — automatic epoch/version root
+    // management for live IRClosure/EnvFrame post-invalidate_function
+    // (non-duplicative with #531 closure-env-safety-stats,
+    // #598 linear-ownership-runtime-stats, #682 GC root coordination).
+    //
+    // Fields (4 + sentinel):
+    //   - stale-closure-detected   compiler_root_stale_closure_detected_total
+    //   - env-version-mismatch     compiler_root_env_version_mismatch_total
+    //   - root-refresh-count       closure_stale_refresh_count_
+    //   - dangling-prevented       compiler_root_dangling_prevented_total
+    //   - schema == 599
+    add("query:compiler-root-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t stale_closure =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_root_stale_closure_detected_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t env_mismatch =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_root_env_version_mismatch_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t root_refresh =
+            m ? static_cast<std::int64_t>(
+                    m->closure_stale_refresh_count_.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dangling_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_root_dangling_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("stale-closure-detected", stale_closure);
+        insert_kv("env-version-mismatch", env_mismatch);
+        insert_kv("root-refresh-count", root_refresh);
+        insert_kv("dangling-prevented", dangling_prevented);
+        insert_kv("schema", 599);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5377,6 +5444,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:reflection-selfmod-stats",
             // Issue #596 — Guard + panic checkpoint + reflect closed loop
             "query:guard-panic-reflect-stats",
+            // Issue #599 — Compiler root epoch/version + GC synergy
+            "query:compiler-root-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash
@@ -5714,9 +5783,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 170 entries as of #596 ship (169 from #593 + 1 guard-panic-reflect-
-        // stats registration from #596).
-        return make_int(170);
+        // 171 entries as of #599 ship (170 from #596 + 1 compiler-root-stats
+        // registration from #599).
+        return make_int(171);
     });
 }
 
