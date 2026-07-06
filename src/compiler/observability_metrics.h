@@ -842,6 +842,42 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_func_table_ref_bump_total{0};
     std::atomic<std::uint64_t> aot_func_table_ref_decrement_total{0};
     std::atomic<std::uint64_t> aot_region_filter_reapply_total{0};
+    // Issue #645: Work-Stealing LIFO/FIFO Adaptive Bias +
+    // YieldReason / outermost Mutation Depth counters
+    // (P0 Runtime-Gap + Scheduler foundation — non-duplicative
+    // to #618 #588 #451).
+    // These are scaffolding for the future AC1 + AC2 + AC4
+    // enforcement work — the bumps happen when worker steal
+    // loop (or scheduler next_worker) consults
+    // victim->last_yield_reason() + is_at_mutation_boundary_safe
+    // (outermost depth==0) to bias the steal decision
+    // (#645 AC1), when the simple adaptive LIFO/FIFO tuning
+    // fires on high steal_deferred_mutation_boundary_count
+    // (#645 AC2), and when the orchestration tune primitive
+    // from #618 is wired to consume these counters
+    // (#645 AC4). P0 ships the counters + the agent-visible
+    // (query:scheduler-steal-bias-stats) primitive so the
+    // Agent has a dashboard today; values are 0 until the
+    // enforcement work ships.
+    //   - scheduler_lifo_hits_total: AC1 — count of LIFO
+    //     local hits when stealing from the worker deque.
+    //     High LIFO rate = worker is hitting its own recent
+    //     local work (low steal pressure / locality good).
+    //   - scheduler_fifo_steals_total: AC1 — count of FIFO
+    //     steals from a victim worker. High FIFO rate = high
+    //     cross-worker steal pressure (could indicate
+    //     load imbalance or LLM bottleneck where mutation-
+    //     heavy victims block local workers).
+    //   - scheduler_mutation_deferred_bias_total: AC1+AC2 —
+    //     count of times we deferred stealing from a victim
+    //     fiber because its outermost mutation depth > 0
+    //     (inner MutationBoundary — risk of stale-env /
+    //     Guard dependency if stolen). Ratio
+    //     (deferred / total steals) = mutation-heavy
+    //     bias pressure the adaptive loop needs to react to.
+    std::atomic<std::uint64_t> scheduler_lifo_hits_total{0};
+    std::atomic<std::uint64_t> scheduler_fifo_steals_total{0};
+    std::atomic<std::uint64_t> scheduler_mutation_deferred_bias_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot

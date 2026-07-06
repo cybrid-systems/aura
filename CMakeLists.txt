@@ -3321,6 +3321,23 @@ add_dependencies(all_test_issue_targets test_issue_643)
 aura_add_issue_test(test_issue_644)
 aura_issue_test_link_llvm_jit(test_issue_644)
 add_dependencies(all_test_issue_targets test_issue_644)
+# Issue #645: query:scheduler-steal-bias-stats — P0
+# Runtime-Gap + Scheduler Work-Stealing LIFO/FIFO Adaptive
+# Bias + YieldReason / outermost Mutation Depth foundation
+# — 1 new Aura primitive (query:scheduler-steal-bias-stats,
+# distinct from #706 query:scheduler-stealbudget-adaptive-
+# stats via the `-bias-` midfix) + 3 new atomics
+# (scheduler_lifo_hits_total +
+# scheduler_fifo_steals_total +
+# scheduler_mutation_deferred_bias_total). Primitive has 4
+# fields: 3 from the new atomics (all foundation scaffolding
+# for AC1+AC2+AC4 enforcement, currently 0) + schema
+# sentinel. Builds on #451 / #588 / #618 / #706 existing
+# scheduler / fiber / yield_reason infrastructure.
+# Non-duplicative to #618/#588/#451 (see issue body).
+aura_add_issue_test(test_issue_645)
+aura_issue_test_link_llvm_jit(test_issue_645)
+add_dependencies(all_test_issue_targets test_issue_645)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
