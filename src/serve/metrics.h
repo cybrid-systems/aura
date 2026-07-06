@@ -340,7 +340,7 @@ inline AdaptiveStealStats& adaptive_steal_stats() {
     return stats;
 }
 
-// Issue #707: bounded per-fiber MutationStack / YieldCheckpoint pool.
+// Issue #652 / #707: bounded per-fiber MutationStack / YieldCheckpoint pool.
 struct PerFiberStackPoolStats {
     std::atomic<std::uint64_t> pool_hits{0};
     std::atomic<std::uint64_t> lazy_allocs{0};

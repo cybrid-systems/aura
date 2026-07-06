@@ -2163,7 +2163,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
-    // Issue #707: Per-fiber MutationStack / YieldCheckpoint pool stats.
+    // Issue #652 / #707: Per-fiber MutationStack / YieldCheckpoint pool stats.
+    // Fields: pool-hits, lazy-allocs, max-depth, churn-reductions,
+    // size-mismatches-caught, growth-warnings, restamps, schema == 652.
     add("query:per-fiber-stack-pool-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
@@ -2217,6 +2219,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {"growth-warnings",
              make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_growth_warnings()))},
             {"restamps", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_restamps()))},
+            {"schema", make_int(652)},
         };
         return build_hash(kv);
     });

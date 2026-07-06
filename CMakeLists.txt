@@ -2964,6 +2964,14 @@ add_dependencies(all_test_issue_targets test_issue_706)
 aura_add_issue_test(test_issue_707)
 aura_issue_test_link_llvm_jit(test_issue_707)
 add_dependencies(all_test_issue_targets test_issue_707)
+# Issue #652: Per-fiber MutationStack / YieldCheckpoint bounded pool for
+# high-concurrency orchestration. 7 ACs: per-fiber-stack-pool-stats
+# (schema 652), 200+ fiber pool reuse >= 80%, lazy alloc bound,
+# steal/yield/panic max-depth cap, monotonic + regression.
+# Non-duplicative with #707 (ship), #588, #542.
+aura_add_issue_test(test_per_fiber_stack_pool_high_concurrency)
+aura_issue_test_link_llvm_jit(test_per_fiber_stack_pool_high_concurrency)
+add_dependencies(all_test_issue_targets test_per_fiber_stack_pool_high_concurrency)
 # Issue #708: AOT hot-reload refcount swap + region/panic multi-fiber safety.
 aura_add_issue_test(test_issue_708)
 aura_issue_test_link_llvm_jit(test_issue_708)
