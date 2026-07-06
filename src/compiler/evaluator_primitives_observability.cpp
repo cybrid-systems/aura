@@ -5538,6 +5538,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:eda-primitives-stats",
             // Issue #587 — AI-native primitives development support observability
             "query:primitives-ai-native-stats",
+            // Issue #591 — Scheduler steal/GC safepoint mutation coordination observability
+            "query:scheduler-mutation-coord-stats",
             // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
             "query:consolidated-p0-production-stats",
             // Issue #516 — Prompt6 memory/ownership/GC safety tracker
@@ -5578,10 +5580,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 167 entries as of #590 ship (166 from #589 + 1 aot-
-        // hotupdate observability stats primitive from #590:
-        // query:aot-hotupdate-stats).
-        return make_int(167);
+        // 168 entries as of #591 ship (167 from #590 + 1 scheduler-mutation-
+        // coord-stats registration from #591 — extends #618 hash with steal/GC
+        // boundary coordination fields: query:scheduler-mutation-coord-stats).
+        return make_int(168);
     });
 }
 

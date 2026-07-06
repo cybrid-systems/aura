@@ -957,14 +957,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_string(static_cast<std::int32_t>(idx));
     });
 
-    // Issue #618: query:scheduler-mutation-coord-stats —
+    // Issue #618 + #591: query:scheduler-mutation-coord-stats —
     // structured-hash companion to (query:orchestration-metrics).
     // The latter (#451) returns a JSON string for back-compat
     // with existing test_issue_451; this primitive is the
     // Agent-discoverable structured form for the LLM-aware
     // orchestrator side.
     //
-    // Returned hash:
+    // Returned hash (#618 foundation + #591 steal/GC coordination):
     //   - gc-pauses-attributed-to-mutation  int (lifetime # of
     //                                      GC safepoints where the
     //                                      wait was attributed to
@@ -987,13 +987,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - schema                           int (sentinel = 618 so
     //                                      the Agent can detect
     //                                      schema changes)
+    //   - steal-deferred-count             int (#591: global defer
+    //                                      count during active boundary)
+    //   - safepoint-wait-on-boundary-us    int (#591: GC wait proxy
+    //                                      attributed to boundary)
+    //   - wakeup-after-defer-success       int (#591: ring-steal
+    //                                      success proxy after defer)
+    //   - mutation-coord-schema            int (591)
+    //   - scheduler-mutation-coord-total   int (monotonic synthesis)
+    //   - scheduler-mutation-coord-recommendation int
     add("query:scheduler-mutation-coord-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
         if (!ev)
             return make_void();
         auto& string_heap = ev->string_heap_mut();
-        auto* ht = FlatHashTable::create(16);
+        auto* ht = FlatHashTable::create(32);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1025,12 +1034,39 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t cur_fiber = aura_fiber_current_id();
         const std::uint64_t ratio = static_cast<std::uint64_t>(
             aura::serve::gc_frequency_tune_ratio().load(std::memory_order_relaxed));
+        const std::uint64_t steal_deferred = aura_adaptive_steal_global_deferred_total();
+        const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
+        const std::uint64_t gc_requests = ev->get_gc_safepoint_requests_total();
+        const std::uint64_t gc_deferred = ev->get_gc_safepoint_deferred_total();
+        const std::uint64_t wait_ns = ev->get_gc_safepoint_wait_total_ns();
+        const std::uint64_t ring_successes = aura_adaptive_steal_ring_successes();
+        const std::uint64_t steal_successes = aura_work_steal_successes_total();
+        const std::int64_t safepoint_wait_on_boundary_us =
+            static_cast<std::int64_t>((wait_ns / 1000) + gc_pauses * 10);
+        const std::int64_t wakeup_after_defer_success =
+            steal_deferred > 0 ? static_cast<std::int64_t>(ring_successes + steal_successes)
+                               : static_cast<std::int64_t>(ring_successes);
+        const std::uint64_t total =
+            gc_pauses + steal_deferred + gc_waits + gc_requests + gc_deferred + ring_successes;
+        std::int64_t recommendation = 0;
+        if (ev->get_mutation_steal_violation_count() > 0)
+            recommendation = 3;
+        else if (steal_deferred > steal_successes && steal_deferred > 3)
+            recommendation = 2;
+        else if (gc_pauses > 0 || steal_deferred > 0)
+            recommendation = 1;
         insert_kv("gc-pauses-attributed-to-mutation", static_cast<std::int64_t>(gc_pauses));
         insert_kv("mutation-boundary-depth", static_cast<std::int64_t>(depth));
         insert_kv("current-fiber-id", static_cast<std::int64_t>(cur_fiber));
         insert_kv("is-fibers-active", cur_fiber > 0 ? 1 : 0);
         insert_kv("gc-frequency-tune-ratio", static_cast<std::int64_t>(ratio));
         insert_kv("schema", 618);
+        insert_kv("steal-deferred-count", static_cast<std::int64_t>(steal_deferred));
+        insert_kv("safepoint-wait-on-boundary-us", safepoint_wait_on_boundary_us);
+        insert_kv("wakeup-after-defer-success", wakeup_after_defer_success);
+        insert_kv("mutation-coord-schema", 591);
+        insert_kv("scheduler-mutation-coord-total", static_cast<std::int64_t>(total));
+        insert_kv("scheduler-mutation-coord-recommendation", recommendation);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
