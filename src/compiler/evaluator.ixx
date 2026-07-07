@@ -4280,6 +4280,63 @@ public:
         }
         return 0;
     }
+    // Issue #755: end-to-end concurrent safety full-cycle integration stats.
+    void bump_concurrent_safety_steal_boundary_success(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->concurrent_safety_steal_boundary_success_total.fetch_add(n,
+                                                                        std::memory_order_relaxed);
+        }
+    }
+    void bump_concurrent_safety_aot_reload_at_guard(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->concurrent_safety_aot_reload_at_guard_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_concurrent_safety_gc_safepoint_during_steal(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->concurrent_safety_gc_safepoint_during_steal_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_concurrent_safety_recovery_success(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->concurrent_safety_recovery_success_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_concurrent_safety_steal_boundary_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->concurrent_safety_steal_boundary_success_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_concurrent_safety_aot_reload_at_guard() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->concurrent_safety_aot_reload_at_guard_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_concurrent_safety_gc_safepoint_during_steal() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->concurrent_safety_gc_safepoint_during_steal_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_concurrent_safety_recovery_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->concurrent_safety_recovery_success_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     // Issue #668: math regex primitive error observability.
     // Bumped alongside primitive_error_count_ (the general
     // counter) every time a regex-* primitive returns PRIM_ERROR.

@@ -232,6 +232,7 @@ bool Evaluator::restore_panic_checkpoint() {
     if (ok) {
         bump_rollback_success_on_panic();
         bump_longrunning_heal_triggers();
+        bump_concurrent_safety_recovery_success();
     }
     if (ok) {
         // Issue #242: truncate the 3 append-only arenas back to

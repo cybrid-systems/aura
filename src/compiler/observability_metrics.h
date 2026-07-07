@@ -1561,6 +1561,22 @@ struct CompilerMetrics {
     //     axis when LLM-heavy workloads hold mutation guards).
     std::atomic<std::uint64_t> orchestration_llm_gc_safepoint_adapted_total{0};
 
+    // Issue #755: end-to-end concurrent safety full-cycle integration
+    // (P0 runtime integration; refines #732/#731/#730/#674/#739,
+    // non-duplicative with per-component primitives).
+    //   - concurrent_safety_steal_boundary_success_total: successful
+    //     steal at outermost-safe MutationBoundary (probe_linear_on_steal).
+    //   - concurrent_safety_aot_reload_at_guard_total: AOT checkpoint
+    //     version drift detected during guard transfer / steal.
+    //   - concurrent_safety_gc_safepoint_during_steal_total: GC safepoint
+    //     coordination during fiber migration (resume/steal cycle).
+    //   - concurrent_safety_recovery_success_total: successful panic
+    //     checkpoint restore (rollback recovery on full cycle).
+    std::atomic<std::uint64_t> concurrent_safety_steal_boundary_success_total{0};
+    std::atomic<std::uint64_t> concurrent_safety_aot_reload_at_guard_total{0};
+    std::atomic<std::uint64_t> concurrent_safety_gc_safepoint_during_steal_total{0};
+    std::atomic<std::uint64_t> concurrent_safety_recovery_success_total{0};
+
     // Issue #668: math regex primitive error observability
     // (P1 stdlib-impl error consistency). Tracks every
     // PRIM_ERROR invocation inside the regex-match? /
