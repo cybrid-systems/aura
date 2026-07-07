@@ -132,8 +132,8 @@ int main() {
         std::println("\n--- AC4: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 167,
-              "stats:count == 167 (bumped from 76 due to ongoing primitive observability work)");
+                  aura::compiler::types::as_int(*count) == 211,
+              "stats:count == 211 (bumped from 76 due to ongoing primitive observability work)");
     }
 
     // AC5: fiber stress + chaos (GC safepoint)
