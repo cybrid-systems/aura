@@ -3269,6 +3269,18 @@ add_dependencies(all_test_issue_targets test_reflection_runtime_validate_macro_e
 aura_add_issue_test(test_primitives_capture_contract)
 aura_issue_test_link_llvm_jit(test_primitives_capture_contract)
 add_dependencies(all_test_issue_targets test_primitives_capture_contract)
+# Issue #752: list/vector map/filter SoA + intrinsic hot-path observability.
+# 4 CompilerMetrics atomics (list_chain_traversals_total /
+# list_soa_hits_total / list_intrinsic_dispatches_total /
+# list_estimated_cache_misses_total) + (query:list-soa-hotpath-stats,
+# schema 752) + map/filter/foldl bump wiring. 8 ACs: schema, 4 bump
+# paths, sum invariant, real AI-loop exercise (100-element list +
+# 10x map/filter + foldl +), regression on adjacent primitives
+# (#667 apply-stats, #506 soa-hotpath-adoption, #614 perf-stats).
+# Non-duplicative with #667/#506/#614/#727.
+aura_add_issue_test(test_list_vector_soa_hotpath_ai_loops)
+aura_issue_test_link_llvm_jit(test_list_vector_soa_hotpath_ai_loops)
+add_dependencies(all_test_issue_targets test_list_vector_soa_hotpath_ai_loops)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

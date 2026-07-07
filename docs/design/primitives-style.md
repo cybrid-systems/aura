@@ -94,7 +94,19 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:primitives-registry-stats)`      | 709    | registry-level summary (7 fields) |
 | `(query:primitives-consistency-stats)`   | 671    | capture-discipline axis (7 fields) |
 | `(query:primitives-contract-stats)`      | 751    | PRIM_ERROR + capture enforcement (5 fields) |
+| `(query:list-soa-hotpath-stats)`         | 752    | list map/filter SoA + intrinsic hot-path (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
+
+### `(query:list-soa-hotpath-stats)` fields (#752)
+
+- `chain-traversals` — `list_chain_traversals_total` (cdr-walk steps in map/filter/foldl)
+- `soa-hits` — `list_soa_hits_total` (primitive fast-dispatch in list hot loops)
+- `intrinsic-dispatches` — `list_intrinsic_dispatches_total` (slot_lookup_fast wins)
+- `estimated-cache-misses` — `list_estimated_cache_misses_total` (advisory pointer-chase estimate)
+- `hotpath-events-total` — sum of the four counters above
+- `schema` — 752 (drift sentinel)
+
+Prefer passing primitive refs (not closures) to `map`/`filter`/`foldl` when the fn is a pure builtin — the intrinsic/SoA-eligible path records `soa-hits` and avoids extra `estimated-cache-misses` from closure dispatch.
 
 ### `(query:primitives-contract-stats)` fields (#751)
 

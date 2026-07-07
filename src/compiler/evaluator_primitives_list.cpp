@@ -29,7 +29,8 @@ namespace {
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
                               std::vector<EvalValue>& error_values, Evaluator& ev) {
-    auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
+    auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg,
+                             bool list_hotpath = false) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
             ev.bump_primitives_apply_lookup_hits();
@@ -37,6 +38,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!prim)
                 return make_void();
             ev.bump_primitives_apply_fastpath_wins();
+            ev.bump_list_intrinsic_dispatches();
+            if (list_hotpath)
+                ev.bump_list_soa_hits();
             // Issue #479: per-slot fast-path hit for "which prim is hottest".
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
@@ -45,12 +49,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
             ev.bump_primitives_apply_closure_calls();
+            if (list_hotpath)
+                ev.bump_list_estimated_cache_misses();
             auto result = ev.apply_closure(cid, {arg});
             return result ? *result : make_void();
         }
         return make_void();
     };
-    auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg) -> bool {
+    auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg,
+                            bool list_hotpath = false) -> bool {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
             ev.bump_primitives_apply_lookup_hits();
@@ -58,6 +65,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!prim)
                 return false;
             ev.bump_primitives_apply_fastpath_wins();
+            ev.bump_list_intrinsic_dispatches();
+            if (list_hotpath)
+                ev.bump_list_soa_hits();
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return aura::compiler::pure::is_truthy((*prim)({arg}));
@@ -65,13 +75,15 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
             ev.bump_primitives_apply_closure_calls();
+            if (list_hotpath)
+                ev.bump_list_estimated_cache_misses();
             auto result = ev.apply_closure(cid, {arg});
             return result ? aura::compiler::pure::is_truthy(*result) : false;
         }
         return false;
     };
-    auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc,
-                              const EvalValue& arg) -> EvalValue {
+    auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg,
+                              bool list_hotpath = false) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
             ev.bump_primitives_apply_lookup_hits();
@@ -79,6 +91,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!prim)
                 return make_void();
             ev.bump_primitives_apply_fastpath_wins();
+            ev.bump_list_intrinsic_dispatches();
+            if (list_hotpath)
+                ev.bump_list_soa_hits();
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return (*prim)({acc, arg});
@@ -86,6 +101,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
             ev.bump_primitives_apply_closure_calls();
+            if (list_hotpath)
+                ev.bump_list_estimated_cache_misses();
             auto result = ev.apply_closure(cid, {acc, arg});
             return result ? *result : make_void();
         }
@@ -283,7 +300,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (idx >= pairs.size())
                 break;
 
-            auto mapped = apply_unary(a[0], pairs[idx].car);
+            ev.bump_list_chain_traversals();
+            ev.bump_list_estimated_cache_misses();
+            auto mapped = apply_unary(a[0], pairs[idx].car, true);
 
             auto new_id = pairs.size();
             pairs.push_back({mapped, make_void()});
@@ -321,7 +340,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (idx >= pairs.size())
                 break;
 
-            bool keep = apply_pred(a[0], pairs[idx].car);
+            ev.bump_list_chain_traversals();
+            ev.bump_list_estimated_cache_misses();
+            bool keep = apply_pred(a[0], pairs[idx].car, true);
             if (keep) {
                 auto new_id = pairs.size();
                 pairs.push_back({pairs[idx].car, make_void()});
@@ -412,7 +433,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto idx = as_pair_idx(lst);
             if (idx >= pairs.size())
                 break;
-            acc = apply_binary(a[0], acc, pairs[idx].car);
+            ev.bump_list_chain_traversals();
+            ev.bump_list_estimated_cache_misses();
+            acc = apply_binary(a[0], acc, pairs[idx].car, true);
             lst = pairs[idx].cdr;
             ++steps;
         }

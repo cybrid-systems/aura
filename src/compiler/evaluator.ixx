@@ -4092,6 +4092,60 @@ public:
         }
         return 0;
     }
+    // Issue #752: list/vector map/filter SoA hot-path observability.
+    // Bump helpers + accessors back (query:list-soa-hotpath-stats).
+    void bump_list_chain_traversals(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->list_chain_traversals_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_list_soa_hits(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->list_soa_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_list_intrinsic_dispatches(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->list_intrinsic_dispatches_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_list_estimated_cache_misses(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->list_estimated_cache_misses_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_list_chain_traversals() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->list_chain_traversals_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_list_soa_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->list_soa_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_list_intrinsic_dispatches() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->list_intrinsic_dispatches_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_list_estimated_cache_misses() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->list_estimated_cache_misses_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     // Issue #668: math regex primitive error observability.
     // Bumped alongside primitive_error_count_ (the general
     // counter) every time a regex-* primitive returns PRIM_ERROR.
