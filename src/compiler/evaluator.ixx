@@ -3666,6 +3666,53 @@ public:
         }
         return 0;
     }
+    // Issue #661: SV InterfaceIR/ModportIR structure observability
+    // (P1 EDA-SV foundation). The 3 bump helpers back the
+    // (query:sv-interface-structure-stats) primitive. Wired into
+    // `eda:parse-netlist`'s interface/modport parse paths (and
+    // available for any future `eda:set-port-direction` primitive
+    // from Action #3 in the issue body).
+    //
+    // All three are no-ops when compiler_metrics_ is null.
+    void bump_sv_interface_ports(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_interface_ports_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_interface_modport_views(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_interface_modport_views_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_interface_direction_changes(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_interface_direction_changes_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_sv_interface_ports_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_interface_ports_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_interface_modport_views_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_interface_modport_views_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_interface_direction_changes_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_interface_direction_changes_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }

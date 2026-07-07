@@ -1287,6 +1287,37 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> self_evolution_chaos_failures_total{0};
     std::atomic<std::uint64_t> self_evolution_chaos_corruptions_total{0};
 
+    // Issue #661: SV InterfaceIR/ModportIR structure observability
+    // (P1 EDA-SV foundation). The 3 counters track the structured
+    // interface IR/ModportIR builder activity:
+    //
+    //   - sv_interface_ports_total:
+    //       Bumped per Interface body port addition (lifetime
+    //       running total). The "ports_count" counter called out
+    //       in the issue body's Action #4.
+    //
+    //   - sv_interface_modport_views_total:
+    //       Bumped per Modport view addition (lifetime running
+    //       total). The "modport_views" counter from Action #4.
+    //
+    //   - sv_interface_direction_changes_total:
+    //       Bumped per port direction change (input <-> output
+    //       <-> inout). The "direction_changes" counter from
+    //       Action #4. Currently bumped via the test-only
+    //       helpers (and any future eda:set-port-direction
+    //       primitive); the production-path mutation is a
+    //       follow-up (issue body Action #3 wires `verify_dirty_`).
+    //
+    // Non-duplicative with #640 sv-verification-closedloop-stats,
+    // #630 sv-verification-closedloop-stats-hash, #539 sv-production-
+    // verification-stats, #497 sv-sva-structure-stats, #498 sv-
+    // structured-edsl-stats, #496 sv-node-stats. Those cover SVA,
+    // verification, and pattern scopes; #661 covers the interface
+    // IR/ModportIR BUILDER-shape specifically.
+    std::atomic<std::uint64_t> sv_interface_ports_total{0};
+    std::atomic<std::uint64_t> sv_interface_modport_views_total{0};
+    std::atomic<std::uint64_t> sv_interface_direction_changes_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

@@ -3057,6 +3057,19 @@ add_dependencies(all_test_issue_targets test_issue_710)
 aura_add_issue_test(test_issue_660_cache_define_bundle)
 aura_issue_test_link_llvm_jit(test_issue_660_cache_define_bundle)
 add_dependencies(all_test_issue_targets test_issue_660_cache_define_bundle)
+# Issue #661: SV InterfaceIR/ModportIR structure observability (P1).
+# 7 ACs: sv-interface-structure-stats (schema 661), ports-count /
+# modport-views / direction-changes bump paths, interface-events-total
+# sum invariant, eda:parse-netlist modport path (1 modport + 3 ports
+# bumps modport-views by 1 + ports by 3), 6 module-local regression
+# (sv-node, sv-structured-edsl, sv-sva-structure, sv-verification-
+# closedloop, self-evolution-chaos, runtime-observability-correlated).
+# Non-duplicative with #640/#630/#539/#497/#498/#496 (SVA / verification
+# / pattern scope); #661 covers the interface IR/ModportIR BUILDER
+# shape specifically.
+aura_add_issue_test(test_issue_661_sv_interface_structure_stats)
+aura_issue_test_link_llvm_jit(test_issue_661_sv_interface_structure_stats)
+add_dependencies(all_test_issue_targets test_issue_661_sv_interface_structure_stats)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
