@@ -93,7 +93,16 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 |------------------------------------------|--------|--------------------------------|
 | `(query:primitives-registry-stats)`      | 709    | registry-level summary (7 fields) |
 | `(query:primitives-consistency-stats)`   | 671    | capture-discipline axis (7 fields) |
+| `(query:primitives-contract-stats)`      | 751    | PRIM_ERROR + capture enforcement (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
+
+### `(query:primitives-contract-stats)` fields (#751)
+
+- `capture-violations` — `primitive_capture_violations_total`
+- `prim-error-hits` — `prim_error_unified_total` (PRIM_ERROR / `make_primitive_error` path)
+- `style-compliance-pct` — derived compliance percentage
+- `capture-contract-version` — `kPrimCaptureContractVersion` (currently 2)
+- `schema` — 751 (drift sentinel)
 
 ### `(query:primitives-consistency-stats)` fields
 

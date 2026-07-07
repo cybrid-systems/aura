@@ -554,6 +554,9 @@ export using EvalResult = aura::diag::Result<types::EvalValue>;
 // Issue #478: unified primitive error construction for evaluator_primitives_*.
 namespace primitives_detail {
 
+    // Issue #751: defined in evaluator_eval_flat.cpp (after Evaluator is complete).
+    void bump_prim_error_unified_total() noexcept;
+
     export inline types::EvalValue
     make_primitive_error(std::pmr::vector<std::string>& string_heap,
                          std::vector<types::EvalValue>& error_values, std::string_view msg,
@@ -562,8 +565,10 @@ namespace primitives_detail {
         string_heap.emplace_back(msg);
         auto eidx = error_values.size();
         error_values.push_back(types::make_string(sidx));
-        if (error_counter)
+        if (error_counter) {
             error_counter->fetch_add(1, std::memory_order_relaxed);
+            bump_prim_error_unified_total();
+        }
         return types::make_error(eidx);
     }
 

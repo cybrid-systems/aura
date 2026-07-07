@@ -4,6 +4,8 @@
 module;
 
 #include "runtime_shared.h"
+#include "primitives_detail.h"
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -19,6 +21,17 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using namespace types;
 
 void register_test_primitives(PrimRegistrar add, Evaluator& ev) {
+
+    // Issue #751: (primitives:contract-probe has-counter? uses-guard?) —
+    // runtime capture-contract probe for CI/tests; records a violation
+    // when has-counter? is #f on a mutate-style path.
+    add("primitives:contract-probe", [&ev](const auto& a) -> EvalValue {
+        const bool has_counter = !a.empty() && is_bool(a[0]) && as_bool(a[0]);
+        const bool uses_guard = a.size() >= 2 && is_bool(a[1]) && as_bool(a[1]);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            primitives_detail::prim_check_capture_contract(m, has_counter, uses_guard);
+        return make_bool(has_counter && uses_guard);
+    });
 
     add("run-tests", [&ev](const auto&) -> EvalValue {
         auto& bindings = ev.top_.bindings();

@@ -28,7 +28,8 @@
 namespace aura::compiler {
 
 // Bump when extension-kit capture contract version changes.
-inline constexpr int kPrimCaptureContractVersion = 1;
+// #751: runtime prim_error_unified wiring + query:primitives-contract-stats.
+inline constexpr int kPrimCaptureContractVersion = 2;
 
 // C++ registration macro — use inside aura.compiler.evaluator partitions where
 // PrimMeta is in scope. Mirrors skeleton strings in primitives_meta.h (#697).

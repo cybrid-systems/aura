@@ -459,6 +459,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #671 — primitives capture consistency stats
     // (P1 stdlib-impl consistency)
     "query:primitives-consistency-stats",
+    // Issue #751 — PRIM_ERROR / capture contract enforcement stats
+    "query:primitives-contract-stats",
     // Issue #672 — linear ownership + GuardShape runtime
     // invariant enforcement observability (P0 production
     // safety)
@@ -1974,6 +1976,66 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                   static_cast<std::int64_t>(kPrimCaptureContractVersion));
         insert_kv("recommended-action", recommended_action);
         insert_kv("schema", 671);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #751: query:primitives-contract-stats — P0 PRIM_ERROR /
+    // capture discipline enforcement dashboard (refines #728/#671/#615;
+    // non-duplicative with #671 primitives-consistency-stats which
+    // focuses on registry meta backfill + recommended-action).
+    //
+    // Fields (4 + sentinel):
+    //   - capture-violations     primitive_capture_violations_total
+    //   - prim-error-hits        prim_error_unified_total
+    //   - style-compliance-pct   derived (slots - violations) / slots * 100
+    //   - capture-contract-version kPrimCaptureContractVersion
+    //   - schema == 751
+    add("query:primitives-contract-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t capture_viol =
+            m ? m->primitive_capture_violations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t prim_errors =
+            m ? m->prim_error_unified_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t slots = ev.primitives_.slot_count();
+        const std::int64_t style_compliance_pct =
+            slots > 0 ? static_cast<std::int64_t>(
+                            ((slots > capture_viol ? slots - capture_viol : 0) * 100) / slots)
+                      : 100;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("capture-violations", static_cast<std::int64_t>(capture_viol));
+        insert_kv("prim-error-hits", static_cast<std::int64_t>(prim_errors));
+        insert_kv("style-compliance-pct", style_compliance_pct);
+        insert_kv("capture-contract-version",
+                  static_cast<std::int64_t>(kPrimCaptureContractVersion));
+        insert_kv("schema", 751);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

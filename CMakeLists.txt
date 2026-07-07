@@ -3253,6 +3253,10 @@ add_dependencies(all_test_issue_targets test_sv_verification_edsl_full_structure
 aura_add_issue_test(test_reflection_runtime_validate_macro_edsl_mutate)
 aura_issue_test_link_llvm_jit(test_reflection_runtime_validate_macro_edsl_mutate)
 add_dependencies(all_test_issue_targets test_reflection_runtime_validate_macro_edsl_mutate)
+# Issue #751: PRIM_ERROR / capture contract enforcement + contract-stats.
+aura_add_issue_test(test_primitives_capture_contract)
+aura_issue_test_link_llvm_jit(test_primitives_capture_contract)
+add_dependencies(all_test_issue_targets test_primitives_capture_contract)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
