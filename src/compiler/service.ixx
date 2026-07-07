@@ -7592,6 +7592,8 @@ private:
         (void)name;
         metrics_.linear_relower_revalidate_hits.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        evaluator_.resync_linear_jit_gc_roots_after_invalidate();
         evaluator_.probe_linear_ownership_at_gc_safepoint();
     }
 

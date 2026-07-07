@@ -267,6 +267,7 @@ struct LLVMBuilder {
     llvm::Function* fn_display_char = nullptr;
     llvm::Function* fn_newline = nullptr;
     llvm::Function* fn_epoch_acquire_fence = nullptr;
+    llvm::Function* fn_linear_jit_safety = nullptr;
     llvm::Function* fn_cast_op = nullptr;
     llvm::Function* fn_bump_init = nullptr;
     llvm::Function* fn_bump_reset = nullptr;
@@ -329,6 +330,7 @@ struct LLVMBuilder {
         auto ptr_i64 = llvm::PointerType::getUnqual(ctx);
         auto void_ty = llvm::Type::getVoidTy(ctx);
         auto i8_ty = llvm::Type::getInt8Ty(ctx);
+        auto i32_ty = llvm::Type::getInt32Ty(ctx);
         auto ptr_i8 = llvm::PointerType::getUnqual(ctx);
 
         fn_alloc_closure =
@@ -415,6 +417,11 @@ struct LLVMBuilder {
             llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                    llvm::Function::ExternalLinkage, "aura_jit_epoch_acquire_fence",
                                    mod);
+
+        fn_linear_jit_safety =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i8_ty, i32_ty}, false),
+                                   llvm::Function::ExternalLinkage,
+                                   "aura_jit_linear_post_invalidate_safety", mod);
 
         fn_cast_op = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                             llvm::Function::ExternalLinkage, "aura_cast_op", mod);
@@ -543,6 +550,15 @@ struct LLVMBuilder {
                 irb->CreateCall(fn_deopt_inc);
             return false;
         }
+        // Issue #740: linear-owned instructions consult JIT safety hook.
+        auto linear_safety_probe = [&]() {
+            if (inst.linear_ownership_state == 0)
+                return;
+            irb->CreateCall(
+                llvm::FunctionCallee(fn_linear_jit_safety),
+                {llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
+                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), inst.opcode)});
+        };
         switch (inst.opcode) {
             case OpNop:
                 // Issue #427: explicit Nop. No-op instruction — no
@@ -768,6 +784,7 @@ struct LLVMBuilder {
             // matches, 0 if deopt). The IR's subsequent Branch uses
             // the result to choose specialized vs generic-trampoline.
             case OpGuardShape: {
+                linear_safety_probe();
                 // Issue #538: trust occurrence-narrowing evidence and
                 // skip the runtime shape check (mirrors ir_executor).
                 if (inst.narrow_evidence != 0) {
@@ -920,6 +937,7 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCapture: {
+                linear_safety_probe();
                 // ops[0] = closure_slot, ops[1] = env_idx, ops[2] = var_slot
                 auto closure_val = load(inst.ops[0]);
                 auto env_val = load(inst.ops[2]);
@@ -942,6 +960,7 @@ struct LLVMBuilder {
             // capture bridge, two encodings (raw value vs encoded
             // cell-ref), differentiated by the sign of the env val.
             case OpCaptureRef: {
+                linear_safety_probe();
                 auto closure_val = load(inst.ops[0]);
                 auto cell_slot = c64(inst.ops[2]); // IR slot of the cell
                 // -1 - cell_slot (matches ir_executor_impl.cpp:842)
@@ -1033,10 +1052,12 @@ struct LLVMBuilder {
             case OpBorrowOp:
             case OpMutBorrowOp:
             case OpRefCountOp: {
+                linear_safety_probe();
                 store(inst.ops[0], load(inst.ops[1]));
                 return true;
             }
             case OpMoveOp: {
+                linear_safety_probe();
                 // Issue #106: source invalidation. After a
                 // MoveOp the source slot is zeroed so a later
                 // DropOp on the source is a no-op (the runtime's
@@ -1048,6 +1069,7 @@ struct LLVMBuilder {
                 return true;
             }
             case OpDropOp: {
+                linear_safety_probe();
                 auto val = load(inst.ops[0]);
                 irb->CreateCall(llvm::FunctionCallee(fn_drop_pair),
                                 llvm::ArrayRef<llvm::Value*>{val});
@@ -1551,6 +1573,7 @@ struct LLVMBuilder {
                 return true;
             }
             case OpArenaPop: {
+                linear_safety_probe();
                 // ArenaPop(saved_offset_slot) — pop TL arena frame
                 irb->CreateCall(llvm::FunctionCallee(fn_arena_pop));
                 return true;
@@ -1893,6 +1916,14 @@ void run_escape_analysis(const std::vector<std::vector<FlatInstruction>>& flat_i
                     // captured value escapes into closure env
                     if (inst.ops[2] < local_count)
                         escape_map[inst.ops[2]] = 1;
+                    // Issue #740: linear-owned captures must heap-allocate in
+                    // JIT L2 (not arena) after post-invalidate re-specialize.
+                    if (inst.linear_ownership_state != 0) {
+                        if (inst.ops[0] < local_count)
+                            escape_map[inst.ops[0]] = 1;
+                        if (inst.ops[2] < local_count)
+                            escape_map[inst.ops[2]] = 1;
+                    }
                     break;
                 case OpCellSet:
                     // CellSet(cell, val) — val escapes into persistent cell
@@ -1999,6 +2030,7 @@ void aura_display_int(int64_t);
 void aura_display_char(char);
 void aura_newline();
 void aura_jit_epoch_acquire_fence(void);
+void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint32_t opcode);
 int64_t aura_jit_prim_dispatch(int64_t, int64_t*, int32_t);
 int64_t aura_cast_op(int64_t, int64_t);
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
@@ -2320,6 +2352,8 @@ struct AuraJIT::Impl {
         reg("aura_display_char", (void*)aura_display_char);
         reg("aura_newline", (void*)aura_newline);
         reg("aura_jit_epoch_acquire_fence", (void*)aura_jit_epoch_acquire_fence);
+        reg("aura_jit_linear_post_invalidate_safety",
+            (void*)aura_jit_linear_post_invalidate_safety);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_cast_op", (void*)aura_cast_op);

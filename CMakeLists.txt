@@ -3187,6 +3187,10 @@ add_dependencies(all_test_issue_targets test_issue_672)
 aura_add_issue_test(test_prompt6_epoch_atomic_visibility_fiber_steal)
 aura_issue_test_link_llvm_jit(test_prompt6_epoch_atomic_visibility_fiber_steal)
 add_dependencies(all_test_issue_targets test_prompt6_epoch_atomic_visibility_fiber_steal)
+# Issue #740: linear JIT L2 post-invalidate Arena/DropOp/GC root safety.
+aura_add_issue_test(test_prompt6_linear_jit_l2_post_invalidate_arena_gc)
+aura_issue_test_link_llvm_jit(test_prompt6_linear_jit_l2_post_invalidate_arena_gc)
+add_dependencies(all_test_issue_targets test_prompt6_linear_jit_l2_post_invalidate_arena_gc)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

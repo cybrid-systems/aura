@@ -200,6 +200,15 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     record_linear_gc_probe(*this, violation, nullptr);
 }
 
+void Evaluator::resync_linear_jit_gc_roots_after_invalidate() noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    if (m)
+        m->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
+    std::vector<std::int64_t> closure_roots;
+    std::vector<std::int64_t> env_roots;
+    collect_compiler_managed_gc_roots(closure_roots, env_roots, current_bridge_epoch());
+}
+
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     const auto current_ver = defuse_version_snapshot();
     const auto current_bridge = current_bridge_epoch();
