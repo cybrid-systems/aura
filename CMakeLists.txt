@@ -3070,6 +3070,20 @@ add_dependencies(all_test_issue_targets test_issue_660_cache_define_bundle)
 aura_add_issue_test(test_issue_661_sv_interface_structure_stats)
 aura_issue_test_link_llvm_jit(test_issue_661_sv_interface_structure_stats)
 add_dependencies(all_test_issue_targets test_issue_661_sv_interface_structure_stats)
+# Issue #662: SVA structured mutate feedback closed loop (P1).
+# Regression net for the AI self-evo "coverage hole -> add coverpoint"
+# / "assert fail -> weaken property" closed loop. The underlying work
+# shipped across #310 (Interface/Modport NodeTag foundation) + #694
+# (SVA structured NodeTags + map_ + dirty bits + eda:weaken-property
+# + eda:add-coverpoint-bin + query:sv-sva-structure-stats) + #640
+# (verification feedback closed loop). 7 ACs: sv-sva-structure-stats
+# baseline (schema 694), eda:weaken-property path, eda:add-coverpoint-bin
+# path, combined hits +2, sva-dirty-total >= 1, SV primitives
+# regression, eda:parse-netlist coexistence (cross-feature
+# integration from #661).
+aura_add_issue_test(test_issue_662_sva_structured_mutate)
+aura_issue_test_link_llvm_jit(test_issue_662_sva_structured_mutate)
+add_dependencies(all_test_issue_targets test_issue_662_sva_structured_mutate)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
