@@ -1295,6 +1295,29 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_aot_reload_marker_mismatches_total{0};
     std::atomic<std::uint64_t> macro_interpreter_fallback_hygiene_hits_total{0};
 
+    // Issue #714: self-evolution closed-loop stats — Agent decision
+    // support for autonomous mutation strategy selection. The
+    // (query:self-evolution-closedloop-stats) primitive exposes a
+    // single integrated report correlating hygiene (MacroIntroduced
+    // count, violation rate), dirty impact (subtree affected), epoch
+    // drift (panic restamp proxy), and reflect-validation pass rate
+    // plus a recommended mutation strategy (safe/aggressive/balanced)
+    // derived from the per-strategy recommendation counts below.
+    //
+    // Phase 1 ships the strategy recommendation *counters* and
+    // derivation logic — the actual Guard dtor + mark_dirty_upward
+    // + reflect auto_validate wiring that drives the recommendation
+    // counts is follow-up work (each hook is a dedicated session).
+    //
+    // (Non-duplicative with #654 macro-hygiene-fiber-panic-stats,
+    // #712 macro-reflect-validation-stats, #713 macro-jit-hygiene-
+    // stats, #488 schema-validation. #714 is the FIRST primitive
+    // that correlates hygiene/dirty/epoch/reflect signals into a
+    // single Agent-facing strategy recommendation.)
+    std::atomic<std::uint64_t> self_evo_strategy_recommend_safe_total{0};
+    std::atomic<std::uint64_t> self_evo_strategy_recommend_aggressive_total{0};
+    std::atomic<std::uint64_t> self_evo_strategy_recommend_balanced_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
