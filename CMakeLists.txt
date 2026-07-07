@@ -3281,6 +3281,16 @@ add_dependencies(all_test_issue_targets test_primitives_capture_contract)
 aura_add_issue_test(test_list_vector_soa_hotpath_ai_loops)
 aura_issue_test_link_llvm_jit(test_list_vector_soa_hotpath_ai_loops)
 add_dependencies(all_test_issue_targets test_list_vector_soa_hotpath_ai_loops)
+# Issue #753: long-running deployment infra (quota/checkpoint/heal/SLO).
+# 5 CompilerMetrics atomics (longrunning_quota_violations_total /
+# longrunning_checkpoint_success_total / longrunning_heal_triggers_total /
+# longrunning_resource_trend_total / longrunning_deployment_slo_hits_total)
+# + resource:quota-set/get/check + (query:longrunning-infra-stats,
+# schema 753) + panic-checkpoint/heal bump wiring. 8 ACs.
+# Non-duplicative with #548/#677/#674/#729.
+aura_add_issue_test(test_longrunning_infra_primitives)
+aura_issue_test_link_llvm_jit(test_longrunning_infra_primitives)
+add_dependencies(all_test_issue_targets test_longrunning_infra_primitives)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

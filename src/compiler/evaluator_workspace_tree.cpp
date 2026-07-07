@@ -210,6 +210,7 @@ bool Evaluator::save_panic_checkpoint() {
     // (query:panic-checkpoint-lifecycle-stats) can report
     // the lifetime save count.
     bump_panic_checkpoint_save_count();
+    bump_longrunning_checkpoint_success();
     return true;
 }
 
@@ -230,6 +231,7 @@ bool Evaluator::restore_panic_checkpoint() {
     bump_panic_checkpoint_restore_count();
     if (ok) {
         bump_rollback_success_on_panic();
+        bump_longrunning_heal_triggers();
     }
     if (ok) {
         // Issue #242: truncate the 3 append-only arenas back to
