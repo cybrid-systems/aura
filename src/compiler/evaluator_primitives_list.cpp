@@ -32,9 +32,11 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
+            ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return make_void();
+            ev.bump_primitives_apply_fastpath_wins();
             // Issue #479: per-slot fast-path hit for "which prim is hottest".
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
@@ -42,6 +44,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
+            ev.bump_primitives_apply_closure_calls();
             auto result = ev.apply_closure(cid, {arg});
             return result ? *result : make_void();
         }
@@ -50,15 +53,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg) -> bool {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
+            ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return false;
+            ev.bump_primitives_apply_fastpath_wins();
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return aura::compiler::pure::is_truthy((*prim)({arg}));
         }
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
+            ev.bump_primitives_apply_closure_calls();
             auto result = ev.apply_closure(cid, {arg});
             return result ? aura::compiler::pure::is_truthy(*result) : false;
         }
@@ -68,15 +74,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               const EvalValue& arg) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
+            ev.bump_primitives_apply_lookup_hits();
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return make_void();
+            ev.bump_primitives_apply_fastpath_wins();
             primitives_detail::prim_record_fastpath_hit_for_slot(
                 static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return (*prim)({acc, arg});
         }
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
+            ev.bump_primitives_apply_closure_calls();
             auto result = ev.apply_closure(cid, {acc, arg});
             return result ? *result : make_void();
         }

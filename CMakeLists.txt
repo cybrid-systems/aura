@@ -3134,6 +3134,21 @@ add_dependencies(all_test_issue_targets test_issue_664_sv_defuse_stats)
 aura_add_issue_test(test_issue_665_sv_stability_stats)
 aura_issue_test_link_llvm_jit(test_issue_665_sv_stability_stats)
 add_dependencies(all_test_issue_targets test_issue_665_sv_stability_stats)
+# Issue #667: list/map/filter apply hot-path observability (P1).
+# Wiring the existing list.cpp apply_unary / apply_pred /
+# apply_binary hot path with 3 new CompilerMetrics atomics
+# (primitives_apply_lookup_hits_total +
+#  primitives_apply_closure_calls_total +
+#  primitives_apply_fastpath_wins_total) + the
+# (query:primitives-apply-stats, schema 667) primitive. 7 ACs:
+# schema, 3 bump paths, sum invariant, real hot-path
+# exercise (map/filter/fold over 100-element lists),
+# regression on adjacent primitives (runtime-observability-
+# correlated 673, sv-defuse 664, sv-interface 661).
+# Non-duplicative with #479/#480/#614/#643/#633.
+aura_add_issue_test(test_issue_667_primitives_apply_stats)
+aura_issue_test_link_llvm_jit(test_issue_667_primitives_apply_stats)
+add_dependencies(all_test_issue_targets test_issue_667_primitives_apply_stats)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

@@ -1379,6 +1379,40 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_generation_wrap_total{0};
     std::atomic<std::uint64_t> sv_stable_ref_invalidation_total{0};
 
+    // Issue #667: List/map/filter apply hot-path observability
+    // (P1 stdlib-impl performance). The 3 counters track the
+    // list/map/filter apply_unary / apply_pred / apply_binary hot
+    // path — the per-element lookup + closure call overhead
+    // called out in issue body Action #1 + #2:
+    //
+    //   - primitives_apply_lookup_hits_total:
+    //       Bumped per slot_lookup_fast call inside the list
+    //       apply_unary/apply_pred/apply_binary helpers (the
+    //       per-element fast-path). The "lookup_hits" counter
+    //       from Action #4.
+    //
+    //   - primitives_apply_closure_calls_total:
+    //       Bumped per apply_closure call inside the list apply
+    //       helpers (closure path, NOT primitive path). The
+    //       "closure_calls" counter from Action #4.
+    //
+    //   - primitives_apply_fastpath_wins_total:
+    //       Bumped when the slot_lookup_fast returns a non-null
+    //       PrimFn* (successful slot→fn dispatch — the fastpath
+    //       actually won). The "fastpath_win" counter from
+    //       Action #4.
+    //
+    // Non-duplicative with #479 (per-slot fastpath hit
+    // breakdown), #480 PrimMeta, #614 hotpath stability,
+    // #643 declarative macro, #633 demands. #667 covers the
+    // LIST/MAP/FILTER apply hot-path observability surface
+    // specifically (a NEW axis: the existing primitives give
+    // per-primitive hit counts; #667 gives the per-element
+    // apply-loop fastpath observability).
+    std::atomic<std::uint64_t> primitives_apply_lookup_hits_total{0};
+    std::atomic<std::uint64_t> primitives_apply_closure_calls_total{0};
+    std::atomic<std::uint64_t> primitives_apply_fastpath_wins_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

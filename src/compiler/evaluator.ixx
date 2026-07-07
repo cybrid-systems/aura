@@ -3814,6 +3814,52 @@ public:
         }
         return 0;
     }
+    // Issue #667: list/map/filter apply hot-path observability
+    // (P1 stdlib-impl performance). The 3 bump helpers + 3
+    // accessors back the (query:primitives-apply-stats)
+    // primitive. Wired into the list/map/filter apply_unary /
+    // apply_pred / apply_binary helpers (the per-element
+    // hot path). Initially bumped from test fixtures +
+    // production wiring in evaluator_primitives_list.cpp.
+    void bump_primitives_apply_lookup_hits(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitives_apply_lookup_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_primitives_apply_closure_calls(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitives_apply_closure_calls_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_primitives_apply_fastpath_wins(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitives_apply_fastpath_wins_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_primitives_apply_lookup_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->primitives_apply_lookup_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_primitives_apply_closure_calls() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->primitives_apply_closure_calls_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_primitives_apply_fastpath_wins() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->primitives_apply_fastpath_wins_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
