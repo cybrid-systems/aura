@@ -36,6 +36,7 @@ module;
 #include "messaging_bridge.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+#include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include <unistd.h>
 #include <sys/stat.h>
@@ -2565,12 +2566,17 @@ public:
             FlatFnBuilder(const aura::ir::IRFunction& ir_fn,
                           const std::uint8_t* precomputed_escape = nullptr,
                           std::size_t precomputed_size = 0,
-                          const std::uint8_t* precomputed_shape = nullptr) {
+                          const std::uint8_t* precomputed_shape = nullptr,
+                          const std::vector<std::uint8_t>* inst_dirty = nullptr) {
                 flat_instrs.resize(ir_fn.blocks.size());
                 flat_blocks.resize(ir_fn.blocks.size());
 
                 for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
                     auto& block = ir_fn.blocks[bi];
+                    std::size_t inst_base = 0;
+                    for (std::size_t pbi = 0; pbi < bi; ++pbi)
+                        inst_base += ir_fn.blocks[pbi].instructions.size();
+                    std::size_t inst_off = 0;
                     for (auto& instr : block.instructions) {
                         // Issue #60 Iter 2: stamp shape_id on the FlatInstruction
                         // from the per-function shape_map. ops[0] is the result
@@ -2579,6 +2585,12 @@ public:
                         if (precomputed_shape && instr.operands[0] < ir_fn.local_count) {
                             shape = precomputed_shape[instr.operands[0]];
                         }
+                        std::uint8_t dirty = 0;
+                        if (inst_dirty) {
+                            const auto gi = inst_base + inst_off;
+                            if (gi < inst_dirty->size())
+                                dirty = (*inst_dirty)[gi];
+                        }
                         flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
                                                    {instr.operands[0], instr.operands[1],
                                                     instr.operands[2], instr.operands[3]},
@@ -2586,7 +2598,8 @@ public:
                                                    instr.narrow_evidence,
                                                    instr.type_id,
                                                    instr.linear_ownership_state,
-                                                   0});
+                                                   dirty});
+                        ++inst_off;
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -2747,7 +2760,12 @@ public:
             if (need_compile) {
                 auto* precomp_escape = escape_pass.get_map(ir_fn.id);
                 auto precomp_size = escape_pass.get_map_size(ir_fn.id);
-                FlatFnBuilder builder(ir_fn, precomp_escape, precomp_size);
+                const std::vector<std::uint8_t>* inst_dirty = nullptr;
+                if (auto cit = ir_cache_v2_.find(ir_fn.name); cit != ir_cache_v2_.end()) {
+                    if (ir_fn.id < cit->second.instruction_dirty_per_func_.size())
+                        inst_dirty = &cit->second.instruction_dirty_per_func_[ir_fn.id];
+                }
+                FlatFnBuilder builder(ir_fn, precomp_escape, precomp_size, nullptr, inst_dirty);
                 // Set shape_map from profiler for L1 specialization
                 bool had_shape = builder.set_shape_map(shape_profiler_, session_id_, ir_fn.name);
                 // Issue #60 Iter 2: rebuild flat_instrs with shape_id stamped
@@ -3610,6 +3628,11 @@ public:
             const auto count = func.blocks[block_idx].instructions.size();
             for (std::size_t i = base; i < base + count; ++i)
                 idf[i] = 1;
+            for (const auto& instr : func.blocks[block_idx].instructions) {
+                if (instr.narrow_evidence != 0 || instr.type_id != 0 ||
+                    instr.linear_ownership_state != 0)
+                    jit_typed_mutation::record_type_propagation_stamp();
+            }
         }
 
         void init_instruction_dirty_from_irs() {
@@ -3910,8 +3933,7 @@ public:
 
     // Issue #741: selective bridge refresh — only expire shared_ptr views
     // for func indices named in impact_scope; bump epoch on the rest.
-    void selective_invalidate_bridge_for_impact(const std::string& name,
-                                                const ImpactScope& scope) {
+    void selective_invalidate_bridge_for_impact(const std::string& name, const ImpactScope& scope) {
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
             bridges = &bit->second;
@@ -7557,8 +7579,7 @@ private:
             aura::ast::StringPool pool(alloc);
             aura::ast::FlatAST flat(alloc);
             auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
-            if (!pr.success || pr.root == aura::ast::NULL_NODE ||
-                !flat_has_quote_or_lambda(flat)) {
+            if (!pr.success || pr.root == aura::ast::NULL_NODE || !flat_has_quote_or_lambda(flat)) {
                 invalidate_bridge_for(affected_name);
                 return;
             }
@@ -7751,6 +7772,10 @@ private:
             // being exercised under mutation churn.
             metrics_.ir_soa_view_cache_hits_total.fetch_add(snap->instructions_emitted,
                                                             std::memory_order_relaxed);
+            if (snap->type_metadata_stamped > 0) {
+                jit_typed_mutation::type_propagation_stamped_total.fetch_add(
+                    snap->type_metadata_stamped, std::memory_order_relaxed);
+            }
             pending_soa_snapshot_ = *snap;
         }
     }
@@ -8756,9 +8781,8 @@ public:
         hooks.on_env_version_resync = &CompilerService::lowering_env_version_resync_trampoline;
         hooks.on_quote_lambda_bridge_copy =
             &CompilerService::lowering_quote_lambda_bridge_trampoline;
-        hooks.impact_func_indices = pending_impact_func_indices_.empty()
-                                        ? nullptr
-                                        : &pending_impact_func_indices_;
+        hooks.impact_func_indices =
+            pending_impact_func_indices_.empty() ? nullptr : &pending_impact_func_indices_;
         set_lowering_observability_hooks(hooks);
     }
 
@@ -8780,7 +8804,8 @@ public:
         auto* raw = aura::messaging::g_current_compiler_service;
         if (!raw)
             return;
-        static_cast<CompilerService*>(raw)->evaluator_.bump_incremental_closure_env_version_resync();
+        static_cast<CompilerService*>(raw)
+            ->evaluator_.bump_incremental_closure_env_version_resync();
     }
 
     static void lowering_quote_lambda_bridge_trampoline() noexcept {

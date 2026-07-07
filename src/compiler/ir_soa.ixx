@@ -92,6 +92,8 @@ export struct IRFunctionSoA {
     std::vector<std::uint8_t> linear_ownership_states_;
     std::vector<std::uint32_t> adt_variant_ids_;
     std::vector<std::uint32_t> narrow_evidence_;
+    // Issue #746: CastOp coercion type_tag (mirrors operands[2] on AoS CastOp).
+    std::vector<std::uint8_t> coercion_tags_;
 
     // Basic blocks: ranges into the SoA columns
     std::vector<BasicBlockSoA> blocks_;
@@ -141,6 +143,7 @@ export struct IRFunctionSoA {
         linear_ownership_states_.reserve(n);
         adt_variant_ids_.reserve(n);
         narrow_evidence_.reserve(n);
+        coercion_tags_.reserve(n);
     }
 
     // Issue #196: per-block dirty tracking. The bitmask is
@@ -297,7 +300,8 @@ export struct BasicBlockSoA {
 // downstream importers get the same definition without ODR
 // violations.
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
-    contract_assert(block_id < blocks_.size() || block_dirty_.empty() || block_id <= block_dirty_.size());
+    contract_assert(block_id < blocks_.size() || block_dirty_.empty() ||
+                    block_id <= block_dirty_.size());
     aura::core::cpp26::record_hotpath_invariant_hit();
     if (block_id >= block_dirty_.size()) {
         block_dirty_.resize(block_id + 1, 1);
@@ -367,6 +371,7 @@ export struct IRInstructionView {
     }
     constexpr std::uint32_t adt_variant_id() const { return func->adt_variant_ids_[idx]; }
     constexpr std::uint32_t narrow_evidence() const { return func->narrow_evidence_[idx]; }
+    constexpr std::uint8_t coercion_tag() const { return func->coercion_tags_[idx]; }
 
     // Convenience: structured operand access. Many call sites
     // want operands as a span. We allocate a tiny stack array
@@ -399,7 +404,8 @@ export struct IRModuleV2 {
                                   std::uint32_t source_node_id = 0, std::uint32_t type_id = 0,
                                   std::uint32_t shape_id = 0, std::uint8_t linear_state = 0,
                                   std::uint32_t adt_variant_id = 0,
-                                  std::uint32_t narrow_evidence = 0) {
+                                  std::uint32_t narrow_evidence = 0,
+                                  std::uint8_t coercion_tag = 0) {
         auto& func = functions[func_idx];
         auto idx = static_cast<std::uint32_t>(func.size());
         func.opcodes_.push_back(opcode);
@@ -413,11 +419,30 @@ export struct IRModuleV2 {
         func.linear_ownership_states_.push_back(linear_state);
         func.adt_variant_ids_.push_back(adt_variant_id);
         func.narrow_evidence_.push_back(narrow_evidence);
+        func.coercion_tags_.push_back(coercion_tag);
         // Issue #380: new instruction starts clean. The mark_*_dirty
         // call later will flip this to 1 if the cached IR for this
         // instruction needs re-derivation.
         func.instruction_dirty_.push_back(0);
         return idx;
+    }
+
+    // Issue #746: patch metadata on the last instruction in a function
+    // (emit_with_metadata sets AoS fields after emit()'s dual-emit).
+    void patch_last_instruction_metadata(std::size_t func_idx, std::uint8_t linear_state,
+                                         std::uint32_t adt_variant, std::uint32_t narrow_evidence,
+                                         std::uint8_t coercion_tag = 0) {
+        if (func_idx >= functions.size())
+            return;
+        auto& func = functions[func_idx];
+        if (func.size() == 0)
+            return;
+        const auto idx = func.size() - 1;
+        func.linear_ownership_states_[idx] = linear_state;
+        func.adt_variant_ids_[idx] = adt_variant;
+        func.narrow_evidence_[idx] = narrow_evidence;
+        if (coercion_tag != 0)
+            func.coercion_tags_[idx] = coercion_tag;
     }
 
     // Get a view of the i-th instruction in a function.

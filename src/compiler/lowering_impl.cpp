@@ -1,5 +1,7 @@
 module;
 
+#include "jit_typed_mutation_stats.h"
+
 module aura.compiler.lowering;
 import std;
 import aura.core.ast;
@@ -37,6 +39,16 @@ void LoweringState::emit_with_metadata(aura::ir::IROpcode op, std::uint32_t tid,
         last.narrow_evidence = narrow_evidence;
         if (linear_state != 0 && g_lowering_hooks.on_linear_metadata_flow)
             g_lowering_hooks.on_linear_metadata_flow();
+        if (dual_emit_soa && cur_func_v2_idx < module_v2.functions.size()) {
+            std::uint8_t coercion_tag =
+                op == aura::ir::IROpcode::CastOp ? static_cast<std::uint8_t>(op2) : 0;
+            module_v2.patch_last_instruction_metadata(cur_func_v2_idx, linear_state, adt_variant,
+                                                      narrow_evidence, coercion_tag);
+            if (narrow_evidence != 0 || tid != 0) {
+                ++soa_type_metadata_stamped;
+                jit_typed_mutation::record_type_propagation_stamp();
+            }
+        }
     }
 }
 
@@ -261,17 +273,15 @@ static std::uint32_t lower_flat_expr(
                                     if (g_lowering_hooks.on_quote_lambda_bridge_copy)
                                         g_lowering_hooks.on_quote_lambda_bridge_copy();
                                 } else {
-                                    state.module.set_closure_bridge_ptr(new_fid, {}, {},
-                                                                        aura::ast::NULL_NODE,
-                                                                        bridge_epoch);
+                                    state.module.set_closure_bridge_ptr(
+                                        new_fid, {}, {}, aura::ast::NULL_NODE, bridge_epoch);
                                 }
                                 if (g_lowering_hooks.on_bridge_epoch_sync)
                                     g_lowering_hooks.on_bridge_epoch_sync();
                                 if (g_lowering_hooks.on_env_version_resync)
                                     g_lowering_hooks.on_env_version_resync();
                                 // Copy body_source for bridge fallback re-parse
-                                if (in_impact_scope &&
-                                    !bridge_it->second[ci].body_source.empty() &&
+                                if (in_impact_scope && !bridge_it->second[ci].body_source.empty() &&
                                     new_fid < state.module.closure_bridge.size()) {
                                     state.module.closure_bridge[new_fid].body_source =
                                         bridge_it->second[ci].body_source;
@@ -1597,6 +1607,7 @@ static IRModule lower_to_ir_impl(
     }
     g_last_soa_snapshot.instructions_emitted = state.soa_instructions_emitted;
     g_last_soa_snapshot.functions_emitted = state.soa_functions_emitted;
+    g_last_soa_snapshot.type_metadata_stamped = state.soa_type_metadata_stamped;
     g_last_soa_snapshot.module = std::move(state.module_v2);
     return state.module;
 }

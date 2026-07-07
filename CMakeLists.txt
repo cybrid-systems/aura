@@ -3215,6 +3215,10 @@ add_dependencies(all_test_issue_targets test_shape_jit_pass_deopt_incremental_cl
 aura_add_issue_test(test_typesystem_solve_delta_occurrence_priority_heavy_mutate)
 aura_issue_test_link_llvm_jit(test_typesystem_solve_delta_occurrence_priority_heavy_mutate)
 add_dependencies(all_test_issue_targets test_typesystem_solve_delta_occurrence_priority_heavy_mutate)
+# Issue #746: narrow_evidence / TypeId / linear propagation → JIT L2 typed mutate.
+aura_add_issue_test(test_typesystem_type_propagation_jit_l2_typed_mutate)
+aura_issue_test_link_llvm_jit(test_typesystem_type_propagation_jit_l2_typed_mutate)
+add_dependencies(all_test_issue_targets test_typesystem_type_propagation_jit_l2_typed_mutate)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

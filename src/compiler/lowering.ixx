@@ -99,6 +99,8 @@ export struct LoweringState {
     // CompilerMetrics::ir_soa_functions_emitted in service.ixx).
     std::uint64_t soa_instructions_emitted = 0;
     std::uint64_t soa_functions_emitted = 0;
+    // Issue #746: SoA dual-emit instructions stamped with type/narrow metadata.
+    std::uint64_t soa_type_metadata_stamped = 0;
     // Issue #684: arena-size reserve hint for SoA columns.
     std::size_t instruction_reserve_hint = 0;
 
@@ -190,10 +192,15 @@ export struct LoweringState {
         // back()-of-AoS instruction for parity.
         if (dual_emit_soa && cur_func_v2_idx < module_v2.functions.size()) {
             auto& last_aos = blk.instructions.back();
-            module_v2.add_instruction(cur_func_v2_idx, op, {op0, op1, op2, op3},
-                                      last_aos.source_ast_node_id, last_aos.type_id,
-                                      last_aos.shape_id, last_aos.linear_ownership_state,
-                                      last_aos.adt_variant_id, last_aos.narrow_evidence);
+            std::uint8_t coercion_tag = 0;
+            if (op == aura::ir::IROpcode::CastOp)
+                coercion_tag = static_cast<std::uint8_t>(op2);
+            module_v2.add_instruction(
+                cur_func_v2_idx, op, {op0, op1, op2, op3}, last_aos.source_ast_node_id,
+                last_aos.type_id, last_aos.shape_id, last_aos.linear_ownership_state,
+                last_aos.adt_variant_id, last_aos.narrow_evidence, coercion_tag);
+            if (last_aos.narrow_evidence != 0 || last_aos.type_id != 0)
+                ++soa_type_metadata_stamped;
             ++soa_instructions_emitted;
         }
     }
@@ -247,6 +254,7 @@ export struct LoweringState {
         cur_func_v2_idx = 0;
         soa_instructions_emitted = 0;
         soa_functions_emitted = 0;
+        soa_type_metadata_stamped = 0;
     }
 };
 
@@ -355,6 +363,7 @@ export aura::ir::IRFunction lower_function_at(
 export struct LowerSoAEmitSnapshot {
     std::uint64_t instructions_emitted = 0;
     std::uint64_t functions_emitted = 0;
+    std::uint64_t type_metadata_stamped = 0;
     IRModuleV2 module;
 };
 
