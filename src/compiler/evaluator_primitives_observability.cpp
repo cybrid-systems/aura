@@ -3334,6 +3334,84 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #674: query:self-evolution-chaos-stats — Closed-loop
+    // self-evolution stability stress testing (P0) outcome
+    // classifier. Companion primitive for the chaos stress
+    // harness that drives 1000+ mutation cycles under fiber
+    // steal + GC + AOT hot-reload conditions. The 3 fields
+    // are the "outcome classifier" of each chaos cycle:
+    //
+    //   - chaos-cycles      self_evolution_chaos_cycles_total
+    //       Bumped by the chaos harness once per full chaos
+    //       mutation cycle (one attempted self-evolution,
+    //       regardless of outcome). The "1000+ mutations" sum
+    //       the issue body calls out as the long-running
+    //       stress baseline.
+    //   - chaos-failures    self_evolution_chaos_failures_total
+    //       Bumped by the chaos harness when a chaos mutation
+    //       cycle fails (post-mutation validation, rollback,
+    //       or panic). The "evolution success rate" denominator.
+    //   - chaos-corruptions self_evolution_chaos_corruptions_total
+    //       Bumped by the chaos harness when a version/ownership
+    //       mismatch is detected during a chaos cycle. The
+    //       "corruption detected per epoch" metric from the
+    //       issue body.
+    //   - chaos-events-total
+    //       Sum of the 3 (per-call derivation, not a separate
+    //       atomic). Lets dashboards show overall chaos-event
+    //       volume at a glance.
+    //   - schema == 674
+    //
+    // Non-duplicative with #548 panic-checkpoint-lifecycle,
+    // #529 atomic-batch-rollback, #527 stable-ref-cow-fiber,
+    // #400 mutation-rollback-coverage, #679 nested-Guard
+    // atomic-batch-rollback. Those cover the production
+    // counter set; #674 covers the chaos/stress-test
+    // outcome classifier.
+    add("query:self-evolution-chaos-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t cycles = static_cast<std::int64_t>(ev.get_self_evolution_chaos_cycles());
+        const std::int64_t failures =
+            static_cast<std::int64_t>(ev.get_self_evolution_chaos_failures());
+        const std::int64_t corruptions =
+            static_cast<std::int64_t>(ev.get_self_evolution_chaos_corruptions());
+        const std::int64_t events_total = cycles + failures + corruptions;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("chaos-cycles", cycles);
+        insert_kv("chaos-failures", failures);
+        insert_kv("chaos-corruptions", corruptions);
+        insert_kv("chaos-events-total", events_total);
+        insert_kv("schema", 674);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
     add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
@@ -5975,6 +6053,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #673 — Unified Runtime Observability Layer (P1)
             // cross-module correlation primitive
             "query:runtime-observability-correlated-stats",
+            // Issue #674 — Closed-loop self-evolution chaos stress
+            // outcome classifier primitive
+            "query:self-evolution-chaos-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #488 — Guard impact snapshot hash

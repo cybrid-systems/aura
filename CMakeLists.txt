@@ -1771,6 +1771,17 @@ aura_issue_test_link_llvm_jit(test_guard_panic_reflect_fiber_resume_task6)
 # #596 (guard-panic-reflect).
 aura_add_issue_test(test_runtime_observability_correlated_stats_673)
 aura_issue_test_link_llvm_jit(test_runtime_observability_correlated_stats_673)
+# Issue #674: Closed-loop self-evolution stability stress testing
+# (P0) companion observability primitive + chaos outcome classifier.
+# 7 ACs: self-evolution-chaos-stats (schema 674), chaos-cycles,
+# chaos-failures, chaos-corruptions, chaos-events-total sum,
+# multi-round chaos simulation (100 cycles) monotonic,
+# 4 module-local regression (panic-checkpoint-lifecycle, atomic-batch-
+# rollback, stable-ref-cow-fiber, runtime-observability-correlated).
+# Non-duplicative with #548/#529/#527/#400/#679 (production recovery
+# counter set); #674 covers the chaos outcome classifier layer.
+aura_add_issue_test(test_self_evolution_chaos_stable_674)
+aura_issue_test_link_llvm_jit(test_self_evolution_chaos_stable_674)
 # Issue #514: Task6 Top 3 production-readiness closed loop (meta).
 # 8 ACs: ir-hygiene + pattern-marker + production-readiness stats,
 # macro→query hygiene → Guard mutate → dirty/type incremental,

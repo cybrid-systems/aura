@@ -3417,8 +3417,7 @@ public:
     void bump_guard_panic_reflect_restores_on_resume() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->guard_panic_reflect_restores_on_resume_total.fetch_add(1,
-                                                                      std::memory_order_relaxed);
+            m->guard_panic_reflect_restores_on_resume_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     void bump_guard_panic_reflect_validate_hook() const noexcept {
@@ -3616,6 +3615,54 @@ public:
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             return m->runtime_observability_steal_ownership_violation_correlated_total.load(
                 std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    // Issue #674: Closed-loop self-evolution chaos stress observability.
+    // The 3 bump helpers below back the (query:self-evolution-chaos-
+    // stats) primitive. They are wired ONLY from the chaos test harness
+    // (test_self_evolution_chaos_stable_674) — they are NOT bumped on
+    // the production mutation path, so the production counter set
+    // (cross_fiber_rollback_count_, panic_checkpoint_size_mismatch_,
+    // envframe_desync_detected_, etc.) is preserved unchanged.
+    //
+    // All three are no-ops when compiler_metrics_ is null.
+    void bump_self_evolution_chaos_cycles(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->self_evolution_chaos_cycles_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_self_evolution_chaos_failures(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->self_evolution_chaos_failures_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_self_evolution_chaos_corruptions(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->self_evolution_chaos_corruptions_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_self_evolution_chaos_cycles() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->self_evolution_chaos_cycles_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_self_evolution_chaos_failures() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->self_evolution_chaos_failures_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_self_evolution_chaos_corruptions() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->self_evolution_chaos_corruptions_total.load(std::memory_order_relaxed);
         }
         return 0;
     }
