@@ -506,73 +506,90 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // Issue #697: Declarative primitives extension kit stats.
-    add("query:primitives-extension-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    // #711 PrimMeta backfill — document this query primitive with
+    // EDA category + descriptive doc so the Agent can filter by
+    // domain via (query:primitives-by-category "eda") without
+    // special-casing individual primitive names. Routes through
+    // ev.primitives_.add (3-arg) instead of the local 2-arg
+    // PrimRegistrar typedef (see top-of-file).
+    ev.primitives_.add(
+        "query:primitives-extension-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t skeletons =
-            m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t eda_cat = ev.primitives_.category_meta_count("eda");
-        const std::uint64_t sva_cat = ev.primitives_.category_meta_count("sva");
-        const std::uint64_t ver_cat = ev.primitives_.category_meta_count("verification");
-        const std::uint64_t backfill_counter =
-            m ? m->primitive_eda_meta_backfill_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t backfill =
-            backfill_counter > 0 ? backfill_counter : (eda_cat + sva_cat + ver_cat);
-        const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
-        const std::uint64_t describes = ev.get_primitive_describe_count();
-        const std::uint64_t slots = ev.primitives_.slot_count();
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
-            {"eda-meta-backfilled", make_int(static_cast<std::int64_t>(backfill))},
-            {"category-eda", make_int(static_cast<std::int64_t>(eda_cat))},
-            {"category-sva", make_int(static_cast<std::int64_t>(sva_cat))},
-            {"category-verification", make_int(static_cast<std::int64_t>(ver_cat))},
-            {"documented-with-schema", make_int(static_cast<std::int64_t>(schema_doc))},
-            {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
-            {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
-            {"extension-kit-version",
-             make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t skeletons =
+                m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t eda_cat = ev.primitives_.category_meta_count("eda");
+            const std::uint64_t sva_cat = ev.primitives_.category_meta_count("sva");
+            const std::uint64_t ver_cat = ev.primitives_.category_meta_count("verification");
+            const std::uint64_t backfill_counter =
+                m ? m->primitive_eda_meta_backfill_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t backfill =
+                backfill_counter > 0 ? backfill_counter : (eda_cat + sva_cat + ver_cat);
+            const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
+            const std::uint64_t describes = ev.get_primitive_describe_count();
+            const std::uint64_t slots = ev.primitives_.slot_count();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
+                {"eda-meta-backfilled", make_int(static_cast<std::int64_t>(backfill))},
+                {"category-eda", make_int(static_cast<std::int64_t>(eda_cat))},
+                {"category-sva", make_int(static_cast<std::int64_t>(sva_cat))},
+                {"category-verification", make_int(static_cast<std::int64_t>(ver_cat))},
+                {"documented-with-schema", make_int(static_cast<std::int64_t>(schema_doc))},
+                {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
+                {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
+                {"extension-kit-version",
+                 make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc =
+                     "Aggregate extension-kit stats: skeleton generations + EDA category counts "
+                     "+ registry slots + extension-kit version. Used by the Agent for kit health.",
+                 .category = "eda",
+                 .schema = "() -> hash"});
 
     // Issue #709: registry fast dispatch + capture discipline + EDA integration stats.
     add("query:primitives-registry-stats", [&ev](const auto&) -> EvalValue {

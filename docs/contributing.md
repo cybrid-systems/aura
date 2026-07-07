@@ -459,3 +459,57 @@ AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()
 - [ ] 在新路径 entry bump 对应的 path-specific counter
 - [ ] 加 epoch/stale 检查（如果新路径会跨 bridge）
 - [ ] 在 `tests/test_issue_376.cpp` 加 AC + 更新本节 baseline 表
+
+## AI 扩展指南（Issue #711）
+
+新 primitive 不必手写完整注册代码 — Aura 已经提供了 introspection + generator 的 Agent-friendly surface，让 Agent 从描述生成符合风格的 skeleton：
+
+### 1. 查询 metadata
+
+```scheme
+;; #669 — enriched per-name meta (8 fields)
+(hash-ref (query:primitives-meta "<primitive-name>")
+  'name 'has-fn 'arity 'pure 'safety 'doc 'category 'schema)
+
+;; #617 — registry-level catalog (7 fields)
+(query:primitives-meta-catalog)
+;; Includes by-category-eda / by-category-sva / by-category-verification
+;; / by-category-general counts so the Agent can filter by domain.
+```
+
+### 2. 生成 skeleton
+
+```scheme
+;; #697 — AI-friendly primitive extension bundle
+(primitive:generate-skeleton "coverpoint with bins")
+;; → hash with 5 fields:
+;;   category      "sva" | "verification" | "eda" | "general"
+;;                 (heuristic dispatch from description keywords)
+;;   spec          "(<args>) -> <ret>"  Aura signature snippet
+;;   cpp-lambda    full add()/add_mutate() lambda with
+;;                 MutationBoundaryGuard template
+;;   test-snippet  example Aura invocation
+;;   registration  DEFINE_PRIMITIVE_META(...) macro call
+```
+
+### 3. 注册风格
+
+参考 [primitives-style.md](design/primitives-style.md)（Issue #671）：
+
+- 优先 `add_mutate` over `add` for state changes（自动套 `MutationBoundaryGuard`）
+- mutating 路径必须 `bump_*` 1 个 atomic counter（observability_metrics.h）
+- 错误路径走 `PRIM_ERROR(...)` helper，不要直接 stderr
+- `PrimMeta` 必须填：`arity / pure / safety_flags / doc / category`（`DEFINE_PRIMITIVE_META` macro）
+- EDA/SVA/verification 方向 primitive 选 `kPrimSafetyMutates` + `category = "eda"|"sva"|"verification"`
+
+### 4. 验证
+
+注册之后：
+
+```scheme
+(query:primitives-extension-stats)  ;; #697 runtime counters
+(query:primitives-meta-catalog)     ;; #617 should reflect new entry
+(hash-ref (query:primitives-meta "<name>") 'has-fn)  ;; should be 1
+```
+
+详见 [`tests/test_issue_711.cpp`](../tests/test_issue_711.cpp) — closed-loop Agent sim 把 1-4 串起来 end-to-end。
