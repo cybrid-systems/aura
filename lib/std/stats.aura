@@ -86,6 +86,8 @@
     "query:longrunning-infra-stats"
     ; ── Issue #754 — LLM-bottleneck orchestration adaptive observability (P0) ──
     "query:orchestration-llm-bottleneck-stats"
+    ; ── Issue #755 — concurrent safety full-cycle integration observability (P0) ──
+    "query:concurrent-safety-full-cycle-stats"
     ; ── Issue #581 — StableNodeRef + dirty propagation SV SoC scalability ──
     "query:stable-ref-sv-scale-stats"
     ; ── Issue #582 — EDA SV concurrency + atomic batch + fiber safety ──

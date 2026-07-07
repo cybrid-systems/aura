@@ -468,6 +468,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:longrunning-infra-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
+    // Issue #755 — concurrent safety full-cycle integration stats
+    "query:concurrent-safety-full-cycle-stats",
     // Issue #672 — linear ownership + GuardShape runtime
     // invariant enforcement observability (P0 production
     // safety)
@@ -2297,6 +2299,67 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("gc-safepoint-adapted", gc_safepoint_adapted);
         insert_kv("orchestration-events-total", events_total);
         insert_kv("schema", 754);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #755: query:concurrent-safety-full-cycle-stats — P0 end-to-end
+    // concurrent safety integration (MutationBoundary + steal + AOT + GC +
+    // recovery; refines #732/#731/#730/#674/#739; non-duplicative with
+    // #674 chaos-stats, #754 orchestration-llm-bottleneck-stats).
+    //
+    // Fields (4 + sentinel):
+    //   - steal-boundary-success   concurrent_safety_steal_boundary_success_total
+    //   - aot-reload-at-guard      concurrent_safety_aot_reload_at_guard_total
+    //   - gc-safepoint-during-steal concurrent_safety_gc_safepoint_during_steal_total
+    //   - recovery-success         concurrent_safety_recovery_success_total
+    //   - safety-events-total      (sum of 4, per-call derivation)
+    //   - schema == 755
+    add("query:concurrent-safety-full-cycle-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t steal_boundary_success =
+            static_cast<std::int64_t>(ev.get_concurrent_safety_steal_boundary_success());
+        const std::int64_t aot_reload_at_guard =
+            static_cast<std::int64_t>(ev.get_concurrent_safety_aot_reload_at_guard());
+        const std::int64_t gc_safepoint_during_steal =
+            static_cast<std::int64_t>(ev.get_concurrent_safety_gc_safepoint_during_steal());
+        const std::int64_t recovery_success =
+            static_cast<std::int64_t>(ev.get_concurrent_safety_recovery_success());
+        const std::int64_t events_total = steal_boundary_success + aot_reload_at_guard +
+                                          gc_safepoint_during_steal + recovery_success;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("steal-boundary-success", steal_boundary_success);
+        insert_kv("aot-reload-at-guard", aot_reload_at_guard);
+        insert_kv("gc-safepoint-during-steal", gc_safepoint_during_steal);
+        insert_kv("recovery-success", recovery_success);
+        insert_kv("safety-events-total", events_total);
+        insert_kv("schema", 755);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

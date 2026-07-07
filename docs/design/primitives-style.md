@@ -97,6 +97,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:list-soa-hotpath-stats)`         | 752    | list map/filter SoA + intrinsic hot-path (6 fields) |
 | `(query:longrunning-infra-stats)`        | 753    | quota/checkpoint/heal/SLO deployment infra (7 fields) |
 | `(query:orchestration-llm-bottleneck-stats)` | 754 | LLM-bottleneck adaptive steal + GC safepoint tuning (6 fields) |
+| `(query:concurrent-safety-full-cycle-stats)` | 755 | MutationBoundary + steal + AOT + GC full-cycle safety (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -121,6 +122,17 @@ Production primitives: `(resource:quota-set kind limit)`, `(resource:quota-get k
 - `schema` — 754 (drift sentinel)
 
 Distinct from `(query:scheduler-stealbudget-adaptive-stats)` (#706): #754 is the orchestration/LLM-bottleneck closed-loop dashboard; #706 is the StealBudget adaptive-bias summary.
+
+### `(query:concurrent-safety-full-cycle-stats)` fields (#755)
+
+- `steal-boundary-success` — `concurrent_safety_steal_boundary_success_total` (safe-boundary steal probe)
+- `aot-reload-at-guard` — `concurrent_safety_aot_reload_at_guard_total` (AOT version drift at guard transfer)
+- `gc-safepoint-during-steal` — `concurrent_safety_gc_safepoint_during_steal_total` (GC coordination on fiber migration)
+- `recovery-success` — `concurrent_safety_recovery_success_total` (successful panic-checkpoint restore)
+- `safety-events-total` — sum of the four counters above
+- `schema` — 755 (drift sentinel)
+
+Distinct from `(query:self-evolution-chaos-stats)` (#674): #674 classifies chaos-harness outcomes; #755 tracks the integrated steal/AOT/GC/recovery full-cycle path.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

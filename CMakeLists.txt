@@ -3318,6 +3318,19 @@ add_dependencies(all_test_issue_targets test_longrunning_infra_primitives)
 aura_add_issue_test(test_scheduler_llm_bottleneck_adaptive_steal_gc)
 aura_issue_test_link_llvm_jit(test_scheduler_llm_bottleneck_adaptive_steal_gc)
 add_dependencies(all_test_issue_targets test_scheduler_llm_bottleneck_adaptive_steal_gc)
+# Issue #755: end-to-end concurrent safety full-cycle integration
+# (MutationBoundary + steal + AOT + GC + recovery).
+# 4 CompilerMetrics atomics (concurrent_safety_steal_boundary_success_total /
+# concurrent_safety_aot_reload_at_guard_total /
+# concurrent_safety_gc_safepoint_during_steal_total /
+# concurrent_safety_recovery_success_total) +
+# (query:concurrent-safety-full-cycle-stats, schema 755) +
+# bump wiring in probe_linear_on_steal / transfer_panic_checkpoint /
+# resume_fiber_migration / restore_panic_checkpoint. 8 ACs.
+# Non-duplicative with #732/#731/#730/#674/#739.
+aura_add_issue_test(test_runtime_concurrent_full_cycle_chaos)
+aura_issue_test_link_llvm_jit(test_runtime_concurrent_full_cycle_chaos)
+add_dependencies(all_test_issue_targets test_runtime_concurrent_full_cycle_chaos)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

@@ -594,6 +594,7 @@ namespace {
         if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
                                               ev->current_bridge_epoch())) {
             aura_aot_record_deopt_on_steal();
+            ev->bump_concurrent_safety_aot_reload_at_guard();
         }
         ev->bump_macro_hygiene_panic_restamp_from_workspace();
     }
@@ -753,6 +754,7 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
         return;
     ev->transfer_mutation_stack_to_current_fiber();
     ev->probe_arena_auto_policy_on_fiber_transition();
+    ev->bump_concurrent_safety_gc_safepoint_during_steal();
 }
 
 // Issue #683: linear ownership enforcement on work-steal.
@@ -762,9 +764,12 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
         return;
     ev->probe_arena_auto_policy_on_fiber_transition();
     ev->probe_linear_ownership_on_fiber_steal();
+    ev->bump_concurrent_safety_steal_boundary_success();
     if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
-                                          ev->current_bridge_epoch()))
+                                          ev->current_bridge_epoch())) {
         aura_aot_record_deopt_on_steal();
+        ev->bump_concurrent_safety_aot_reload_at_guard();
+    }
 }
 
 extern "C" {
