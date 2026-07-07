@@ -1227,6 +1227,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_closure_blocks_relowered_total{0};
     std::atomic<std::uint64_t> incremental_closure_min_scope_win_total{0};
     std::atomic<std::uint64_t> incremental_closure_jit_sync_total{0};
+    // Issue #741: impact_scope → closure_bridge shared_ptr + EnvFrame
+    // version re-stamp for quote/lambda-heavy defines (non-duplicative
+    // with #718 block_dirty, #719 epoch/bridge general safety).
+    // Exposed via (query:incremental-closure-bridge-stats).
+    std::atomic<std::uint64_t> incremental_closure_bridge_impact_blocks_total{0};
+    std::atomic<std::uint64_t> incremental_closure_quote_lambda_stale_prevented_total{0};
+    std::atomic<std::uint64_t> incremental_closure_env_version_resync_total{0};
 
     // Issue #654: Macro+reflect+self-evo hygiene vs fiber/panic/AOT/SoA
     // cross-cutting gaps (non-duplicative with #593 pattern-ir-hygiene,

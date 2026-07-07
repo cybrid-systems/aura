@@ -3846,6 +3846,59 @@ public:
     // invalidation will be added in a follow-up that consults
     // the dep_graph_ to find which block(s) of a dependent
     // actually reference the mutated define.
+    // Issue #741: detect quote/lambda in a FlatAST (agent macro/self-mod).
+    static bool flat_has_quote_or_lambda(const aura::ast::FlatAST& flat) noexcept {
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            const auto tag = flat.get(id).tag;
+            if (tag == aura::ast::NodeTag::Quote || tag == aura::ast::NodeTag::Lambda)
+                return true;
+        }
+        return false;
+    }
+
+    // Issue #741: selective bridge refresh — only expire shared_ptr views
+    // for func indices named in impact_scope; bump epoch on the rest.
+    void selective_invalidate_bridge_for_impact(const std::string& name,
+                                                const ImpactScope& scope) {
+        std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
+        if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
+            bridges = &bit->second;
+        else if (auto vit = ir_cache_v2_.find(name);
+                 vit != ir_cache_v2_.end() && !vit->second.bridges.empty())
+            bridges = &vit->second.bridges;
+        if (!bridges || bridges->empty())
+            return;
+
+        std::unordered_set<std::size_t> affected_funcs;
+        for (const auto& b : scope.affected_blocks)
+            affected_funcs.insert(b.function_index);
+
+        pending_impact_func_indices_ = affected_funcs;
+
+        const auto current_epoch = bridge_epoch();
+        std::uint64_t impacted = 0;
+        for (std::size_t fi = 0; fi < bridges->size(); ++fi) {
+            auto& bridge = (*bridges)[fi];
+            bridge.bridge_epoch = current_epoch;
+            if (!affected_funcs.empty() && !affected_funcs.count(fi))
+                continue;
+            bridge.flat.reset();
+            bridge.pool.reset();
+            bridge.body_id = aura::ast::NULL_NODE;
+            ++impacted;
+        }
+        if (impacted > 0) {
+            metrics_.bridge_invalidations_count.fetch_add(1, std::memory_order_relaxed);
+            metrics_.compiler_inval_bridge_epoch_total.fetch_add(impacted,
+                                                                 std::memory_order_relaxed);
+            const std::uint64_t block_count =
+                scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size();
+            metrics_.incremental_closure_bridge_impact_blocks_total.fetch_add(
+                block_count, std::memory_order_relaxed);
+            evaluator_.bump_incremental_closure_bridge_impact_blocks(block_count);
+        }
+    }
+
     // Issue #680: compute ir_cache_pure impact_scope for a Define
     // mutation root and bump Evaluator observability counters.
     void run_define_impact_scope(aura::ast::NodeId root) {
@@ -3861,6 +3914,26 @@ public:
         evaluator_.bump_edsl_mutate_invalidate_precision();
         if (flat->is_macro_introduced(root))
             evaluator_.bump_macro_hygiene_dirty_impact();
+
+        // Issue #741: quote/lambda defines — selective bridge refresh +
+        // live EnvFrame version re-stamp for captured closures.
+        if (flat_has_quote_or_lambda(*flat)) {
+            std::string define_name;
+            if (flat->get(root).tag == aura::ast::NodeTag::Define) {
+                if (auto* pool = evaluator_.workspace_pool())
+                    define_name = std::string(pool->resolve(flat->get(root).sym_id));
+            }
+            if (!define_name.empty()) {
+                selective_invalidate_bridge_for_impact(define_name, scope);
+                metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                evaluator_.bump_incremental_closure_quote_lambda_stale_prevented();
+            }
+            metrics_.incremental_closure_bridge_impact_blocks_total.fetch_add(
+                blocks, std::memory_order_relaxed);
+            evaluator_.bump_incremental_closure_bridge_impact_blocks(blocks);
+        }
+        (void)evaluator_.resync_live_closure_env_versions_on_invalidate();
     }
 
     void mark_define_dirty(const std::string& name) {
@@ -7192,6 +7265,9 @@ private:
 
     // Bridge data cached alongside ir_cache_ (same keys, parallel indices).
     std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>> ir_cache_bridge_;
+    // Issue #741: func indices from the latest impact_scope computation,
+    // wired into lowering hooks to limit bridge shared_ptr copy scope.
+    std::unordered_set<std::size_t> pending_impact_func_indices_;
     // String pool cached alongside ir_cache_ (same keys).
     std::unordered_map<std::string, std::vector<std::string>> ir_cache_strings_;
 
@@ -7404,13 +7480,38 @@ private:
         // Bumps the bridge_epoch_ field so any closure
         // holding a reference will detect staleness and
         // re-parse from body_source on next use.
+        // Issue #741: quote/lambda defines use impact_scope-
+        // selective shared_ptr refresh instead of full bridge wipe.
         // Issue #682: GC root coordination before bindings cleared.
-        on_compiler_invalidate_gc_coordination(name);
-        invalidate_bridge_for(name);
-        for (auto& dep_name : dependents) {
-            on_compiler_invalidate_gc_coordination(dep_name);
-            invalidate_bridge_for(dep_name);
-        }
+        const auto invalidate_bridge_with_impact = [&](const std::string& affected_name) {
+            on_compiler_invalidate_gc_coordination(affected_name);
+            auto src_it = function_sources_.find(affected_name);
+            if (src_it == function_sources_.end()) {
+                invalidate_bridge_for(affected_name);
+                return;
+            }
+            auto alloc = arena_.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE ||
+                !flat_has_quote_or_lambda(flat)) {
+                invalidate_bridge_for(affected_name);
+                return;
+            }
+            flat.root = pr.root;
+            std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>
+                source_to_ir;
+            std::unordered_map<std::string, std::size_t> ir_cache_index;
+            auto scope = compute_impact_scope(flat, pr.root, source_to_ir, ir_cache_index);
+            selective_invalidate_bridge_for_impact(affected_name, scope);
+            metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+            evaluator_.bump_incremental_closure_quote_lambda_stale_prevented();
+        };
+        invalidate_bridge_with_impact(name);
+        for (auto& dep_name : dependents)
+            invalidate_bridge_with_impact(dep_name);
 
         // Issue #601: live IRClosure walk — refresh closures whose
         // bridge_epoch is stale (captured before the mutation_epoch_
@@ -7452,6 +7553,10 @@ private:
             for (auto& dep_name : dependents)
                 live_walk_one(dep_name);
         }
+
+        // Issue #741: re-stamp EnvFrame version_ for live tree-walker
+        // closures captured from quote/lambda paths in impacted blocks.
+        (void)evaluator_.resync_live_closure_env_versions_on_invalidate();
 
         // Issue #272 Cycle 2: drop stale IR define env bindings before re-bind.
         clear_ir_define_env_binding(name);
@@ -8574,6 +8679,12 @@ public:
         hooks.bridge_epoch_capture = bridge_epoch();
         hooks.on_bridge_epoch_sync = &CompilerService::lowering_bridge_sync_trampoline;
         hooks.on_linear_metadata_flow = &CompilerService::lowering_linear_metadata_trampoline;
+        hooks.on_env_version_resync = &CompilerService::lowering_env_version_resync_trampoline;
+        hooks.on_quote_lambda_bridge_copy =
+            &CompilerService::lowering_quote_lambda_bridge_trampoline;
+        hooks.impact_func_indices = pending_impact_func_indices_.empty()
+                                        ? nullptr
+                                        : &pending_impact_func_indices_;
         set_lowering_observability_hooks(hooks);
     }
 
@@ -8589,6 +8700,23 @@ public:
         if (!raw)
             return;
         static_cast<CompilerService*>(raw)->evaluator_.bump_compiler_core_linear_metadata_flow();
+    }
+
+    static void lowering_env_version_resync_trampoline() noexcept {
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        static_cast<CompilerService*>(raw)->evaluator_.bump_incremental_closure_env_version_resync();
+    }
+
+    static void lowering_quote_lambda_bridge_trampoline() noexcept {
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        auto* self = static_cast<CompilerService*>(raw);
+        self->metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+        self->evaluator_.bump_incremental_closure_quote_lambda_stale_prevented();
     }
 
     static void jit_unhandled_invalidate_trampoline(const char* fn_name) noexcept {

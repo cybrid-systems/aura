@@ -3590,6 +3590,31 @@ public:
             m->incremental_closure_jit_sync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #741: impact_scope → closure_bridge + EnvFrame version re-stamp.
+    void bump_incremental_closure_bridge_impact_blocks(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_closure_bridge_impact_blocks_total.fetch_add(n,
+                                                                         std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_closure_quote_lambda_stale_prevented() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_closure_env_version_resync() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_closure_env_version_resync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Proactive EnvFrame version re-stamp for live tree-walker closures
+    // held across invalidate_function / partial re-lower. Returns the
+    // number of frames resynced.
+    std::uint64_t resync_live_closure_env_versions_on_invalidate();
     // Issue #654: macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps.
     void bump_macro_hygiene_panic_restamp() const noexcept {
         if (compiler_metrics_) {
