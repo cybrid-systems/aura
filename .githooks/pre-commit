@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Aura pre-commit hook — clang-format (C++) + ruff (Python) enforcement.
+# Aura pre-commit hook — clang-format (C++) + ruff (Python) + docs regen.
 #
 # Why plan B (auto-fix + check) instead of plan A (check-only)?
 #   - Today #637-#644 (6 issues) shipped with clang-format drift because the
@@ -16,6 +16,13 @@
 # pre-commit hook only caught C++; Python lint drift slipped through. Same
 # auto-fix + final-check pattern as clang-format below.
 #
+# 2026-07-07 (later) update: also run `./build.py docs` to regenerate
+# `docs/generated/*.md` files. The CI gate's docs check was failing
+# because adding/removing primitives didn't trigger docs regen. The
+# generated files live in the repo, so any commit that adds a primitive
+# (src/compiler/evaluator_primitives_*.cpp changes) MUST update
+# docs/generated/primitives.md. Auto-fix regenerates + re-stages.
+#
 # Flow:
 #   1. Collect staged C++ files matching the same filter CI uses
 #      (src|tests) + (\.(cpp|ixx|hh|h)$).
@@ -23,17 +30,18 @@
 #   3. Run `clang-format -i` on C++ files (auto-fix).
 #   4. Run `ruff check --fix --unsafe-fixes` + `ruff format` on Python
 #      files (auto-fix). Matches `./build.py lint --fix`.
-#   5. `git add` the modified files so the formatted content is what gets
+#   5. If src/ changed (likely added/removed/renamed primitives),
+#      run `./build.py docs` to regen docs/generated/*.md, then
+#      `git add` any modified generated files.
+#   6. `git add` the modified files so the formatted content is what gets
 #      committed (no separate "format" noise commit).
-#   6. Final `clang-format --dry-run -Werror` and `ruff check` +
+#   7. Final `clang-format --dry-run -Werror` and `ruff check` +
 #      `ruff format --check` — belt-and-suspenders so the commit message
 #      is honest even if auto-fix ever diverges from --check.
 #
 # Exit codes:
 #   0 — all staged files clean (or no matching files staged)
-#   1 — clang-format / ruff missing OR final check failed (shouldn't
-#       happen unless the tool itself is broken or auto-fix can't resolve
-#       the issue e.g. ruff auto-fix can't fix an E501 violation)
+#   1 — clang-format / ruff / build.py missing OR final check failed
 
 set -euo pipefail
 
@@ -49,6 +57,12 @@ cpp_files=$(git diff --cached --name-only --diff-filter=ACMR \
 # Collect staged Python files.
 py_files=$(git diff --cached --name-only --diff-filter=ACMR \
     | grep -E '\.py$' \
+    || true)
+
+# Collect staged files under src/ — triggers docs regen since
+# primitive registration lives in src/compiler/evaluator_primitives_*.cpp.
+src_files=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '^src/' \
     || true)
 
 # ── C++ (clang-format) ─────────────────────────────────────────────
@@ -96,6 +110,32 @@ if [ -n "$py_files" ]; then
     echo "pre-commit: ruff format --check (final check)..."
     echo "$py_files" | xargs ruff format --check
     echo "pre-commit: ruff clean ✓"
+fi
+
+# ── Docs regen (docs/generated/*.md) ───────────────────────────────
+# Triggered when src/ has staged changes (primitive registration
+# lives there). The regen is fast (~2s) and matches the CI gate's
+# `./build.py docs` check exactly. Skip if no src/ changes.
+if [ -n "$src_files" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "❌ pre-commit: python3 not found on PATH" >&2
+        exit 1
+    fi
+
+    echo "pre-commit: regenerating docs (src/ has staged changes)..."
+    if ! python3 "$ROOT/build.py" docs > /tmp/docs_regen.log 2>&1; then
+        echo "❌ pre-commit: ./build.py docs failed. See /tmp/docs_regen.log" >&2
+        cat /tmp/docs_regen.log >&2
+        exit 1
+    fi
+
+    # Re-stage any docs/generated/ files that were updated.
+    docs_changed=$(git diff --name-only docs/generated/ || true)
+    if [ -n "$docs_changed" ]; then
+        echo "pre-commit: re-staging updated docs ($(echo "$docs_changed" | wc -l) file(s))..."
+        echo "$docs_changed" | xargs git add
+    fi
+    echo "pre-commit: docs regen clean ✓"
 fi
 
 # If neither C++ nor Python staged, exit 0 (nothing to format).
