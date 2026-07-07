@@ -449,8 +449,16 @@ public:
         }
         std::size_t after = buffer_.size();
         std::size_t saved = (before > after) ? (before - after) : 0;
+        // Issue #300: always increment the defrag attempt
+        // counter on every (arena:defrag) call, regardless of
+        // whether bytes were saved. This matches the test
+        // contract from test_issue_300 AC4: a no-op defrag
+        // (arena already compacted) still counts as an
+        // attempt. The `saved > 0` gate is preserved for
+        // last_defrag_saved (so a no-op defrag doesn't reset
+        // the last-saved value to 0).
+        stats_.defrag_attempted_count++;
         if (saved > 0) {
-            stats_.defrag_attempted_count++;
             stats_.last_defrag_saved = saved;
             invoke_compact_hook_();
         }
