@@ -132,9 +132,8 @@ namespace concept_self_check {
 // Column count for IRFunctionSoA (opcode + 4 operands + 5 metadata).
 // Must match ir_soa.ixx IRFunctionSoA column layout.
 inline constexpr std::size_t kIrSoaColumnCount = 10;
-static_assert(kIrSoaColumnCount == 10,
-              "Issue #742: IRFunctionSoA column count must be 10 "
-              "(update ir_soa.ixx + this file together)");
+static_assert(kIrSoaColumnCount == 10, "Issue #742: IRFunctionSoA column count must be 10 "
+                                       "(update ir_soa.ixx + this file together)");
 
 // Shape inline ID range must be disjoint from SHAPE_UNKNOWN/SHAPE_ANY.
 inline constexpr std::uint64_t kShapeInlineIntId = 2;

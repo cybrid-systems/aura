@@ -44,27 +44,10 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    - name: Static checks (docs + lint + fixtures)
+    # gate = docs --check + ruff + clang-format (full src/tests tree) + fixtures.
+    # C++ format is enforced via build.py format inside gate (not a separate step).
+    - name: Static checks (docs + lint + format + fixtures)
       run: python3 build.py gate
-
-    # Issue #476 / #699: clang-format enforcement (blocking).
-    # The .clang-format file lives at the repo root (LLVM style,
-    # 4-space indent, 100-column limit). Drift cleared in #699;
-    # gate now fails on any violation (--Werror).
-    #
-    # Excludes the .github/ directory (workflow YAML doesn't
-    # follow the project's C++ style) and build*/ (generated
-    # files).
-    - name: Check C++ formatting (clang-format --dry-run --Werror)
-      run: |
-        files=$(find src tests -name '*.cpp' -o -name '*.ixx' -o -name '*.hh' -o -name '*.h' 2>/dev/null)
-        if [ -z "$files" ]; then
-          echo "::error::no source files found (unexpected)"
-          exit 1
-        fi
-        total=$(echo "$files" | wc -l)
-        echo "$files" | xargs clang-format --dry-run -Werror
-        echo "✓ clang-format --dry-run clean ($total files checked)"
 
     # Issue #476: clang-tidy static analysis (subset).
     # The .clang-tidy config (repo root) whitelists the

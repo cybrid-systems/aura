@@ -624,8 +624,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // counter (the runtime version of the eliminated_cast_count).
                         locals[ops[0]] = locals[ops[1]];
                         if (metrics_) {
-                            metrics_->dead_coercion_post_mutate_elim_hits_total
-                                .fetch_add(1, std::memory_order_relaxed);
+                            metrics_->dead_coercion_post_mutate_elim_hits_total.fetch_add(
+                                1, std::memory_order_relaxed);
                         }
                         break;
                     }

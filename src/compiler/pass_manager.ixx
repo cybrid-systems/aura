@@ -303,8 +303,7 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
             passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
             if (fn_shape_stable)
                 passes_skipped_shape_stable_blocks.fetch_add(
-                    static_cast<std::uint64_t>(func.blocks.size()),
-                    std::memory_order_relaxed);
+                    static_cast<std::uint64_t>(func.blocks.size()), std::memory_order_relaxed);
             aura::core::cpp26::record_hotpath_invariant_hit();
             continue;
         }

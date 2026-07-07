@@ -76,8 +76,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(policy_hash(cs, "schema") == 743, "schema == 743");
     CHECK(policy_hash(cs, "auto-compact-triggers") >= 0, "auto-compact-triggers present");
     CHECK(policy_hash(cs, "defrag-fiber-safe-hits") >= 0, "defrag-fiber-safe-hits present");
-    CHECK(policy_hash(cs, "fragmentation-post-mutate") >= 0,
-          "fragmentation-post-mutate present");
+    CHECK(policy_hash(cs, "fragmentation-post-mutate") >= 0, "fragmentation-post-mutate present");
     CHECK(policy_hash(cs, "shape-inval-on-compact") >= 0, "shape-inval-on-compact present");
     CHECK(policy_hash(cs, "env-reval-success") >= 0, "env-reval-success present");
 

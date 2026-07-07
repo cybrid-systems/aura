@@ -84,8 +84,18 @@ if [ -n "$cpp_files" ]; then
     # Re-stage so formatted content lands in this commit (same as ruff path).
     echo "$cpp_files" | xargs git add
 
-    echo "pre-commit: clang-format --dry-run -Werror (final check)..."
+    echo "pre-commit: clang-format --dry-run -Werror (staged files)..."
     echo "$cpp_files" | xargs clang-format --dry-run -Werror
+
+    # Full-tree check — matches CI gate. Staged-only -i misses drift in
+    # files that were not part of this commit (root cause of past CI reds).
+    echo "pre-commit: clang-format full-tree --dry-run -Werror..."
+    all_cpp=$(find "$ROOT/src" "$ROOT/tests" \
+        \( -name '*.cpp' -o -name '*.ixx' -o -name '*.hh' -o -name '*.h' \) \
+        2>/dev/null || true)
+    if [ -n "$all_cpp" ]; then
+        echo "$all_cpp" | xargs clang-format --dry-run -Werror
+    fi
     echo "pre-commit: clang-format clean ✓"
 fi
 

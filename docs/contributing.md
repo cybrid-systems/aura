@@ -14,7 +14,12 @@
 ./build.py test integ     # .aura 端到端
 ```
 
-**Git hooks**：`.githooks/pre-commit` 已在仓库内，但 Git **不会自动启用**——须运行 `./scripts/install-githooks.sh`（设置 `core.hooksPath=.githooks`）。启用后，staged `src/` 变更会在 commit 前自动跑 `./build.py docs` 并 re-stage `docs/generated/*.md`；CI `./build.py gate` 仍作最终校验。
+**Git hooks**：`.githooks/` 已在仓库内，但 Git **不会自动启用**——须运行 `./scripts/install-githooks.sh`（设置 `core.hooksPath=.githooks`）。
+
+- **pre-commit**：staged C++/Python 自动 `clang-format` / `ruff`；任意 staged C++ 变更后还会做**全树** `clang-format --dry-run`（与 CI 相同，避免只修 staged 文件、其他文件仍漂移）；staged `src/` 变更会 regen `docs/generated/*.md`。
+- **pre-push**：推送前跑 `./build.py gate`（docs + lint + clang-format + fixtures），与 CI `gate` job 对齐。
+
+本地可手动：`./build.py format --fix`（修 C++ 格式）、`./build.py gate`（跑完整静态检查）。
 
 加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例。若未装 hook，须手动 **`./build.py docs`** 并把 `docs/generated/*.md` 一并提交（否则 `docs --check` 挂）。
 

@@ -71,17 +71,16 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::str
 static void run_ac1_reachable(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:dead-coercion-elim-stats reachable (schema 687) ---");
     auto r = cs.eval("(query:dead-coercion-elim-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r),
-          "query:dead-coercion-elim-stats returns a hash");
+    CHECK(r && aura::compiler::types::is_hash(*r), "query:dead-coercion-elim-stats returns a hash");
     auto schema = hash_int(cs, "query:dead-coercion-elim-stats", "schema");
     CHECK(schema == 687, std::format("schema field == 687 (got {})", schema));
 }
 
 static void run_ac2_six_fields(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: 6 fields present in the hash response ---");
-    const std::vector<std::string> keys = {"casts-eliminated", "residual-hotpath",
+    const std::vector<std::string> keys = {"casts-eliminated",      "residual-hotpath",
                                            "zero-overhead-savings", "post-mutate-elim-hits",
-                                           "hot-path-rate", "schema"};
+                                           "hot-path-rate",         "schema"};
     for (const auto& k : keys) {
         auto f = cs.eval(std::format("(hash-ref (query:dead-coercion-elim-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
@@ -93,8 +92,7 @@ static void run_ac3_fresh_zero(aura::compiler::CompilerService& cs) {
     auto casts_elim = hash_int(cs, "query:dead-coercion-elim-stats", "casts-eliminated");
     auto residual = hash_int(cs, "query:dead-coercion-elim-stats", "residual-hotpath");
     auto savings = hash_int(cs, "query:dead-coercion-elim-stats", "zero-overhead-savings");
-    auto post_mutate =
-        hash_int(cs, "query:dead-coercion-elim-stats", "post-mutate-elim-hits");
+    auto post_mutate = hash_int(cs, "query:dead-coercion-elim-stats", "post-mutate-elim-hits");
     CHECK(casts_elim == 0, std::format("casts-eliminated == 0 (got {})", casts_elim));
     CHECK(residual == 0, std::format("residual-hotpath == 0 (got {})", residual));
     CHECK(savings == 0, std::format("zero-overhead-savings == 0 (got {})", savings));
@@ -160,6 +158,6 @@ int main() {
     }
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
-                  g_failed, g_passed + g_failed);
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

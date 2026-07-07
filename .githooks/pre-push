@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# Aura pre-push hook — run the same static gate CI runs before push.
+# Catches clang-format / ruff / docs drift that slipped past commit
+# (--no-verify) or accumulated in unstaged files.
+#
+# Exit codes:
+#   0 — gate clean
+#   1 — gate failed (fix locally, then push again)
+
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel)
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "❌ pre-push: python3 not found on PATH" >&2
+    exit 1
+fi
+
+echo "pre-push: running ./build.py gate (docs + lint + format + fixtures)..."
+if ! python3 "$ROOT/build.py" gate; then
+    echo "❌ pre-push: gate failed — fix locally before pushing" >&2
+    echo "   hints: ./build.py format --fix  |  ./build.py lint --fix  |  ./build.py docs" >&2
+    exit 1
+fi
+
+echo "pre-push: gate clean ✓"
+exit 0

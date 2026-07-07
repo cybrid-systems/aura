@@ -145,10 +145,9 @@ static void run_matrix(CompilerService& cs) {
             escaped_mutate.push_back('\\');
         escaped_mutate.push_back(c);
     }
-    auto reb = cs.eval(std::format("(mutate:rebind \"deep-pred\" \"{}\" \"issue-745\")",
-                                   escaped_mutate));
-    CHECK(reb && aura::compiler::types::is_bool(*reb) &&
-              aura::compiler::types::as_bool(*reb),
+    auto reb =
+        cs.eval(std::format("(mutate:rebind \"deep-pred\" \"{}\" \"issue-745\")", escaped_mutate));
+    CHECK(reb && aura::compiler::types::is_bool(*reb) && aura::compiler::types::as_bool(*reb),
           "mutate:rebind on 52-nest predicate succeeds");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after heavy mutate");
     CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck after heavy mutate (no TIMEOUT)");
