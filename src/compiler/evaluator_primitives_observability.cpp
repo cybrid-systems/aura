@@ -1708,14 +1708,11 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             // has-fn).
             const auto slot = ev.primitives_.slot_for_name(name);
             const bool known = slot < ev.primitives_.slot_count();
-            const PrimMeta& pm =
-                known ? ev.primitives_.meta_for_slot(slot) : PrimMeta{};
+            const PrimMeta& pm = known ? ev.primitives_.meta_for_slot(slot) : PrimMeta{};
             insert_kv("has-fn", make_int(known ? 1 : 0));
-            insert_kv("arity",
-                      make_int(static_cast<std::int64_t>(pm.arity)));
+            insert_kv("arity", make_int(static_cast<std::int64_t>(pm.arity)));
             insert_kv("pure", make_bool(pm.pure));
-            insert_kv("safety",
-                      make_int(static_cast<std::int64_t>(pm.safety_flags)));
+            insert_kv("safety", make_int(static_cast<std::int64_t>(pm.safety_flags)));
             auto doc_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(pm.doc);
             insert_kv("doc", make_string(static_cast<std::uint64_t>(doc_idx)));
@@ -1813,12 +1810,11 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                       ->primitives_meta_query_total.load(std::memory_order_relaxed)
                 : 0);
-        const std::int64_t documented = static_cast<std::int64_t>(
-            ev.get_primitive_documented_meta_count());
-        const std::int64_t schema_documented = static_cast<std::int64_t>(
-            ev.primitives_.schema_documented_meta_count());
-        const std::int64_t total =
-            static_cast<std::int64_t>(ev.primitives_.slot_count());
+        const std::int64_t documented =
+            static_cast<std::int64_t>(ev.get_primitive_documented_meta_count());
+        const std::int64_t schema_documented =
+            static_cast<std::int64_t>(ev.primitives_.schema_documented_meta_count());
+        const std::int64_t total = static_cast<std::int64_t>(ev.primitives_.slot_count());
         auto* ht = FlatHashTable::create(8);
         if (!ht)
             return make_void();

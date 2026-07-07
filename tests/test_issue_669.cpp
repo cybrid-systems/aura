@@ -74,10 +74,11 @@ static void run_ac1_8_fields(aura::compiler::CompilerService& cs) {
     CHECK(r && aura::compiler::types::is_hash(*r),
           "query:primitives-meta \"regex-match?\" returns a hash");
     // All 8 fields present (we don't assert the values here, just presence).
-    const std::vector<std::string> keys = {"name", "has-fn", "arity", "pure",
-                                           "safety", "doc", "category", "schema"};
+    const std::vector<std::string> keys = {"name",   "has-fn", "arity",    "pure",
+                                           "safety", "doc",    "category", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:primitives-meta \"regex-match?\") '{}')", k));
+        auto f =
+            cs.eval(std::format("(hash-ref (query:primitives-meta \"regex-match?\") '{}')", k));
         CHECK(f, std::format("field '{}' present in per-name response", k));
     }
 }
@@ -87,8 +88,7 @@ static void run_ac2_real_primitive(aura::compiler::CompilerService& cs) {
     const auto name = cs.eval(R"aura((hash-ref (query:primitives-meta "regex-match?") 'name))aura");
     const auto arity =
         cs.eval(R"aura((hash-ref (query:primitives-meta "regex-match?") 'arity))aura");
-    const auto pure =
-        cs.eval(R"aura((hash-ref (query:primitives-meta "regex-match?") 'pure))aura");
+    const auto pure = cs.eval(R"aura((hash-ref (query:primitives-meta "regex-match?") 'pure))aura");
     const auto safety =
         cs.eval(R"aura((hash-ref (query:primitives-meta "regex-match?") 'safety))aura");
     CHECK(name && aura::compiler::types::is_string(*name), "name is a string");
@@ -105,8 +105,8 @@ static void run_ac2_real_primitive(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_unknown_primitive(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: per-name response for unknown primitive returns has-fn=0 ---");
-    auto has_fn =
-        cs.eval(R"aura((hash-ref (query:primitives-meta "definitely-not-a-primitive-xyz") 'has-fn))aura");
+    auto has_fn = cs.eval(
+        R"aura((hash-ref (query:primitives-meta "definitely-not-a-primitive-xyz") 'has-fn))aura");
     auto schema = cs.eval(
         R"aura((hash-ref (query:primitives-meta "definitely-not-a-primitive-xyz") 'schema))aura");
     CHECK(has_fn && aura::compiler::types::is_int(*has_fn) &&
@@ -127,13 +127,11 @@ static void run_ac4_schema_669(aura::compiler::CompilerService& cs) {
 static void run_ac5_stats_shape(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: query:primitives-meta-stats reachable with 4+ fields ---");
     auto r = cs.eval("(query:primitives-meta-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r),
-          "query:primitives-meta-stats returns a hash");
-    const std::vector<std::string> keys = {"meta-hits", "documented-count",
-                                           "schema-documented", "total-registered", "schema"};
+    CHECK(r && aura::compiler::types::is_hash(*r), "query:primitives-meta-stats returns a hash");
+    const std::vector<std::string> keys = {"meta-hits", "documented-count", "schema-documented",
+                                           "total-registered", "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:primitives-meta-stats) '{}')", k));
+        auto f = cs.eval(std::format("(hash-ref (query:primitives-meta-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
     auto total = cs.eval("(hash-ref (query:primitives-meta-stats) 'total-registered)");
@@ -148,8 +146,7 @@ static void run_ac5_stats_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac6_meta_hits_bump(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: meta-hits counter increments on per-name query ---");
-    const auto before =
-        cs.eval("(hash-ref (query:primitives-meta-stats) 'meta-hits)");
+    const auto before = cs.eval("(hash-ref (query:primitives-meta-stats) 'meta-hits)");
     if (!before || !aura::compiler::types::is_int(*before)) {
         ++g_failed;
         std::println(std::cerr, "  FAIL: meta-hits before not an int");
@@ -181,8 +178,7 @@ static void run_ac8_regression(aura::compiler::CompilerService& cs) {
     CHECK(catalog && aura::compiler::types::is_hash(*catalog),
           "query:primitives-meta-catalog (#617) regression [hash]");
     CHECK(describe, "primitive:describe (#480/#559) regression");
-    auto total_field =
-        cs.eval("(hash-ref (query:primitives-meta-catalog) 'total-registered)");
+    auto total_field = cs.eval("(hash-ref (query:primitives-meta-catalog) 'total-registered)");
     CHECK(total_field && aura::compiler::types::is_int(*total_field) &&
               aura::compiler::types::as_int(*total_field) > 0,
           "query:primitives-meta-catalog total-registered > 0 (regression)");
@@ -227,6 +223,6 @@ int main() {
     }
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
-                  g_failed, g_passed + g_failed);
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

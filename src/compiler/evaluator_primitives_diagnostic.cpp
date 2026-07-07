@@ -222,8 +222,18 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             result = code;
         }
 
-        if (result != code)
+        if (result != code) {
             ev.bump_verify_tool_feedback_mutate_success();
+            // Issue #670: apply-fix success path also bumps
+            // the StableRef + dirty-propagation counters so
+            // the AI Agent can see "fix was applied with
+            // provenance" via (query:verify-tool-guard-stats).
+            // Pre-#670 only feedback_mutate_success fired —
+            // the StableRef / dirty_propagation axes were
+            // dead code in the apply-fix path.
+            ev.bump_verify_tool_stable_ref_hit();
+            ev.bump_verify_tool_dirty_propagation();
+        }
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(result);
         return make_string(sidx);
@@ -247,6 +257,11 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         ev.bump_verify_tool_stable_ref_hit();
         auto nv = flat.get(node);
+        // Issue #670: capture the result so we can bump
+        // dirty_propagation at the end if the precondition
+        // passed (true). Pre-#670 the bump wasn't wired in
+        // this path — only the StableRef capture fired.
+        EvalValue result = make_bool(false);
 
         // String arg: type compatibility check
         if (is_string(a[1])) {
@@ -259,39 +274,54 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             switch (nv.tag) {
                 case aura::ast::NodeTag::LiteralInt:
                     // Int literal: compatible with Int, Float, Bool (≠0), Dyn
-                    return make_bool(new_type == "Int" || new_type == "Float" ||
-                                     new_type == "Bool" || new_type == "Dyn" || new_type == "Any");
+                    result = make_bool(new_type == "Int" || new_type == "Float" ||
+                                        new_type == "Bool" || new_type == "Dyn" || new_type == "Any");
+                    break;
                 case aura::ast::NodeTag::LiteralFloat:
                     // Float literal: compatible with Float, Dyn
-                    return make_bool(new_type == "Float" || new_type == "Dyn" || new_type == "Any");
+                    result = make_bool(new_type == "Float" || new_type == "Dyn" || new_type == "Any");
+                    break;
                 case aura::ast::NodeTag::LiteralString:
-                    return make_bool(new_type == "String" || new_type == "Dyn" ||
-                                     new_type == "Any");
+                    result = make_bool(new_type == "String" || new_type == "Dyn" ||
+                                        new_type == "Any");
+                    break;
                 case aura::ast::NodeTag::Call:
                 case aura::ast::NodeTag::Lambda:
                     // Structural nodes: always OK (any type)
-                    return make_bool(true);
+                    result = make_bool(true);
+                    break;
                 case aura::ast::NodeTag::Variable:
                     // Variable: always OK (outer scope determines type)
-                    return make_bool(true);
+                    result = make_bool(true);
+                    break;
                 default:
                     // Other nodes: permissive
-                    return make_bool(true);
+                    result = make_bool(true);
+                    break;
+            }
+        } else if (is_int(a[1])) {
+            // Int arg: field existence check
+            auto field = static_cast<std::uint32_t>(as_int(a[1]));
+            switch (field) {
+                case 0:
+                    result = make_bool(nv.has_int()); // int_val_
+                    break;
+                case 1:
+                    result = make_bool(true); // type_id_ (always valid)
+                    break;
+                default:
+                    result = make_bool(false);
+                    break;
             }
         }
-
-        // Int arg: field existence check
-        if (!is_int(a[1]))
-            return make_bool(false);
-        auto field = static_cast<std::uint32_t>(as_int(a[1]));
-        switch (field) {
-            case 0:
-                return make_bool(nv.has_int()); // int_val_
-            case 1:
-                return make_bool(true); // type_id_ (always valid)
-            default:
-                return make_bool(false);
-        }
+        // Issue #670: on precondition pass (true), bump
+        // dirty_propagation so the AI Agent can see "this
+        // node was successfully precondition-checked, AST
+        // verification dirty state propagated" via
+        // (query:verify-tool-guard-stats).
+        if (is_bool(result) && as_bool(result))
+            ev.bump_verify_tool_dirty_propagation();
+        return result;
     });
 }
 

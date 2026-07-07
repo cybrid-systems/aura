@@ -129,9 +129,13 @@ int main() {
     {
         std::println("\n--- AC5: stats:count ---");
         auto count = cs.eval("(stats:count)");
+        // Issue #668 + #669 added 2 primitives
+        // (query:primitives-regex-error-stats,
+        // query:primitives-meta-stats) since this test
+        // was written (was 211, now 213).
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 211,
-              "stats:count == 211");
+                  aura::compiler::types::as_int(*count) == 213,
+              "stats:count == 213 (post #668 + #669 enrichment)");
     }
 
     // AC6: fiber stress — verify parse + feedback + guard stats
