@@ -313,20 +313,20 @@ bool test_eight_fiber_concurrent_panic_yield(CompilerService& cs) {
             std::uniform_int_distribution<int> coin(0, 3);
             for (int i = 0; i < iters; ++i) {
                 switch (coin(rng)) {
-                case 0:
-                    aura_evaluator_test_push_mutation_checkpoint();
-                    Fiber::yield(YieldReason::Explicit);
-                    aura_evaluator_test_pop_mutation_checkpoint();
-                    break;
-                case 1:
-                    Fiber::yield(YieldReason::MutationBoundary);
-                    break;
-                case 2:
-                    Fiber::yield(YieldReason::Explicit);
-                    break;
-                default:
-                    Fiber::yield(YieldReason::Explicit);
-                    break;
+                    case 0:
+                        aura_evaluator_test_push_mutation_checkpoint();
+                        Fiber::yield(YieldReason::Explicit);
+                        aura_evaluator_test_pop_mutation_checkpoint();
+                        break;
+                    case 1:
+                        Fiber::yield(YieldReason::MutationBoundary);
+                        break;
+                    case 2:
+                        Fiber::yield(YieldReason::Explicit);
+                        break;
+                    default:
+                        Fiber::yield(YieldReason::Explicit);
+                        break;
                 }
             }
             done.fetch_add(1);

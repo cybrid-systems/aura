@@ -3916,8 +3916,7 @@ void Evaluator::ensure_macro_hygiene_contract() const noexcept {
             // Issue #593: post-mutate IR hygiene violation tally.
             if (compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-                m->ir_hygiene_post_mutate_violation_total.fetch_add(1,
-                                                                    std::memory_order_relaxed);
+                m->ir_hygiene_post_mutate_violation_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }

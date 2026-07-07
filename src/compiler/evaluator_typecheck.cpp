@@ -169,8 +169,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // incremental coercion win on the typed-mutation path.
             if (compiler_metrics_) {
                 auto* metrics = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-                metrics->coercion_zerooverhead_win_total.fetch_add(
-                    cm.size(), std::memory_order_relaxed);
+                metrics->coercion_zerooverhead_win_total.fetch_add(cm.size(),
+                                                                   std::memory_order_relaxed);
             }
         }
     }

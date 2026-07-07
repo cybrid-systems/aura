@@ -26,9 +26,9 @@ void clear_lowering_observability_hooks() noexcept {
 }
 
 void LoweringState::emit_with_metadata(aura::ir::IROpcode op, std::uint32_t tid,
-                                      std::uint8_t linear_state, std::uint32_t adt_variant,
-                                      std::uint32_t narrow_evidence, std::uint32_t op0,
-                                      std::uint32_t op1, std::uint32_t op2, std::uint32_t op3) {
+                                       std::uint8_t linear_state, std::uint32_t adt_variant,
+                                       std::uint32_t narrow_evidence, std::uint32_t op0,
+                                       std::uint32_t op1, std::uint32_t op2, std::uint32_t op3) {
     emit_with_type(op, tid, op0, op1, op2, op3);
     if (cur_func && cur_block < cur_func->blocks.size()) {
         auto& last = cur_func->blocks[cur_block].instructions.back();
