@@ -20,6 +20,8 @@ Usage:
   ./build.py docs --check      # 校验生成文档未过期（CI）
   ./build.py lint              # Ruff lint + format check（Python）
   ./build.py lint --fix        # 自动修复可修复项并格式化
+  ./build.py format            # clang-format 全树校验（与 CI gate 相同）
+  ./build.py format --fix      # clang-format -i 自动修复 src/ + tests/
   ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
   ./build.py repro [--verify]  # 可复现 Release 构建（#675）
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
@@ -135,6 +137,48 @@ def cmd_docs(*, check: bool | None = None):
     else:
         fail("docs stale — run ./build.py docs" if check else "docs generation failed")
     return r
+
+
+def _cpp_source_files():
+    """Same filter as .github/workflows/ci.yml clang-format step."""
+    exts = {".cpp", ".ixx", ".hh", ".h"}
+    files = []
+    for base in ("src", "tests"):
+        root = ROOT / base
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.suffix in exts and path.is_file():
+                files.append(path)
+    return files
+
+
+def cmd_format():
+    """clang-format check/fix for all C++ under src/ + tests/ (CI parity)."""
+    fix = "--fix" in sys.argv[2:]
+    print(f"{B}═══ Format {'(fix)' if fix else '(check)'} ═══{N}")
+    clang_format = shutil.which("clang-format")
+    if not clang_format:
+        fail("clang-format not found — install clang-format (CI: llvm 22.x)")
+        return 1
+    files = _cpp_source_files()
+    if not files:
+        fail("no C++ source files found under src/ or tests/")
+        return 1
+    info(f"checking {len(files)} files")
+    if fix:
+        r = run([clang_format, "-i", *[str(f) for f in files]], cwd=ROOT)
+        if r != 0:
+            fail("clang-format -i failed")
+            return r
+        ok("clang-format fixed")
+        return 0
+    r = run([clang_format, "--dry-run", "-Werror", *[str(f) for f in files]], cwd=ROOT)
+    if r != 0:
+        fail("clang-format check failed — run ./build.py format --fix")
+        return r
+    ok("clang-format OK")
+    return 0
 
 
 def cmd_lint():
@@ -1107,8 +1151,8 @@ def cmd_test(suite_names: list[str]):
 
 
 def cmd_gate():
-    """Fast static checks for CI (docs + lint + fixtures)."""
-    return cmd_docs(check=True) or cmd_lint() or cmd_fixtures()
+    """Fast static checks for CI (docs + lint + format + fixtures)."""
+    return cmd_docs(check=True) or cmd_lint() or cmd_format() or cmd_fixtures()
 
 
 def cmd_ci():
@@ -1501,6 +1545,7 @@ def main():
         "docs": cmd_docs,
         "fixtures": cmd_fixtures,
         "lint": cmd_lint,
+        "format": cmd_format,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

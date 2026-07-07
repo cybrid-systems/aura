@@ -63,8 +63,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(loop_hash(cs, "schema") == 744, "schema == 744");
     CHECK(loop_hash(cs, "stability-churn-deopts") >= 0, "stability-churn-deopts present");
     CHECK(loop_hash(cs, "dirty-from-shape") >= 0, "dirty-from-shape present");
-    CHECK(loop_hash(cs, "incremental-recompile-hits") >= 0,
-          "incremental-recompile-hits present");
+    CHECK(loop_hash(cs, "incremental-recompile-hits") >= 0, "incremental-recompile-hits present");
     CHECK(loop_hash(cs, "speculative-win-lost") >= 0, "speculative-win-lost present");
     CHECK(loop_hash(cs, "shape-stable-block-skips") >= 0, "shape-stable-block-skips present");
 
