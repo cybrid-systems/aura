@@ -33,9 +33,13 @@
 #   5. If src/ changed (likely added/removed/renamed primitives),
 #      run `./build.py docs` to regen docs/generated/*.md, then
 #      `git add` any modified generated files.
-#   6. `git add` the modified C++/Python/generated files so the formatted
+#   6. After the docs regen + re-stage, run `gen_docs.py --check` to
+#      verify the working tree + index are now consistent with source.
+#      If they're not, FAIL the commit. (Past #739/#740 slipped past
+#      regen + re-stage into commits — --check catches that case.)
+#   7. `git add` the modified C++/Python/generated files so the formatted
 #      content is what gets committed (no separate "format" noise commit).
-#   7. Final `clang-format --dry-run -Werror` and `ruff check` +
+#   8. Final `clang-format --dry-run -Werror` and `ruff check` +
 #      `ruff format --check` — belt-and-suspenders so the commit message
 #      is honest even if auto-fix ever diverges from --check.
 #
@@ -139,6 +143,23 @@ if [ -n "$src_files" ]; then
         echo "$docs_changed" | xargs git add
     fi
     echo "pre-commit: docs regen clean ✓"
+
+    # Belt-and-suspenders verify: after regen + re-stage, run
+    # gen_docs.py --check and FAIL the commit if docs are still
+    # stale. This catches edge cases that slipped past regen +
+    # re-stage on past commits (see history for #739 / #740
+    # where committed docs lagged source by 2 primitives despite
+    # the hook firing — likely --no-verify was used or the index
+    # already had a stale snapshot). Without this, CI's
+    # `./build.py gate → docs --check` is the only safety net
+    # and the bad commit is already in history by then.
+    if ! python3 "$ROOT/scripts/gen_docs.py" --check > /tmp/docs_check.log 2>&1; then
+        echo "❌ pre-commit: docs still stale after regen (gen_docs.py --check failed)" >&2
+        cat /tmp/docs_check.log >&2
+        echo "   Hint: run ./build.py docs manually, then git add docs/generated/" >&2
+        exit 1
+    fi
+    echo "pre-commit: docs verify (--check) clean ✓"
 fi
 
 # If neither C++ nor Python staged, exit 0 (nothing to format).
