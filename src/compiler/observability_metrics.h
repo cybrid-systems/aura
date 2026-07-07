@@ -1413,6 +1413,22 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> primitives_apply_closure_calls_total{0};
     std::atomic<std::uint64_t> primitives_apply_fastpath_wins_total{0};
 
+    // Issue #668: math regex primitive error observability
+    // (P1 stdlib-impl error consistency). Tracks every
+    // PRIM_ERROR invocation inside the regex-match? /
+    // regex-find / regex-replace / regex-split
+    // primitives — both pre-try validation failures
+    // (type-mismatch / OOB string index) and post-try
+    // invalid-regex-syntax failures. Bumped alongside
+    // the general primitive_error_count_ so the ratio
+    // (regex / total) tells the AI Agent how much of the
+    // primitive-error surface is regex-related.
+    // Non-duplicative with #615 (PRIM_ERROR macro) — #615
+    // unifies the error path shape, #668 adds the
+    // per-regex-primitive observability axis (count +
+    // breakdown by primitive via the query primitive).
+    std::atomic<std::uint64_t> primitives_regex_error_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

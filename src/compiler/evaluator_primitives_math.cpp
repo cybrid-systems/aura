@@ -32,7 +32,8 @@ namespace {
 
 void register_math_regex_and_arithmetic_primitives(
     PrimRegistrar add, std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
-    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter) {
+    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
+    Evaluator& ev) {
 
     // ── M4 linear-type primitives (Issue #108 part 3) ─────────────
     add("m4-move", [](std::span<const EvalValue> a) -> EvalValue {
@@ -55,28 +56,44 @@ void register_math_regex_and_arithmetic_primitives(
     });
 
     // ── Regex ──────────────────────────────────────────────────
+    // Issue #668: math regex primitive error consistency.
+    // Pre-try validation paths now use PRIM_ERROR (consistent
+    // with post-try catch (...) blocks) instead of silent
+    // sentinel returns. bump_regex_error also bumps the
+    // primitives_regex_error_total counter so the AI Agent
+    // can see the per-regex-primitive observability axis
+    // via (query:primitives-regex-error-stats).
+    auto bump_regex_error = [&ev, &string_heap, &error_values,
+                             primitive_error_counter](const char* prim_name, const char* reason) {
+        ev.bump_primitives_regex_error_total();
+        const std::string msg = std::string(prim_name) + ": " + reason;
+        return primitives_detail::make_primitive_error(string_heap, error_values, msg,
+                                                       primitive_error_counter);
+    };
     add("regex-match?",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter, bump_regex_error](
+            std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-                return make_int(0);
+                return bump_regex_error("regex-match?", "expected two string arguments");
             auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
             if (pi >= string_heap.size() || si >= string_heap.size())
-                return make_int(0);
+                return bump_regex_error("regex-match?", "string index out of range");
             try {
                 std::regex re(string_heap[pi]);
                 return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
             } catch (...) {
-                return PRIM_ERROR("regex-match?: invalid regular expression");
+                return bump_regex_error("regex-match?", "invalid regular expression");
             }
         });
 
     add("regex-find",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter, bump_regex_error](
+            std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-                return make_void();
+                return bump_regex_error("regex-find", "expected two string arguments");
             auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
             if (pi >= string_heap.size() || si >= string_heap.size())
-                return make_void();
+                return bump_regex_error("regex-find", "string index out of range");
             try {
                 std::regex re(string_heap[pi]);
                 std::smatch m;
@@ -86,18 +103,19 @@ void register_math_regex_and_arithmetic_primitives(
                     return make_string(id);
                 }
             } catch (...) {
-                return PRIM_ERROR("regex-find: invalid regular expression");
+                return bump_regex_error("regex-find", "invalid regular expression");
             }
             return make_void();
         });
 
     add("regex-replace",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+        [&string_heap, &error_values, primitive_error_counter, bump_regex_error](
+            std::span<const EvalValue> a) {
             if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
-                return make_void();
+                return bump_regex_error("regex-replace", "expected three string arguments");
             auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
             if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
-                return make_void();
+                return bump_regex_error("regex-replace", "string index out of range");
             try {
                 std::regex re(string_heap[pi]);
                 auto result = std::regex_replace(string_heap[si], re, string_heap[ri]);
@@ -105,17 +123,18 @@ void register_math_regex_and_arithmetic_primitives(
                 string_heap.push_back(std::move(result));
                 return make_string(id);
             } catch (...) {
-                return PRIM_ERROR("regex-replace: invalid regular expression");
+                return bump_regex_error("regex-replace", "invalid regular expression");
             }
         });
 
-    add("regex-split", [&string_heap, &pairs, &error_values,
-                        primitive_error_counter](std::span<const EvalValue> a) {
+    add("regex-split",
+        [&string_heap, &pairs, &error_values, primitive_error_counter, bump_regex_error](
+            std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return make_void();
+            return bump_regex_error("regex-split", "expected two string arguments");
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
         if (pi >= string_heap.size() || si >= string_heap.size())
-            return make_void();
+            return bump_regex_error("regex-split", "string index out of range");
         try {
             std::regex re(string_heap[pi]);
             std::sregex_token_iterator it(string_heap[si].begin(), string_heap[si].end(), re, -1);
@@ -133,7 +152,7 @@ void register_math_regex_and_arithmetic_primitives(
             }
             return result;
         } catch (...) {
-            return PRIM_ERROR("regex-split: invalid regular expression");
+            return bump_regex_error("regex-split", "invalid regular expression");
         }
     });
 

@@ -3183,6 +3183,64 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         (void)emitted;
         return result;
     });
+
+    // Issue #668: query:primitives-regex-error-stats — math regex
+    // primitive error observability (P1 stdlib-impl error
+    // consistency).
+    //
+    // Counter tracks every PRIM_ERROR invocation inside the
+    // regex-match? / regex-find / regex-replace / regex-split
+    // primitives — both pre-try validation failures
+    // (type-mismatch / OOB string index) and post-try
+    // invalid-regex-syntax failures. The counter is bumped
+    // alongside the general primitive_error_count_ so the AI
+    // Agent can compute the ratio (regex / total) to gauge
+    // regex-primitive error surface.
+    //
+    // Schema:
+    //   - regex-errors      primitives_regex_error_total (the only
+    //                       per-primitive axis currently exposed;
+    //                       per-primitive breakdown deferred —
+    //                       would require per-primitive atomics on
+    //                       CompilerMetrics and is a separate
+    //                       follow-up)
+    //   - schema            668
+    add("query:primitives-regex-error-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t regex_errors =
+            static_cast<std::int64_t>(ev.get_primitives_regex_error_total());
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const std::string& k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (char c : k_str)
+                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::uint64_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("regex-errors", regex_errors);
+        insert_kv("schema", 668);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
