@@ -3597,7 +3597,7 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->incremental_closure_bridge_impact_blocks_total.fetch_add(n,
-                                                                         std::memory_order_relaxed);
+                                                                        std::memory_order_relaxed);
         }
     }
     void bump_incremental_closure_quote_lambda_stale_prevented() noexcept {
@@ -3618,9 +3618,9 @@ public:
         if (!arena_group_)
             return;
         const double frag = arena_ ? arena_->stats().fragmentation_ratio() : 0.0;
-        const bool want_compact = frag >= 0.30 || (arena_ && arena_->defrag_requested()) ||
-                                  aura::core::arena_policy::dirty_cascade_pending.load(
-                                      std::memory_order_acquire);
+        const bool want_compact =
+            frag >= 0.30 || (arena_ && arena_->defrag_requested()) ||
+            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire);
         if (success) {
             aura::core::arena_policy::record_fragmentation_post_mutate(frag);
             if (want_compact && compiler_metrics_) {
@@ -3674,6 +3674,29 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->macro_reflect_hygiene_validation_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #712: subtree-level reflect validation counters. These
+    // are bumped by post_mutation_reflect_validate() when it walks
+    // MacroIntroduced nodes and finds hygiene drift. They back the
+    // standalone (query:macro-reflect-validation-stats) primitive.
+    void bump_macro_reflect_validation_calls() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_reflect_validation_calls_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_reflect_schema_mismatches_caught() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_reflect_schema_mismatches_caught_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_reflect_post_mutate_hygiene_drift() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_reflect_post_mutate_hygiene_drift_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
     }
     void bump_macro_hygiene_dirty_impact() noexcept {

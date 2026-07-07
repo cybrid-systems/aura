@@ -3887,18 +3887,50 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     health.generation_healthy = ws->generation_wrap_count() < 1'000'000;
     constexpr auto kExpansion =
         static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    // Issue #712: subtree-level reflect validation. After the
+    // whole-workspace marker-consistency scan, walk MacroIntroduced
+    // nodes specifically and tally three diagnostics. The walk
+    // happens unconditionally (no early-out) so the counters
+    // reflect the actual post-mutate state the Agent sees.
+    bool called_macro_validate = false;
+    std::uint64_t macro_dirty = 0;
+    std::uint64_t macro_marker_mismatches = 0;
     for (NodeId id = 0; id < ws->size(); ++id) {
         if (ws->is_dirty(id))
             ++health.dirty_nodes;
         if (ws->is_macro_introduced(id)) {
             ++health.macro_markers;
-            if ((ws->macro_dirty(id) & kExpansion) == 0)
+            if ((ws->macro_dirty(id) & kExpansion) == 0) {
                 health.marker_consistent = false;
+                ++macro_marker_mismatches;
+            }
+            // Subtree-level: count MacroIntroduced nodes whose
+            // dirty bit is set in the latest post-mutate snapshot.
+            // That means: macro subtree was mutated between the
+            // previous committed snapshot and now (post-mutate
+            // hygiene drift). The Agent can query this counter to
+            // decide whether to run a deep schema validate on the
+            // affected subtree before trusting it.
+            if (ws->is_dirty(id) && (ws->macro_dirty(id) & kExpansion) != 0)
+                ++macro_dirty;
         }
         const auto parent = ws->parent_of(id);
         if (parent != aura::ast::NULL_NODE && parent >= ws->size())
             health.marker_consistent = false;
     }
+    // Subtree-level auto_validate call count: one bump per
+    // post_mutation_reflect_validate() invocation that found at
+    // least one MacroIntroduced node (i.e., a macro subtree was
+    // walked for reflect validation this mutation cycle).
+    if (health.macro_markers > 0) {
+        called_macro_validate = true;
+        bump_macro_reflect_validation_calls();
+    }
+    if (macro_marker_mismatches > 0)
+        bump_macro_reflect_schema_mismatches_caught();
+    if (macro_dirty > 0)
+        bump_macro_reflect_post_mutate_hygiene_drift();
+    (void)called_macro_validate;
     set_dirty_nodes_in_snapshot(health.dirty_nodes);
     set_macro_markers_in_snapshot(health.macro_markers);
     const bool ok = health.generation_healthy && health.marker_consistent;

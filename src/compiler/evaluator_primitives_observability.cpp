@@ -473,6 +473,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #708 — AOT hot-reload refcount + checkpoint version
     "query:aot-reload-stats",
     "query:aot-checkpoint-version-stats",
+    // Issue #712 — Subtree-level reflect validation for MacroIntroduced nodes
+    "query:macro-reflect-validation-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -3743,6 +3745,118 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // Issue #712: (query:macro-reflect-validation-stats) — subtree-level
+    // reflect validation counters (non-duplicative with #654 which
+    // folds reflect-hygiene-validation into macro-hygiene-fiber-panic-
+    // stats as one of 5 fields, and with #488 which tracks whole-
+    // workspace schema_validation_pass_count / fail_count).
+    //
+    // Fields (4 + sentinel):
+    //   - validation-calls         calls to subtree-level auto_validate
+    //                              for MacroIntroduced nodes during
+    //                              post_mutation_reflect_validate (==1
+    //                              per mutation cycle that touched any
+    //                              macro subtree)
+    //   - schema-mismatches-caught # of MacroIntroduced nodes whose
+    //                              macro_dirty bit is missing the
+    //                              kMacroExpansion flag during the
+    //                              post-mutate reflect scan
+    //   - post-mutate-hygiene-drift # of MacroIntroduced nodes that are
+    //                              also dirty in the post-mutate snapshot
+    //                              (macro subtree was re-expanded or
+    //                              re-written between commits — the
+    //                              Agent uses this counter to decide
+    //                              whether to deep-validate that subtree
+    //                              before trusting it)
+    //   - schema-pass              reflects from schema_validation_pass_count_
+    //                              (whole-workspace pass counter); lets
+    //                              the Agent correlate subtree-level
+    //                              diagnostics with workspace-level
+    //                              validation outcomes
+    //   - schema == 712
+    // Issue #712: routes through ev.primitives_.add (3-arg form) so
+    // we can attach PrimMeta with schema=712 + category=general +
+    // arity=0 + pure=true. The local PrimRegistrar typedef at the
+    // top of this file is intentionally 2-arg (matches pre-#669
+    // baseline). Other #669/#671 primitives that don't carry PrimMeta
+    // use the 2-arg add() directly.
+    ev.primitives_.add(
+        "query:macro-reflect-validation-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t validation_calls =
+                m ? static_cast<std::int64_t>(
+                        m->macro_reflect_validation_calls_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t schema_mismatches =
+                m ? static_cast<std::int64_t>(m->macro_reflect_schema_mismatches_caught_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_drift =
+                m ? static_cast<std::int64_t>(m->macro_reflect_post_mutate_hygiene_drift_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t schema_pass =
+                static_cast<std::int64_t>(ev.get_schema_validation_pass_count());
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"validation-calls", make_int(validation_calls)},
+                {"schema-mismatches-caught", make_int(schema_mismatches)},
+                {"post-mutate-hygiene-drift", make_int(hygiene_drift)},
+                {"schema-pass", make_int(schema_pass)},
+                {"schema", make_int(712)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Subtree-level reflect validation counters for MacroIntroduced "
+                        "nodes (post-mutate hygiene drift + schema mismatch catches). "
+                        "Used by Agent to decide whether to deep-validate a macro subtree.",
+                 .category = "general",
+                 .schema = "() -> hash"});
 
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
