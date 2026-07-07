@@ -3169,6 +3169,11 @@ add_dependencies(all_test_issue_targets test_issue_670)
 aura_add_issue_test(test_issue_671)
 aura_issue_test_link_llvm_jit(test_issue_671)
 add_dependencies(all_test_issue_targets test_issue_671)
+# Issue #737: atomic batch + snapshot/rollback + StableNodeRef pinning
+# for multi-round AI Agent edit loops (P0 EDSL-Core).
+aura_add_issue_test(test_atomic_batch_snapshot_stable_ref_ai_loops)
+aura_issue_test_link_llvm_jit(test_atomic_batch_snapshot_stable_ref_ai_loops)
+add_dependencies(all_test_issue_targets test_atomic_batch_snapshot_stable_ref_ai_loops)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
