@@ -95,6 +95,8 @@ export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, 
 export using PipelineYieldHook = bool (*)() noexcept;
 export inline std::atomic<std::uint64_t> pipeline_yield_count{0};
 export inline std::atomic<std::uint64_t> passes_skipped_dirty_pipeline{0};
+// Issue #744: blocks skipped because fn shape is stable and block is clean.
+export inline std::atomic<std::uint64_t> passes_skipped_shape_stable_blocks{0};
 // Issue #625: lifetime # of full run_pipeline() invocations.
 // Bumped once per full pipeline run (NOT per-pass). Pairs with
 // passes_skipped_dirty_pipeline so the Agent can compute the
@@ -231,6 +233,20 @@ concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id)
     { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
 };
 
+// ── Issue #744: ShapeStableAwarePass concept ──────────────────
+//
+// Passes that can skip clean blocks when the enclosing function's
+// ShapeProfiler profile is stable (speculative opt win preserved).
+export using FnShapeStableProbeFn = bool (*)(std::string_view fn_name) noexcept;
+export inline FnShapeStableProbeFn g_fn_shape_stable_probe = nullptr;
+
+export void set_fn_shape_stable_probe(FnShapeStableProbeFn probe) noexcept {
+    g_fn_shape_stable_probe = probe;
+}
+
+export template <typename P>
+concept ShapeStableAwarePass = DirtyAwarePass<P>;
+
 // ── Issue #494: JITFriendlyPass concept ───────────────────────
 //
 // Passes that expose a pipeline epoch hint for JIT / mutation_epoch
@@ -272,15 +288,23 @@ export template <IncrementalPass P>
     requires DirtyAwarePass<P>
 bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
     for (auto& func : mod.functions) {
+        const bool fn_shape_stable =
+            g_fn_shape_stable_probe != nullptr && g_fn_shape_stable_probe(func.name);
         bool any_dirty = false;
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
             if (pass.is_block_dirty(static_cast<std::uint32_t>(bi))) {
                 any_dirty = true;
                 break;
             }
+            if (fn_shape_stable)
+                passes_skipped_shape_stable_blocks.fetch_add(1, std::memory_order_relaxed);
         }
         if (!any_dirty) {
             passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
+            if (fn_shape_stable)
+                passes_skipped_shape_stable_blocks.fetch_add(
+                    static_cast<std::uint64_t>(func.blocks.size()),
+                    std::memory_order_relaxed);
             aura::core::cpp26::record_hotpath_invariant_hit();
             continue;
         }
@@ -604,6 +628,8 @@ private:
 
 static_assert(DirtyAwarePass<ConstantFoldingWrap>,
               "ConstantFoldingWrap exposes is_block_dirty for IRSoA wiring");
+static_assert(ShapeStableAwarePass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap is ShapeStableAwarePass via DirtyAware");
 static_assert(JITFriendlyPass<ConstantFoldingWrap>,
               "ConstantFoldingWrap exposes pipeline_epoch_hint for JIT paths");
 static_assert(JITFriendlyPass<ArityWrap>, "ArityWrap exposes pipeline_epoch_hint");

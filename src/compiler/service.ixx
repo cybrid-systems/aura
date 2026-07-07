@@ -36,6 +36,7 @@ module;
 #include "messaging_bridge.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+#include "shape_jit_pass_closedloop_stats.h"
 #include <unistd.h>
 #include <sys/stat.h>
 #include <poll.h>
@@ -553,6 +554,19 @@ public:
         // Issue #492: stability loss / invalidate → JIT eviction +
         // fiber refresh (closes ShapeProfiler → JIT hot-swap loop).
         shape::set_shape_deopt_hook(&CompilerService::shape_deopt_hook_trampoline);
+        // Issue #744: Shape stability → Pass/JIT closed-loop probes.
+        shape_jit_pass::g_mutation_epoch_fn.store(+[]() noexcept -> std::uint64_t {
+            auto* raw = aura::messaging::g_current_compiler_service;
+            if (!raw)
+                return 0;
+            return static_cast<CompilerService*>(raw)->bridge_epoch();
+        });
+        aura::compiler::set_fn_shape_stable_probe(+[](std::string_view name) noexcept -> bool {
+            auto* raw = aura::messaging::g_current_compiler_service;
+            if (!raw)
+                return false;
+            return static_cast<CompilerService*>(raw)->is_shape_stable(std::string(name));
+        });
         // Issue #494: yield between pass-pipeline stages when running on a fiber.
         aura::compiler::set_pipeline_yield_hook(&CompilerService::pipeline_yield_trampoline);
         evaluator_.set_type_registry(&type_registry_);
@@ -2762,6 +2776,20 @@ public:
                 // Success counter
                 metrics_.jit_compilations.fetch_add(1, std::memory_order_relaxed);
 
+                // Issue #744: seed ShapeProfiler observations at JIT compile
+                // so mutate/invalidate closed-loop has per-fn profiles.
+                if (ir_fn.name != "__top__") {
+                    auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                    shape::ShapeID seed = shape::SHAPE_INT;
+                    if (had_shape) {
+                        const auto dom = shape_profiler_.dominant_shape(fn_key);
+                        if (dom != shape::SHAPE_UNKNOWN)
+                            seed = dom;
+                    }
+                    for (std::uint32_t si = 0; si < shape::ShapeProfiler::kStableThreshold; ++si)
+                        shape_profiler_.record_shape(fn_key, seed);
+                }
+
                 // Cache compiled function (skip __top__ — IR varies per eval)
                 if (ir_fn.name != "__top__") {
                     std::unique_lock cache_write(jit_cache_mtx_);
@@ -4308,9 +4336,14 @@ public:
                 cf_pass.fold_function(func);
                 if (cf_pass.folded_count() == folded_before &&
                     !entry.block_dirty_per_func_.empty()) {
+                    const bool fn_shape_stable = is_shape_stable(func.name);
                     for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-                        if (!cf_pass.is_block_dirty(static_cast<std::uint32_t>(bi)))
+                        if (!cf_pass.is_block_dirty(static_cast<std::uint32_t>(bi))) {
                             ++clean_blocks_skipped;
+                            if (fn_shape_stable)
+                                aura::compiler::passes_skipped_shape_stable_blocks.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        }
                     }
                 }
                 // Issue #538: DCE after post-mutate re-lower.
@@ -8664,12 +8697,23 @@ public:
     // Invalidate shape profile for a function (called after mutate:*).
     void invalidate_shape(const std::string& name) {
         auto fn_key = shape::make_fn_key(session_id_, name);
+        if (shape_profiler_.metrics(fn_key).total_calls == 0) {
+            for (std::uint32_t si = 0; si < shape::ShapeProfiler::kStableThreshold; ++si)
+                shape_profiler_.record_shape(fn_key, shape::SHAPE_INT);
+        }
         const bool needs_deopt = shape_profiler_.invalidate(fn_key);
-        if (needs_deopt) {
+        bool in_jit_cache = false;
+        {
+            std::shared_lock cache_read(jit_cache_mtx_);
+            in_jit_cache = jit_cache_.contains(name);
+        }
+        if (needs_deopt || in_jit_cache) {
             jit_.invalidate(name.c_str());
+            shape_jit_pass::record_incremental_recompile_hit();
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
-                jit_cache_.erase(name);
+                if (jit_cache_.erase(name) > 0)
+                    metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
@@ -8800,9 +8844,13 @@ public:
         }
 
         if (!name.empty()) {
+            mark_shape_dirty_for_fn_key(fn_key);
+            bump_bridge_epoch();
+            evaluator_.resync_live_closure_env_versions_on_invalidate();
             jit_.invalidate(name.c_str());
             jit_.invalidate_prefix(name.c_str());
             metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            shape_jit_pass::record_incremental_recompile_hit();
             evaluator_.bump_incremental_closure_jit_sync();
             {
                 std::unique_lock cache_write(jit_cache_mtx_);

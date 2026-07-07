@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 #include "primitives_detail.h"
@@ -101,6 +102,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:cpp26-contracts-stats",
     // Issue #743 — Arena auto-compact + defrag + fiber safepoint + dirty/Shape
     "query:arena-auto-policy-stats",
+    // Issue #744 — Shape → dirty → Pass → JIT deopt/recompile closed loop
+    "query:shape-jit-pass-closedloop-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -4082,6 +4085,67 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("shape-inval-on-compact", static_cast<std::int64_t>(shape_inval));
         insert_kv("env-reval-success", static_cast<std::int64_t>(env_reval));
         insert_kv("schema", 743);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #744: query:shape-jit-pass-closedloop-stats — Shape stability churn
+    // → IRSoA dirty → DirtyAware Pass short-circuit → JIT deopt/recompile
+    // (non-duplicative with #686 shape-value-pass-stats, #605 shapeprofiler,
+    // #723 DirtyAware, #720 JIT metadata).
+    //
+    // Fields (4 + sentinel):
+    //   - stability-churn-deopts   stable→unstable / invalidate deopt fires
+    //   - dirty-from-shape         dirty_hook / IRSoA cascade from shape loss
+    //   - incremental-recompile-hits JIT invalidate + recompile requests
+    //   - speculative-win-lost     stable speculative opt invalidated
+    //   - schema == 744
+    add("query:shape-jit-pass-closedloop-stats", [&ev](const auto&) -> EvalValue {
+        (void)ev;
+        const std::int64_t churn = static_cast<std::int64_t>(
+            shape_jit_pass::stability_churn_deopts_total.load(std::memory_order_relaxed));
+        const std::int64_t dirty_shape = static_cast<std::int64_t>(
+            shape_jit_pass::dirty_from_shape_total.load(std::memory_order_relaxed));
+        const std::int64_t recompile = static_cast<std::int64_t>(
+            shape_jit_pass::incremental_recompile_hits_total.load(std::memory_order_relaxed));
+        const std::int64_t win_lost = static_cast<std::int64_t>(
+            shape_jit_pass::speculative_win_lost_total.load(std::memory_order_relaxed));
+        const std::int64_t stable_skips = static_cast<std::int64_t>(
+            passes_skipped_shape_stable_blocks.load(std::memory_order_relaxed));
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("stability-churn-deopts", churn);
+        insert_kv("dirty-from-shape", dirty_shape);
+        insert_kv("incremental-recompile-hits", recompile);
+        insert_kv("speculative-win-lost", win_lost);
+        insert_kv("shape-stable-block-skips", stable_skips);
+        insert_kv("schema", 744);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

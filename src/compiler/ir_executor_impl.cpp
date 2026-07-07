@@ -15,6 +15,7 @@ module;
 #include <vector>
 #include "runtime_shared.h"
 #include "observability_logger.h"
+#include "shape_jit_pass_closedloop_stats.h"
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -791,6 +792,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (metrics_) {
                             metrics_->deopt_count.fetch_add(1, std::memory_order_relaxed);
                         }
+                        // Issue #744: GuardShape mismatch → speculative win lost.
+                        aura::compiler::shape_jit_pass::record_speculative_win_lost();
                         // Issue #62 Iter 2: structured JSON log.
                         // Gated by AURA_OBS_LOG=1 (independent of the
                         // human-readable kDeoptTrace form).

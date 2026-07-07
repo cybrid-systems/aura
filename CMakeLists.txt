@@ -3207,6 +3207,10 @@ add_dependencies(all_test_issue_targets test_cpp26_contracts_hotpath_arena_soa_v
 aura_add_issue_test(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
 aura_issue_test_link_llvm_jit(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
 add_dependencies(all_test_issue_targets test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
+# Issue #744: Shape → dirty → Pass → JIT deopt/recompile closed loop.
+aura_add_issue_test(test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate)
+aura_issue_test_link_llvm_jit(test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate)
+add_dependencies(all_test_issue_targets test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
