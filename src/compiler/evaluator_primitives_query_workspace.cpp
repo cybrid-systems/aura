@@ -1811,9 +1811,10 @@ void register_workspace_query_primitives(
         for (const auto& rec : log) {
             if (rec.var_name != var_name)
                 continue;
-            // Build the entry hash. 8-slot is enough for 7 fields
-            // (one slot of slack).
-            auto* ht = FlatHashTable::create(8);
+            // Build the entry hash. 16-slot is enough for the 9
+            // fields below (3 headroom for collisions; 8 was too
+            // small and the insert loop aborted with '!inserted').
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 continue;
             std::vector<std::pair<std::string, EvalValue>> kv = {
