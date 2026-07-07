@@ -1255,6 +1255,38 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> runtime_observability_steal_deferred_correlated_total{0};
     std::atomic<std::uint64_t> runtime_observability_steal_ownership_violation_correlated_total{0};
 
+    // Issue #674: Closed-loop self-evolution stability stress testing
+    // atomics (P0). Companion counters for the chaos stress test
+    // harness that drives 1000+ mutation cycles under fiber steal +
+    // GC + AOT hot-reload conditions. The 3 counters are the
+    // "outcome classifier" of each chaos cycle:
+    //   - self_evolution_chaos_cycles_total:
+    //       Bumped by the chaos harness once per full mutation cycle
+    //       (one attempted self-evolution, regardless of outcome).
+    //   - self_evolution_chaos_failures_total:
+    //       Bumped by the chaos harness when a chaos mutation cycle
+    //       fails (post-mutation validation, rollback, or panic).
+    //   - self_evolution_chaos_corruptions_total:
+    //       Bumped by the chaos harness when a version/ownership
+    //       mismatch is detected during a chaos cycle (the
+    //       "long-running corruption detected per epoch" metric
+    //       called out in the issue body).
+    //
+    // The primitive (query:self-evolution-chaos-stats, schema 674)
+    // exposes all 3 + a cycles-total sum. Per-call derivation
+    // (`chaos-failures-rate + chaos-corruptions-rate`) is derived
+    // at the test/harness layer; the primitive only stores totals.
+    //
+    // Non-duplicative with #548 panic-checkpoint-lifecycle-stats,
+    // #529 atomic-batch-rollback-stats, #527 stable-ref-cow-fiber-
+    // stats, #400 mutation-rollback-coverage-stats, #679 nested-
+    // Guard atomic-batch-rollback. Those cover the *production*
+    // counter set; #674 covers the *stress/chaos-test* outcome
+    // classifier that complements them.
+    std::atomic<std::uint64_t> self_evolution_chaos_cycles_total{0};
+    std::atomic<std::uint64_t> self_evolution_chaos_failures_total{0};
+    std::atomic<std::uint64_t> self_evolution_chaos_corruptions_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

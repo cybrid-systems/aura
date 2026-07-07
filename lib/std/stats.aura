@@ -110,6 +110,8 @@
     "query:typesystem-typed-mutate-stats"
     ; ── Issue #673 — Unified Runtime Observability Layer (P1) cross-module correlation ──
     "query:runtime-observability-correlated-stats"
+    ; ── Issue #674 — Closed-loop self-evolution chaos stress outcome classifier ──
+    "query:self-evolution-chaos-stats"
     ; ── Issue #524 — Macro+hygiene production closed-loop tracker ──
     "query:macro-production-hygiene-stats"
     ; ── Issue #525 — Guard post-mutate impact + reflect validation tracker ──
