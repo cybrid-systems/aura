@@ -147,9 +147,7 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
     # workloads or simulate fiber steal pressure. Scale timeout
     # to 4x for those so a single bench run doesn't get
     # cut off mid-workload by the 60s default.
-    is_bench = ("bench" in bin_name or
-                bin_name == "test_issues_jit" or
-                bin_name.startswith("test_jit_"))
+    is_bench = "bench" in bin_name or bin_name == "test_issues_jit" or bin_name.startswith("test_jit_")
     eff_timeout = timeout * 4 if is_bench else timeout
     # Issue #226 follow-up: pass AURA_BIN + AURA_SRC_ROOT to
     # subprocesses so tests that shell out to the aura binary
