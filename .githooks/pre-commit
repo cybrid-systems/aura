@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Aura pre-commit hook — clang-format enforcement (plan B: auto-fix + final check).
+# Aura pre-commit hook — clang-format (C++) + ruff (Python) enforcement.
 #
 # Why plan B (auto-fix + check) instead of plan A (check-only)?
 #   - Today #637-#644 (6 issues) shipped with clang-format drift because the
@@ -11,54 +11,92 @@
 #   - The final --dry-run --Werror at the end is the same gate CI runs
 #     (`workflows/ci.yml`), so local + CI behavior are identical.
 #
+# 2026-07-07 update: also run `ruff check --fix` and `ruff format` on staged
+# Python files. The CI gate's `./build.py lint` was failing because the
+# pre-commit hook only caught C++; Python lint drift slipped through. Same
+# auto-fix + final-check pattern as clang-format below.
+#
 # Flow:
 #   1. Collect staged C++ files matching the same filter CI uses
 #      (src|tests) + (\.(cpp|ixx|hh|h)$).
-#   2. Run `clang-format -i` on them (auto-fix).
-#   3. `git add` the modified files so the formatted content is what gets
-#      committed (not a separate "format" noise commit).
-#   4. Final `clang-format --dry-run -Werror` — belt-and-suspenders so
-#      the commit message is honest even if `clang-format -i` ever diverges
-#      from `--dry-run`.
+#   2. Collect staged Python files (\.py$).
+#   3. Run `clang-format -i` on C++ files (auto-fix).
+#   4. Run `ruff check --fix --unsafe-fixes` + `ruff format` on Python
+#      files (auto-fix). Matches `./build.py lint --fix`.
+#   5. `git add` the modified files so the formatted content is what gets
+#      committed (no separate "format" noise commit).
+#   6. Final `clang-format --dry-run -Werror` and `ruff check` +
+#      `ruff format --check` — belt-and-suspenders so the commit message
+#      is honest even if auto-fix ever diverges from --check.
 #
 # Exit codes:
-#   0 — all staged files clean (or no C++ files staged)
-#   1 — clang-format missing OR final dry-run failed (shouldn't happen
-#       unless the tool itself is broken)
+#   0 — all staged files clean (or no matching files staged)
+#   1 — clang-format / ruff missing OR final check failed (shouldn't
+#       happen unless the tool itself is broken or auto-fix can't resolve
+#       the issue e.g. ruff auto-fix can't fix an E501 violation)
 
 set -euo pipefail
 
+ROOT=$(git rev-parse --show-toplevel)
+
 # Collect staged C++ files using the same filter the CI gate uses
 # (`.github/workflows/ci.yml` line 64-66).
-files=$(git diff --cached --name-only --diff-filter=ACMR \
+cpp_files=$(git diff --cached --name-only --diff-filter=ACMR \
     | grep -E '\.(cpp|ixx|hh|h)$' \
     | grep -E '^(src|tests)/' \
     || true)
 
-if [ -z "$files" ]; then
-    # No C++ files staged — nothing to format.
-    exit 0
+# Collect staged Python files.
+py_files=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '\.py$' \
+    || true)
+
+# ── C++ (clang-format) ─────────────────────────────────────────────
+if [ -n "$cpp_files" ]; then
+    # Defensive: ensure clang-format is on PATH.
+    if ! command -v clang-format >/dev/null 2>&1; then
+        echo "❌ pre-commit: clang-format not found on PATH" >&2
+        echo "   install clang-format (CI uses clang-format 22.1.7 from llvm.org)" >&2
+        exit 1
+    fi
+
+    echo "pre-commit: clang-format -i on $(echo "$cpp_files" | wc -l) staged C++ file(s)..."
+    echo "$cpp_files" | xargs clang-format -i
+
+    echo "pre-commit: clang-format --dry-run -Werror (final check)..."
+    echo "$cpp_files" | xargs clang-format --dry-run -Werror
+    echo "pre-commit: clang-format clean ✓"
 fi
 
-# Defensive: ensure clang-format is on PATH.
-if ! command -v clang-format >/dev/null 2>&1; then
-    echo "❌ pre-commit: clang-format not found on PATH" >&2
-    echo "   install clang-format (CI uses clang-format 22.1.7 from llvm.org)" >&2
-    exit 1
+# ── Python (ruff check + format) ────────────────────────────────────
+if [ -n "$py_files" ]; then
+    # Defensive: ensure ruff is on PATH.
+    if ! command -v ruff >/dev/null 2>&1; then
+        echo "❌ pre-commit: ruff not found on PATH" >&2
+        echo "   pip install ruff (matches CI requirements-dev.txt)" >&2
+        exit 1
+    fi
+
+    # Step 1: ruff check --fix --unsafe-fixes (matches build.py lint --fix).
+    # Restricted to the staged files only (don't re-lint the whole repo at
+    # every commit — too slow).
+    echo "pre-commit: ruff check --fix on $(echo "$py_files" | wc -l) staged Python file(s)..."
+    echo "$py_files" | xargs ruff check --fix --unsafe-fixes
+
+    # Step 2: ruff format (auto-format).
+    echo "pre-commit: ruff format on $(echo "$py_files" | wc -l) staged Python file(s)..."
+    echo "$py_files" | xargs ruff format
+
+    # Step 3: re-stage so the fixed content lands in this commit.
+    echo "$py_files" | xargs git add
+
+    # Step 4: final check (matches CI `./build.py lint`).
+    echo "pre-commit: ruff check (final check)..."
+    echo "$py_files" | xargs ruff check
+    echo "pre-commit: ruff format --check (final check)..."
+    echo "$py_files" | xargs ruff format --check
+    echo "pre-commit: ruff clean ✓"
 fi
 
-# Step 1: auto-fix.
-echo "pre-commit: clang-format -i on $(echo "$files" | wc -l) staged C++ file(s)..."
-echo "$files" | xargs clang-format -i
-
-# Step 2: re-stage the formatted content so it lands in the same commit
-# (no separate "format" commit).
-echo "$files" | xargs git add
-
-# Step 3: final check (belt-and-suspenders — should never fire if step 1
-# is correct, but if clang-format -i ever diverges from --dry-run this
-# catches it).
-echo "pre-commit: clang-format --dry-run -Werror (final check)..."
-echo "$files" | xargs clang-format --dry-run -Werror
-
-echo "pre-commit: clang-format clean ✓"
+# If neither C++ nor Python staged, exit 0 (nothing to format).
+exit 0
