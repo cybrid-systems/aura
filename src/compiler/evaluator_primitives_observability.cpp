@@ -425,6 +425,9 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #667 — list/map/filter apply hot-path
     // observability (P1 stdlib-impl)
     "query:primitives-apply-stats",
+    // Issue #668 — math regex primitive error observability
+    // (P1 stdlib-impl error consistency)
+    "query:primitives-regex-error-stats",
     // Issue #706 — Scheduler StealBudget adaptive bias
     "query:scheduler-stealbudget-adaptive-stats",
     // Issue #652 / #707 — Per-fiber stack/checkpoint pool

@@ -35,7 +35,7 @@ void Evaluator::register_all_primitives() {
                                                            primitive_error_counter);
 
     primitives_detail::register_math_regex_and_arithmetic_primitives(
-        prim_registrar(), pairs_, string_heap_, error_values_, primitive_error_counter);
+        prim_registrar(), pairs_, string_heap_, error_values_, primitive_error_counter, *this);
 
     primitives_detail::register_reflect_and_type_primitives(prim_registrar(), pairs_, string_heap_,
                                                             keyword_table_, type_registry_);

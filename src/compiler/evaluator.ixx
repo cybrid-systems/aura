@@ -588,7 +588,7 @@ namespace primitives_detail {
     void register_math_regex_and_arithmetic_primitives(
         std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
         std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-        std::atomic<std::uint64_t>* primitive_error_counter);
+        std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev);
     void register_reflect_and_type_primitives(std::function<void(std::string, PrimFn)> add,
                                               std::pmr::vector<Pair>& pairs,
                                               std::pmr::vector<std::string>& string_heap,
@@ -3893,6 +3893,22 @@ public:
             return m->primitives_apply_fastpath_wins_total.load(std::memory_order_relaxed);
         }
         return 0;
+    }
+    // Issue #668: math regex primitive error observability.
+    // Bumped alongside primitive_error_count_ (the general
+    // counter) every time a regex-* primitive returns PRIM_ERROR.
+    [[nodiscard]] std::uint64_t get_primitives_regex_error_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->primitives_regex_error_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    void bump_primitives_regex_error_total(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitives_regex_error_total.fetch_add(n, std::memory_order_relaxed);
+        }
     }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);

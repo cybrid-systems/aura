@@ -3153,6 +3153,10 @@ add_dependencies(all_test_issue_targets test_issue_665_sv_stability_stats)
 aura_add_issue_test(test_issue_667_primitives_apply_stats)
 aura_issue_test_link_llvm_jit(test_issue_667_primitives_apply_stats)
 add_dependencies(all_test_issue_targets test_issue_667_primitives_apply_stats)
+# Issue #668: math regex primitive error consistency (P1 stdlib-impl).
+aura_add_issue_test(test_issue_668)
+aura_issue_test_link_llvm_jit(test_issue_668)
+add_dependencies(all_test_issue_targets test_issue_668)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
