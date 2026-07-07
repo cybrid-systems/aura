@@ -2966,6 +2966,85 @@ public:
             m->linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #672: linear ownership runtime enforcement
+    // observability bump helpers. These wrap the existing
+    // atomics on CompilerMetrics so callers (Guard dtor,
+    // probe paths, AI Agent verify-tool hooks) have a
+    // canonical surface that survives the
+    // atomic-vs-Evaluator-metrics-access pattern split.
+    //
+    // Bumped on every linear-ownership violation event —
+    // use-after-move / double-borrow / frame-version
+    // mismatch / bridge_epoch mismatch. Per the issue's
+    // recommended-action matrix, callers may follow this
+    // bump with either panic_or_rollback (strict policy)
+    // or log_warn + auto_revalidate (lenient policy).
+    inline void bump_linear_ownership_violation() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+            m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #672: bump on a successful post-mutate linear
+    // ownership revalidate (i.e. the Guard exit saw no
+    // violations). Companion to bump_linear_ownership_violation
+    // — the AI Agent can derive the violation_rate =
+    // violations / (violations + passes) per session.
+    inline void bump_linear_ownership_pass() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+            m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #672: bump on every Guard exit (success path)
+    // — the Guard exit IS an enforcement event, and the
+    // AI Agent can compute the propagation_ratio =
+    // exits / violations to gauge how often the post-mutate
+    // revalidate is "clean". Pairs with
+    // linear_post_mutate_enforcements_total.
+    inline void bump_linear_post_mutate_enforcement() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #672: bump when the linear-ownership probe
+    // detects a leaked linear binding (a `(let ((x (Linear e))) ...)`
+    // where the binding escapes without consuming). Pairs with
+    // linear_violations_caught_total for the AI Agent to
+    // distinguish "use-after-move" from "leaked-linear".
+    inline void bump_linear_leak_prevented() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_leak_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #672: public linear ownership enforcement entry
+    // point. Wraps the private validate_linear_ownership_state
+    // + bumps the violation counter on failure. Takes the
+    // frame_version + linear_state as raw args (the public
+    // StableNodeRef API exposes `.gen` for the caller to
+    // pass here) so this method doesn't need to import the
+    // ast module's StableNodeRef type. Returns true if the
+    // ref is still valid (frame_version >= current and
+    // bridge_epoch matches). The caller is expected to
+    // follow up with either rollback (strict policy) or
+    // auto_revalidate + log (lenient policy).
+    [[nodiscard]] bool check_linear_ownership_for_frame(std::uint64_t frame_version,
+                                                        std::uint8_t linear_state = 1) noexcept {
+        const auto current_ver = defuse_version_snapshot();
+        const auto current_bridge = current_bridge_epoch();
+        const bool ok = validate_linear_ownership_state(linear_state, frame_version, current_ver, 0,
+                                                       current_bridge);
+        if (!ok) {
+            bump_linear_ownership_violation();
+        } else {
+            bump_linear_ownership_pass();
+        }
+        return ok;
+    }
     // Issue #614: primitives hot-path memory-stability counters.
     // Bumped by evaluator_primitives_list.cpp (pair pushes +
     // cdr walks) so the AI agent can correlate the
@@ -4314,6 +4393,15 @@ public:
         // propagation_ratio = dirty_propagation / guard_dirty_epoch
         // (close to 1.0 = every Guard exit propagates).
         bump_guard_dirty_epoch_count();
+        // Issue #672: every successful Guard exit is itself a
+        // linear ownership enforcement event — bump the
+        // post-mutate enforcement counter so the AI Agent can
+        // gauge how often Guard exits propagate through
+        // (query:linear-ownership-enforcement-stats). Pairs
+        // with bump_guard_dirty_epoch_count() above so the
+        // Agent can compute enforcement_ratio =
+        // linear_post_mutate_enforcements / guard_dirty_epoch.
+        bump_linear_post_mutate_enforcement();
         // Issue #555 / #518: selective_recheck_count_ is
         // bumped from infer_flat_partial's
         // reanalyze_occurrence_contexts path, not here.

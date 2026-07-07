@@ -435,6 +435,10 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #671 — primitives capture consistency stats
     // (P1 stdlib-impl consistency)
     "query:primitives-consistency-stats",
+    // Issue #672 — linear ownership + GuardShape runtime
+    // invariant enforcement observability (P0 production
+    // safety)
+    "query:linear-ownership-enforcement-stats",
     // Issue #706 — Scheduler StealBudget adaptive bias
     "query:scheduler-stealbudget-adaptive-stats",
     // Issue #652 / #707 — Per-fiber stack/checkpoint pool
@@ -1890,8 +1894,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     // macro for registration), #617 (catalog registry
     // summary).
     add("query:primitives-consistency-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t capture_viol =
             m ? m->primitive_capture_violations_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t slots = ev.primitives_.slot_count();
@@ -1932,8 +1935,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
         };
-        insert_kv("capture-violations-detected",
-                  static_cast<std::int64_t>(capture_viol));
+        insert_kv("capture-violations-detected", static_cast<std::int64_t>(capture_viol));
         insert_kv("style-compliance-pct", style_compliance_pct);
         insert_kv("registry-slots", static_cast<std::int64_t>(slots));
         insert_kv("documented-count", static_cast<std::int64_t>(documented));

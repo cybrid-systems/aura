@@ -76,10 +76,9 @@ static void run_ac1_reachable(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_seven_fields(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: 7 fields present in the hash response ---");
-    const std::vector<std::string> keys = {"capture-violations-detected", "style-compliance-pct",
-                                           "registry-slots", "documented-count",
-                                           "capture-contract-version", "recommended-action",
-                                           "schema"};
+    const std::vector<std::string> keys = {
+        "capture-violations-detected", "style-compliance-pct", "registry-slots", "documented-count",
+        "capture-contract-version",    "recommended-action",   "schema"};
     for (const auto& k : keys) {
         auto f = cs.eval(std::format("(hash-ref (query:primitives-consistency-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
@@ -128,8 +127,8 @@ static void run_ac7_regression(aura::compiler::CompilerService& cs) {
     // (#709 shipped it as one of 7 fields; #671 carves out a
     // dedicated primitive so the regression is intentional).
     auto viol = hash_int(cs, "query:primitives-registry-stats", "capture-violations");
-    CHECK(viol >= 0, std::format("query:primitives-registry-stats capture-violations >= 0 ({})",
-                                 viol));
+    CHECK(viol >= 0,
+          std::format("query:primitives-registry-stats capture-violations >= 0 ({})", viol));
 }
 
 } // namespace aura_issue_671_detail
@@ -167,6 +166,6 @@ int main() {
     }
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
-                  g_failed, g_passed + g_failed);
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
