@@ -141,6 +141,16 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
     bin_path = BUILD / bin_name
     if not bin_path.is_file():
         return bin_name, 0, 0, 127, f"binary not found: {bin_path}"
+    # Per-binary timeout scaling. Bench / stress test binaries
+    # (test_*bench*, test_issues_jit, test_jit_*) need more
+    # than the default 60s because they exercise 10k+ element
+    # workloads or simulate fiber steal pressure. Scale timeout
+    # to 4x for those so a single bench run doesn't get
+    # cut off mid-workload by the 60s default.
+    is_bench = ("bench" in bin_name or
+                bin_name == "test_issues_jit" or
+                bin_name.startswith("test_jit_"))
+    eff_timeout = timeout * 4 if is_bench else timeout
     # Issue #226 follow-up: pass AURA_BIN + AURA_SRC_ROOT to
     # subprocesses so tests that shell out to the aura binary
     # (test_issue_294, test_issue_295) can resolve relative
@@ -158,13 +168,13 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
             [str(bin_path)],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=eff_timeout,
             errors="replace",
             cwd=str(ROOT),
             env=env,
         )
     except subprocess.TimeoutExpired:
-        return bin_name, 0, 0, 124, f"timeout after {timeout}s"
+        return bin_name, 0, 0, 124, f"timeout after {eff_timeout}s"
     passed, failed = parse_pass_fail_count(r.stdout)
     if passed + failed == 0:
         if r.returncode == 0:
