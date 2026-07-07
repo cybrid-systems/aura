@@ -428,6 +428,9 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #668 — math regex primitive error observability
     // (P1 stdlib-impl error consistency)
     "query:primitives-regex-error-stats",
+    // Issue #669 — primitives meta introspection stats
+    // (P1 stdlib-impl AI-native introspection)
+    "query:primitives-meta-stats",
     // Issue #706 — Scheduler StealBudget adaptive bias
     "query:scheduler-stealbudget-adaptive-stats",
     // Issue #652 / #707 — Per-fiber stack/checkpoint pool
@@ -1576,18 +1579,34 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //     (distinct from primitives_meta_catalog_query_total
     //     #617 which tracks the catalog primitive).
     //
-    // Fields per entry (5) + sentinel:
+    // Fields per entry (8) + sentinel:
     //   - name              primitive name (string)
-    //   - arity             primitive arity (int) — foundation
-    //                       for the DEFINE_PRIMITIVE macro
-    //                       arity-at-compile validation
-    //                       (#643 AC1)
     //   - has-fn            1 if the primitive has a registered
     //                       function body, 0 otherwise
+    //   - arity             from PrimMeta.arity (255 = variadic)
+    //                       — foundation for the DEFINE_PRIMITIVE
+    //                       macro arity-at-compile validation
+    //                       (#643 AC1)
+    //   - pure              from PrimMeta.pure (bool) — lets the
+    //                       Agent decide whether memoization /
+    //                       const-folding applies (Issue #669
+    //                       fill-the-gap enrichment)
+    //   - safety            from PrimMeta.safety_flags (int) —
+    //                       0x01=mutates, 0x02=io, 0x04=fiber
+    //                       (#480 + #669 enrichment)
+    //   - doc               from PrimMeta.doc (string, "") —
+    //                       lets the Agent render help text for
+    //                       end-users without hardcoded
+    //                       (#480 + #669 enrichment)
     //   - category          classification from #559
     //                       (mutation-safety / core /
     //                       internal-observable / convenience)
-    //   - schema == 643     sentinel for Agent drift detection
+    //   - schema == 669     sentinel for Agent drift detection
+    //                       (changed from 643 in #669 to signal
+    //                       the enriched 8-field shape; pre-#669
+    //                       shape was 5 fields with hardcoded
+    //                       arity=0 / category="internal-observable" / no
+    //                       pure / no safety / no doc)
     //
     // Discovery before this PR (preserved, not duplication):
     // the existing infrastructure covers ~70% of the AI-native
@@ -1634,13 +1653,24 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                       ->prim_error_unified_total.load(std::memory_order_relaxed)
                 : 0;
         auto build_pair = [&](const std::string& name) -> EvalValue {
-            // Build a 5-field meta pair: name + arity + has-fn
-            // + category + schema sentinel.
-            // arity + has-fn are 0/1 today (full arity-from-
-            // signature introspection is a follow-up once the
-            // DEFINE_PRIMITIVE macro lands in AC1).
-            // category defaults to "internal-observable"
-            // (the #559 taxonomy for the new query:* primitives).
+            // Issue #669: enrich the per-name response with
+            // real PrimMeta fields (arity, pure, safety,
+            // doc, category) via meta_for_slot. Pre-#669 the
+            // shape returned hardcoded arity=0 + has-fn=1 +
+            // category="internal-observable" — PrimMeta was
+            // populated (#480) but never reached the Agent.
+            //
+            // Schema now exposes 8 fields:
+            //   - name              primitive name
+            //   - has-fn            1 if registered, 0 if unknown
+            //   - arity             from PrimMeta.arity (255 = variadic)
+            //   - pure              from PrimMeta.pure (bool)
+            //   - safety            from PrimMeta.safety_flags (int)
+            //   - doc               from PrimMeta.doc (string, "")
+            //   - category          from PrimMeta.category (string)
+            //   - schema            669 (drift sentinel — changed
+            //                       from 643 to signal the
+            //                       enriched field set)
             auto* ht = FlatHashTable::create(8);
             if (!ht)
                 return make_void();
@@ -1670,13 +1700,29 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             };
             auto name_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(name);
-            auto cat_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back("internal-observable");
             insert_kv("name", make_string(static_cast<std::uint64_t>(name_idx)));
-            insert_kv("arity", make_int(0));
-            insert_kv("has-fn", make_int(1));
+            // Look up the real PrimMeta via slot_for_name +
+            // meta_for_slot. If unknown, has-fn=0 + default
+            // PrimMeta{} (the Agent can distinguish "known
+            // primitive with no body" from "unknown" via
+            // has-fn).
+            const auto slot = ev.primitives_.slot_for_name(name);
+            const bool known = slot < ev.primitives_.slot_count();
+            const PrimMeta& pm =
+                known ? ev.primitives_.meta_for_slot(slot) : PrimMeta{};
+            insert_kv("has-fn", make_int(known ? 1 : 0));
+            insert_kv("arity",
+                      make_int(static_cast<std::int64_t>(pm.arity)));
+            insert_kv("pure", make_bool(pm.pure));
+            insert_kv("safety",
+                      make_int(static_cast<std::int64_t>(pm.safety_flags)));
+            auto doc_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(pm.doc);
+            insert_kv("doc", make_string(static_cast<std::uint64_t>(doc_idx)));
+            auto cat_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(pm.category);
             insert_kv("category", make_string(static_cast<std::uint64_t>(cat_idx)));
-            insert_kv("schema", make_int(643));
+            insert_kv("schema", make_int(669));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -1732,6 +1778,79 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("define-macro-used", static_cast<std::int64_t>(define_macro_used));
         insert_kv("prim-error-unified", static_cast<std::int64_t>(prim_error_unified));
         insert_kv("schema", 643);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #669: query:primitives-meta-stats — per-meta
+    // observability summary (P1 stdlib-impl AI-native
+    // introspection gap-fill). Reports the count of
+    // primitives by meta status so the Agent can see
+    // how much of the stdlib surface has been
+    // meta-documented vs left default.
+    //
+    // Non-duplicative with #617 query:primitives-meta-catalog
+    // (which returns the registry-level summary) and
+    // #697 query:primitives-extension-stats (which tracks
+    // runtime counters). #669 adds the per-meta-axis
+    // observability summary that the Agent needs to
+    // know "how much is documented?" at-a-glance.
+    //
+    // Fields (4 + sentinel):
+    //   - meta-hits            primitives_meta_query_total
+    //                          (this primitive's call counter)
+    //   - documented-count     documented_meta_count()
+    //                          (primitives with non-empty doc)
+    //   - schema-documented    schema_documented_meta_count()
+    //                          (primitives with both doc AND
+    //                          schema set)
+    //   - total-registered     primitives_.slot_count()
+    //   - schema == 669        drift sentinel
+    add("query:primitives-meta-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t meta_hits = static_cast<std::int64_t>(
+            ev.compiler_metrics()
+                ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                      ->primitives_meta_query_total.load(std::memory_order_relaxed)
+                : 0);
+        const std::int64_t documented = static_cast<std::int64_t>(
+            ev.get_primitive_documented_meta_count());
+        const std::int64_t schema_documented = static_cast<std::int64_t>(
+            ev.primitives_.schema_documented_meta_count());
+        const std::int64_t total =
+            static_cast<std::int64_t>(ev.primitives_.slot_count());
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("meta-hits", meta_hits);
+        insert_kv("documented-count", documented);
+        insert_kv("schema-documented", schema_documented);
+        insert_kv("total-registered", total);
+        insert_kv("schema", 669);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

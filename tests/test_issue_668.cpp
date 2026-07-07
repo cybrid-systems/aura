@@ -208,6 +208,6 @@ int main() {
     }
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
-                  g_failed, g_passed + g_failed);
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
