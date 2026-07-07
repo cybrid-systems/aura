@@ -84,6 +84,8 @@
     "query:list-soa-hotpath-stats"
     ; ── Issue #753 — long-running deployment infra observability (P0) ──
     "query:longrunning-infra-stats"
+    ; ── Issue #754 — LLM-bottleneck orchestration adaptive observability (P0) ──
+    "query:orchestration-llm-bottleneck-stats"
     ; ── Issue #581 — StableNodeRef + dirty propagation SV SoC scalability ──
     "query:stable-ref-sv-scale-stats"
     ; ── Issue #582 — EDA SV concurrency + atomic batch + fiber safety ──

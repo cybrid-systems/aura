@@ -15,6 +15,7 @@ module;
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 #include "primitives_detail.h"
+#include "serve/metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -465,6 +466,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:list-soa-hotpath-stats",
     // Issue #753 — long-running deployment infra stats
     "query:longrunning-infra-stats",
+    // Issue #754 — LLM-bottleneck orchestration adaptive stats
+    "query:orchestration-llm-bottleneck-stats",
     // Issue #672 — linear ownership + GuardShape runtime
     // invariant enforcement observability (P0 production
     // safety)
@@ -2232,6 +2235,68 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("deployment-slo-hits", deployment_slo_hits);
         insert_kv("infra-events-total", events_total);
         insert_kv("schema", 753);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #754: query:orchestration-llm-bottleneck-stats — P0 LLM-
+    // bottleneck adaptive scheduling + yield-classification-driven
+    // work-stealing bias + GC safepoint self-tuning (refines #730;
+    // non-duplicative with #706 scheduler-stealbudget-adaptive-stats,
+    // #650 yield-class-stats, #646 gc-safepoint-deferral-stats).
+    //
+    // Fields (4 + sentinel):
+    //   - outermost-preferred   AdaptiveStealStats::outermost_preferred
+    //   - backoff-triggers      AdaptiveStealStats::deferred_pressure_boosts
+    //   - llm-tail-reduction    AdaptiveStealStats::llm_tail_reductions
+    //   - gc-safepoint-adapted  orchestration_llm_gc_safepoint_adapted_total
+    //   - orchestration-events-total (sum of 4, per-call derivation)
+    //   - schema == 754
+    add("query:orchestration-llm-bottleneck-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t outermost_preferred =
+            static_cast<std::int64_t>(aura_adaptive_steal_outermost_preferred());
+        const std::int64_t backoff_triggers =
+            static_cast<std::int64_t>(aura_adaptive_steal_deferred_pressure_boosts());
+        const std::int64_t llm_tail_reduction =
+            static_cast<std::int64_t>(aura_adaptive_steal_llm_tail_reductions());
+        const std::int64_t gc_safepoint_adapted =
+            static_cast<std::int64_t>(ev.get_orchestration_llm_gc_safepoint_adapted());
+        const std::int64_t events_total =
+            outermost_preferred + backoff_triggers + llm_tail_reduction + gc_safepoint_adapted;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("outermost-preferred", outermost_preferred);
+        insert_kv("backoff-triggers", backoff_triggers);
+        insert_kv("llm-tail-reduction", llm_tail_reduction);
+        insert_kv("gc-safepoint-adapted", gc_safepoint_adapted);
+        insert_kv("orchestration-events-total", events_total);
+        insert_kv("schema", 754);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

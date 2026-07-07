@@ -1553,6 +1553,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> longrunning_resource_trend_total{0};
     std::atomic<std::uint64_t> longrunning_deployment_slo_hits_total{0};
 
+    // Issue #754: LLM-bottleneck orchestration adaptive stats
+    // (P0 runtime orchestration; refines #730, non-duplicative with
+    // #706 scheduler-stealbudget-adaptive-stats and #646 gc-deferral).
+    //   - orchestration_llm_gc_safepoint_adapted_total: GC safepoint
+    //     deferral/adaptation under active MutationBoundary (self-tuning
+    //     axis when LLM-heavy workloads hold mutation guards).
+    std::atomic<std::uint64_t> orchestration_llm_gc_safepoint_adapted_total{0};
+
     // Issue #668: math regex primitive error observability
     // (P1 stdlib-impl error consistency). Tracks every
     // PRIM_ERROR invocation inside the regex-match? /
