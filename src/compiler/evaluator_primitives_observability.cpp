@@ -6448,6 +6448,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:hardware-backend-sv-stats",
             // Issue #664 — SV DefUse incremental observability (P1)
             "query:sv-defuse-stats",
+            // Issue #665 — SV stability observability (P1)
+            "query:sv-stability-stats",
             // Issue #706 — Scheduler StealBudget adaptive bias
             "query:scheduler-stealbudget-adaptive-stats",
             // Issue #652 / #707 — Per-fiber stack/checkpoint pool

@@ -3115,6 +3115,25 @@ add_dependencies(all_test_issue_targets test_issue_663_hardware_backend_sv_stats
 aura_add_issue_test(test_issue_664_sv_defuse_stats)
 aura_issue_test_link_llvm_jit(test_issue_664_sv_defuse_stats)
 add_dependencies(all_test_issue_targets test_issue_664_sv_defuse_stats)
+# Issue #665: SV stability observability (P1 EDA-SV scalability).
+# Observability surface for the SV-tagged stability + scale
+# activity. 3 CompilerMetrics atomics
+# (sv_dirty_traversal_depth_total / sv_generation_wrap_total /
+#  sv_stable_ref_invalidation_total) + query:sv-stability-stats
+# primitive (schema 665). The production wiring for Actions #1
+# (early-exit / special-case SV tags in mark_dirty_upward) +
+# #2 (compact_nodes / restore subtree-gen scope for SV) is
+# follow-up scope; this commit ships the observability surface
+# + regression net. 7 ACs: schema, 3 bump paths (with depth
+# values for the avg-derivation path), sum invariant,
+# multi-round simulation (50×5 depth + 30 wrap + 20 inval =
+# 300 total events), regression on adjacent SV primitives
+# (sv-interface 661, sv-sva 694, sv-defuse 664,
+# hardware-backend-sv 663). Non-duplicative with #641/#368/
+# #392/#336/#642/#664.
+aura_add_issue_test(test_issue_665_sv_stability_stats)
+aura_issue_test_link_llvm_jit(test_issue_665_sv_stability_stats)
+add_dependencies(all_test_issue_targets test_issue_665_sv_stability_stats)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

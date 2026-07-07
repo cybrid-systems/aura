@@ -76,6 +76,8 @@
     "query:hardware-backend-sv-stats"
     ; ── Issue #664 — SV DefUse incremental observability (P1) ──
     "query:sv-defuse-stats"
+    ; ── Issue #665 — SV stability observability (P1) ──
+    "query:sv-stability-stats"
     ; ── Issue #581 — StableNodeRef + dirty propagation SV SoC scalability ──
     "query:stable-ref-sv-scale-stats"
     ; ── Issue #582 — EDA SV concurrency + atomic batch + fiber safety ──
