@@ -423,16 +423,36 @@ public:
     //
     // Returns the number of bytes reclaimed (same as compact()).
     [[nodiscard]] std::size_t defrag() noexcept {
+        // Public entry point: caller wants the flag cleared
+        // regardless of whether defrag actually reclaims bytes.
+        return defrag_impl(true);
+    }
+
+    [[nodiscard]] std::size_t defrag_no_clear_request() noexcept {
+        // Internal entry point: used by maybe_auto_compact_on_alloc
+        // so a transient no-op defrag doesn't lose the user's
+        // pending request flag.
+        return defrag_impl(false);
+    }
+
+    [[nodiscard]] std::size_t defrag_impl(bool clear_request_flag) noexcept {
         // Issue #604: same fiber-context coordination as compact().
         if (aura::gc_hooks::fiber_active()) {
             stats_.compaction_yield_checks++;
             aura::gc_hooks::safepoint_check();
         }
-        // Issue #300 Phase 3: clear the request flag at the start
-        // of the defrag. A subsequent request can set it again if
-        // needed. The clear happens before the buffer mutation so
-        // the fiber safepoint sees the clear as soon as possible.
-        defrag_requested_.store(false, std::memory_order_release);
+        // Issue #300 Phase 3 + Issue #300 AC5 follow-up: the
+        // request flag is cleared ONLY when defrag actually
+        // reclaims bytes. A no-op defrag (arena already
+        // compacted) leaves the flag set so the user's
+        // pending request isn't silently lost by transient
+        // auto-alloc defrags. Explicit `(arena:defrag)`
+        // calls (see below) override this and always clear
+        // the flag — the user invoked it explicitly.
+        const bool caller_wants_clear = clear_request_flag;
+        if (clear_request_flag) {
+            defrag_requested_.store(false, std::memory_order_release);
+        }
         std::size_t before = buffer_.size();
         std::size_t u = stats_.used;
         if (u == 0) {
@@ -459,6 +479,12 @@ public:
         // the last-saved value to 0).
         stats_.defrag_attempted_count++;
         if (saved > 0) {
+            if (!caller_wants_clear) {
+                // Auto-alloc path: clear the flag now that we
+                // actually did work. (Caller-explicit path
+                // already cleared at start.)
+                defrag_requested_.store(false, std::memory_order_release);
+            }
             stats_.last_defrag_saved = saved;
             invoke_compact_hook_();
         }
@@ -579,6 +605,14 @@ private:
 
     // Issue #685: auto-compact / defrag when fragmentation or
     // small-pool pressure exceeds thresholds (alloc-path policy).
+    //
+    // Issue #300 follow-up: respect the defrag-requested flag
+    // ONLY when there's actual fragmentation to fix. Calling
+    // defrag() on a low-frag arena (when want_defrag is set)
+    // would clear the request flag without doing useful work,
+    // losing the user's pending request. The fix: also
+    // require frag_high to act on want_defrag. small_high
+    // still triggers compact() (no flag interaction).
     void maybe_auto_compact_on_alloc() noexcept {
         static constexpr double kFragThreshold = 0.50;
         static constexpr double kSmallPoolThreshold = 0.85;
@@ -586,14 +620,26 @@ private:
         const bool small_high = small_pool_.utilization() >= kSmallPoolThreshold;
         const bool frag_high = snap.fragmentation_ratio() >= kFragThreshold;
         const bool want_defrag = defrag_requested();
-        if (!small_high && !frag_high && !want_defrag)
+        // Three independent triggers; compact() path uses
+        // small_high OR frag_high. The want_defrag path
+        // additionally requires frag_high so we don't clear
+        // the request flag on a no-op defrag.
+        if (!small_high && !frag_high)
             return;
+        if (want_defrag && !frag_high)
+            return; // keep flag set for a future alloc
+                    // that actually triggers fragmentation
 
         stats_.compaction_yield_checks++;
         const double frag_before = snap.fragmentation_ratio();
         std::size_t saved = 0;
         if (want_defrag) {
-            saved = defrag();
+            // Issue #300 AC5 follow-up: use defrag_no_clear_request
+            // so a transient no-op defrag (saved == 0) doesn't
+            // lose the user's pending request flag. Only
+            // successful (saved > 0) auto-defrags clear the flag.
+            // Explicit `(arena:defrag)` calls still always clear.
+            saved = defrag_no_clear_request();
             if (saved > 0)
                 stats_.defrag_savings_alloc += saved;
         } else {
