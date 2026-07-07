@@ -463,6 +463,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:primitives-contract-stats",
     // Issue #752 — list/vector map/filter SoA hot-path stats
     "query:list-soa-hotpath-stats",
+    // Issue #753 — long-running deployment infra stats
+    "query:longrunning-infra-stats",
     // Issue #672 — linear ownership + GuardShape runtime
     // invariant enforcement observability (P0 production
     // safety)
@@ -534,6 +536,71 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     // (panic-auto-rollback?) — Query current auto-rollback state
     add("panic-auto-rollback?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.panic_auto_rollback_); });
+
+    // Issue #753: (resource:quota-set kind limit) — configure quota
+    // axis ("memory" | "fibers" | "time"). 0 = unlimited.
+    add("resource:quota-set", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+            return make_int(0);
+        const auto ki = as_string_idx(a[0]);
+        if (ki >= ev.string_heap_.size())
+            return make_int(0);
+        const auto limit = static_cast<std::uint64_t>(as_int(a[1]));
+        const auto& kind = ev.string_heap_[ki];
+        if (kind == "memory")
+            ev.set_resource_quota_memory(limit);
+        else if (kind == "fibers")
+            ev.set_resource_quota_fibers(limit);
+        else if (kind == "time")
+            ev.set_resource_quota_time_us(limit);
+        else
+            return make_int(0);
+        return make_int(1);
+    });
+    // Issue #753: (resource:quota-get kind) — read configured limit.
+    add("resource:quota-get", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_int(0);
+        const auto ki = as_string_idx(a[0]);
+        if (ki >= ev.string_heap_.size())
+            return make_int(0);
+        const auto& kind = ev.string_heap_[ki];
+        if (kind == "memory")
+            return make_int(static_cast<std::int64_t>(ev.resource_quota_memory()));
+        if (kind == "fibers")
+            return make_int(static_cast<std::int64_t>(ev.resource_quota_fibers()));
+        if (kind == "time")
+            return make_int(static_cast<std::int64_t>(ev.resource_quota_time_us()));
+        return make_int(0);
+    });
+    // Issue #753: (resource:quota-check kind current) — enforce quota;
+    // bumps quota-violations / resource-trend / deployment-slo-hits.
+    add("resource:quota-check", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+            return make_bool(false);
+        const auto ki = as_string_idx(a[0]);
+        if (ki >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto current = static_cast<std::uint64_t>(as_int(a[1]));
+        const auto& kind = ev.string_heap_[ki];
+        std::uint64_t limit = 0;
+        if (kind == "memory")
+            limit = ev.resource_quota_memory();
+        else if (kind == "fibers")
+            limit = ev.resource_quota_fibers();
+        else if (kind == "time")
+            limit = ev.resource_quota_time_us();
+        else
+            return make_bool(false);
+        ev.bump_longrunning_resource_trend();
+        if (limit > 0 && current > limit) {
+            ev.bump_longrunning_quota_violations();
+            return make_bool(false);
+        }
+        if (limit > 0)
+            ev.bump_longrunning_deployment_slo_hits();
+        return make_bool(true);
+    });
 
     // (panic-checkpoint) — Save current workspace as a safe checkpoint
     // Returns #t on success, #f if no workspace loaded.
@@ -2100,6 +2167,71 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("estimated-cache-misses", estimated_cache_misses);
         insert_kv("hotpath-events-total", events_total);
         insert_kv("schema", 752);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #753: query:longrunning-infra-stats — P0 long-running
+    // deployment infra observability (refines #729; non-duplicative
+    // with #548 panic-checkpoint-lifecycle, #677 deployment-stats,
+    // #674 chaos-stats).
+    //
+    // Fields (5 + sentinel):
+    //   - quota-violations       longrunning_quota_violations_total
+    //   - checkpoint-success     longrunning_checkpoint_success_total
+    //   - heal-triggers          longrunning_heal_triggers_total
+    //   - resource-trend         longrunning_resource_trend_total
+    //   - deployment-slo-hits    longrunning_deployment_slo_hits_total
+    //   - infra-events-total     (sum of 5, per-call derivation)
+    //   - schema == 753
+    add("query:longrunning-infra-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t quota_violations =
+            static_cast<std::int64_t>(ev.get_longrunning_quota_violations());
+        const std::int64_t checkpoint_success =
+            static_cast<std::int64_t>(ev.get_longrunning_checkpoint_success());
+        const std::int64_t heal_triggers =
+            static_cast<std::int64_t>(ev.get_longrunning_heal_triggers());
+        const std::int64_t resource_trend =
+            static_cast<std::int64_t>(ev.get_longrunning_resource_trend());
+        const std::int64_t deployment_slo_hits =
+            static_cast<std::int64_t>(ev.get_longrunning_deployment_slo_hits());
+        const std::int64_t events_total = quota_violations + checkpoint_success + heal_triggers +
+                                          resource_trend + deployment_slo_hits;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("quota-violations", quota_violations);
+        insert_kv("checkpoint-success", checkpoint_success);
+        insert_kv("heal-triggers", heal_triggers);
+        insert_kv("resource-trend", resource_trend);
+        insert_kv("deployment-slo-hits", deployment_slo_hits);
+        insert_kv("infra-events-total", events_total);
+        insert_kv("schema", 753);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

@@ -95,7 +95,20 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:primitives-consistency-stats)`   | 671    | capture-discipline axis (7 fields) |
 | `(query:primitives-contract-stats)`      | 751    | PRIM_ERROR + capture enforcement (5 fields) |
 | `(query:list-soa-hotpath-stats)`         | 752    | list map/filter SoA + intrinsic hot-path (6 fields) |
+| `(query:longrunning-infra-stats)`        | 753    | quota/checkpoint/heal/SLO deployment infra (7 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
+
+### `(query:longrunning-infra-stats)` fields (#753)
+
+- `quota-violations` — `longrunning_quota_violations_total`
+- `checkpoint-success` — `longrunning_checkpoint_success_total` (panic-checkpoint save/commit)
+- `heal-triggers` — `longrunning_heal_triggers_total` (successful panic-restore self-heal)
+- `resource-trend` — `longrunning_resource_trend_total` (resource:quota-check samples)
+- `deployment-slo-hits` — `longrunning_deployment_slo_hits_total` (within-quota checks)
+- `infra-events-total` — sum of the five counters above
+- `schema` — 753 (drift sentinel)
+
+Production primitives: `(resource:quota-set kind limit)`, `(resource:quota-get kind)`, `(resource:quota-check kind current)` where `kind` is `"memory"`, `"fibers"`, or `"time"` (limit `0` = unlimited).
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

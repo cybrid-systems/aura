@@ -82,6 +82,8 @@
     "query:primitives-apply-stats"
     ; ── Issue #752 — list/vector map/filter SoA hot-path observability (P0) ──
     "query:list-soa-hotpath-stats"
+    ; ── Issue #753 — long-running deployment infra observability (P0) ──
+    "query:longrunning-infra-stats"
     ; ── Issue #581 — StableNodeRef + dirty propagation SV SoC scalability ──
     "query:stable-ref-sv-scale-stats"
     ; ── Issue #582 — EDA SV concurrency + atomic batch + fiber safety ──

@@ -1297,6 +1297,7 @@ public:
         // so (query:panic-checkpoint-lifecycle-stats) can
         // report the lifetime commit count.
         bump_panic_checkpoint_commit_count();
+        bump_longrunning_checkpoint_success();
     }
 
     // Check if a safe checkpoint exists.
@@ -2155,6 +2156,11 @@ private:
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
     std::string panic_safe_source_; // last known good source code
+
+    // Issue #753: long-running resource quota limits (0 = unlimited).
+    std::uint64_t resource_quota_memory_ = 0;
+    std::uint64_t resource_quota_fibers_ = 0;
+    std::uint64_t resource_quota_time_us_ = 0;
 
     // Issue #242: panic checkpoint for the 4 pmr/append-only
     // arenas. save_panic_checkpoint() snapshots each size; on
@@ -4143,6 +4149,86 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             return m->list_estimated_cache_misses_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    // Issue #753: long-running deployment infra observability.
+    void set_resource_quota_memory(std::uint64_t limit) noexcept { resource_quota_memory_ = limit; }
+    void set_resource_quota_fibers(std::uint64_t limit) noexcept { resource_quota_fibers_ = limit; }
+    void set_resource_quota_time_us(std::uint64_t limit) noexcept {
+        resource_quota_time_us_ = limit;
+    }
+    [[nodiscard]] std::uint64_t resource_quota_memory() const noexcept {
+        return resource_quota_memory_;
+    }
+    [[nodiscard]] std::uint64_t resource_quota_fibers() const noexcept {
+        return resource_quota_fibers_;
+    }
+    [[nodiscard]] std::uint64_t resource_quota_time_us() const noexcept {
+        return resource_quota_time_us_;
+    }
+    void bump_longrunning_quota_violations(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->longrunning_quota_violations_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_longrunning_checkpoint_success(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->longrunning_checkpoint_success_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_longrunning_heal_triggers(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->longrunning_heal_triggers_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_longrunning_resource_trend(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->longrunning_resource_trend_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_longrunning_deployment_slo_hits(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->longrunning_deployment_slo_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_longrunning_quota_violations() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_quota_violations_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_longrunning_checkpoint_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_checkpoint_success_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_longrunning_heal_triggers() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_heal_triggers_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_longrunning_resource_trend() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_resource_trend_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_longrunning_deployment_slo_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_deployment_slo_hits_total.load(std::memory_order_relaxed);
         }
         return 0;
     }

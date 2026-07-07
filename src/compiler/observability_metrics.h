@@ -1509,6 +1509,27 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> list_intrinsic_dispatches_total{0};
     std::atomic<std::uint64_t> list_estimated_cache_misses_total{0};
 
+    // Issue #753: long-running deployment infra observability
+    // (P0 stdlib commercial deployment; refines #729, non-duplicative
+    // with #548 panic-checkpoint-lifecycle, #677 deployment-stats,
+    // #674 chaos-stats). Tracks quota enforcement, checkpoint/heal
+    // recovery, resource sampling, and SLO-within-quota hits.
+    //   - longrunning_quota_violations_total: resource:quota-check
+    //     over-limit events (memory / fibers / time axes).
+    //   - longrunning_checkpoint_success_total: successful panic
+    //     checkpoint save/commit on the production Guard path.
+    //   - longrunning_heal_triggers_total: successful panic-restore
+    //     self-heal recoveries (auto-rollback / Guard failure path).
+    //   - longrunning_resource_trend_total: advisory resource samples
+    //     taken via resource:quota-check (trend observability axis).
+    //   - longrunning_deployment_slo_hits_total: quota-check passes
+    //     while a finite limit is configured (within-SLO events).
+    std::atomic<std::uint64_t> longrunning_quota_violations_total{0};
+    std::atomic<std::uint64_t> longrunning_checkpoint_success_total{0};
+    std::atomic<std::uint64_t> longrunning_heal_triggers_total{0};
+    std::atomic<std::uint64_t> longrunning_resource_trend_total{0};
+    std::atomic<std::uint64_t> longrunning_deployment_slo_hits_total{0};
+
     // Issue #668: math regex primitive error observability
     // (P1 stdlib-impl error consistency). Tracks every
     // PRIM_ERROR invocation inside the regex-match? /
