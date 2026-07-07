@@ -104,6 +104,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:arena-auto-policy-stats",
     // Issue #744 — Shape → dirty → Pass → JIT deopt/recompile closed loop
     "query:shape-jit-pass-closedloop-stats",
+    // Issue #745 — Dynamic reverify limit + Occurrence priority in solve_delta
+    "query:constraint-reverify-occurrence-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -4146,6 +4148,74 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("speculative-win-lost", win_lost);
         insert_kv("shape-stable-block-skips", stable_skips);
         insert_kv("schema", 744);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #745: query:constraint-reverify-occurrence-stats — dynamic
+    // effective_reverify_limit + Occurrence-narrowed priority scan in
+    // reverify_clean_constraints_for_touched (non-duplicative with #466,
+    // #690 constraint-typed-mutate-stats, #659 typesystem-typed-mutate).
+    //
+    // Fields (4 + sentinel):
+    //   - reverify-hits-on-narrow      priority scans on occurrence-narrow roots
+    //   - cross-delta-blame-complete   blame chain with active_mutation_id
+    //   - timeout-prevented            dynamic limit avoided fixed-256 truncation
+    //   - stale-blame-invalidation     cross-delta hit without mutation epoch
+    //   - schema == 745
+    add("query:constraint-reverify-occurrence-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t narrow_hits =
+            m ? static_cast<std::int64_t>(
+                    m->constraint_reverify_narrow_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t blame_complete =
+            m ? static_cast<std::int64_t>(
+                    m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t timeout_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->constraint_reverify_timeout_prevented_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        const std::int64_t stale_blame =
+            m ? static_cast<std::int64_t>(
+                    m->constraint_stale_blame_invalidation_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("reverify-hits-on-narrow", narrow_hits);
+        insert_kv("cross-delta-blame-complete", blame_complete);
+        insert_kv("timeout-prevented", timeout_prevented);
+        insert_kv("stale-blame-invalidation", stale_blame);
+        insert_kv("schema", 745);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

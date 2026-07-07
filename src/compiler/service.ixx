@@ -5790,6 +5790,12 @@ public:
             metrics_.reverify_truncated_total.load(std::memory_order_relaxed);
         s.constraint_blame_chain_complete_total =
             metrics_.constraint_blame_chain_complete_total.load(std::memory_order_relaxed);
+        s.constraint_reverify_narrow_hits_total =
+            metrics_.constraint_reverify_narrow_hits_total.load(std::memory_order_relaxed);
+        s.constraint_reverify_timeout_prevented_total =
+            metrics_.constraint_reverify_timeout_prevented_total.load(std::memory_order_relaxed);
+        s.constraint_stale_blame_invalidation_total =
+            metrics_.constraint_stale_blame_invalidation_total.load(std::memory_order_relaxed);
         s.solve_delta_full_solve_fallback_total =
             metrics_.solve_delta_full_solve_fallback_total.load(std::memory_order_relaxed);
         if (s.delta_constraints_total > 0) {
