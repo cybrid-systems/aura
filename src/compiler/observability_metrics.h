@@ -1318,6 +1318,36 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_interface_modport_views_total{0};
     std::atomic<std::uint64_t> sv_interface_direction_changes_total{0};
 
+    // Issue #664: SV DefUse incremental observability (P1 EDA-SV).
+    // The 3 counters track the structured DefUse build + incremental
+    // update activity for nested Interface/Modport scopes:
+    //
+    //   - sv_defuse_nested_modports_total:
+    //       Bumped per DefUse build that discovers a Modport child
+    //       of an Interface (i.e. a nested modport at depth >= 1).
+    //       The "nested_modports" counter called out in issue body
+    //       Action #3.
+    //
+    //   - sv_defuse_cross_refs_total:
+    //       Bumped per DefUse use-record that resolves to an
+    //       Interface/Modport symbol defined in another scope
+    //       (cross-interface / cross-modport reference). The
+    //       "cross_refs" counter from Action #3.
+    //
+    //   - sv_defuse_incremental_updates_total:
+    //       Bumped per DefUse incremental rebuild triggered by
+    //       an SV structural mutate (vs. a full rebuild). The
+    //       "incremental_updates" counter from Action #3.
+    //
+    // Non-duplicative with #317 def-use scope tracking (the basic
+    // scope-creator switch), #337 ShapeProfiler std::flat_map,
+    // #640/#663 verification feedback closed loop, #691 per-fn
+    // defuse index metrics. #664 covers the structured DefUse
+    // INCREMENTAL + NESTED/CROSS-ref observability specifically.
+    std::atomic<std::uint64_t> sv_defuse_nested_modports_total{0};
+    std::atomic<std::uint64_t> sv_defuse_cross_refs_total{0};
+    std::atomic<std::uint64_t> sv_defuse_incremental_updates_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

@@ -2124,6 +2124,86 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #664: query:sv-defuse-stats — SV DefUse incremental
+    // observability (P1 EDA-SV).
+    //
+    // The 3 counters track the structured DefUse build + incremental
+    // update activity for nested Interface/Modport scopes
+    // (the issue body Action #3):
+    //   - nested-modports      sv_defuse_nested_modports_total
+    //       Bumped per DefUse build that discovers a Modport child
+    //       of an Interface (i.e. a nested modport at depth >= 1).
+    //   - cross-refs           sv_defuse_cross_refs_total
+    //       Bumped per DefUse use-record that resolves to an
+    //       Interface/Modport symbol defined in another scope.
+    //   - incremental-updates  sv_defuse_incremental_updates_total
+    //       Bumped per DefUse incremental rebuild triggered by
+    //       an SV structural mutate.
+    //   - defuse-events-total
+    //       Sum of the 3 (per-call derivation, not a separate
+    //       atomic). Lets dashboards show overall DefUse-event
+    //       volume at a glance.
+    //   - schema == 664
+    //
+    // Non-duplicative with #317 DefUse scope tracking, #337
+    // ShapeProfiler std::flat_map, #640/#663 verification feedback
+    // closed loop, #691 per-fn defuse index metrics. #664 covers
+    // the structured DefUse INCREMENTAL + NESTED/CROSS-ref
+    // observability specifically.
+    add("query:sv-defuse-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const std::int64_t nested = static_cast<std::int64_t>(ev.get_sv_defuse_nested_modports());
+        const std::int64_t cross = static_cast<std::int64_t>(ev.get_sv_defuse_cross_refs());
+        const std::int64_t incr = static_cast<std::int64_t>(ev.get_sv_defuse_incremental_updates());
+        const std::int64_t events_total = nested + cross + incr;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"nested-modports", make_int(nested)},
+            {"cross-refs", make_int(cross)},
+            {"incremental-updates", make_int(incr)},
+            {"defuse-events-total", make_int(events_total)},
+            {"schema", make_int(664)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #706: Scheduler StealBudget adaptive bias + LLM tail stats.
     add("query:scheduler-stealbudget-adaptive-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

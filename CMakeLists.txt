@@ -3097,6 +3097,24 @@ add_dependencies(all_test_issue_targets test_issue_662_sva_structured_mutate)
 aura_add_issue_test(test_issue_663_hardware_backend_sv_stats)
 aura_issue_test_link_llvm_jit(test_issue_663_hardware_backend_sv_stats)
 add_dependencies(all_test_issue_targets test_issue_663_hardware_backend_sv_stats)
+# Issue #664: SV DefUse incremental observability (P1).
+# Observability surface for the structured DefUse build +
+# incremental update path. 3 CompilerMetrics atomics
+# (sv_defuse_nested_modports_total /
+#  sv_defuse_cross_refs_total /
+#  sv_defuse_incremental_updates_total) + query:sv-defuse-stats
+# primitive (schema 664). The production wiring for Actions #1
+# (DefUse build for generate + cross-ref) + #2 (post-mutate
+# incremental rebuild hook) is follow-up scope; this commit
+# ships the observability surface + regression net.
+# 7 ACs: schema, 3 bump paths, sum invariant, multi-round
+# simulate (20+15+10 = 45 events), regression on adjacent
+# SV primitives (sv-sva 694, sv-interface 661, hardware-
+# backend-sv 663). Non-duplicative with #317/#337/#640/#663/
+# #691/#661/#662.
+aura_add_issue_test(test_issue_664_sv_defuse_stats)
+aura_issue_test_link_llvm_jit(test_issue_664_sv_defuse_stats)
+add_dependencies(all_test_issue_targets test_issue_664_sv_defuse_stats)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
