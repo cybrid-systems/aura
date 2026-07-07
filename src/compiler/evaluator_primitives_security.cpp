@@ -2979,6 +2979,124 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #672: query:linear-ownership-enforcement-stats
+    // — P0 runtime invariant enforcement observability for
+    // Linear ownership + GuardShape under concurrent fiber
+    // mutation. Exposes the 4 enforcement atomics (defined
+    // on CompilerMetrics in observability_metrics.h via
+    // #610/#638/#683) as a single Agent-discoverable
+    // surface. Pre-#672 the counters were scattered across
+    // 4 query primitives (mutation / safety / runtime /
+    // incremental / gc / typed-mutate) with no
+    // single-stop enforcement dashboard.
+    //
+    // Schema (6 fields + sentinel):
+    //   - post-mutate-enforcements
+    //       linear_post_mutate_enforcements_total — bumped
+    //       by bump_linear_post_mutate_enforcement() on
+    //       every successful Guard exit (#672 wiring)
+    //   - violations-caught
+    //       linear_violations_caught_total — bumped by
+    //       bump_linear_ownership_violation() + by
+    //       record_linear_gc_probe on violation
+    //   - deopt-on-mismatch
+    //       linear_deopt_on_mismatch_total — bumped by
+    //       bump_linear_ownership_violation() (the violation
+    //       implies a deopt). Pairs with violations-caught
+    //       for violation_rate derivation.
+    //   - check-passes
+    //       linear_check_pass_count_ — bumped by
+    //       bump_linear_ownership_pass() on every successful
+    //       check_linear_ownership_for_ref call. Agent
+    //       computes violation_rate = violations /
+    //       (violations + passes).
+    //   - leak-prevented
+    //       linear_leak_prevented_total — bumped by
+    //       bump_linear_leak_prevented() when a leaked
+    //       Linear binding is caught before eval.
+    //   - recommended-action
+    //       0 = no action (no violations, no leaks), 1 =
+    //       tighten policy (violations > 0), 2 = audit
+    //       linear-bindings (leaks > 0). Triggered when
+    //       any violation or leak counter > 0.
+    //   - schema == 672
+    //
+    // Non-duplicative with #610 / #638 / #683 / #688 (which
+    // expose the per-axis counters in their respective
+    // primitives). #672 carves out the enforcement-axis
+    // dashboard — useful when the Agent's question is
+    // "are linear-ownership invariants being enforced?"
+    // rather than "how is the post-mutate revalidate
+    // surface broken down by category?".
+    add("query:linear-ownership-enforcement-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t enforcements =
+            m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t violations =
+            m ? m->linear_violations_caught_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t deopts =
+            m ? m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t passes =
+            m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t leaks =
+            m ? m->linear_leak_prevented_total.load(std::memory_order_relaxed) : 0;
+        std::int64_t recommended_action = 0;
+        if (violations > 0)
+            recommended_action = 1; // tighten policy
+        else if (leaks > 0)
+            recommended_action = 2; // audit linear-bindings
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"post-mutate-enforcements", make_int(static_cast<std::int64_t>(enforcements))},
+            {"violations-caught", make_int(static_cast<std::int64_t>(violations))},
+            {"deopt-on-mismatch", make_int(static_cast<std::int64_t>(deopts))},
+            {"check-passes", make_int(static_cast<std::int64_t>(passes))},
+            {"leak-prevented", make_int(static_cast<std::int64_t>(leaks))},
+            {"recommended-action", make_int(recommended_action)},
+            {"schema", make_int(672)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #686: ShapeProfiler ring history + Value v2 dispatch +
     // DirtyAware pass short-circuit synergy stats.
     add("query:shape-value-pass-stats", [&ev](const auto&) -> EvalValue {

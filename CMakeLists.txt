@@ -3179,6 +3179,10 @@ add_dependencies(all_test_issue_targets test_atomic_batch_snapshot_stable_ref_ai
 aura_add_issue_test(test_stable_ref_cow_subworkspace_concurrent_ai)
 aura_issue_test_link_llvm_jit(test_stable_ref_cow_subworkspace_concurrent_ai)
 add_dependencies(all_test_issue_targets test_stable_ref_cow_subworkspace_concurrent_ai)
+# Issue #672: Linear ownership + GuardShape runtime invariant enforcement (P0).
+aura_add_issue_test(test_issue_672)
+aura_issue_test_link_llvm_jit(test_issue_672)
+add_dependencies(all_test_issue_targets test_issue_672)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

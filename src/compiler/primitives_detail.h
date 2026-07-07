@@ -162,8 +162,8 @@ namespace primitives_detail {
 
 #define PRIM_CAPTURE_USES_GUARD(SATISFIED)                                                         \
     static_assert((SATISFIED),                                                                     \
-                  "Issue #671 PRIM_CAPTURE_CONTRACT violated: mutate path must wrap work in "     \
-                  "MutationBoundaryGuard for provenance. See primitives_detail.h header for "     \
+                  "Issue #671 PRIM_CAPTURE_CONTRACT violated: mutate path must wrap work in "      \
+                  "MutationBoundaryGuard for provenance. See primitives_detail.h header for "      \
                   "the required capture discipline.")
 
 } // namespace primitives_detail
