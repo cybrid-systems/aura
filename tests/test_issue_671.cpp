@@ -101,9 +101,8 @@ static void run_ac4_compliance_pct(aura::compiler::CompilerService& cs) {
 static void run_ac5_contract_version(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: capture-contract-version reflects the header constant ---");
     auto v = hash_int(cs, "query:primitives-consistency-stats", "capture-contract-version");
-    // Issue #709 established kPrimCaptureContractVersion = 1.
-    // #671 doesn't bump it (no contract change), so it stays 1.
-    CHECK(v == 1, std::format("capture-contract-version == 1 (got {})", v));
+    // #751 bumped kPrimCaptureContractVersion to 2 (enforcement wiring).
+    CHECK(v == 2, std::format("capture-contract-version == 2 (got {})", v));
 }
 
 static void run_ac6_recommended_action(aura::compiler::CompilerService& cs) {

@@ -21,6 +21,17 @@ import aura.parser.parser;
 
 namespace aura::compiler {
 
+namespace primitives_detail {
+
+    void bump_prim_error_unified_total() noexcept {
+        if (auto* qev = Evaluator::get_query_evaluator()) {
+            if (auto* m = static_cast<CompilerMetrics*>(qev->compiler_metrics()))
+                m->prim_error_unified_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+} // namespace primitives_detail
+
 using macro_exp::clone_macro_body;
 using macro_exp::expand_inner_macros;
 using macro_exp::MacroExpansionDef;
