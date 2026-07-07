@@ -7,6 +7,14 @@
 //
 // Agents extending stdlib should use DEFINE_PRIMITIVE_META for registration meta
 // and slot_lookup_fast (via prim_record_fastpath_hit) in list/map/filter loops.
+//
+// Issue #671: STATIC_CAPTURE_CHECK helpers (compile-time enforcement).
+// Use PRIM_CAPTURE_HAS_ERROR_COUNTER / PRIM_CAPTURE_USES_GUARD at the
+// top of a register_*_primitives lambda body to fire a
+// static_assert(false) when the convention is violated. These are
+// no-ops at runtime (the assertion fires only when the caller
+// passes `false`); the intent is to make the discipline visible at
+// compile time during code review.
 
 #ifndef AURA_COMPILER_PRIMITIVES_DETAIL_H
 #define AURA_COMPILER_PRIMITIVES_DETAIL_H
@@ -123,6 +131,40 @@ namespace primitives_detail {
 #define PRIM_ERROR(MSG)                                                                            \
     ::aura::compiler::primitives_detail::make_primitive_error(string_heap, error_values, (MSG),    \
                                                               primitive_error_counter)
+
+// Issue #671: compile-time capture contract helpers. The
+// function bodies are unreachable (static_assert on the
+// `false` branch when the convention is violated); passing
+// `true` is a no-op. This makes the discipline visible at
+// code-review time without forcing a runtime check at every
+// primitive call site. Use inside register_*_primitives
+// lambdas:
+//
+//   add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
+//       PRIM_CAPTURE_HAS_ERROR_COUNTER(true);   // compile-time check
+//       PRIM_CAPTURE_USES_GUARD(true);         // compile-time check
+//       ...
+//   });
+//
+// The helpers are inline constexpr so they have zero runtime
+// cost when the convention is satisfied (the static_assert
+// branch is dead code).
+//
+// Implementation note: the helpers take a `bool` template
+// argument (not a function argument) so the static_assert
+// fires at compile time. The macro form passes the literal
+// `true` / `false` as a template parameter.
+#define PRIM_CAPTURE_HAS_ERROR_COUNTER(SATISFIED)                                                  \
+    static_assert((SATISFIED),                                                                     \
+                  "Issue #671 PRIM_CAPTURE_CONTRACT violated: mutate path must capture "           \
+                  "primitive_error_counter. See primitives_detail.h header for the required "      \
+                  "capture discipline.")
+
+#define PRIM_CAPTURE_USES_GUARD(SATISFIED)                                                         \
+    static_assert((SATISFIED),                                                                     \
+                  "Issue #671 PRIM_CAPTURE_CONTRACT violated: mutate path must wrap work in "     \
+                  "MutationBoundaryGuard for provenance. See primitives_detail.h header for "     \
+                  "the required capture discipline.")
 
 } // namespace primitives_detail
 

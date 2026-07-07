@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
+#include "primitives_detail.h"
 
 module aura.compiler.evaluator;
 
@@ -431,6 +432,9 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #669 — primitives meta introspection stats
     // (P1 stdlib-impl AI-native introspection)
     "query:primitives-meta-stats",
+    // Issue #671 — primitives capture consistency stats
+    // (P1 stdlib-impl consistency)
+    "query:primitives-consistency-stats",
     // Issue #706 — Scheduler StealBudget adaptive bias
     "query:scheduler-stealbudget-adaptive-stats",
     // Issue #652 / #707 — Per-fiber stack/checkpoint pool
@@ -1847,6 +1851,96 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("schema-documented", schema_documented);
         insert_kv("total-registered", total);
         insert_kv("schema", 669);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #671: query:primitives-consistency-stats —
+    // primitives_detail lambda capture discipline + style
+    // compliance observability (P1 stdlib-impl consistency).
+    //
+    // Companion to #709 (query:primitives-registry-stats which
+    // bundles registry-level metrics) but specialized on the
+    // capture-discipline axis. The existing #709 primitive
+    // exposes `capture-violations` as one of 7 fields; #671
+    // carves out a dedicated primitive focused on consistency:
+    //   - capture-violations-detected
+    //       primitive_capture_violations_total — bumped by
+    //       prim_record_capture_violation when a primitive
+    //       fails the capture contract (no error_counter on
+    //       a mutate path)
+    //   - style-compliance-pct
+    //       derived metric: (1 - capture_violations /
+    //       slot_count) * 100 — 100 means every primitive
+    //       passes the contract
+    //   - capture-contract-version
+    //       kPrimCaptureContractVersion (defined in
+    //       primitives_detail.h) — bump when the contract
+    //       changes so the Agent can detect drift
+    //   - recommended-action
+    //       0 = no action, 1 = backfill missing meta, 2 =
+    //       audit capture contract. Triggered when
+    //       capture_violations > 0 or documented < slots.
+    //   - schema == 671
+    //
+    // Non-duplicative with #709 (registry-level summary with
+    // 7 fields covering fast-path + EDA integration),
+    // #615 (PRIM_ERROR macro shape), #643 (DEFINE_PRIMITIVE
+    // macro for registration), #617 (catalog registry
+    // summary).
+    add("query:primitives-consistency-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t capture_viol =
+            m ? m->primitive_capture_violations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t slots = ev.primitives_.slot_count();
+        const std::uint64_t documented = ev.primitives_.documented_meta_count();
+        const std::int64_t style_compliance_pct =
+            slots > 0 ? static_cast<std::int64_t>(
+                            ((slots > capture_viol ? slots - capture_viol : 0) * 100) / slots)
+                      : 100;
+        std::int64_t recommended_action = 0;
+        if (capture_viol > 0)
+            recommended_action = 2; // audit capture contract
+        else if (documented < slots)
+            recommended_action = 1; // backfill missing meta
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("capture-violations-detected",
+                  static_cast<std::int64_t>(capture_viol));
+        insert_kv("style-compliance-pct", style_compliance_pct);
+        insert_kv("registry-slots", static_cast<std::int64_t>(slots));
+        insert_kv("documented-count", static_cast<std::int64_t>(documented));
+        insert_kv("capture-contract-version",
+                  static_cast<std::int64_t>(kPrimCaptureContractVersion));
+        insert_kv("recommended-action", recommended_action);
+        insert_kv("schema", 671);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
