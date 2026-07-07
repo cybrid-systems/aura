@@ -32,6 +32,11 @@ export struct LoweringObservabilityHooks {
     std::uint64_t bridge_epoch_capture = 0;
     void (*on_bridge_epoch_sync)() noexcept = nullptr;
     void (*on_linear_metadata_flow)() noexcept = nullptr;
+    // Issue #741: re-stamp EnvFrame version + quote/lambda bridge copy
+    // observability during re-lower of impacted defines.
+    void (*on_env_version_resync)() noexcept = nullptr;
+    void (*on_quote_lambda_bridge_copy)() noexcept = nullptr;
+    const std::unordered_set<std::size_t>* impact_func_indices = nullptr;
 };
 
 // ── LoweringState — all mutable lowering state ────────────────

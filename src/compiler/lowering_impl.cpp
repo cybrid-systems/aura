@@ -236,6 +236,13 @@ static std::uint32_t lower_flat_expr(
                             auto bridge_it = state.cache_bridge->find(std::string(name));
                             if (bridge_it != state.cache_bridge->end() &&
                                 ci < bridge_it->second.size()) {
+                                // Issue #741: limit bridge shared_ptr copy to
+                                // func indices in the impact_scope set (partial
+                                // re-lower). Non-impacted lambdas get epoch-only
+                                // refresh so stale flat/pool are not retained.
+                                const bool in_impact_scope =
+                                    !g_lowering_hooks.impact_func_indices ||
+                                    g_lowering_hooks.impact_func_indices->count(ci) > 0;
                                 // Issue #224 Cycle 2: shared_ptr<>-based
                                 // bridge. The cache bridge holds a
                                 // shared_ptr; we copy it (refcount
@@ -246,13 +253,25 @@ static std::uint32_t lower_flat_expr(
                                 std::uint64_t bridge_epoch = bridge_it->second[ci].bridge_epoch;
                                 if (g_lowering_hooks.bridge_epoch_capture != 0)
                                     bridge_epoch = g_lowering_hooks.bridge_epoch_capture;
-                                state.module.set_closure_bridge_ptr(
-                                    new_fid, bridge_it->second[ci].flat, bridge_it->second[ci].pool,
-                                    bridge_it->second[ci].body_id, bridge_epoch);
+                                if (in_impact_scope) {
+                                    state.module.set_closure_bridge_ptr(
+                                        new_fid, bridge_it->second[ci].flat,
+                                        bridge_it->second[ci].pool, bridge_it->second[ci].body_id,
+                                        bridge_epoch);
+                                    if (g_lowering_hooks.on_quote_lambda_bridge_copy)
+                                        g_lowering_hooks.on_quote_lambda_bridge_copy();
+                                } else {
+                                    state.module.set_closure_bridge_ptr(new_fid, {}, {},
+                                                                        aura::ast::NULL_NODE,
+                                                                        bridge_epoch);
+                                }
                                 if (g_lowering_hooks.on_bridge_epoch_sync)
                                     g_lowering_hooks.on_bridge_epoch_sync();
+                                if (g_lowering_hooks.on_env_version_resync)
+                                    g_lowering_hooks.on_env_version_resync();
                                 // Copy body_source for bridge fallback re-parse
-                                if (!bridge_it->second[ci].body_source.empty() &&
+                                if (in_impact_scope &&
+                                    !bridge_it->second[ci].body_source.empty() &&
                                     new_fid < state.module.closure_bridge.size()) {
                                     state.module.closure_bridge[new_fid].body_source =
                                         bridge_it->second[ci].body_source;
@@ -1101,6 +1120,10 @@ static std::uint32_t lower_flat_expr(
                     state.current_pool, [](const aura::ast::StringPool*) {});
                 state.module.set_closure_bridge(fid, std::move(flat_sp), std::move(pool_sp),
                                                 v.child(0));
+                if (g_lowering_hooks.on_quote_lambda_bridge_copy)
+                    g_lowering_hooks.on_quote_lambda_bridge_copy();
+                if (g_lowering_hooks.on_env_version_resync)
+                    g_lowering_hooks.on_env_version_resync();
                 // Save lambda body source for bridge fallback re-parse
                 auto body_src = unparse_node(*state.current_flat, *state.current_pool, v.child(0));
                 state.module.set_closure_body_source(fid, body_src);

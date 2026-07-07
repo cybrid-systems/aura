@@ -85,6 +85,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:compiler-root-stats",
     // Issue #600 — Per-block dirty + impact scope + closure bridge synergy
     "query:incremental-closure-stats",
+    // Issue #741 — impact_scope → closure_bridge + EnvFrame version re-stamp
+    "query:incremental-closure-bridge-stats",
     // Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps
     "query:macro-hygiene-fiber-panic-stats",
     // Issue #655 — EDSL core stability COW/atomic/query/mutate gaps
@@ -3583,6 +3585,71 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("min-scope-win", min_scope_win);
         insert_kv("jit-sync-count", jit_sync);
         insert_kv("schema", 600);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #741: query:incremental-closure-bridge-stats — impact_scope
+    // propagation to closure_bridge shared_ptr lifetime + EnvFrame version
+    // re-stamp for quote/lambda-heavy defines (non-duplicative with #718
+    // block_dirty, #719 epoch/bridge general safety).
+    //
+    // Fields (3 + sentinel):
+    //   - impact-blocks-on-bridge  incremental_closure_bridge_impact_blocks_total
+    //   - quote-lambda-stale-prevented
+    //                              incremental_closure_quote_lambda_stale_prevented_total
+    //   - env-version-resync       incremental_closure_env_version_resync_total
+    //   - schema == 741
+    add("query:incremental-closure-bridge-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t impact_on_bridge =
+            m ? static_cast<std::int64_t>(
+                    m->incremental_closure_bridge_impact_blocks_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        const std::int64_t quote_lambda_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->incremental_closure_quote_lambda_stale_prevented_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        const std::int64_t env_resync =
+            m ? static_cast<std::int64_t>(
+                    m->incremental_closure_env_version_resync_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("impact-blocks-on-bridge", impact_on_bridge);
+        insert_kv("quote-lambda-stale-prevented", quote_lambda_prevented);
+        insert_kv("env-version-resync", env_resync);
+        insert_kv("schema", 741);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

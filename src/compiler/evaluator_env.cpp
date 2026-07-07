@@ -562,6 +562,9 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // events for production monitoring. Stats-only
         // (relaxed-ordering); doesn't affect control flow.
         bump_envframe_stale_refresh_count();
+        // Issue #741: EnvFrame version re-stamp on materialize for
+        // quote/lambda closures held across partial re-lower.
+        bump_incremental_closure_env_version_resync();
         // Issue #317 follow-up: emit the diagnostic only when
         // the operator has opted in. Default silent. The
         // (query:envframe-dualpath-stats) primitive is the
@@ -695,6 +698,30 @@ bool Evaluator::is_env_frame_invalid(EnvId id) const {
     // guards against an alloc_env_frame concurrent reallocation.
     std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
     return env_frames_[id].version_ == INVALID_VERSION;
+}
+
+// Issue #741: proactive EnvFrame version re-stamp for live
+// tree-walker closures after invalidate_function / impact_scope
+// partial re-lower. Walks closures_ and refreshes stale captured
+// env frames so long-lived quote/lambda closures don't trip
+// closure_needs_safe_fallback on their next apply.
+std::uint64_t Evaluator::resync_live_closure_env_versions_on_invalidate() {
+    std::uint64_t resynced = 0;
+    const std::uint64_t current = defuse_version_.load(std::memory_order_acquire);
+    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
+    for (const auto& [cid, cl] : closures_) {
+        (void)cid;
+        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+            continue;
+        const EnvFrame& fr = env_frames_[cl.env_id];
+        if (fr.version_ == INVALID_VERSION || fr.version_ >= current)
+            continue;
+        refresh_stale_frame_in_walk(cl.env_id, "resync_live_closure_env_on_invalidate");
+        bump_incremental_closure_env_version_resync();
+        ++resynced;
+    }
+    return resynced;
 }
 
 // Issue #356: invalidate_post_rollback_env_frames — mark
