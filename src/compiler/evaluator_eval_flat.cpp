@@ -3883,6 +3883,73 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     return ok;
 }
 
+std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view name) noexcept {
+    if (!workspace_flat_ || !workspace_pool_)
+        return -1;
+    auto src_fn = primitives_.lookup("current-source");
+    if (!src_fn)
+        return -1;
+    auto src = (*src_fn)({});
+    if (!types::is_string(src))
+        return -1;
+    auto src_idx = types::as_string_idx(src);
+    if (src_idx >= string_heap_.size())
+        return -1;
+    auto source = string_heap_[src_idx];
+    workspace_flat_->recycle_dead_nodes();
+    FlatSnapshot fs;
+    try {
+        fs.flat = std::make_unique<aura::ast::FlatAST>();
+        fs.pool = std::make_unique<aura::ast::StringPool>();
+        *fs.flat = *workspace_flat_;
+        *fs.pool = *workspace_pool_;
+        fs.has_flat = true;
+        fs.flat_generation = workspace_flat_->generation();
+        fs.flat_size = workspace_flat_->size();
+        if (workspace_tree_) {
+            auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+            if (auto* node = wt->active())
+                fs.cow_epoch = node->cow_epoch;
+        }
+    } catch (...) {
+        fs.has_flat = false;
+    }
+    auto id = snapshot_sources_.size();
+    snapshot_sources_.push_back(source);
+    snapshot_names_.push_back(std::string(name));
+    snapshot_flats_.push_back(std::move(fs));
+    return static_cast<std::int64_t>(id);
+}
+
+bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
+    if (id >= snapshot_sources_.size() || workspace_read_only_ || !workspace_flat_ || !workspace_pool_)
+        return false;
+    last_set_code_error_kind_.clear();
+    last_set_code_error_msg_.clear();
+    last_eval_current_result_.reset();
+    if (id < snapshot_flats_.size() && snapshot_flats_[id].has_flat && snapshot_flats_[id].flat &&
+        snapshot_flats_[id].pool) {
+        try {
+            *workspace_flat_ = *snapshot_flats_[id].flat;
+            *workspace_pool_ = *snapshot_flats_[id].pool;
+            workspace_flat_->recycle_dead_nodes();
+            update_shared_tree_root();
+            last_post_restore_report_ = workspace_flat_->validate_post_restore();
+            last_post_restore_violations_ = last_post_restore_report_.violations;
+            defuse_index_destroy(reinterpret_cast<void**>(&defuse_index_));
+            defuse_affected_syms_.clear();
+            if (mark_all_defines_dirty_fn_)
+                mark_all_defines_dirty_fn_();
+            if (pre_cache_workspace_defines_fn_)
+                pre_cache_workspace_defines_fn_();
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    return false;
+}
+
 Evaluator::MutationImpactEntry Evaluator::get_latest_mutation_impact_entry() const noexcept {
     const auto seq = mutation_impact_ring_seq_.load(std::memory_order_acquire);
     if (seq == 0)

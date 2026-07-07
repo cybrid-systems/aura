@@ -558,6 +558,66 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // Issue #737: query:atomic-batch-snapshot-stats-hash — end-to-end
+    // atomic batch + snapshot + StableNodeRef pinning observability
+    // for multi-round AI Agent edit loops. Complements #622 (per-
+    // batch runtime state) and #529 (rollback stats).
+    //
+    // Fields (7):
+    //   - batch-commits              Evaluator atomic_batch_count_
+    //   - rollback-triggers        Evaluator atomic_batch_rollbacks_
+    //   - pinned-refs-last-batch     current pinned ref set size
+    //   - pinned-refs-total          lifetime pinned ref captures
+    //   - snapshot-captures          batches that took :snapshot?
+    //   - snapshot-rollbacks         ast:restore on batch failure
+    //   - suppressed-bumps-total     atomic_batch_bumps_saved_total_
+    //   - schema == 737
+    add("query:atomic-batch-snapshot-stats-hash", [&ev](const auto&) -> EvalValue {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("batch-commits", static_cast<std::int64_t>(ev.atomic_batch_count()));
+        insert_kv("rollback-triggers", static_cast<std::int64_t>(ev.atomic_batch_rollbacks()));
+        insert_kv("pinned-refs-last-batch",
+                  static_cast<std::int64_t>(ev.atomic_batch_pinned_ref_count()));
+        insert_kv("pinned-refs-total",
+                  static_cast<std::int64_t>(ev.atomic_batch_pinned_refs_total()));
+        insert_kv("snapshot-captures",
+                  static_cast<std::int64_t>(ev.atomic_batch_snapshot_captures()));
+        insert_kv("snapshot-rollbacks",
+                  static_cast<std::int64_t>(ev.atomic_batch_snapshot_rollbacks()));
+        insert_kv("suppressed-bumps-total",
+                  static_cast<std::int64_t>(ev.atomic_batch_bumps_saved_total()));
+        insert_kv("schema", 737);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

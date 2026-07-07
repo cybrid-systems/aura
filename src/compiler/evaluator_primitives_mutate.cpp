@@ -2680,44 +2680,60 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //     initial_log_size) which actually undoes the
     //     per-op mutations recorded in the log.
     add_mutate("mutate:atomic-batch", [&ev, mev](const auto& a) -> EvalValue {
+        // Issue #737: parse args + optional pre-guard snapshot
+        // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
+        // also takes workspace_mtx_; nested acquire deadlocks).
+        if (a.size() < 1) {
+            return mev("bad-arg",
+                       "usage: (mutate:atomic-batch (list ...) [\"summary\"] [:snapshot? #t])");
+        }
+        bool want_snapshot = false;
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (is_keyword(a[ai])) {
+                auto kidx = as_keyword_idx(a[ai]);
+                if (kidx >= ev.keyword_table_.size())
+                    return mev("bad-arg", "unknown keyword");
+                const auto& kw = ev.keyword_table_[kidx];
+                if (kw == ":snapshot?") {
+                    want_snapshot = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            want_snapshot = as_bool(a[ai + 1]);
+                        else
+                            want_snapshot = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                } else {
+                    return mev("bad-arg",
+                               std::string("unknown mutate:atomic-batch keyword: ") + kw);
+                }
+            }
+        }
+        EvalValue op_list = a[0];
+        if (!is_pair(op_list) && !is_void(op_list))
+            return mev("bad-arg", "ops list must be a list (use (list) for empty)");
+        if (!ev.workspace_flat_)
+            return mev("no-workspace", "no FlatAST available");
+        ev.begin_atomic_batch_pinning();
+        std::int64_t batch_snap_id = -1;
+        if (want_snapshot) {
+            if (auto snap_fn = ev.primitives_.lookup("ast:snapshot")) {
+                auto snap_name_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back("atomic-batch-pre");
+                auto snap_result = (*snap_fn)({make_string(snap_name_idx)});
+                if (is_int(snap_result)) {
+                    batch_snap_id = as_int(snap_result);
+                    ev.record_atomic_batch_snapshot_capture(batch_snap_id);
+                }
+            }
+        }
         bool guard_ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        // Issue #396 Phase 1: set the current fiber's yield reason
-        // to MutationBoundary for the duration of the batch. This
-        // makes work-stealing decisions (is_stealable()) see this
-        // fiber as being at a mutation boundary, even though the
-        // actual batch hasn't yielded. The hook is a no-op when
-        // not in serve mode (no scheduler).
-        //
-        // Issue #396 Phase 3: also track whether we were in a
-        // fiber context for the "executed-under-concurrent-fiber"
-        // heuristic counter. The hook being non-null implies
-        // serve mode (scheduler active); combined with the fact
-        // that we're inside a fiber call site, this is a good
-        // proxy for "ran under concurrent fiber pressure".
+        guard.suppress_generation_bump(true);
         const bool in_fiber =
             (aura::messaging::g_fiber_set_yield_reason_mutation_boundary != nullptr);
-        if (in_fiber) {
+        if (in_fiber)
             aura::messaging::g_fiber_set_yield_reason_mutation_boundary();
-        }
-        // Allow a.size() == 1 with the ops list being empty (void)
-        // — that's a vacuous success (no ops, no rollback needed).
-        // The summary string is optional in that case.
-        if (a.size() < 1) {
-            guard_ok = false;
-            return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) \"summary\")");
-        }
-        // a[0] is the ops list. It can be an empty list (void)
-        // or a non-empty proper list. Anything else is bad-arg.
-        EvalValue op_list = a[0];
-        if (!is_pair(op_list) && !is_void(op_list)) {
-            guard_ok = false;
-            return mev("bad-arg", "ops list must be a list (use (list) for empty)");
-        }
-        if (!ev.workspace_flat_) {
-            guard_ok = false;
-            return mev("no-workspace", "no FlatAST available");
-        }
         std::uint64_t initial_log_size = ev.workspace_flat_->all_mutations().size();
         bool ok = true;
         std::size_t op_count = 0;
@@ -2790,9 +2806,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_->rollback_atomic_batch();
                 ev.atomic_batch_rollbacks_++;
                 ev.bump_edsl_nested_atomic_rollback();
-                guard_ok = false;
-                return ev.make_merr(
-                    "batch-unsupported-op",
+            if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                         static_cast<std::size_t>(batch_snap_id)))
+                ev.bump_atomic_batch_snapshot_rollback();
+            ev.rollback_atomic_batch_pinning();
+            guard_ok = false;
+            return ev.make_merr(
+                "batch-unsupported-op",
                     ("mutate:atomic-batch does not yet support '" + op_name +
                      "' (only :rebind / :replace-value / :tweak-literal; the others "
                      "need lockless helper extraction)")
@@ -2807,6 +2827,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ok = false;
                 break;
             }
+            ev.pin_dirty_nodes_for_atomic_batch();
             ++op_count;
         }
         if (!ok) {
@@ -2814,6 +2835,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ev.workspace_flat_->rollback_atomic_batch();
             ev.atomic_batch_rollbacks_++;
             ev.bump_edsl_nested_atomic_rollback();
+            if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                         static_cast<std::size_t>(batch_snap_id)))
+                ev.bump_atomic_batch_snapshot_rollback();
+            ev.rollback_atomic_batch_pinning();
             guard_ok = false;
             // Issue #250 / regression fix: the previous
             // `make_bool(false)` return made the failure
@@ -2836,6 +2861,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.atomic_batch_count_++;
         ev.atomic_batch_ops_total_ += op_count;
         ev.atomic_batch_bumps_saved_total_ += saved;
+        ev.commit_atomic_batch_pinning();
         // Issue #396 Phase 3: track fiber-context commits for
         // the "executed-under-concurrent-fiber" heuristic.
         if (in_fiber) {

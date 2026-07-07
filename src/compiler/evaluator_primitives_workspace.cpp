@@ -23,6 +23,52 @@ using namespace types;
 void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                                    std::function<void()> destroy_defuse_index) {
 
+    // Issue #737: (workspace:snapshot name) → snapshot ID.
+    // Named convenience wrapper over (ast:snapshot name) for
+    // AI Agent multi-round edit loops.
+    add("workspace:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_int(-1);
+        auto snap_fn = ev.primitives_.lookup("ast:snapshot");
+        if (!snap_fn)
+            return make_int(-1);
+        return (*snap_fn)(a);
+    });
+
+    // Issue #737: (workspace:rollback-to name-or-epoch) → #t/#f.
+    // Restores a named snapshot or numeric snapshot ID.
+    add("workspace:rollback-to", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty())
+            return make_bool(false);
+        auto restore_fn = ev.primitives_.lookup("ast:restore");
+        if (!restore_fn)
+            return make_bool(false);
+        if (is_int(a[0]))
+            return (*restore_fn)(a);
+        if (!is_string(a[0]))
+            return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& target = ev.string_heap_[name_idx];
+        for (std::size_t i = 0; i < ev.snapshot_names_.size(); ++i) {
+            if (ev.snapshot_names_[i] == target)
+                return (*restore_fn)({make_int(static_cast<std::int64_t>(i))});
+        }
+        // Fallback: match auto-generated "snapshot-N" names.
+        constexpr std::string_view prefix = "snapshot-";
+        if (target.size() > prefix.size() && target.substr(0, prefix.size()) == prefix) {
+            try {
+                auto id = static_cast<std::size_t>(std::stoull(target.substr(prefix.size())));
+                if (id < ev.snapshot_sources_.size())
+                    return (*restore_fn)({make_int(static_cast<std::int64_t>(id))});
+            } catch (...) {
+                return make_bool(false);
+            }
+        }
+        return make_bool(false);
+    });
+
     // (workspace:rollback-latest) → mutation-id of the most recent
     //   committed mutation, after rolling it back. Returns 0 if no
     //   committed mutation exists. Issue #142: convenience wrapper

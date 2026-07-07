@@ -5452,6 +5452,11 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             // Name matches the issue's proposed field.
             {"executed-under-concurrent-fiber",
              make_int(static_cast<std::int64_t>(ev.atomic_batch_in_fiber_total_))},
+            // Issue #737: pinning + snapshot rollback observability.
+            {"pinned-refs-last-batch",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_pinned_ref_count()))},
+            {"rollback-triggers",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_rollbacks()))},
         };
         return build_hash(kv);
     });

@@ -2267,6 +2267,14 @@ private:
     // in those. Exposed via (atomic-batch:stats) hash key
     // "executed-under-concurrent-fiber".
     std::atomic<std::uint64_t> atomic_batch_in_fiber_total_{0};
+    // Issue #737: atomic-batch snapshot + StableNodeRef pinning
+    // for multi-round AI edit loops. Pinned refs stay valid
+    // across the suppressed-bump window; refreshed on commit.
+    std::vector<aura::ast::FlatAST::StableNodeRef> atomic_batch_pinned_refs_{};
+    std::atomic<std::uint64_t> atomic_batch_pinned_refs_total_{0};
+    std::atomic<std::uint64_t> atomic_batch_snapshot_rollbacks_{0};
+    std::atomic<std::uint64_t> atomic_batch_snapshot_captures_{0};
+    std::int64_t last_atomic_batch_snapshot_id_ = -1;
     // Issue #453: panic checkpoint lifecycle metrics. Bumped by
     // the bridge hooks (g_transfer_panic_checkpoint, etc.) when
     // a checkpoint transfer or GC defer happens across a fiber
@@ -4610,6 +4618,72 @@ public:
     [[nodiscard]] std::uint64_t atomic_batch_in_fiber_total() const noexcept {
         return atomic_batch_in_fiber_total_.load(std::memory_order_relaxed);
     }
+    // Issue #737: atomic-batch snapshot + pinning accessors.
+    void begin_atomic_batch_pinning() noexcept {
+        atomic_batch_pinned_refs_.clear();
+        last_atomic_batch_snapshot_id_ = -1;
+    }
+    void pin_node_for_atomic_batch(aura::ast::NodeId id) noexcept {
+        if (!workspace_flat_ || id >= workspace_flat_->size())
+            return;
+        const auto ref = workspace_flat_->make_safe_ref(id);
+        for (const auto& existing : atomic_batch_pinned_refs_) {
+            if (existing.id == ref.id)
+                return;
+        }
+        atomic_batch_pinned_refs_.push_back(ref);
+    }
+    void pin_dirty_nodes_for_atomic_batch() noexcept {
+        if (!workspace_flat_)
+            return;
+        for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+            if (workspace_flat_->is_dirty(id))
+                pin_node_for_atomic_batch(id);
+        }
+    }
+    void commit_atomic_batch_pinning() noexcept {
+        if (!workspace_flat_)
+            return;
+        atomic_batch_pinned_refs_total_.fetch_add(atomic_batch_pinned_refs_.size(),
+                                                  std::memory_order_relaxed);
+        const auto gen = workspace_flat_->generation();
+        for (auto& ref : atomic_batch_pinned_refs_) {
+            if (ref.id < workspace_flat_->size())
+                ref.gen = gen;
+        }
+    }
+    void rollback_atomic_batch_pinning() noexcept {
+        atomic_batch_pinned_refs_.clear();
+        last_atomic_batch_snapshot_id_ = -1;
+    }
+    void record_atomic_batch_snapshot_capture(std::int64_t snap_id) noexcept {
+        last_atomic_batch_snapshot_id_ = snap_id;
+        if (snap_id >= 0)
+            atomic_batch_snapshot_captures_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_atomic_batch_snapshot_rollback() noexcept {
+        atomic_batch_snapshot_rollbacks_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t atomic_batch_pinned_ref_count() const noexcept {
+        return atomic_batch_pinned_refs_.size();
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_pinned_refs_total() const noexcept {
+        return atomic_batch_pinned_refs_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_snapshot_rollbacks() const noexcept {
+        return atomic_batch_snapshot_rollbacks_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_snapshot_captures() const noexcept {
+        return atomic_batch_snapshot_captures_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::int64_t last_atomic_batch_snapshot_id() const noexcept {
+        return last_atomic_batch_snapshot_id_;
+    }
+    // Issue #737: snapshot capture/restore without re-acquiring
+    // workspace_mtx_ (caller must hold the exclusive lock).
+    [[nodiscard]] std::int64_t
+    capture_workspace_snapshot_under_lock(std::string_view name) noexcept;
+    [[nodiscard]] bool restore_workspace_snapshot_under_lock(std::size_t id) noexcept;
     // Issue #459: nested atomic-batch + suppressed-bump
     // observability. Bumped when:
     //   - atomic_batch_steal_violation_ — a fiber steal
