@@ -3704,6 +3704,30 @@ public:
                                                                        std::memory_order_relaxed);
         }
     }
+    // Issue #713: JIT/AOT/Interpreter macro-hygiene violation
+    // counters backing the standalone (query:macro-jit-hygiene-stats)
+    // primitive. The bumps are wired from aura_jit_bridge.cpp
+    // (aot reload path) and evaluator.ixx fast paths; deopt hook
+    // (LLVM IR emit) is follow-up work for a focused JIT session.
+    void bump_macro_jit_hygiene_deopt() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_jit_hygiene_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_aot_reload_marker_mismatches() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_aot_reload_marker_mismatches_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_interpreter_fallback_hygiene_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_interpreter_fallback_hygiene_hits_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

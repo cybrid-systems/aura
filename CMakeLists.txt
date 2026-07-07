@@ -3074,6 +3074,18 @@ add_dependencies(all_test_issue_targets test_issue_711)
 aura_add_issue_test(test_issue_712)
 aura_issue_test_link_llvm_jit(test_issue_712)
 add_dependencies(all_test_issue_targets test_issue_712)
+# Issue #713: macro hygiene in JIT/AOT/Interpreter — 3 atomics
+# backing (query:macro-jit-hygiene-stats, schema 713) primitive.
+# Pairs with #488/#654/#712 (#713 is the JIT/AOT/Interpreter
+# extension of those subtree/workspace hygiene surfaces).
+# 5 ACs / 17 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #697 + #712. Real JIT deopt / AOT reload marker-mismatch /
+# interpreter fallback hooks are follow-up (each requires
+# dedicated LLVM/dlopen/IR-dispatch session).
+aura_add_issue_test(test_issue_713)
+aura_issue_test_link_llvm_jit(test_issue_713)
+add_dependencies(all_test_issue_targets test_issue_713)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
