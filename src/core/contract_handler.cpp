@@ -23,6 +23,8 @@
 
 #include <contracts>
 
+#include "cpp26_contract_stats.h"
+
 // ── Public C API for the hook ─────────────────────────────────
 // We pass a C struct (not std::contracts::contract_violation) so
 // the hook signature doesn't depend on <contracts> at every call
@@ -105,6 +107,9 @@ void handle_contract_violation(const std::contracts::contract_violation& v) {
                  semantic_str(cv.semantic), (cv.file ? cv.file : "?"), cv.line,
                  (cv.function ? cv.function[0] ? std::string(" in ") + cv.function : "" : ""),
                  (cv.comment ? cv.comment : "(no comment)"));
+
+    // Issue #742: bump cpp26 contract violation counter before abort.
+    aura::core::cpp26::record_contract_violation_caught();
 
     // 2. Call the user-registered hook, if any. The hook can record
     //    the violation into DiagnosticCollector, observability

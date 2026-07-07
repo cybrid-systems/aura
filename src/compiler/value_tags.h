@@ -46,6 +46,8 @@
 #include <atomic>
 #include <cstdint>
 
+#include "core/cpp26_contract_stats.h"
+
 namespace aura::compiler::types {
 
 // Issue #571: unified tag classification for EvalValue v2 dispatch.
@@ -138,6 +140,10 @@ inline constexpr RefType RefKeyword = 11;
 // a new RefType, the 4-bit allocation is already maxed out (16 entries);
 // switch to 8-bit type tag in both this header and lib/runtime.c.
 static_assert(RefKeyword == 11, "RefType drift: update value_tags.h + lib/runtime.c");
+// Issue #742: Ref sub-type range must fit the 4-bit field (bits 2-5).
+static_assert(RefKeyword < 16, "Ref sub-types must fit in 4 bits");
+static_assert(RefPair == 0 && RefClosure == 1 && RefCell == 2,
+              "Ref sub-type ids 0..2 must be stable for dispatch");
 
 // ═══════════════════════════════════════════════════════════════════
 // Cross-cutting tag map (Issue #58 documentation)
@@ -359,6 +365,7 @@ static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
 // is_float_raw_v2 for clarity.
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     value_classify_call_count.fetch_add(1, std::memory_order_relaxed);
+    aura::core::cpp26::record_hotpath_invariant_hit();
     if ((v & 3) == 3) {
         if (v == 3 || v == 7 || v == 11) {
             record_value_dispatch_hit();

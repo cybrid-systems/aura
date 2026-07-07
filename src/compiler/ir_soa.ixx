@@ -29,12 +29,18 @@ module;
 #include <vector>
 #include <contracts>
 
+#include "core/cpp26_contract_stats.h"
+
 export module aura.compiler.ir_soa;
 
 import std;
 import aura.compiler.ir; // for aura::ir::IROpcode (lives in aura::ir)
 
 namespace aura::compiler {
+
+// Issue #742: consteval SoA column count (must match cxx26_invariants.ixx).
+inline constexpr std::size_t kIrSoaColumnCount = 10;
+static_assert(kIrSoaColumnCount == 10, "IRFunctionSoA must have 10 SoA columns");
 
 // ── Forward declarations ──────────────────────────────────────
 //
@@ -291,6 +297,8 @@ export struct BasicBlockSoA {
 // downstream importers get the same definition without ODR
 // violations.
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
+    contract_assert(block_id < blocks_.size() || block_dirty_.empty() || block_id <= block_dirty_.size());
+    aura::core::cpp26::record_hotpath_invariant_hit();
     if (block_id >= block_dirty_.size()) {
         block_dirty_.resize(block_id + 1, 1);
     } else {
@@ -415,7 +423,9 @@ export struct IRModuleV2 {
     // Get a view of the i-th instruction in a function.
     // The view is non-owning; it stays valid as long as the
     // function is not modified.
-    IRInstructionView view_at(std::size_t func_idx, std::uint32_t idx) const {
+    IRInstructionView view_at(std::size_t func_idx, std::uint32_t idx) const
+        pre(func_idx < functions.size()) pre(idx < functions[func_idx].size()) {
+        aura::core::cpp26::record_hotpath_invariant_hit();
         return IRInstructionView(functions[func_idx], idx);
     }
 

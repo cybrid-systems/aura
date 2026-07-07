@@ -3199,6 +3199,10 @@ add_dependencies(all_test_issue_targets test_prompt6_linear_jit_l2_post_invalida
 aura_add_issue_test(test_prompt2_6_impact_scope_quote_lambda_bridge_env)
 aura_issue_test_link_llvm_jit(test_prompt2_6_impact_scope_quote_lambda_bridge_env)
 add_dependencies(all_test_issue_targets test_prompt2_6_impact_scope_quote_lambda_bridge_env)
+# Issue #742: C++26 Contracts + consteval hot-path invariants.
+aura_add_issue_test(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
+aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
+add_dependencies(all_test_issue_targets test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
