@@ -127,4 +127,22 @@ namespace concept_self_check {
                   "Issue #431: std::vector<int> must satisfy SoAColumnar");
 } // namespace concept_self_check
 
+// ── Issue #742: IR SoA + Pass pipeline consteval invariants ───
+//
+// Column count for IRFunctionSoA (opcode + 4 operands + 5 metadata).
+// Must match ir_soa.ixx IRFunctionSoA column layout.
+inline constexpr std::size_t kIrSoaColumnCount = 10;
+static_assert(kIrSoaColumnCount == 10,
+              "Issue #742: IRFunctionSoA column count must be 10 "
+              "(update ir_soa.ixx + this file together)");
+
+// Shape inline ID range must be disjoint from SHAPE_UNKNOWN/SHAPE_ANY.
+inline constexpr std::uint64_t kShapeInlineIntId = 2;
+inline constexpr std::uint64_t kShapeInlinePairId = 10;
+static_assert(kShapeInlineIntId < kShapeInlinePairId,
+              "Issue #742: inline ShapeID ranges must be ordered");
+
+// Exported count for (query:cpp26-contracts-stats) consteval_checks field.
+inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 32;
+
 } // namespace aura::core

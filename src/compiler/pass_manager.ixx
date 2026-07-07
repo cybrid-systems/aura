@@ -16,6 +16,8 @@ module;
 #include <utility>
 #include <vector>
 
+#include "core/cpp26_contract_stats.h"
+
 export module aura.compiler.pass_manager;
 import std;
 import aura.core;
@@ -121,6 +123,7 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 // template still works as before.
 export template <Pass... Passes>
 bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Passes) > 0) {
+    aura::core::cpp26::record_hotpath_invariant_hit();
     // Issue #625: bump the pass-pipeline-runs counter once per
     // full invocation (NOT per-pass). Pairs with the dirty-block
     // short-circuit counters from #494/#606 so the Agent can see
@@ -278,6 +281,7 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
         }
         if (!any_dirty) {
             passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
+            aura::core::cpp26::record_hotpath_invariant_hit();
             continue;
         }
         pass.run(func);

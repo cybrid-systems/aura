@@ -8,6 +8,7 @@ module;
 #include "observability_metrics.h"
 #include "compiler/shape.h"
 #include "compiler/value_tags.h"
+#include "core/cpp26_contract_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 #include "primitives_detail.h"
@@ -95,6 +96,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:compiler-core-incremental-stats",
     // Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps
     "query:highperf-cpp26-stats",
+    // Issue #742 — C++26 Contracts + consteval hot-path invariants
+    "query:cpp26-contracts-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -3944,6 +3947,59 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("shape-history-jitter-wins", jitter_wins);
         insert_kv("pass-dirty-skips", dirty_skips);
         insert_kv("schema", 658);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #742: query:cpp26-contracts-stats — C++26 Contracts +
+    // consteval hot-path invariant observability for Arena/SoA/Value/
+    // Shape/Pass pipeline (non-duplicative with #658 highperf-cpp26,
+    // #431 cxx26-invariants, #465 cxx26-hotpath-invariants).
+    //
+    // Fields (3 + sentinel):
+    //   - contract-violations-caught  cpp26::contract_violations_caught_total
+    //   - consteval-checks            kConstevalChecksTotal (compile-time)
+    //   - hotpath-invariant-hits      cpp26::hotpath_invariant_hits_total
+    //   - schema == 742
+    add("query:cpp26-contracts-stats", [&ev](const auto&) -> EvalValue {
+        (void)ev;
+        const std::int64_t violations = static_cast<std::int64_t>(
+            aura::core::cpp26::contract_violations_caught_total.load(std::memory_order_relaxed));
+        const std::int64_t consteval_checks = aura::core::cpp26::kConstevalChecksTotal;
+        const std::int64_t hotpath_hits = static_cast<std::int64_t>(
+            aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed));
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("contract-violations-caught", violations);
+        insert_kv("consteval-checks", consteval_checks);
+        insert_kv("hotpath-invariant-hits", hotpath_hits);
+        insert_kv("schema", 742);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

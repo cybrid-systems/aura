@@ -11,6 +11,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/gc_hooks.h"
+#include "core/cpp26_contract_stats.h"
 export module aura.core.arena;
 import std;
 
@@ -117,6 +118,12 @@ public:
     static constexpr std::size_t kPerTierSize = kSmallPoolSize / kNumTiers; // 1MB each
     static constexpr std::size_t kMaxSmallSize = kTierSizes[kNumTiers - 1]; // 64
 
+    // Issue #742: consteval tier layout invariants (zero runtime cost).
+    static_assert(kTierSizes[0] < kTierSizes[1] && kTierSizes[1] < kTierSizes[2],
+                  "SmallObjectPool tier sizes must be strictly ascending");
+    static_assert(kTierSizes[0] >= 16 && kTierSizes[2] <= kMaxSmallSize,
+                  "SmallObjectPool tier range must be [16, kMaxSmallSize]");
+
     SmallObjectPool() {
         buffer_.resize(kSmallPoolSize);
         for (std::size_t i = 0; i < kNumTiers; ++i) {
@@ -129,17 +136,19 @@ public:
 
     // Allocate from the best-fitting tier. Returns nullptr if too large
     // or if the tier is exhausted (caller should fallback).
-    void* try_allocate(std::size_t size) {
+    void* try_allocate(std::size_t size) pre(size > 0) pre(size <= kMaxSmallSize) {
         for (auto& c : classes_) {
             if (size <= c.obj_sz) {
                 void* ptr = c.bump;
                 c.bump += c.obj_sz;
                 if (c.bump <= c.end) {
                     allocated_from_small_ += c.obj_sz;
+                    aura::core::cpp26::record_hotpath_invariant_hit();
                     return ptr;
                 }
                 // This tier is exhausted — reset bump and signal overflow
                 c.bump -= c.obj_sz; // undo
+                aura::core::cpp26::record_hotpath_invariant_hit();
                 return nullptr;
             }
         }
@@ -589,11 +598,13 @@ private:
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);
             if (ptr) {
+                aura::core::cpp26::record_hotpath_invariant_hit();
                 maybe_auto_compact_on_alloc();
                 return ptr;
             }
             // Issue #658: tier exhausted — fall through to main pmr arena.
             arena_small_tier_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            aura::core::cpp26::record_hotpath_invariant_hit();
         }
 
         // Allocate from main pmr buffer

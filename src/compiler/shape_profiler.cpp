@@ -7,6 +7,7 @@
 //
 #include "shape_profiler.h"
 #include "value_tags.h"
+#include "core/cpp26_contract_stats.h"
 #include <algorithm>
 #include <contracts>
 #include <cstdint>
@@ -59,6 +60,7 @@ ShapeDeoptHook shape_deopt_hook() noexcept {
 // Timing: ~2-5ns (bit ops + table dispatch, no heap access)
 
 ShapeID inline_shape_of(std::int64_t val) {
+    aura::core::cpp26::record_hotpath_invariant_hit();
     using aura::compiler::types::classify_eval_value_tag;
     using aura::compiler::types::EvalValueTag;
     using aura::compiler::types::ref_type;
@@ -293,6 +295,8 @@ ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
 bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     // The pre (shape_id != SHAPE_UNKNOWN) is on the declaration
     // in shape_profiler.h.
+    aura::core::cpp26::record_hotpath_invariant_hit();
+    contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
     auto& profile = profiles_[fn];
     auto& history = profile.history;
     std::uint64_t now = ++global_time_;
@@ -324,6 +328,7 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
         profile.is_stable = true;
         profile.stable_shape = dominant;
         profile.last_metric_time = now;
+        contract_assert(ratio >= 0.0 && ratio <= 1.0);
         return true;
     }
 
