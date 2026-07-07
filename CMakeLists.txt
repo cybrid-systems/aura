@@ -3231,6 +3231,10 @@ add_dependencies(all_test_issue_targets test_typesystem_solve_delta_occurrence_p
 aura_add_issue_test(test_typesystem_type_propagation_jit_l2_typed_mutate)
 aura_issue_test_link_llvm_jit(test_typesystem_type_propagation_jit_l2_typed_mutate)
 add_dependencies(all_test_issue_targets test_typesystem_type_propagation_jit_l2_typed_mutate)
+# Issue #747: Linear + Occurrence predicate-branch safety under typed mutation.
+aura_add_issue_test(test_linear_ownership_occurrence_predicate_mutate)
+aura_issue_test_link_llvm_jit(test_linear_ownership_occurrence_predicate_mutate)
+add_dependencies(all_test_issue_targets test_linear_ownership_occurrence_predicate_mutate)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

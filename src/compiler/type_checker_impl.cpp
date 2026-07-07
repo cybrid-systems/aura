@@ -37,6 +37,34 @@ using namespace aura::ast;
 using namespace aura::core;
 using namespace aura::diag;
 
+static void collect_linear_bindings_under_nodes(const FlatAST& flat, const StringPool& pool,
+                                                const std::vector<NodeId>& nodes,
+                                                std::unordered_set<std::string>& out);
+
+static void bump_linear_occurrence_predicate_safe(void* metrics) {
+    if (!metrics)
+        return;
+    static_cast<struct CompilerMetrics*>(metrics)->linear_occurrence_predicate_safe_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
+    std::function<bool(NodeId)> walk = [&](NodeId id) -> bool {
+        if (id == NULL_NODE || id >= flat.size())
+            return false;
+        const auto v = flat.get(id);
+        if (v.tag == NodeTag::Linear || v.tag == NodeTag::Move || v.tag == NodeTag::Borrow ||
+            v.tag == NodeTag::MutBorrow || v.tag == NodeTag::Drop)
+            return true;
+        for (auto c : v.children) {
+            if (c != NULL_NODE && walk(c))
+                return true;
+        }
+        return false;
+    };
+    return walk(root);
+}
+
 // ── Edit distance for "did you mean" suggestions ────────────────
 static std::size_t edit_distance(std::string_view a, std::string_view b) {
     auto m = a.size(), n = b.size();
@@ -237,8 +265,8 @@ void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow)
 }
 
 std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
-    const std::size_t impact = dirty_count_ * 8 + touched_roots_.size() * 4 +
-                               occurrence_priority_roots_.size() * 16;
+    const std::size_t impact =
+        dirty_count_ * 8 + touched_roots_.size() * 4 + occurrence_priority_roots_.size() * 16;
     const std::size_t scaled = std::max(kReverifyCleanScanLimit, impact);
     return std::min(scaled, kReverifyCleanScanMax);
 }
@@ -272,8 +300,7 @@ int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
                     pri = std::max(pri, 1);
                 auto it = var_to_constraints_.find(raw_rep);
                 if (it != var_to_constraints_.end()) {
-                    const auto deg =
-                        static_cast<int>(std::min<std::size_t>(it->second.size(), 8));
+                    const auto deg = static_cast<int>(std::min<std::size_t>(it->second.size(), 8));
                     pri += deg;
                 }
             }
@@ -350,8 +377,7 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     }
     if (!truncated && to_check.size() > kReverifyCleanScanLimit && metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        m->constraint_reverify_timeout_prevented_total.fetch_add(1,
-                                                                  std::memory_order_relaxed);
+        m->constraint_reverify_timeout_prevented_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     std::vector<std::pair<int, std::size_t>> ordered;
@@ -3698,6 +3724,10 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             // skipped for observability.
             ++stats_.narrowing_skipped;
         }
+        if (subtree_has_linear_ops(flat, then_id)) {
+            ownership_env_.mark_ownership_dirty(occ->var_name);
+            bump_linear_occurrence_predicate_safe(cs_.metrics_);
+        }
         TypeId then_type = synthesize_flat(flat, pool, then_id, flat.get(then_id));
         ownership_env_.pop_scope();
         env_.pop_scope();
@@ -3784,8 +3814,13 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
         ownership_env_.push_scope();
         if (env_.is_bound(occ->var_name))
             env_.bind(occ->var_name, occ->refined_type);
-        if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+        if (v.children.size() >= 3 && v.child(2) != NULL_NODE) {
+            if (subtree_has_linear_ops(flat, v.child(2))) {
+                ownership_env_.mark_ownership_dirty(occ->var_name);
+                bump_linear_occurrence_predicate_safe(cs_.metrics_);
+            }
             else_type = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+        }
         ownership_env_.pop_scope();
         env_.pop_scope();
         return lub(then_type, else_type);
@@ -4222,6 +4257,10 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                     rec.capture_epoch = cache_epoch_;
                     flat.record_narrowing(std::move(rec));
                 }
+                if (subtree_has_linear_ops(flat, then_id)) {
+                    ownership_env_.mark_ownership_dirty(occ->var_name);
+                    bump_linear_occurrence_predicate_safe(cs_.metrics_);
+                }
                 check_flat(flat, pool, then_id, expected);
                 ownership_env_.pop_scope();
                 env_.pop_scope();
@@ -4252,8 +4291,13 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                     rec.capture_epoch = cache_epoch_;
                     flat.record_narrowing(std::move(rec));
                 }
-                if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                if (v.children.size() >= 3 && v.child(2) != NULL_NODE) {
+                    if (subtree_has_linear_ops(flat, v.child(2))) {
+                        ownership_env_.mark_ownership_dirty(occ->var_name);
+                        bump_linear_occurrence_predicate_safe(cs_.metrics_);
+                    }
                     check_flat(flat, pool, v.child(2), expected);
+                }
                 ownership_env_.pop_scope();
                 env_.pop_scope();
                 // Then-branch: no refinement
@@ -4943,6 +4987,19 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
     }
 
+    // Issue #747: linear bindings in occurrence-dirty if-contexts → ownership_dirty.
+    OwnershipEnv occurrence_linear_dirty;
+    for (auto if_id : occurrence_targets) {
+        if (!subtree_has_linear_ops(flat, if_id))
+            continue;
+        std::unordered_set<std::string> if_linear;
+        collect_linear_bindings_under_nodes(flat, pool, {if_id}, if_linear);
+        for (const auto& name : if_linear)
+            occurrence_linear_dirty.mark_ownership_dirty(name);
+        if (metrics_)
+            bump_linear_occurrence_predicate_safe(metrics_);
+    }
+
     // Spin up a per-call engine. Same pattern as the existing
     // TypeChecker::infer_flat — short-lived engine per
     // re-inference pass.
@@ -5074,6 +5131,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             if (!sym_name.empty())
                 linear_bindings.insert(sym_name);
         }
+        for (const auto& name : occurrence_linear_dirty.ownership_dirty_bindings())
+            linear_bindings.insert(name);
         if (!linear_bindings.empty()) {
             std::vector<OwnershipNote> ownership_notes;
             const bool ownership_pass = OwnershipEnv::validate_ownership(
@@ -5858,6 +5917,23 @@ void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool, 
 void record_linear_ownership_mutation_metrics(void* metrics, bool revalidated,
                                               const std::vector<OwnershipNote>& ownership_notes,
                                               bool pass) {
+    auto bump_occurrence = [&](struct CompilerMetrics* m) {
+        if (!m)
+            return;
+        if (revalidated) {
+            m->linear_occurrence_revalidate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            if (pass)
+                m->linear_occurrence_predicate_safe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!pass)
+            m->linear_occurrence_escape_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        for (const auto& note : ownership_notes) {
+            if (note.kind == "use-after-move" || note.kind == "double-borrow" ||
+                note.kind == "invalid-state" || note.kind == "leaked-linear")
+                m->linear_occurrence_escape_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    bump_occurrence(static_cast<struct CompilerMetrics*>(metrics));
     if (!metrics)
         return;
     auto* m = static_cast<struct CompilerMetrics*>(metrics);

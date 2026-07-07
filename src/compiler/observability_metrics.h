@@ -1897,6 +1897,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_relower_revalidate_hits{0};
     // Issue #688: infer_flat_partial OwnershipEnv post-mutate revalidate.
     std::atomic<std::uint64_t> linear_dirty_revalidate_count{0};
+    // Issue #747: linear + Occurrence predicate-branch safety under typed mutate.
+    std::atomic<std::uint64_t> linear_occurrence_revalidate_hits_total{0};
+    std::atomic<std::uint64_t> linear_occurrence_escape_prevented_total{0};
+    std::atomic<std::uint64_t> linear_occurrence_predicate_safe_total{0};
     // Issue #688: graceful safe-fallback on GC/fiber linear probe violation.
     std::atomic<std::uint64_t> linear_typed_mutate_safe_fallbacks{0};
 
