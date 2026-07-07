@@ -111,6 +111,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:jit-typed-mutation-stats",
     // Issue #747 — Linear + Occurrence predicate-branch safety under typed mutate
     "query:linear-occurrence-mutate-stats",
+    // Issue #748 — SV verification EDSL structured mutate + dirty re-emit closed-loop
+    "query:sv-verification-structure-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -4337,6 +4339,72 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("escape-violations-prevented", escape_prev);
         insert_kv("predicate-branch-linear-safe", branch_safe);
         insert_kv("schema", 747);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #748: query:sv-verification-structure-stats — P0 SV verification
+    // EDSL structured representation + emit fidelity + dirty re-emit closed-loop
+    // (consolidates #724/#725/#726; non-duplicative with #694 sv-sva-structure,
+    // #640 sv-verification-closedloop, #693 hardware-backend-sv-closedloop).
+    //
+    // Fields (4 + sentinel):
+    //   - structure-mutate-hits   sv_verification_structure_mutate_hits_total
+    //   - dirty-reemit-triggers   sv_verification_dirty_reemit_total
+    //   - emit-fidelity-pass      sv_emit_parse_success_total
+    //   - emit-fidelity-fail      sv_emit_parse_fail_total
+    //   - schema == 748
+    add("query:sv-verification-structure-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t structure_mutate =
+            m ? static_cast<std::int64_t>(
+                    m->sv_verification_structure_mutate_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dirty_reemit =
+            m ? static_cast<std::int64_t>(
+                    m->sv_verification_dirty_reemit_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t emit_pass =
+            m ? static_cast<std::int64_t>(
+                    m->sv_emit_parse_success_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t emit_fail =
+            m ? static_cast<std::int64_t>(
+                    m->sv_emit_parse_fail_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("structure-mutate-hits", structure_mutate);
+        insert_kv("dirty-reemit-triggers", dirty_reemit);
+        insert_kv("emit-fidelity-pass", emit_pass);
+        insert_kv("emit-fidelity-fail", emit_fail);
+        insert_kv("schema", 748);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
