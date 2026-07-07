@@ -58,6 +58,9 @@ bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64
 void aura_aot_record_deopt_on_steal(void);
 std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 
+// Issue #739: acquire fence before GuardShape / epoch-sensitive JIT paths.
+void aura_jit_epoch_acquire_fence(void);
+
 // Issue #358 — incremental re-AOT foundation.
 //
 // `aura_set_is_define_dirty_fn` registers a host-side callback

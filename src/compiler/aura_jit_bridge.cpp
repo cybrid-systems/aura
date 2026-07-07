@@ -312,6 +312,13 @@ extern "C" void aura_aot_record_deopt_on_steal() {
         g_aot_metrics->aot_deopt_on_steal_.fetch_add(1, std::memory_order_relaxed);
 }
 
+extern "C" void aura_jit_epoch_acquire_fence(void) {
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (g_aot_metrics)
+        g_aot_metrics->closure_epoch_fence_enforced_total.fetch_add(1,
+                                                                    std::memory_order_relaxed);
+}
+
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
     bump_reload_attempt();
     if (!path) {

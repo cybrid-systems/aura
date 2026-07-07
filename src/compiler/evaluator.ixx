@@ -944,12 +944,7 @@ public:
     // service.ixx. CompilerService::install_bridge_epoch_fn()
     // sets the function pointer when binding to the Evaluator.
     using BridgeEpochFn = std::uint64_t (*)(void*);
-    [[nodiscard]] std::uint64_t current_bridge_epoch() const noexcept {
-        if (bridge_epoch_fn_ && compiler_service_) {
-            return bridge_epoch_fn_(compiler_service_);
-        }
-        return 0;
-    }
+    [[nodiscard]] std::uint64_t current_bridge_epoch() const noexcept;
     void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept { bridge_epoch_fn_ = fn; }
     // Issue #682: compiler GC root flush hook (service.ixx
     // implements flush_compiler_gc_roots). Called from

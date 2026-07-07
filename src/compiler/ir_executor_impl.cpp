@@ -49,6 +49,13 @@ static void record_linear_runtime_safety(CompilerMetrics* metrics, bool mismatch
     }
 }
 
+static void record_epoch_stale_steal_caught(CompilerMetrics* metrics) {
+    if (!metrics)
+        return;
+    metrics->epoch_stale_steal_caught.fetch_add(1, std::memory_order_relaxed);
+    metrics->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #61 Iter 4: deopt tracing switch. Off by default
 // (perf: avoid a printf on every guard). Enable by setting
 // AURA_DEOPT_TRACE=1 in the env before launching the process.
@@ -179,6 +186,7 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
                 context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
                     1, std::memory_order_relaxed);
                 context_.metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                record_epoch_stale_steal_caught(context_.metrics);
             }
             if (auto tw =
                     context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
@@ -668,6 +676,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 // guard in the IR takes the mismatch to ops[3] (the
                 // generic-trampoline block).
                 case IROpcode::GuardShape: {
+                    if (context_.evaluator)
+                        (void)context_.evaluator->current_bridge_epoch();
                     // Issue #684: deopt when SoA instruction_dirty_ says stale.
                     if (context_.is_instruction_dirty_fn &&
                         (instr.linear_ownership_state != 0 || instr.narrow_evidence != 0) &&
@@ -984,6 +994,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                         .fetch_add(1, std::memory_order_relaxed);
                                     context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
                                         1, std::memory_order_relaxed);
+                                    record_epoch_stale_steal_caught(context_.metrics);
                                 }
                                 if (auto tw =
                                         context_.evaluator->apply_closure(closure_id, call_args))

@@ -61,15 +61,39 @@ static std::string closest_match(std::string_view name, std::span<const std::str
         return _ev_;                                                                               \
     } while (0)
 
+// Issue #739: acquire fence before epoch load so invalidate_function's
+// release bump is visible to fibers executing stolen closure work.
+std::uint64_t Evaluator::current_bridge_epoch() const noexcept {
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->closure_epoch_fence_enforced_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (bridge_epoch_fn_ && compiler_service_) {
+        return bridge_epoch_fn_(compiler_service_);
+    }
+    return 0;
+}
+
+static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
+    if (!m)
+        return;
+    m->epoch_stale_steal_caught.fetch_add(1, std::memory_order_relaxed);
+    m->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #681: pre-call epoch/version enforcement for live closures
 // held across mutate:rebind / invalidate_function.
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
-    if (cl.bridge_epoch != 0 && ev.is_bridge_stale(cl.bridge_epoch, ev.current_bridge_epoch())) {
+    const auto cur_epoch = ev.current_bridge_epoch();
+    if (cl.bridge_epoch != 0 && ev.is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
         stale = true;
-        if (m)
+        if (m) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+            record_epoch_stale_steal_caught(m);
+        }
     }
     if (cl.env_id != NULL_ENV_ID) {
         if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
@@ -245,17 +269,22 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // nullopt) so the caller can re-bridge from the new
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
-            if (is_bridge_stale(cl_copy.bridge_epoch, current_bridge_epoch())) {
-                if (metrics)
-                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                if (closure_bridge_) {
-                    if (auto bridged = closure_bridge_(cid, args))
-                        return bridged;
+            {
+                const auto cur_epoch = current_bridge_epoch();
+                if (is_bridge_stale(cl_copy.bridge_epoch, cur_epoch)) {
+                    if (metrics) {
+                        metrics->compiler_closure_safe_fallbacks.fetch_add(
+                            1, std::memory_order_relaxed);
+                        record_epoch_stale_steal_caught(metrics);
+                    }
+                    if (closure_bridge_) {
+                        if (auto bridged = closure_bridge_(cid, args))
+                            return bridged;
+                    }
+                    if (metrics)
+                        metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                    return std::nullopt;
                 }
-                if (metrics)
-                    metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-                return std::nullopt;
             }
             if (metrics)
                 metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);

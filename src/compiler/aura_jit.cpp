@@ -266,6 +266,7 @@ struct LLVMBuilder {
     llvm::Function* fn_display_int = nullptr;
     llvm::Function* fn_display_char = nullptr;
     llvm::Function* fn_newline = nullptr;
+    llvm::Function* fn_epoch_acquire_fence = nullptr;
     llvm::Function* fn_cast_op = nullptr;
     llvm::Function* fn_bump_init = nullptr;
     llvm::Function* fn_bump_reset = nullptr;
@@ -409,6 +410,11 @@ struct LLVMBuilder {
 
         fn_newline = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                             llvm::Function::ExternalLinkage, "aura_newline", mod);
+
+        fn_epoch_acquire_fence =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_epoch_acquire_fence",
+                                   mod);
 
         fn_cast_op = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                             llvm::Function::ExternalLinkage, "aura_cast_op", mod);
@@ -768,6 +774,8 @@ struct LLVMBuilder {
                     store(inst.ops[0], c64(KWD_TRUE_VAL));
                     return true;
                 }
+                // Issue #739: acquire fence before runtime shape probe.
+                irb->CreateCall(llvm::FunctionCallee(fn_epoch_acquire_fence));
                 auto* arg_val = load(inst.ops[1]);
                 // The runtime shape of a tagged value: extract a 32-bit
                 // shape id. We do this with a chain of icmp + select
@@ -1990,6 +1998,7 @@ uint64_t aura_prim_call_total_ns();
 void aura_display_int(int64_t);
 void aura_display_char(char);
 void aura_newline();
+void aura_jit_epoch_acquire_fence(void);
 int64_t aura_jit_prim_dispatch(int64_t, int64_t*, int32_t);
 int64_t aura_cast_op(int64_t, int64_t);
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
@@ -2310,6 +2319,7 @@ struct AuraJIT::Impl {
         reg("aura_display_int", (void*)aura_display_int);
         reg("aura_display_char", (void*)aura_display_char);
         reg("aura_newline", (void*)aura_newline);
+        reg("aura_jit_epoch_acquire_fence", (void*)aura_jit_epoch_acquire_fence);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_cast_op", (void*)aura_cast_op);

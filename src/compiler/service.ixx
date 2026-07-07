@@ -692,7 +692,7 @@ public:
                 if (e.dirty)
                     ++dirty_count;
             }
-            std::uint64_t epoch = mutation_epoch_.load(std::memory_order_relaxed);
+            std::uint64_t epoch = mutation_epoch_.load(std::memory_order_acquire);
             std::uint64_t edges = 0;
             for (auto& [_, dep_entry] : dep_graph_) {
                 edges += static_cast<std::uint64_t>(dep_entry.calls.size());
@@ -1067,7 +1067,7 @@ public:
         // time; a mismatch indicates the bridge's flat*/pool* are
         // dangling (the arena was reset). The bridge falls back
         // to re-parse from body_source (or invalidates the closure).
-        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+        mutation_epoch_.fetch_add(1, std::memory_order_release);
     }
 
     // ---- Strict mode (type errors → rejected) ------------------------
@@ -7279,12 +7279,11 @@ private:
         // before any other work. This ensures that any cache entry
         // being concurrently checked by another fiber will see a
         // newer epoch than its last_seen_epoch_ and treat itself
-        // as stale. The increment is atomic with relaxed ordering
-        // (we don't need a happens-before relationship with the
-        // subsequent dep_graph_ walk; the dep_graph_ walk is
-        // protected by mutate_mtx_ which the cache checkers don't
-        // hold).
-        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+        // as stale. The increment uses release ordering so
+        // concurrently executing apply_closure / JIT / interpreter
+        // paths that load with acquire see the bump before using
+        // stale bridge/EnvFrame metadata (Issue #739).
+        mutation_epoch_.fetch_add(1, std::memory_order_release);
         // Issue #531: bump closure_stale_refresh_count_ on
         // every invalidate_function — measures the closure
         // refresh frequency post-mutate. Stats-only
@@ -7967,11 +7966,12 @@ public:
     // by name. Single process-wide counter, monotonic.
     //
     // Pattern:
-    //   - mutation: mutation_epoch_.fetch_add(1, relaxed);
+    //   - mutation: mutation_epoch_.fetch_add(1, release);
     //   - ir_cache lookup: if entry.last_seen_epoch_ != current,
     //                       treat as stale (re-lower)
     //   - jit_cache lookup: if entry.last_seen_epoch_ != current,
     //                        treat as stale (re-compile)
+    //   - apply_closure: load current via bridge_epoch() acquire
     std::atomic<std::uint64_t> mutation_epoch_{0};
 
     // Issue #223 / #296: bridge_epoch() returns the current
@@ -7995,7 +7995,7 @@ public:
     // via Evaluator::is_bridge_stale(). A bypass of either
     // invariant is a contract violation.
     [[nodiscard]] std::uint64_t bridge_epoch() const noexcept {
-        return mutation_epoch_.load(std::memory_order_relaxed);
+        return mutation_epoch_.load(std::memory_order_acquire);
     }
     // Issue #223: explicitly bump the bridge epoch. Called when
     // the bridge_epoch_ field on existing ClosureBridgeData should
@@ -8008,7 +8008,7 @@ public:
     // visible. The current implementation reuses
     // mutation_epoch_ which is bumped together with cache
     // invalidation in mark_define_dirty / mark_all_defines_dirty.
-    void bump_bridge_epoch() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_relaxed); }
+    void bump_bridge_epoch() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_release); }
 
     // Issue #225 cycle 3: invalidate the bridge data for a
     // function. Bumps the bridge_epoch_ field on all bridge

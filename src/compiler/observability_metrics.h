@@ -159,6 +159,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_inval_bridge_epoch_total{0};
     std::atomic<std::uint64_t> compiler_closure_epoch_mismatch_hits{0};
     std::atomic<std::uint64_t> compiler_closure_safe_fallbacks{0};
+    // Issue #739: atomic epoch visibility under fiber steal.
+    //   - epoch_stale_steal_caught: stale bridge_epoch detected
+    //     after acquire fence in apply_closure / IR paths
+    //   - closure_epoch_fence_enforced_total: acquire fences
+    //     executed before epoch staleness checks
+    //   - linear_violation_prevented_epoch_total: linear /
+    //     ownership violations prevented by epoch stale catch
+    std::atomic<std::uint64_t> epoch_stale_steal_caught{0};
+    std::atomic<std::uint64_t> closure_epoch_fence_enforced_total{0};
+    std::atomic<std::uint64_t> linear_violation_prevented_epoch_total{0};
     // Issue #682: compiler IRClosure/EnvId GC root coordination on
     // invalidate / hot-swap / safepoint.
     //   - ir_closure_roots_registered: roots pinned in last
