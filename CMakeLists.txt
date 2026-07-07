@@ -3306,6 +3306,18 @@ add_dependencies(all_test_issue_targets test_list_vector_soa_hotpath_ai_loops)
 aura_add_issue_test(test_longrunning_infra_primitives)
 aura_issue_test_link_llvm_jit(test_longrunning_infra_primitives)
 add_dependencies(all_test_issue_targets test_longrunning_infra_primitives)
+# Issue #754: LLM-bottleneck adaptive scheduling + yield-classification metrics
+# + work-stealing bias + GC safepoint self-tuning.
+# 1 CompilerMetrics atomic (orchestration_llm_gc_safepoint_adapted_total)
+# + (query:orchestration-llm-bottleneck-stats, schema 754) aggregating
+# AdaptiveStealStats (outermost-preferred / backoff-triggers /
+# llm-tail-reduction) + GC safepoint defer bump wiring in
+# request_gc_safepoint. 8 ACs: schema, gc-safepoint-adapted bump/defer
+# path, sum invariant, real guard exercise, regression on #706/#646.
+# Non-duplicative with #730/#706/#650/#646.
+aura_add_issue_test(test_scheduler_llm_bottleneck_adaptive_steal_gc)
+aura_issue_test_link_llvm_jit(test_scheduler_llm_bottleneck_adaptive_steal_gc)
+add_dependencies(all_test_issue_targets test_scheduler_llm_bottleneck_adaptive_steal_gc)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

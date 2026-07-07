@@ -96,6 +96,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:primitives-contract-stats)`      | 751    | PRIM_ERROR + capture enforcement (5 fields) |
 | `(query:list-soa-hotpath-stats)`         | 752    | list map/filter SoA + intrinsic hot-path (6 fields) |
 | `(query:longrunning-infra-stats)`        | 753    | quota/checkpoint/heal/SLO deployment infra (7 fields) |
+| `(query:orchestration-llm-bottleneck-stats)` | 754 | LLM-bottleneck adaptive steal + GC safepoint tuning (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -109,6 +110,17 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 - `schema` — 753 (drift sentinel)
 
 Production primitives: `(resource:quota-set kind limit)`, `(resource:quota-get kind)`, `(resource:quota-check kind current)` where `kind` is `"memory"`, `"fibers"`, or `"time"` (limit `0` = unlimited).
+
+### `(query:orchestration-llm-bottleneck-stats)` fields (#754)
+
+- `outermost-preferred` — `AdaptiveStealStats::outermost_preferred` (work-steal bias toward outermost MutationBoundary)
+- `backoff-triggers` — `AdaptiveStealStats::deferred_pressure_boosts` (StealBudget alertness raises under defer pressure)
+- `llm-tail-reduction` — `AdaptiveStealStats::llm_tail_reductions` (Explicit/OperationBoundary steals under LLM tail pressure)
+- `gc-safepoint-adapted` — `orchestration_llm_gc_safepoint_adapted_total` (GC safepoint deferral under MutationBoundary)
+- `orchestration-events-total` — sum of the four counters above
+- `schema` — 754 (drift sentinel)
+
+Distinct from `(query:scheduler-stealbudget-adaptive-stats)` (#706): #754 is the orchestration/LLM-bottleneck closed-loop dashboard; #706 is the StealBudget adaptive-bias summary.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

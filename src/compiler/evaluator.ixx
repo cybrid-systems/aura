@@ -3432,6 +3432,7 @@ public:
         bump_gc_safepoint_request();
         if (mutation_boundary_depth() > 0) {
             bump_gc_safepoint_deferred();
+            bump_orchestration_llm_gc_safepoint_adapted();
             return 1;
         }
         // Issue #683: probe linear ownership before sweep when
@@ -4262,6 +4263,20 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             return m->longrunning_deployment_slo_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    // Issue #754: LLM-bottleneck orchestration GC safepoint self-tuning.
+    void bump_orchestration_llm_gc_safepoint_adapted(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->orchestration_llm_gc_safepoint_adapted_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_orchestration_llm_gc_safepoint_adapted() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->orchestration_llm_gc_safepoint_adapted_total.load(std::memory_order_relaxed);
         }
         return 0;
     }
