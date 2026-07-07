@@ -6,6 +6,7 @@
 // recursive type issues.
 //
 #include "shape_profiler.h"
+#include "shape_jit_pass_closedloop_stats.h"
 #include "value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include <algorithm>
@@ -334,9 +335,16 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
 
     if (profile.is_stable) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
+        shape_jit_pass::record_stability_churn_deopt();
+        shape_jit_pass::record_speculative_win_lost();
+        const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
+        profile.version = epoch > profile.version ? epoch : profile.version + 1;
+        shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
         fire_shape_deopt_hook(fn, profile.version, kShapeDirtyScopeStabilityLoss);
-        if (dirty_hook_)
+        if (dirty_hook_) {
+            shape_jit_pass::record_dirty_from_shape();
             dirty_hook_(fn, kShapeDirtyScopeStabilityLoss);
+        }
     }
     profile.is_stable = false;
     profile.stable_shape = SHAPE_UNKNOWN;
@@ -380,10 +388,17 @@ bool ShapeProfiler::invalidate(FnKey fn) {
     shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
     if (was_stable) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
+        shape_jit_pass::record_stability_churn_deopt();
+        shape_jit_pass::record_speculative_win_lost();
     }
+    const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
+    if (epoch > it->second.version)
+        it->second.version = epoch;
     fire_shape_deopt_hook(fn, it->second.version, kShapeDirtyScopeInvalidate);
-    if (dirty_hook_)
+    if (dirty_hook_) {
+        shape_jit_pass::record_dirty_from_shape();
         dirty_hook_(fn, kShapeDirtyScopeInvalidate);
+    }
     return was_stable;
 }
 
