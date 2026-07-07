@@ -6443,6 +6443,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:verify-tool-guard-stats",
             // Issue #698 — Hardware backend commercial interop
             "query:hardware-backend-commercial-stats",
+            // Issue #663 — Hardware backend SV-specific observability
+            // (verbatim-name view of the issue body's Action #4)
+            "query:hardware-backend-sv-stats",
             // Issue #706 — Scheduler StealBudget adaptive bias
             "query:scheduler-stealbudget-adaptive-stats",
             // Issue #652 / #707 — Per-fiber stack/checkpoint pool

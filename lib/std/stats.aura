@@ -72,6 +72,8 @@
     "query:verification-feedback-loop-stats"
     ; ── Issue #580 — Hardware backend emit maturity + commercial interop ──
     "query:hardware-backend-stats"
+    ; ── Issue #663 — Hardware backend SV-specific observability (P1) ──
+    "query:hardware-backend-sv-stats"
     ; ── Issue #581 — StableNodeRef + dirty propagation SV SoC scalability ──
     "query:stable-ref-sv-scale-stats"
     ; ── Issue #582 — EDA SV concurrency + atomic batch + fiber safety ──
