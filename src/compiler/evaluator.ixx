@@ -14,6 +14,8 @@ module;
 // here in the module preamble (avoids the import-only
 // restriction on .h).
 #include "observability_metrics.h"
+#include "core/arena_auto_policy_stats.h"
+#include "core/gc_hooks.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -3611,6 +3613,40 @@ public:
             m->incremental_closure_env_version_resync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #743: MutationBoundary / fiber transition arena auto-policy probe.
+    void probe_arena_auto_policy_on_boundary_exit(bool success) noexcept {
+        if (!arena_group_)
+            return;
+        const double frag = arena_ ? arena_->stats().fragmentation_ratio() : 0.0;
+        const bool want_compact = frag >= 0.30 || (arena_ && arena_->defrag_requested()) ||
+                                  aura::core::arena_policy::dirty_cascade_pending.load(
+                                      std::memory_order_acquire);
+        if (success) {
+            aura::core::arena_policy::record_fragmentation_post_mutate(frag);
+            if (want_compact && compiler_metrics_) {
+                static_cast<CompilerMetrics*>(compiler_metrics_)
+                    ->arena_guard_request_defrag_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (want_compact) {
+            const std::size_t saved = arena_group_->auto_compact_with_safety();
+            if (success && saved > 0) {
+                aura::core::arena_policy::record_env_reval_success();
+                if (resync_live_closure_env_versions_on_invalidate() > 0)
+                    bump_incremental_closure_env_version_resync();
+            }
+        } else {
+            arena_group_->bump_auto_compact_guard_call();
+        }
+    }
+    void probe_arena_auto_policy_on_fiber_transition() noexcept {
+        if (!arena_group_)
+            return;
+        const double frag = arena_ ? arena_->stats().fragmentation_ratio() : 0.0;
+        if (frag >= 0.30 || (arena_ && arena_->defrag_requested()) ||
+            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire))
+            arena_group_->auto_compact_with_safety();
+    }
     // Proactive EnvFrame version re-stamp for live tree-walker closures
     // held across invalidate_function / partial re-lower. Returns the
     // number of frames resynced.
@@ -5196,7 +5232,7 @@ public:
             // follow-up. The counter is the precondition
             // that the AI Agent can monitor.
             if (outermost && ev_->arena_group_) {
-                ev_->arena_group_->bump_auto_compact_guard_call();
+                ev_->probe_arena_auto_policy_on_boundary_exit(success);
             }
             // Issue #490: proactive Evaluator tag_arity_index rebuild
             // on successful outermost Guard exit when policy requests it.

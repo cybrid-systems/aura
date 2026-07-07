@@ -3203,6 +3203,10 @@ add_dependencies(all_test_issue_targets test_prompt2_6_impact_scope_quote_lambda
 aura_add_issue_test(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
 aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
 add_dependencies(all_test_issue_targets test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
+# Issue #743: Arena auto-compact + defrag + fiber safepoint + dirty/Shape closed loop.
+aura_add_issue_test(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
+aura_issue_test_link_llvm_jit(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
+add_dependencies(all_test_issue_targets test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

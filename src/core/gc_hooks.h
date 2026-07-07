@@ -75,6 +75,28 @@ inline bool fiber_active() noexcept {
     return fn ? fn() : false;
 }
 
+// ── Arena auto-compact notification (Issue #743) ────────────
+// Called from arena.ixx when allocate_raw auto-compact fires
+// or fiber-safe compact/defrag coordinates a safepoint.
+// Wired by CompilerService at startup to bump CompilerMetrics.
+using ArenaAutoCompactTriggerFn = void (*)();
+inline std::atomic<ArenaAutoCompactTriggerFn> g_arena_auto_compact_trigger{nullptr};
+
+using ArenaFiberSafeCompactFn = void (*)();
+inline std::atomic<ArenaFiberSafeCompactFn> g_arena_fiber_safe_compact{nullptr};
+
+inline void notify_auto_compact_trigger() noexcept {
+    auto fn = g_arena_auto_compact_trigger.load(std::memory_order_acquire);
+    if (fn)
+        fn();
+}
+
+inline void notify_fiber_safe_compact() noexcept {
+    auto fn = g_arena_fiber_safe_compact.load(std::memory_order_acquire);
+    if (fn)
+        fn();
+}
+
 } // namespace aura::gc_hooks
 
 #endif // AURA_CORE_GC_HOOKS_H
