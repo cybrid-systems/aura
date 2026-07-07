@@ -95,6 +95,7 @@ namespace {
             const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+                m->sv_verification_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
                 if (!diff.empty())
                     m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
                 if (validation.ok)
@@ -3938,6 +3939,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward(cg_id, aura::ast::FlatAST::kGeneralDirty,
                               aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
         maybe_sv_hardware_closedloop(ev, cg_id);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
@@ -3969,6 +3972,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
                               aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         maybe_sv_hardware_closedloop(ev, pid);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
@@ -4014,8 +4019,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
                               aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         maybe_sv_hardware_closedloop(ev, pid);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
@@ -4052,8 +4059,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward(cp_id, aura::ast::FlatAST::kGeneralDirty,
                               aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
         maybe_sv_hardware_closedloop(ev, cp_id);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
@@ -4092,8 +4101,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             cid, aura::ast::FlatAST::kGeneralDirty | aura::ast::FlatAST::kConstraintDirty,
             aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         maybe_sv_hardware_closedloop(ev, cid);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });

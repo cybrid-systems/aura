@@ -142,9 +142,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         const std::uint64_t total_hotpath = post_mutate + residual;
         const std::int64_t hotpath_rate =
-            total_hotpath > 0
-                ? static_cast<std::int64_t>((post_mutate * 100) / total_hotpath)
-                : 100;
+            total_hotpath > 0 ? static_cast<std::int64_t>((post_mutate * 100) / total_hotpath)
+                              : 100;
         auto* ht = FlatHashTable::create(8);
         if (!ht)
             return make_void();
@@ -2514,6 +2513,9 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                     m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
                     m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
                     m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+                    m->sv_verification_structure_mutate_hits_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->sv_verification_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
                     if (!diff.empty())
                         m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
                     if (validation.ok) {

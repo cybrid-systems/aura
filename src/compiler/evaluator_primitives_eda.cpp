@@ -118,6 +118,7 @@ void maybe_hardware_feedback(Evaluator& ev, aura::ast::NodeId node) {
         const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+            m->sv_verification_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
             if (validation.ok)
                 m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
             else
@@ -264,6 +265,7 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->eda_foundation_mutate_total.fetch_add(1, std::memory_order_relaxed);
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         ws->bump_sv_mutate_success();
         return make_bool(true);
