@@ -36,3 +36,9 @@ extern "C" void aura_set_aot_metrics(void* metrics) {
 extern "C" void aura_jit_epoch_acquire_fence(void) {
     std::atomic_thread_fence(std::memory_order_acquire);
 }
+
+extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state,
+                                                       std::uint32_t opcode) {
+    (void)linear_state;
+    (void)opcode;
+}

@@ -1504,6 +1504,9 @@ public:
                                     std::uint64_t current_bridge_epoch) noexcept;
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
+    // Issue #740: re-snapshot compiler-managed GC roots after
+    // invalidate when linear metadata may have changed in JIT L2.
+    void resync_linear_jit_gc_roots_after_invalidate() noexcept;
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
     // After the GC collector has marked live objects, this method
     // reclaims the unmarked ones. Called from the GC coordinator's

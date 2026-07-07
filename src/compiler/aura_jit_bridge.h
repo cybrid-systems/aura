@@ -61,6 +61,9 @@ std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 // Issue #739: acquire fence before GuardShape / epoch-sensitive JIT paths.
 void aura_jit_epoch_acquire_fence(void);
 
+// Issue #740: linear ownership safety probe in JIT L2 hot paths.
+void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint32_t opcode);
+
 // Issue #358 — incremental re-AOT foundation.
 //
 // `aura_set_is_define_dirty_fn` registers a host-side callback

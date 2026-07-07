@@ -1862,6 +1862,13 @@ struct CompilerMetrics {
     //     mismatch triggered deopt or hard error
     std::atomic<std::uint64_t> linear_post_mutate_enforcements_total{0};
     std::atomic<std::uint64_t> linear_deopt_on_mismatch_total{0};
+    // Issue #740: linear ownership safety in JIT L2 hot paths
+    // post-invalidate (Arena/DropOp/GC root re-sync).
+    // Exposed via (query:linear-jit-safety-stats).
+    std::atomic<std::uint64_t> linear_jit_post_invalidate_total{0};
+    std::atomic<std::uint64_t> linear_jit_arena_forced_post_mutate_total{0};
+    std::atomic<std::uint64_t> linear_jit_drop_op_emitted_total{0};
+    std::atomic<std::uint64_t> linear_jit_gc_root_resync_total{0};
     // Issue #683: linear ownership + GC safepoint / fiber-steal /
     // post-re-lower revalidate integration.
     // Exposed via (query:linear-ownership-gc-stats).

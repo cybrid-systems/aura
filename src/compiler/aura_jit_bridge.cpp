@@ -319,6 +319,41 @@ extern "C" void aura_jit_epoch_acquire_fence(void) {
                                                                     std::memory_order_relaxed);
 }
 
+extern "C" void aura_arena_pop(void);
+
+extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state,
+                                                       std::uint32_t opcode) {
+    if (!g_aot_metrics || linear_state == 0)
+        return;
+    g_aot_metrics->linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    switch (opcode) {
+    case 48: // DropOp
+        g_aot_metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+        aura_arena_pop();
+        break;
+    case 51: // ArenaPop
+        g_aot_metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(
+            1, std::memory_order_relaxed);
+        aura_arena_pop();
+        break;
+    case 22: // Capture
+    case 23: // CaptureRef
+        g_aot_metrics->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case 52: // GuardShape
+        g_aot_metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(
+            1, std::memory_order_relaxed);
+        g_aot_metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+        aura_arena_pop();
+        break;
+    case 45: // MoveOp
+        g_aot_metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+        break;
+    default:
+        break;
+    }
+}
+
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
     bump_reload_attempt();
     if (!path) {

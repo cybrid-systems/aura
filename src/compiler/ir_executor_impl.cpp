@@ -56,6 +56,36 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* metrics) {
     metrics->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #740: linear JIT L2 safety counters on interpreter hot path.
+static void record_linear_jit_safety(CompilerMetrics* metrics, IROpcode opcode) {
+    if (!metrics)
+        return;
+    metrics->linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    switch (opcode) {
+    case IROpcode::DropOp:
+        metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case IROpcode::ArenaPop:
+        metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(1,
+                                                                     std::memory_order_relaxed);
+        break;
+    case IROpcode::GuardShape:
+        metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(1,
+                                                                     std::memory_order_relaxed);
+        metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case IROpcode::Capture:
+    case IROpcode::CaptureRef:
+        metrics->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case IROpcode::MoveOp:
+        metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+        break;
+    default:
+        break;
+    }
+}
+
 // Issue #61 Iter 4: deopt tracing switch. Off by default
 // (perf: avoid a printf on every guard). Enable by setting
 // AURA_DEOPT_TRACE=1 in the env before launching the process.
@@ -678,6 +708,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::GuardShape: {
                     if (context_.evaluator)
                         (void)context_.evaluator->current_bridge_epoch();
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::GuardShape);
                     // Issue #684: deopt when SoA instruction_dirty_ says stale.
                     if (context_.is_instruction_dirty_fn &&
                         (instr.linear_ownership_state != 0 || instr.narrow_evidence != 0) &&
@@ -1068,6 +1100,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Capture: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::Capture);
                     auto& closure_val = locals[ops[0]];
                     if (is_closure(closure_val)) {
                         auto closure_id = as_closure_id(closure_val);
@@ -1079,6 +1113,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::CaptureRef: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::CaptureRef);
                     auto& closure_val = locals[ops[0]];
                     if (is_closure(closure_val)) {
                         auto closure_id = as_closure_id(closure_val);
@@ -1214,6 +1250,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::MoveOp: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::MoveOp);
                     // Move ownership: decrement source refcount, pass value through
                     // Runtime check: double-move detection
                     // Issue #106: source invalidation. After a move,
@@ -1319,6 +1357,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::DropOp: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::DropOp);
                     // Explicit destruct: decrement refcount, erase if zero
                     // Runtime check: double-drop detection
                     auto val = locals[ops[0]];
@@ -1363,6 +1403,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::ArenaPop: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::ArenaPop);
                     // ArenaPop(saved_slot) — pop frame
                     tl_arena_pop(&g_tl_arena);
                     break;
