@@ -210,6 +210,15 @@ struct CompilerMetrics {
     // observability — lets the user see what the pass
     // would have done.
     std::atomic<std::uint64_t> dead_coercion_kept_for_debug_total{0};
+    // Issue #687: IR-interpreter CastOp identity
+    // passthrough fast-path. Bumped when the interpreter
+    // skips the 7-branch switch because the source value
+    // is already a Dynamic (type_tag >= 3) — the cast is
+    // a no-op at runtime. Companion to
+    // dead_coercion_eliminated_total (the lowering pass)
+    // so the Agent can compute runtime_savings_ratio =
+    // post_mutate_elim_hits / eliminated.
+    std::atomic<std::uint64_t> dead_coercion_post_mutate_elim_hits_total{0};
 
     // Issue #462: ShapeAwareFoldingPass metrics (lifetime totals).
     // Bumped in service.ixx after each ShapeAwareFoldingPass::run.

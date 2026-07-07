@@ -443,6 +443,9 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:linear-ownership-enforcement-stats",
     // Issue #740 — linear JIT L2 post-invalidate safety
     "query:linear-jit-safety-stats",
+    // Issue #687 — DeadCoercionEliminationPass + IR-interpreter
+    // identity fast-path dashboard (P0 zero-overhead gradual typing)
+    "query:dead-coercion-elim-stats",
     // Issue #706 — Scheduler StealBudget adaptive bias
     "query:scheduler-stealbudget-adaptive-stats",
     // Issue #652 / #707 — Per-fiber stack/checkpoint pool

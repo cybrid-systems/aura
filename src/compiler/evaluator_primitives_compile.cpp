@@ -96,6 +96,93 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(cnt));
     });
 
+    // (query:dead-coercion-elim-stats) — Issue #687: hash
+    // dashboard for the DeadCoercionEliminationPass +
+    // IR-interpreter identity fast-path (P0 production
+    // zero-overhead gradual typing). Non-duplicative with
+    // (compile:dead-coercion-{stats,elapsed,kept-for-debug})
+    // (#433/#508) which each return a single int; #687
+    // carves out a hash primitive so the AI Agent gets
+    // the full zero-overhead-elimination surface in one
+    // call.
+    //
+    // Schema (5 fields + sentinel):
+    //   - casts-eliminated        dead_coercion_eliminated_total
+    //                             (lowering pass; the canonical
+    //                             "how many CastOps did we
+    //                             statically eliminate" counter)
+    //   - residual-hotpath        dead_coercion_kept_for_debug_total
+    //                             (counted but not eliminated —
+    //                             the residual runtime cost)
+    //   - zero-overhead-savings   dead_coercion_elapsed_us_total
+    //                             (cumulative μs the pass spent —
+    //                             proxy for "how much backend
+    //                             time we saved" via the avoided
+    //                             switch dispatches)
+    //   - post-mutate-elim-hits   dead_coercion_post_mutate_elim_hits_total
+    //                             (IR-interpreter identity-cast
+    //                             fast-path; runtime companion
+    //                             to casts-eliminated)
+    //   - hot-path-rate           derived
+    //                             (post-mutate-elim-hits /
+    //                             (post-mutate-elim-hits +
+    //                              residual-hotpath)) * 100
+    //                             — 100 means every CastOp is
+    //                             eliminated or fast-path'd
+    //   - schema == 687
+    add("query:dead-coercion-elim-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t casts_elim = 0, residual = 0, elapsed_us = 0, post_mutate = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            casts_elim = m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+            residual = m->dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed);
+            elapsed_us = m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
+            post_mutate =
+                m->dead_coercion_post_mutate_elim_hits_total.load(std::memory_order_relaxed);
+        }
+        const std::uint64_t total_hotpath = post_mutate + residual;
+        const std::int64_t hotpath_rate =
+            total_hotpath > 0
+                ? static_cast<std::int64_t>((post_mutate * 100) / total_hotpath)
+                : 100;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("casts-eliminated", static_cast<std::int64_t>(casts_elim));
+        insert_kv("residual-hotpath", static_cast<std::int64_t>(residual));
+        insert_kv("zero-overhead-savings", static_cast<std::int64_t>(elapsed_us));
+        insert_kv("post-mutate-elim-hits", static_cast<std::int64_t>(post_mutate));
+        insert_kv("hot-path-rate", hotpath_rate);
+        insert_kv("schema", 687);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // (compile:ir-soa-stats) — Issue #254: observability for
     // the IR SoA dual-emit path. Hash with the 2 counters
     // (instructions-emitted, functions-emitted). Returns a

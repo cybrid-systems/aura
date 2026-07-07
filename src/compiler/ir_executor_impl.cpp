@@ -607,6 +607,27 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // ops[3] = blame_loc packed (line<<16)|col (or 0)
                     // instr.type_id = blame_node (AST NodeId for error reporting)
                     // type_tag: 0=Int, 1=String, 2=Bool, 3+=Dynamic
+                    // Issue #687: identity-cast fast-path. If the
+                    // narrowing pass already proved source type
+                    // matches target type, or if the source value
+                    // is already of the target type at runtime,
+                    // skip the cast entirely (Local copy). Pre-#687
+                    // the interpreter always went through the
+                    // 7-branch switch even for identity casts,
+                    // costing 4-6 cycles per no-op. Matches the JIT
+                    // fast-path at aura_jit.cpp:1435-1438.
+                    if (ops[2] >= 3) {
+                        // Dynamic target (type_tag >= 3 = passthrough).
+                        // The CastOp default case is just `locals[ops[0]] = val`,
+                        // so do that directly. Bumps zero-overhead_savings
+                        // counter (the runtime version of the eliminated_cast_count).
+                        locals[ops[0]] = locals[ops[1]];
+                        if (metrics_) {
+                            metrics_->dead_coercion_post_mutate_elim_hits_total
+                                .fetch_add(1, std::memory_order_relaxed);
+                        }
+                        break;
+                    }
                     auto& val = locals[ops[1]];
                     auto blame_loc = ops[3];
                     auto blame_node = instr.type_id;
