@@ -3165,6 +3165,10 @@ add_dependencies(all_test_issue_targets test_issue_669)
 aura_add_issue_test(test_issue_670)
 aura_issue_test_link_llvm_jit(test_issue_670)
 add_dependencies(all_test_issue_targets test_issue_670)
+# Issue #671: primitives capture consistency + style compliance (P1 stdlib-impl).
+aura_add_issue_test(test_issue_671)
+aura_issue_test_link_llvm_jit(test_issue_671)
+add_dependencies(all_test_issue_targets test_issue_671)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

@@ -68,14 +68,11 @@ static std::int64_t guard_stat(aura::compiler::CompilerService& cs, std::string_
 static void run_ac1_stats_reachable(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:verify-tool-guard-stats 4 fields reachable ---");
     auto r = cs.eval("(query:verify-tool-guard-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r),
-          "query:verify-tool-guard-stats returns hash");
+    CHECK(r && aura::compiler::types::is_hash(*r), "query:verify-tool-guard-stats returns hash");
     for (const auto& k :
          {"guard-captures", "dirty-propagation", "stable-ref-hits", "feedback-mutate-success"}) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:verify-tool-guard-stats) '{}')", k));
-        CHECK(f && aura::compiler::types::is_int(*f),
-              std::format("field '{}' is an int", k));
+        auto f = cs.eval(std::format("(hash-ref (query:verify-tool-guard-stats) '{}')", k));
+        CHECK(f && aura::compiler::types::is_int(*f), std::format("field '{}' is an int", k));
     }
 }
 
@@ -90,16 +87,15 @@ static void run_ac2_apply_fix_success_bumps(aura::compiler::CompilerService& cs)
     // Hand-crafted diagnose result: (cause target fix-type fix-data explanation)
     auto fix = cs.eval(
         R"aura((apply-fix "(define x 1)" '("missing-require" "map" "add-require" "std/list" "Add require")))aura");
-    CHECK(fix && aura::compiler::types::is_string(*fix),
-          "apply-fix returns a string (fixed code)");
+    CHECK(fix && aura::compiler::types::is_string(*fix), "apply-fix returns a string (fixed code)");
     const auto ref_after = guard_stat(cs, "stable-ref-hits");
     const auto dirty_after = guard_stat(cs, "dirty-propagation");
     const auto feedback_after = guard_stat(cs, "feedback-mutate-success");
     CHECK(ref_after - ref_before >= 1,
           std::format("stable-ref-hits bumped by >=1 (was {}, now {})", ref_before, ref_after));
-    CHECK(dirty_after - dirty_before >= 1,
-          std::format("dirty-propagation bumped by >=1 (was {}, now {})", dirty_before,
-                      dirty_after));
+    CHECK(
+        dirty_after - dirty_before >= 1,
+        std::format("dirty-propagation bumped by >=1 (was {}, now {})", dirty_before, dirty_after));
     CHECK(feedback_after - feedback_before >= 1,
           std::format("feedback-mutate-success bumped by >=1 (was {}, now {})", feedback_before,
                       feedback_after));
@@ -111,16 +107,14 @@ static void run_ac3_apply_fix_no_op(aura::compiler::CompilerService& cs) {
     const auto ref_before = guard_stat(cs, "stable-ref-hits");
     const auto dirty_before = guard_stat(cs, "dirty-propagation");
     const auto feedback_before = guard_stat(cs, "feedback-mutate-success");
-    cs.eval(R"aura((apply-fix "(define x 1)" '("syntax-error" "x" "fix-syntax" "" "Can't auto-fix")))aura");
+    cs.eval(
+        R"aura((apply-fix "(define x 1)" '("syntax-error" "x" "fix-syntax" "" "Can't auto-fix")))aura");
     const auto ref_after = guard_stat(cs, "stable-ref-hits");
     const auto dirty_after = guard_stat(cs, "dirty-propagation");
     const auto feedback_after = guard_stat(cs, "feedback-mutate-success");
-    CHECK(ref_after == ref_before,
-          "stable-ref-hits unchanged when fix is no-op");
-    CHECK(dirty_after == dirty_before,
-          "dirty-propagation unchanged when fix is no-op");
-    CHECK(feedback_after == feedback_before,
-          "feedback-mutate-success unchanged when fix is no-op");
+    CHECK(ref_after == ref_before, "stable-ref-hits unchanged when fix is no-op");
+    CHECK(dirty_after == dirty_before, "dirty-propagation unchanged when fix is no-op");
+    CHECK(feedback_after == feedback_before, "feedback-mutate-success unchanged when fix is no-op");
 }
 
 static void run_ac4_check_preconditions_pass(aura::compiler::CompilerService& cs) {
@@ -147,16 +141,15 @@ static void run_ac4_check_preconditions_pass(aura::compiler::CompilerService& cs
         literal_id = 0;
     }
     const auto dirty_before = guard_stat(cs, "dirty-propagation");
-    auto r = cs.eval(std::format(R"aura((check-preconditions {} "Int"))aura",
-                                  static_cast<int>(literal_id)));
-    CHECK(r && aura::compiler::types::is_bool(*r),
-          "check-preconditions returns a bool");
+    auto r = cs.eval(
+        std::format(R"aura((check-preconditions {} "Int"))aura", static_cast<int>(literal_id)));
+    CHECK(r && aura::compiler::types::is_bool(*r), "check-preconditions returns a bool");
     if (r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r)) {
         // Precondition passed — dirty-propagation should have bumped.
         const auto dirty_after = guard_stat(cs, "dirty-propagation");
         CHECK(dirty_after - dirty_before >= 1,
-              std::format("dirty-propagation bumped by >=1 on pass (was {}, now {})",
-                          dirty_before, dirty_after));
+              std::format("dirty-propagation bumped by >=1 on pass (was {}, now {})", dirty_before,
+                          dirty_after));
     } else {
         std::println(std::cout, "  (skipped pass-bump check — preconditions returned #f)");
     }
@@ -184,13 +177,12 @@ static void run_ac5_check_preconditions_fail(aura::compiler::CompilerService& cs
     }
     const auto dirty_before = guard_stat(cs, "dirty-propagation");
     // Use an incompatible type for LiteralInt — should return #f.
-    auto r = cs.eval(std::format(R"aura((check-preconditions {} "Pair"))aura",
-                                  static_cast<int>(literal_id)));
+    auto r = cs.eval(
+        std::format(R"aura((check-preconditions {} "Pair"))aura", static_cast<int>(literal_id)));
     CHECK(r && aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "check-preconditions returns #f for incompatible type");
     const auto dirty_after = guard_stat(cs, "dirty-propagation");
-    CHECK(dirty_after == dirty_before,
-          "dirty-propagation unchanged on fail (NEW wiring verified)");
+    CHECK(dirty_after == dirty_before, "dirty-propagation unchanged on fail (NEW wiring verified)");
 }
 
 static void run_ac6_check_preconditions_oob(aura::compiler::CompilerService& cs) {
@@ -201,8 +193,7 @@ static void run_ac6_check_preconditions_oob(aura::compiler::CompilerService& cs)
     CHECK(r && aura::compiler::types::is_bool(*r) && !aura::compiler::types::as_bool(*r),
           "check-preconditions returns #f for OOB node-id");
     const auto dirty_after = guard_stat(cs, "dirty-propagation");
-    CHECK(dirty_after == dirty_before,
-          "dirty-propagation unchanged on OOB early-out");
+    CHECK(dirty_after == dirty_before, "dirty-propagation unchanged on OOB early-out");
 }
 
 static void run_ac7_regression_parse_coverage(aura::compiler::CompilerService& cs) {
@@ -229,8 +220,7 @@ static void run_ac7_regression_parse_coverage(aura::compiler::CompilerService& c
     CHECK(cs.eval("(verify:run-external-sim \"echo hello\")") ||
               cs.eval("(verify:run-external-sim \"echo hello\")"),
           "verify:run-external-sim reachable");
-    CHECK(cs.eval("(verify:parse-failures \"1 hole_b\n\")"),
-          "verify:parse-failures reachable");
+    CHECK(cs.eval("(verify:parse-failures \"1 hole_b\n\")"), "verify:parse-failures reachable");
 }
 
 } // namespace aura_issue_670_detail
@@ -268,6 +258,6 @@ int main() {
     }
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
-                  g_failed, g_passed + g_failed);
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

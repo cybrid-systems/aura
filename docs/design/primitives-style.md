@@ -1,0 +1,143 @@
+# Primitive Capture-Contract Style Guide
+
+> Issue #671: primitives_detail lambda capture discipline + style
+> compliance observability for stdlib-impl primitives.
+> Complements the existing [primitives_detail.h](../../src/compiler/primitives_detail.h)
+> header contract with the canonical writeup.
+
+## Why this exists
+
+Post the P1/P2 split, every `register_*_primitives` partition has a
+shared signature with `PrimRegistrar`, `pairs_`, `string_heap_`,
+`error_values_`, `primitive_error_counter`, and `*this` for `ev`.
+Lambdas manually capture these; some use the counter, some don't;
+some wrap mutate paths in `MutationBoundaryGuard`, some don't.
+
+Without a documented discipline:
+- New primitives or AI-Agent-generated extensions risk missing
+  `error_counter` → silent or inconsistent error observability.
+- Mutate paths without Guard provenance can leave the
+  workspace in a partial state during fiber cancellation.
+- Read-only hot paths with silent `catch (...)` swallow
+  production bugs.
+
+## Required capture discipline (the PRIM_CAPTURE_CONTRACT)
+
+### Mutate paths
+
+1. **Capture `primitive_error_counter`** as a parameter to the
+   `register_*_primitives` function. Pass to `make_primitive_error`
+   for any error path. Use the `PRIM_ERROR(MSG)` macro — it
+   forwards `string_heap`, `error_values`, and
+   `primitive_error_counter` to the helper.
+2. **Wrap mutate work in `MutationBoundaryGuard`** for fiber-safe
+   provenance:
+
+   ```cpp
+   bool ok = true;
+   aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+   ```
+
+3. **For EDSL-style "real" primitives** (those that call
+   `workspace_flat_->mutate_*`), mark dirty explicitly via
+   `mark_dirty_upward` so observability surfaces see the propagation.
+
+### Error paths
+
+4. **Always use `PRIM_ERROR(MSG)`** instead of building the error
+   value inline. The macro expands to the canonical 4-arg call,
+   including the counter bump. See
+   `src/compiler/primitives_detail.h` for the macro definition.
+
+5. **For type-mismatch / OOB pre-try validation**, use
+   `PRIM_ERROR(MSG)` with a structured message like
+   `"<prim-name>: expected N string arguments"`. Do not return
+   silent sentinels (`make_int(0)` / `make_void()`) — silent
+   sentinels conflate "operation didn't apply" with "user input
+   was malformed". See `evaluator_primitives_math.cpp` regex
+   primitives for the post-#668 pattern.
+
+### Read-only hot paths
+
+6. **Capture `&ev` or explicit heap refs** as needed. Do not
+   silently swallow exceptions in `catch (...)` — let the
+   evaluator surface the error or use `PRIM_ERROR(MSG)` for the
+   structured path.
+
+## Compile-time helpers
+
+`primitives_detail.h` ships two `constexpr` helpers:
+
+```cpp
+PRIM_CAPTURE_HAS_ERROR_COUNTER(true);  // mutate path: pass true if you capture counter
+PRIM_CAPTURE_USES_GUARD(true);        // mutate path: pass true if you wrap in Guard
+```
+
+These fire a `static_assert` at compile time when `false` is
+passed — making the discipline visible during code review
+without forcing a runtime check at every call site.
+
+```cpp
+add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
+    PRIM_CAPTURE_HAS_ERROR_COUNTER(true);
+    PRIM_CAPTURE_USES_GUARD(true);
+    bool ok = true;
+    aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+    // ... mutate logic ...
+});
+```
+
+## Runtime observability
+
+| Primitive                                | Schema | Source                         |
+|------------------------------------------|--------|--------------------------------|
+| `(query:primitives-registry-stats)`      | 709    | registry-level summary (7 fields) |
+| `(query:primitives-consistency-stats)`   | 671    | capture-discipline axis (7 fields) |
+| `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
+
+### `(query:primitives-consistency-stats)` fields
+
+- `capture-violations-detected` — `primitive_capture_violations_total`
+  bumped by `prim_record_capture_violation` when a primitive fails
+  the capture contract.
+- `style-compliance-pct` — derived `(slots - capture_violations) / slots * 100`.
+  100 means every primitive passes the contract.
+- `registry-slots` — `primitives_.slot_count()`.
+- `documented-count` — `primitives_.documented_meta_count()`.
+- `capture-contract-version` — `kPrimCaptureContractVersion` from
+  `primitives_detail.h`. Bump when the contract changes so the
+  Agent can detect drift.
+- `recommended-action` — 0 = no action, 1 = backfill missing
+  meta, 2 = audit capture contract. Triggered when
+  `capture_violations > 0` or `documented < slots`.
+- `schema` — 671 (drift sentinel).
+
+## Audit checklist
+
+For every new `register_*_primitives` partition:
+
+- [ ] Mutate primitives capture `primitive_error_counter` and use
+      `PRIM_ERROR(MSG)` for error paths.
+- [ ] Mutate primitives wrap work in `MutationBoundaryGuard`.
+- [ ] Pre-try validation (type-mismatch / OOB) uses `PRIM_ERROR(MSG)`
+      instead of silent sentinels.
+- [ ] Read-only hot paths don't silently `catch (...)` —
+      either let it propagate or use `PRIM_ERROR(MSG)`.
+- [ ] Compiles with `PRIM_CAPTURE_HAS_ERROR_COUNTER(true)` +
+      `PRIM_CAPTURE_USES_GUARD(true)` at the top of every
+      mutate lambda body.
+- [ ] Test covers: success path, error path (counter bumped),
+      pre-try validation path (counter bumped, not silent).
+- [ ] If EDSL-style (calls `workspace_flat_->mutate_*`):
+      `mark_dirty_upward` is called for dirty propagation.
+
+## Related
+
+- `src/compiler/primitives_detail.h` — header contract + macro
+  definitions
+- `src/compiler/observability_metrics.h` — `primitive_capture_violations_total`
+  atomic
+- `src/compiler/evaluator.ixx` — `MutationBoundaryGuard` definition
+- `src/compiler/primitives_meta.h` — `DEFINE_PRIMITIVE_META` macro
+- `docs/design/primitive-vs-stdlib-decision-framework.md` —
+  which primitives belong in C++ vs stdlib `.aura`

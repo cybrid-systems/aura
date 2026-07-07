@@ -274,16 +274,18 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             switch (nv.tag) {
                 case aura::ast::NodeTag::LiteralInt:
                     // Int literal: compatible with Int, Float, Bool (≠0), Dyn
-                    result = make_bool(new_type == "Int" || new_type == "Float" ||
-                                        new_type == "Bool" || new_type == "Dyn" || new_type == "Any");
+                    result =
+                        make_bool(new_type == "Int" || new_type == "Float" || new_type == "Bool" ||
+                                  new_type == "Dyn" || new_type == "Any");
                     break;
                 case aura::ast::NodeTag::LiteralFloat:
                     // Float literal: compatible with Float, Dyn
-                    result = make_bool(new_type == "Float" || new_type == "Dyn" || new_type == "Any");
+                    result =
+                        make_bool(new_type == "Float" || new_type == "Dyn" || new_type == "Any");
                     break;
                 case aura::ast::NodeTag::LiteralString:
-                    result = make_bool(new_type == "String" || new_type == "Dyn" ||
-                                        new_type == "Any");
+                    result =
+                        make_bool(new_type == "String" || new_type == "Dyn" || new_type == "Any");
                     break;
                 case aura::ast::NodeTag::Call:
                 case aura::ast::NodeTag::Lambda:
