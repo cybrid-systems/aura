@@ -1135,8 +1135,8 @@ public:
                 auto fast_body_id = fast_root_v.child(0);
                 if (fast_body_id < flat.size()) {
                     auto fast_name = std::string(pool.resolve(fast_root_v.sym_id));
-                    const bool needs = define_body_needs_tree_walker_fallback(
-                        flat, pool, fast_body_id, fast_name);
+                    const bool needs =
+                        define_body_needs_tree_walker_fallback(flat, pool, fast_body_id, fast_name);
                     if (flat_has_quote && needs)
                         metrics_.compiler_core_quote_fallback_refresh_total.fetch_add(
                             1, std::memory_order_relaxed);
@@ -5887,27 +5887,42 @@ public:
         // because the shared_mutex's internal state is mutable
         // (its lock/unlock operations don't change the logical
         // contents of the Evaluator).
+        //
+        // Re-entrancy: snapshot() can be called from the IR
+        // interpreter via Aura primitives (e.g. (query:*) that
+        // compute hash fields from runtime stats). If the
+        // interpreter runs while set-code / restore-ast /
+        // mutate holds workspace_mtx_ unique_lock, calling
+        // lock_workspace_shared() here would deadlock
+        // (EDEADLK / "Resource deadlock avoided"). Use
+        // try_lock_shared() and skip the marker read on
+        // contention — the marker counts are observability
+        // hints, not correctness state, so a missed read is
+        // acceptable.
         {
             auto& eval_mut = const_cast<Evaluator&>(evaluator_);
-            eval_mut.lock_workspace_shared();
-            struct UnlockGuard {
-                Evaluator& e;
-                ~UnlockGuard() { e.unlock_workspace_shared(); }
-            } guard{eval_mut};
-            const auto* wf = eval_mut.workspace_flat();
-            if (wf) {
-                const auto& markers = wf->marker_column();
-                s.marker_total_count = markers.size();
-                for (auto m : markers) {
-                    auto val = static_cast<int>(m);
-                    if (val == 0)
-                        ++s.marker_user_count;
-                    else if (val == 1)
-                        ++s.marker_macro_introduced_count;
-                    else if (val == 2)
-                        ++s.marker_bool_literal_count;
+            if (eval_mut.try_lock_workspace_shared()) {
+                struct UnlockGuard {
+                    Evaluator& e;
+                    ~UnlockGuard() { e.unlock_workspace_shared(); }
+                } guard{eval_mut};
+                const auto* wf = eval_mut.workspace_flat();
+                if (wf) {
+                    const auto& markers = wf->marker_column();
+                    s.marker_total_count = markers.size();
+                    for (auto m : markers) {
+                        auto val = static_cast<int>(m);
+                        if (val == 0)
+                            ++s.marker_user_count;
+                        else if (val == 1)
+                            ++s.marker_macro_introduced_count;
+                        else if (val == 2)
+                            ++s.marker_bool_literal_count;
+                    }
                 }
             }
+            // else: contended — the caller already holds unique_lock
+            // (e.g. set-code, restore-ast, mutate:*). Skip marker read.
         }
         // Populate per-function metrics from the JIT cache
         {
@@ -8579,7 +8594,8 @@ public:
         auto* raw = aura::messaging::g_current_compiler_service;
         if (!raw)
             return;
-        static_cast<CompilerService*>(raw)->evaluator_.bump_compiler_core_jit_unhandled_invalidate();
+        static_cast<CompilerService*>(raw)
+            ->evaluator_.bump_compiler_core_jit_unhandled_invalidate();
     }
 
     // Issue #492: ShapeProfiler deopt hook trampoline (C fn ptr).

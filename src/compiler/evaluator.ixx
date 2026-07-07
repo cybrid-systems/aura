@@ -5026,6 +5026,16 @@ public:
     void unlock_workspace_shared() { workspace_mtx_.unlock_shared(); }
     void lock_workspace_unique() { workspace_mtx_.lock(); }
     void unlock_workspace_unique() { workspace_mtx_.unlock(); }
+    // Non-blocking shared lock for read paths that may be
+    // called from within the IR interpreter (e.g. snapshot()
+    // bumping marker counts from inside a query primitive). If
+    // the same thread already holds unique_lock (e.g. via
+    // set-code / restore-ast / mutate:*), the blocking
+    // lock_shared() would throw EDEADLK ("Resource deadlock
+    // avoided") under pthread robust-mutex semantics. Returns
+    // true on acquire, false on contention — callers may
+    // safely skip the read.
+    bool try_lock_workspace_shared() { return workspace_mtx_.try_lock_shared(); }
 
     // Issue #157 Phase 1: defuse_version_ accessor for the JIT
     // version check (aura_get_defuse_version in aura_jit_runtime.cpp).
