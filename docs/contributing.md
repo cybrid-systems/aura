@@ -7,13 +7,16 @@
 ## 构建与测试
 
 ```bash
+./scripts/install-githooks.sh   # 一次性：启用 pre-commit（含 docs 自动 regen）
 ./build.py build
 ./build.py check          # CI 默认
 ./build.py test unit      # test_ir
 ./build.py test integ     # .aura 端到端
 ```
 
-加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例，并运行 **`./build.py docs`**（会写 `docs/generated/*.md`；CI `./build.py gate` 用 `docs --check` 校验，须把生成文件一并提交）。
+**Git hooks**：`.githooks/pre-commit` 已在仓库内，但 Git **不会自动启用**——须运行 `./scripts/install-githooks.sh`（设置 `core.hooksPath=.githooks`）。启用后，staged `src/` 变更会在 commit 前自动跑 `./build.py docs` 并 re-stage `docs/generated/*.md`；CI `./build.py gate` 仍作最终校验。
+
+加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例。若未装 hook，须手动 **`./build.py docs`** 并把 `docs/generated/*.md` 一并提交（否则 `docs --check` 挂）。
 
 ## Evaluator 是什么
 
