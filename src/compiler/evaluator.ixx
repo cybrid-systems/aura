@@ -1414,7 +1414,7 @@ public:
     // workspace if it still shares parent's flat. No-op if active is
     // root, already cloned, or read-only. Returns true on success,
     // false if read-only or COW refused (budget exceeded).
-    static bool trigger_lazy_cow(void* wt);
+    bool trigger_lazy_cow(void* wt);
 
     // After trigger_lazy_cow, the active workspace's flat/pool may
     // have been reallocated. Call this to refresh the pointers.
@@ -4679,6 +4679,60 @@ public:
     [[nodiscard]] std::int64_t last_atomic_batch_snapshot_id() const noexcept {
         return last_atomic_batch_snapshot_id_;
     }
+    // Issue #738: COW/sub-workspace StableNodeRef boundary pinning.
+    std::vector<aura::ast::FlatAST::StableNodeRef> cow_boundary_pinned_refs_{};
+    std::atomic<std::uint64_t> cow_boundary_pins_total_{0};
+    void pin_stable_ref_for_cow_boundary(aura::ast::FlatAST::StableNodeRef ref) noexcept {
+        ref.pin_for_cow();
+        for (const auto& existing : cow_boundary_pinned_refs_) {
+            if (existing.id == ref.id && existing.workspace_id == ref.workspace_id)
+                return;
+        }
+        cow_boundary_pinned_refs_.push_back(ref);
+        cow_boundary_pins_total_.fetch_add(1, std::memory_order_relaxed);
+        if (workspace_flat_)
+            workspace_flat_->bump_pinned_across_boundaries();
+    }
+    void propagate_cow_pins_after_clone(std::uint32_t child_layer,
+                                        std::uint64_t child_cow_epoch) noexcept {
+        if (!workspace_tree_ || !workspace_flat_)
+            return;
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        if (child_layer >= wt->size())
+            return;
+        workspace_flat_->set_workspace_cow_epoch(child_cow_epoch);
+        const auto parent_layer = wt->nodes_[child_layer].parent_layer_idx;
+        for (const auto& pinned : cow_boundary_pinned_refs_) {
+            if (pinned.workspace_id != parent_layer)
+                continue;
+            auto resolved =
+                wt->resolve_stable_ref(parent_layer, pinned, child_layer);
+            if (!resolved)
+                continue;
+            auto child_ref = *resolved;
+            child_ref.cow_epoch_at_capture = child_cow_epoch;
+            child_ref.pin_for_cow();
+            pin_stable_ref_for_cow_boundary(child_ref);
+        }
+    }
+    [[nodiscard]] bool validate_stable_ref_cross_cow_boundary(
+        const aura::ast::FlatAST::StableNodeRef& ref,
+        std::uint64_t current_cow_epoch) const noexcept {
+        if (!workspace_flat_)
+            return false;
+        workspace_flat_->bump_cross_boundary_validations();
+        if (ref.cow_epoch_at_capture == 0 || ref.cow_epoch_at_capture == current_cow_epoch)
+            return workspace_flat_->is_valid(ref);
+        if (ref.boundary_pinned && workspace_flat_->is_live_node(ref.id))
+            return true;
+        return workspace_flat_->is_valid(ref);
+    }
+    [[nodiscard]] std::uint64_t cow_boundary_pins_total() const noexcept {
+        return cow_boundary_pins_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t cow_boundary_pinned_ref_count() const noexcept {
+        return cow_boundary_pinned_refs_.size();
+    }
     // Issue #737: snapshot capture/restore without re-acquiring
     // workspace_mtx_ (caller must hold the exclusive lock).
     [[nodiscard]] std::int64_t
@@ -5546,7 +5600,9 @@ WorkspaceTree::resolve_stable_ref(std::uint32_t from_layer, ast::FlatAST::Stable
                                     ref.fiber_id,
                                     ref.last_validated_generation,
                                     ref.wrap_epoch,
-                                    ref.subtree_gen_at_capture};
+                                    ref.subtree_gen_at_capture,
+                                    target_flat->workspace_cow_epoch(),
+                                    ref.boundary_pinned};
     return out;
 }
 

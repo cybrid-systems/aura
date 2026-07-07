@@ -268,6 +268,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (ws) {
                 ev.workspace_flat_ = ws->flat;
                 ev.workspace_pool_ = ws->pool;
+                // Issue #738: sync COW epoch into flat for StableNodeRef capture.
+                if (ws->flat)
+                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
             }
         }
         ev.workspace_read_only_ = ws ? ws->read_only : false;

@@ -5163,6 +5163,20 @@ public:
         // are still accepted by is_valid_subtree() because
         // subtree_gen_[T] starts at 0.
         std::uint16_t subtree_gen_at_capture = 0;
+        // Issue #738: COW epoch at capture for cross-boundary
+        // validity. Compared against the workspace layer's
+        // cow_epoch on lazy clone to detect parent→child
+        // boundary crossings without over-invalidating refs
+        // that remain live in the child COW copy.
+        std::uint64_t cow_epoch_at_capture = 0;
+        // Issue #738: set when pin_for_cow() records this ref
+        // in the evaluator's boundary pin registry.
+        bool boundary_pinned = false;
+
+        // Issue #738: mark this ref as pinned across a COW
+        // boundary (no-op on the ref itself; Evaluator
+        // registry does the bookkeeping).
+        void pin_for_cow() noexcept { boundary_pinned = true; }
 
         // Issue #379: bodies of these methods moved to
         // src/core/ast_stability.cpp (impl unit of aura.core.ast).
@@ -5269,7 +5283,8 @@ public:
                              0,
                              0,
                              wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id)};
+                             subtree_generation(id),
+                             workspace_cow_epoch_};
     }
 
     // Issue #291: make_ref variant that also tags the ref
@@ -5289,7 +5304,8 @@ public:
                              0,
                              0,
                              wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id)};
+                             subtree_generation(id),
+                             workspace_cow_epoch_};
     }
 
     // Issue #303: make_safe_ref records full provenance
@@ -5309,7 +5325,8 @@ public:
                              fiber_id,
                              generation_,
                              wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id)};
+                             subtree_generation(id),
+                             workspace_cow_epoch_};
     }
 
     // Issue #303: capture_for_fiber is a shorthand for
@@ -5344,7 +5361,8 @@ public:
                              0,
                              gen,
                              wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id)};
+                             subtree_generation(id),
+                             workspace_cow_epoch_};
     }
 
     // Issue #393: flat-style validity check for callers that
@@ -5752,6 +5770,24 @@ public:
     }
     std::uint64_t stable_ref_invalidations() const noexcept {
         return stable_ref_invalidations_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t workspace_cow_epoch() const noexcept { return workspace_cow_epoch_; }
+    void set_workspace_cow_epoch(std::uint64_t epoch) noexcept { workspace_cow_epoch_ = epoch; }
+    [[nodiscard]] std::uint64_t pinned_across_boundaries() const noexcept {
+        return pinned_across_boundaries_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t cross_boundary_validations() const noexcept {
+        return cross_boundary_validations_.load(std::memory_order_relaxed);
+    }
+    void bump_pinned_across_boundaries() const noexcept {
+        pinned_across_boundaries_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_cross_boundary_validations() const noexcept {
+        cross_boundary_validations_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void reset_boundary_observability_counters() noexcept {
+        pinned_across_boundaries_.store(0, std::memory_order_relaxed);
+        cross_boundary_validations_.store(0, std::memory_order_relaxed);
     }
     // Issue #457: generation_ / node_gen_ lifecycle
     // observability accessors. Public so the
@@ -6277,6 +6313,12 @@ public:
     }
 
     NodeId root = NULL_NODE;
+
+    // Issue #738: workspace-layer COW epoch mirrored from
+    // WorkspaceNode::cow_epoch on switch / lazy clone.
+    std::uint64_t workspace_cow_epoch_ = 0;
+    mutable std::atomic<std::uint64_t> pinned_across_boundaries_{0};
+    mutable std::atomic<std::uint64_t> cross_boundary_validations_{0};
 
     // Issue #250: atomic-batch state. Placed at the end of the
     // class (after `root`) to preserve the SoA field ordering

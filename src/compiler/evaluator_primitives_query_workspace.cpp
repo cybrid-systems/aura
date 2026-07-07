@@ -255,7 +255,7 @@ void register_workspace_query_primitives(
     // The result is a 2-element list `(id . gen)` so the agent
     // can capture it as a single value and pass it through
     // multi-round edit pipelines.
-    add("query:stable-ref", [ws, mev](const auto& a) -> EvalValue {
+    add("query:stable-ref", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (query:stable-ref node-id)");
@@ -267,6 +267,13 @@ void register_workspace_query_primitives(
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
         auto gen = flat.generation();
+        // Issue #738: auto-pin captured refs for COW boundary tracking.
+        std::uint32_t layer = 0;
+        if (ev.workspace_tree()) {
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+            layer = wt->active_idx();
+        }
+        ev.pin_stable_ref_for_cow_boundary(flat.make_safe_ref(node, layer));
         // Build (node-id . gen) pair
         auto gen_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
