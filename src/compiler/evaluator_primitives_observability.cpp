@@ -113,6 +113,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:linear-occurrence-mutate-stats",
     // Issue #748 — SV verification EDSL structured mutate + dirty re-emit closed-loop
     "query:sv-verification-structure-stats",
+    // Issue #750 — Runtime reflection schema validation for macro/EDSL mutate
+    "query:reflection-schema-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -4519,6 +4521,72 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("emit-fidelity-pass", emit_pass);
         insert_kv("emit-fidelity-fail", emit_fail);
         insert_kv("schema", 748);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #750: query:reflection-schema-stats — Runtime reflection schema
+    // validation bridge for macro bodies + EDSL structs under Guard mutate
+    // (refines #734; non-duplicative with #454 reflect-edsl-bridge, #502
+    // reflect-postmutate, #654 macro-hygiene-fiber-panic).
+    //
+    // Fields (4 + sentinel):
+    //   - validated                  reflection_schema_validated_total
+    //   - hygiene-invariants-held    reflection_macro_provenance_held_total
+    //   - schema-violations          reflection_schema_violations_total
+    //   - stale-validation-prevented reflection_stale_validation_prevented_total
+    //   - schema == 750
+    add("query:reflection-schema-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t validated =
+            m ? static_cast<std::int64_t>(
+                    m->reflection_schema_validated_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hygiene_held =
+            m ? static_cast<std::int64_t>(
+                    m->reflection_macro_provenance_held_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t violations =
+            m ? static_cast<std::int64_t>(
+                    m->reflection_schema_violations_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t stale_prev =
+            m ? static_cast<std::int64_t>(
+                    m->reflection_stale_validation_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("validated", validated);
+        insert_kv("hygiene-invariants-held", hygiene_held);
+        insert_kv("schema-violations", violations);
+        insert_kv("stale-validation-prevented", stale_prev);
+        insert_kv("schema", 750);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

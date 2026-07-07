@@ -1922,6 +1922,11 @@ struct CompilerMetrics {
     // Issue #748: SV verification EDSL structured mutate + dirty re-emit closed-loop.
     std::atomic<std::uint64_t> sv_verification_structure_mutate_hits_total{0};
     std::atomic<std::uint64_t> sv_verification_dirty_reemit_total{0};
+    // Issue #750: Runtime reflection schema validation for macro/EDSL mutate (refines #734).
+    std::atomic<std::uint64_t> reflection_schema_validated_total{0};
+    std::atomic<std::uint64_t> reflection_schema_violations_total{0};
+    std::atomic<std::uint64_t> reflection_stale_validation_prevented_total{0};
+    std::atomic<std::uint64_t> reflection_macro_provenance_held_total{0};
     // Issue #688: graceful safe-fallback on GC/fiber linear probe violation.
     std::atomic<std::uint64_t> linear_typed_mutate_safe_fallbacks{0};
 

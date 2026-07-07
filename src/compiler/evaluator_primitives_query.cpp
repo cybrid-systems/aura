@@ -61,6 +61,80 @@ static std::uint64_t ir_inline_hygiene_skipped(Evaluator* ev) {
     return ev->get_macro_hygiene_skipped_fn_();
 }
 
+// Issue #750: runtime AST subtree validation for macro/EDSL self-evo safety.
+struct ReflectRuntimeValidateResult {
+    bool ok = false;
+    bool hygiene_held = true;
+    bool stale_prevented = false;
+    std::uint64_t macro_markers = 0;
+};
+
+static bool is_edsl_verification_tag(aura::ast::NodeTag tag) noexcept {
+    using aura::ast::NodeTag;
+    return tag == NodeTag::Constraint || tag == NodeTag::Class || tag == NodeTag::Covergroup ||
+           tag == NodeTag::Coverpoint || tag == NodeTag::Property || tag == NodeTag::Interface ||
+           tag == NodeTag::Modport || tag == NodeTag::Sequence || tag == NodeTag::Assert;
+}
+
+static ReflectRuntimeValidateResult runtime_reflect_validate_ast_subtree(aura::ast::FlatAST& flat,
+                                                                         aura::ast::NodeId root,
+                                                                         bool edsl_mode) {
+    ReflectRuntimeValidateResult out;
+    if (root == aura::ast::NULL_NODE || root >= flat.size() || !flat.is_live_node(root)) {
+        out.stale_prevented = true;
+        return out;
+    }
+    if (edsl_mode && !is_edsl_verification_tag(flat.get(root).tag))
+        return out;
+    constexpr auto kExpansion =
+        static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
+    bool marker_ok = true;
+    std::vector<aura::ast::NodeId> stack;
+    stack.push_back(root);
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == aura::ast::NULL_NODE || id >= flat.size()) {
+            marker_ok = false;
+            continue;
+        }
+        const auto v = flat.get(id);
+        if (flat.is_macro_introduced(id)) {
+            ++out.macro_markers;
+            if ((flat.macro_dirty(id) & kExpansion) == 0)
+                marker_ok = false;
+        }
+        const auto parent = flat.parent_of(id);
+        if (parent != aura::ast::NULL_NODE && parent >= flat.size())
+            marker_ok = false;
+        for (auto c : v.children) {
+            if (c != aura::ast::NULL_NODE)
+                stack.push_back(c);
+        }
+    }
+    out.hygiene_held = marker_ok;
+    out.ok = marker_ok;
+    return out;
+}
+
+static void bump_reflection_schema_metrics(CompilerMetrics* m,
+                                           const ReflectRuntimeValidateResult& result) {
+    if (!m)
+        return;
+    if (result.stale_prevented) {
+        m->reflection_stale_validation_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        m->reflection_schema_violations_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (result.ok) {
+        m->reflection_schema_validated_total.fetch_add(1, std::memory_order_relaxed);
+        if (result.macro_markers > 0)
+            m->reflection_macro_provenance_held_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        m->reflection_schema_violations_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                std::pmr::vector<std::string>& string_heap, void*& type_registry,
                                ModulePathResolver resolve_module_path, Evaluator& ev) {
@@ -4114,6 +4188,36 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t impact = ev->get_mutation_impact_count();
         const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
         return make_int(static_cast<std::int64_t>(pass + fail + snapshots + impact + guard_epoch));
+    });
+
+    // Issue #750: (reflect:validate-macro-body node-id) — runtime hygiene/schema
+    // check on MacroIntroduced subtrees before Guard commit.
+    add("reflect:validate-macro-body", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto result = runtime_reflect_validate_ast_subtree(*ws, nid, false);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            bump_reflection_schema_metrics(m, result);
+        return make_bool(result.ok);
+    });
+
+    // Issue #750: (reflect:validate-edsl node-id) — runtime schema check for
+    // SV verification EDSL nodes (Constraint/Class/Covergroup/SVA/etc.).
+    add("reflect:validate-edsl", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto result = runtime_reflect_validate_ast_subtree(*ws, nid, true);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            bump_reflection_schema_metrics(m, result);
+        return make_bool(result.ok);
     });
 
     // Issue #501 / #514: query:ir-hygiene-stats. Hash view of IR-level

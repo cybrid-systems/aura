@@ -3939,8 +3939,22 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
         bump_schema_validation_pass_count();
         if (health.macro_markers > 0)
             bump_macro_reflect_hygiene_validation();
-    } else
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflection_schema_validated_total.fetch_add(1, std::memory_order_relaxed);
+            if (health.macro_markers > 0)
+                m->reflection_macro_provenance_held_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
         bump_schema_validation_fail_count();
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflection_schema_violations_total.fetch_add(1, std::memory_order_relaxed);
+            if (!health.generation_healthy)
+                m->reflection_stale_validation_prevented_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        }
+    }
     return ok;
 }
 
