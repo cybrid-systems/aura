@@ -3713,6 +3713,60 @@ public:
         }
         return 0;
     }
+    // Issue #664: SV DefUse incremental observability (P1). The 3
+    // bump helpers back the (query:sv-defuse-stats) primitive.
+    // (1) nested_modports: bumped when DefUse build discovers a
+    //     Modport child of an Interface (nested modport at depth
+    //     >= 1).
+    // (2) cross_refs: bumped when a use-record resolves to an
+    //     Interface/Modport symbol defined in another scope
+    //     (cross-interface / cross-modport reference).
+    // (3) incremental_updates: bumped per DefUse incremental
+    //     rebuild triggered by an SV structural mutate
+    //     (vs. a full rebuild).
+    //
+    // Initially the bump sites are the test-fixture callers + the
+    // planned production wiring (issue body Actions #1 + #2).
+    // The follow-up wiring for Actions #1 + #2 is separate work.
+    void bump_sv_defuse_nested_modports(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_defuse_nested_modports_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_defuse_cross_refs(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_defuse_cross_refs_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_defuse_incremental_updates(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_defuse_incremental_updates_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_sv_defuse_nested_modports() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_defuse_nested_modports_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_defuse_cross_refs() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_defuse_cross_refs_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_defuse_incremental_updates() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_defuse_incremental_updates_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
