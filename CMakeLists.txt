@@ -3174,6 +3174,11 @@ add_dependencies(all_test_issue_targets test_issue_671)
 aura_add_issue_test(test_atomic_batch_snapshot_stable_ref_ai_loops)
 aura_issue_test_link_llvm_jit(test_atomic_batch_snapshot_stable_ref_ai_loops)
 add_dependencies(all_test_issue_targets test_atomic_batch_snapshot_stable_ref_ai_loops)
+# Issue #738: StableNodeRef COW/sub-workspace pinning + cross-boundary
+# validity tracking for concurrent AI orchestration (P0 EDSL-Core).
+aura_add_issue_test(test_stable_ref_cow_subworkspace_concurrent_ai)
+aura_issue_test_link_llvm_jit(test_stable_ref_cow_subworkspace_concurrent_ai)
+add_dependencies(all_test_issue_targets test_stable_ref_cow_subworkspace_concurrent_ai)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)

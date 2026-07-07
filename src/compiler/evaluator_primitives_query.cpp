@@ -517,7 +517,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Uses the `string_heap` reference passed into
             // register_query_primitives() (avoids the private
             // Evaluator::string_heap_ field).
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_int(rec_int);
             auto meta = ht->metadata();
@@ -548,10 +548,74 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
             insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
             insert_kv("recommendation", rec_int);
+            // Issue #738: cross-COW + boundary pinning observability.
+            insert_kv("cross-cow-invalidations",
+                      static_cast<std::int64_t>(ev.get_cross_cow_invalidations()));
+            if (auto* wflat = ev.workspace_flat())
+                insert_kv("pinned-across-boundaries",
+                          static_cast<std::int64_t>(wflat->pinned_across_boundaries()));
+            else
+                insert_kv("pinned-across-boundaries", 0);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #738: query:stable-ref-boundary-stats-hash — cross-COW /
+    // sub-workspace pinning + boundary validity observability for
+    // concurrent AI orchestration. Complements #527
+    // (stable-ref-cow-fiber-stats) and #457 (stable-ref-stats).
+    add("query:stable-ref-boundary-stats-hash",
+        [&ev, &string_heap](const auto&) -> EvalValue {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const std::uint64_t cross_cow = ev.get_cross_cow_invalidations();
+        const std::uint64_t pins_total = ev.cow_boundary_pins_total();
+        const std::uint64_t pins_active = ev.cow_boundary_pinned_ref_count();
+        std::uint64_t flat_pins = 0;
+        std::uint64_t boundary_checks = 0;
+        std::uint64_t cow_epoch = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            flat_pins = ws->pinned_across_boundaries();
+            boundary_checks = ws->cross_boundary_validations();
+            cow_epoch = ws->workspace_cow_epoch();
+        }
+        insert_kv("cross-cow-invalidations", static_cast<std::int64_t>(cross_cow));
+        insert_kv("pinned-across-boundaries", static_cast<std::int64_t>(flat_pins));
+        insert_kv("boundary-pins-total", static_cast<std::int64_t>(pins_total));
+        insert_kv("boundary-pins-active", static_cast<std::int64_t>(pins_active));
+        insert_kv("boundary-validations", static_cast<std::int64_t>(boundary_checks));
+        insert_kv("workspace-cow-epoch", static_cast<std::int64_t>(cow_epoch));
+        insert_kv("schema", 738);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 
     // Issue #620: query:stable-ref-provenance — Agent-discoverable
     // StableNodeRef provenance query. Takes a raw NodeId, calls

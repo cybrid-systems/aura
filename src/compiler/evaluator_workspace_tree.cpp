@@ -154,7 +154,16 @@ bool Evaluator::trigger_lazy_cow(void* wt) {
         return true; // already cloned
     if (node.read_only)
         return false; // can't clone read-only
-    return tree->ensure_local_flat(idx);
+    const bool cloned = tree->ensure_local_flat(idx);
+    if (cloned && tree->nodes_[idx].has_own_flat) {
+        auto& node = tree->nodes_[idx];
+        if (node.flat) {
+            node.flat->set_workspace_cow_epoch(node.cow_epoch);
+            node.flat->reset_boundary_observability_counters();
+        }
+        propagate_cow_pins_after_clone(idx, node.cow_epoch);
+    }
+    return cloned;
 }
 
 // After trigger_lazy_cow, the active workspace's flat/pool may have
