@@ -3052,6 +3052,18 @@ add_dependencies(all_test_issue_targets test_issue_709)
 aura_add_issue_test(test_issue_710)
 aura_issue_test_link_llvm_jit(test_issue_710)
 add_dependencies(all_test_issue_targets test_issue_710)
+# Issue #711: AI-native primitives meta introspection + generator +
+# EDA category backfill + style spec (elevates #669 #617 #643,
+# non-duplicative). Closed-loop integration test wires together
+# the foundations shipped from #617 (catalog), #669 (per-name
+# enrichment), #671 (style spec), #697 (generator + extension
+# stats). 7 ACs: drift check, catalog by-category-eda,
+# generator category detection (sva/verification/eda), closed-
+# loop Agent sim, regression of foundations. No new primitives
+# added (all five surfaces already exist).
+aura_add_issue_test(test_issue_711)
+aura_issue_test_link_llvm_jit(test_issue_711)
+add_dependencies(all_test_issue_targets test_issue_711)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
