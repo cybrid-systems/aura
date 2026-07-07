@@ -1,6 +1,7 @@
 // aura_jit.cpp — LLVM ORC JIT backend for Aura IR
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
+#include "jit_typed_mutation_stats.h"
 #include "value_tags.h"
 
 #if AURA_HAVE_LLVM
@@ -552,6 +553,8 @@ struct LLVMBuilder {
         auto linear_safety_probe = [&]() {
             if (inst.linear_ownership_state == 0)
                 return;
+            if (inst.narrow_evidence != 0)
+                aura::compiler::jit_typed_mutation::record_linear_state_optimized();
             irb->CreateCall(
                 llvm::FunctionCallee(fn_linear_jit_safety),
                 {llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
@@ -786,6 +789,7 @@ struct LLVMBuilder {
                 // Issue #538: trust occurrence-narrowing evidence and
                 // skip the runtime shape check (mirrors ir_executor).
                 if (inst.narrow_evidence != 0) {
+                    aura::compiler::jit_typed_mutation::record_narrow_evidence_hit();
                     store(inst.ops[0], c64(KWD_TRUE_VAL));
                     return true;
                 }
@@ -1278,6 +1282,8 @@ struct LLVMBuilder {
                 // we avoid the call + the global heap round-trip.
                 if (inst_shape(inst) == SHAPE_PAIR && fn.escape_map &&
                     result_slot < fn.local_count && !fn.escape_map[result_slot]) {
+                    if (inst.narrow_evidence != 0 || inst.type_id != 0)
+                        aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
                     // L2 SPECIALIZED: stack-allocate the pair.
                     // Issue #200: aura_alloc_pair_arena intrinsic
                     // (4/4 of the #194 migration). Bumps
@@ -1458,6 +1464,8 @@ struct LLVMBuilder {
                 // without runtime cast (DCE may have missed this on
                 // incremental paths).
                 if (inst.narrow_evidence != 0) {
+                    aura::compiler::jit_typed_mutation::record_narrow_evidence_hit();
+                    aura::compiler::jit_typed_mutation::record_cast_elided_in_l2();
                     store(inst.ops[0], load(inst.ops[1]));
                     return true;
                 }

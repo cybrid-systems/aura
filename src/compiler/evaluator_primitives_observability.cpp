@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
@@ -106,6 +107,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:shape-jit-pass-closedloop-stats",
     // Issue #745 — Dynamic reverify limit + Occurrence priority in solve_delta
     "query:constraint-reverify-occurrence-stats",
+    // Issue #746 — JIT typed-mutation narrow_evidence / linear / L2 propagation
+    "query:jit-typed-mutation-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -3616,9 +3619,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         CompilerMetrics* m =
             ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
         const std::int64_t impact_on_bridge =
-            m ? static_cast<std::int64_t>(
-                    m->incremental_closure_bridge_impact_blocks_total.load(
-                        std::memory_order_relaxed))
+            m ? static_cast<std::int64_t>(m->incremental_closure_bridge_impact_blocks_total.load(
+                    std::memory_order_relaxed))
               : 0;
         const std::int64_t quote_lambda_prevented =
             m ? static_cast<std::int64_t>(
@@ -3627,8 +3629,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
               : 0;
         const std::int64_t env_resync =
             m ? static_cast<std::int64_t>(
-                    m->incremental_closure_env_version_resync_total.load(
-                        std::memory_order_relaxed))
+                    m->incremental_closure_env_version_resync_total.load(std::memory_order_relaxed))
               : 0;
         auto* ht = FlatHashTable::create(8);
         if (!ht)
@@ -4049,8 +4050,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (ev.compiler_metrics()) {
             auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-            env_reval += m->incremental_closure_env_version_resync_total.load(
-                std::memory_order_relaxed);
+            env_reval +=
+                m->incremental_closure_env_version_resync_total.load(std::memory_order_relaxed);
         }
         auto* ht = FlatHashTable::create(8);
         if (!ht)
@@ -4079,10 +4080,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
         };
-        insert_kv("auto-compact-triggers",
-                  static_cast<std::int64_t>(auto_triggers));
-        insert_kv("defrag-fiber-safe-hits",
-                  static_cast<std::int64_t>(defrag_fiber_safe));
+        insert_kv("auto-compact-triggers", static_cast<std::int64_t>(auto_triggers));
+        insert_kv("defrag-fiber-safe-hits", static_cast<std::int64_t>(defrag_fiber_safe));
         insert_kv("fragmentation-post-mutate", static_cast<std::int64_t>(frag_post));
         insert_kv("shape-inval-on-compact", static_cast<std::int64_t>(shape_inval));
         insert_kv("env-reval-success", static_cast<std::int64_t>(env_reval));
@@ -4177,8 +4176,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
               : 0;
         const std::int64_t timeout_prevented =
             m ? static_cast<std::int64_t>(
-                    m->constraint_reverify_timeout_prevented_total.load(
-                        std::memory_order_relaxed))
+                    m->constraint_reverify_timeout_prevented_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t stale_blame =
             m ? static_cast<std::int64_t>(
@@ -4216,6 +4214,67 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("timeout-prevented", timeout_prevented);
         insert_kv("stale-blame-invalidation", stale_blame);
         insert_kv("schema", 745);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #746: query:jit-typed-mutation-stats — narrow_evidence / TypeId /
+    // linear_ownership_state propagation from lowering/IRSoA to JIT L2
+    // (non-duplicative with #687 dead-coercion-elim, #403 ir-metadata-stats,
+    // #550 typed-mutation-stats, #744 shape-jit-pass-closedloop).
+    //
+    // Fields (4 + sentinel):
+    //   - narrow-evidence-hits      JIT GuardShape/CastOp narrow fast paths
+    //   - cast-elided-in-l2         CastOp elided via narrow_evidence in JIT
+    //   - linear-state-optimized    linear probe + narrow_evidence synergy
+    //   - type-propagation-coverage basis-points stamped/total metadata path
+    //   - schema == 746
+    add("query:jit-typed-mutation-stats", [&ev](const auto&) -> EvalValue {
+        (void)ev;
+        const std::int64_t narrow_hits = static_cast<std::int64_t>(
+            jit_typed_mutation::narrow_evidence_hits_total.load(std::memory_order_relaxed));
+        const std::int64_t cast_elided = static_cast<std::int64_t>(
+            jit_typed_mutation::cast_elided_in_l2_total.load(std::memory_order_relaxed));
+        const std::int64_t linear_opt = static_cast<std::int64_t>(
+            jit_typed_mutation::linear_state_optimized_total.load(std::memory_order_relaxed));
+        const std::int64_t stamped = static_cast<std::int64_t>(
+            jit_typed_mutation::type_propagation_stamped_total.load(std::memory_order_relaxed));
+        const std::int64_t denom = narrow_hits + cast_elided + linear_opt;
+        const std::int64_t coverage_bp =
+            denom > 0 ? (10000 * stamped) / denom : (stamped > 0 ? 10000 : 0);
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("narrow-evidence-hits", narrow_hits);
+        insert_kv("cast-elided-in-l2", cast_elided);
+        insert_kv("linear-state-optimized", linear_opt);
+        insert_kv("type-propagation-coverage", coverage_bp);
+        insert_kv("schema", 746);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
