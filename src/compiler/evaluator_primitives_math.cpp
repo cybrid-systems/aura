@@ -70,66 +70,62 @@ void register_math_regex_and_arithmetic_primitives(
         return primitives_detail::make_primitive_error(string_heap, error_values, msg,
                                                        primitive_error_counter);
     };
-    add("regex-match?",
-        [&string_heap, &error_values, primitive_error_counter, bump_regex_error](
-            std::span<const EvalValue> a) {
-            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-                return bump_regex_error("regex-match?", "expected two string arguments");
-            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-            if (pi >= string_heap.size() || si >= string_heap.size())
-                return bump_regex_error("regex-match?", "string index out of range");
-            try {
-                std::regex re(string_heap[pi]);
-                return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
-            } catch (...) {
-                return bump_regex_error("regex-match?", "invalid regular expression");
-            }
-        });
+    add("regex-match?", [&string_heap, &error_values, primitive_error_counter,
+                         bump_regex_error](std::span<const EvalValue> a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return bump_regex_error("regex-match?", "expected two string arguments");
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+        if (pi >= string_heap.size() || si >= string_heap.size())
+            return bump_regex_error("regex-match?", "string index out of range");
+        try {
+            std::regex re(string_heap[pi]);
+            return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
+        } catch (...) {
+            return bump_regex_error("regex-match?", "invalid regular expression");
+        }
+    });
 
-    add("regex-find",
-        [&string_heap, &error_values, primitive_error_counter, bump_regex_error](
-            std::span<const EvalValue> a) {
-            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-                return bump_regex_error("regex-find", "expected two string arguments");
-            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-            if (pi >= string_heap.size() || si >= string_heap.size())
-                return bump_regex_error("regex-find", "string index out of range");
-            try {
-                std::regex re(string_heap[pi]);
-                std::smatch m;
-                if (std::regex_search(string_heap[si], m, re)) {
-                    auto id = string_heap.size();
-                    string_heap.push_back(m.str());
-                    return make_string(id);
-                }
-            } catch (...) {
-                return bump_regex_error("regex-find", "invalid regular expression");
-            }
-            return make_void();
-        });
-
-    add("regex-replace",
-        [&string_heap, &error_values, primitive_error_counter, bump_regex_error](
-            std::span<const EvalValue> a) {
-            if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
-                return bump_regex_error("regex-replace", "expected three string arguments");
-            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
-            if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
-                return bump_regex_error("regex-replace", "string index out of range");
-            try {
-                std::regex re(string_heap[pi]);
-                auto result = std::regex_replace(string_heap[si], re, string_heap[ri]);
+    add("regex-find", [&string_heap, &error_values, primitive_error_counter,
+                       bump_regex_error](std::span<const EvalValue> a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return bump_regex_error("regex-find", "expected two string arguments");
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+        if (pi >= string_heap.size() || si >= string_heap.size())
+            return bump_regex_error("regex-find", "string index out of range");
+        try {
+            std::regex re(string_heap[pi]);
+            std::smatch m;
+            if (std::regex_search(string_heap[si], m, re)) {
                 auto id = string_heap.size();
-                string_heap.push_back(std::move(result));
+                string_heap.push_back(m.str());
                 return make_string(id);
-            } catch (...) {
-                return bump_regex_error("regex-replace", "invalid regular expression");
             }
-        });
+        } catch (...) {
+            return bump_regex_error("regex-find", "invalid regular expression");
+        }
+        return make_void();
+    });
 
-    add("regex-split",
-        [&string_heap, &pairs, &error_values, primitive_error_counter, bump_regex_error](
-            std::span<const EvalValue> a) {
+    add("regex-replace", [&string_heap, &error_values, primitive_error_counter,
+                          bump_regex_error](std::span<const EvalValue> a) {
+        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
+            return bump_regex_error("regex-replace", "expected three string arguments");
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
+        if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
+            return bump_regex_error("regex-replace", "string index out of range");
+        try {
+            std::regex re(string_heap[pi]);
+            auto result = std::regex_replace(string_heap[si], re, string_heap[ri]);
+            auto id = string_heap.size();
+            string_heap.push_back(std::move(result));
+            return make_string(id);
+        } catch (...) {
+            return bump_regex_error("regex-replace", "invalid regular expression");
+        }
+    });
+
+    add("regex-split", [&string_heap, &pairs, &error_values, primitive_error_counter,
+                        bump_regex_error](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return bump_regex_error("regex-split", "expected two string arguments");
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
