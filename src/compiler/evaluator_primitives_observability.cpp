@@ -5461,8 +5461,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #737: pinning + snapshot rollback observability.
             {"pinned-refs-last-batch",
              make_int(static_cast<std::int64_t>(ev.atomic_batch_pinned_ref_count()))},
-            {"rollback-triggers",
-             make_int(static_cast<std::int64_t>(ev.atomic_batch_rollbacks()))},
+            {"rollback-triggers", make_int(static_cast<std::int64_t>(ev.atomic_batch_rollbacks()))},
         };
         return build_hash(kv);
     });
@@ -5676,8 +5675,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         if (ev.compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
             stale_steal = m->epoch_stale_steal_caught.load(std::memory_order_relaxed);
-            fence_enforced =
-                m->closure_epoch_fence_enforced_total.load(std::memory_order_relaxed);
+            fence_enforced = m->closure_epoch_fence_enforced_total.load(std::memory_order_relaxed);
             linear_prevented =
                 m->linear_violation_prevented_epoch_total.load(std::memory_order_relaxed);
         }

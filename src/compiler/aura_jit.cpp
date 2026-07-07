@@ -413,15 +413,13 @@ struct LLVMBuilder {
         fn_newline = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                             llvm::Function::ExternalLinkage, "aura_newline", mod);
 
-        fn_epoch_acquire_fence =
-            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
-                                   llvm::Function::ExternalLinkage, "aura_jit_epoch_acquire_fence",
-                                   mod);
+        fn_epoch_acquire_fence = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                                        llvm::Function::ExternalLinkage,
+                                                        "aura_jit_epoch_acquire_fence", mod);
 
-        fn_linear_jit_safety =
-            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i8_ty, i32_ty}, false),
-                                   llvm::Function::ExternalLinkage,
-                                   "aura_jit_linear_post_invalidate_safety", mod);
+        fn_linear_jit_safety = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {i8_ty, i32_ty}, false),
+            llvm::Function::ExternalLinkage, "aura_jit_linear_post_invalidate_safety", mod);
 
         fn_cast_op = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                             llvm::Function::ExternalLinkage, "aura_cast_op", mod);

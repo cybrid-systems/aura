@@ -5771,7 +5771,9 @@ public:
     std::uint64_t stable_ref_invalidations() const noexcept {
         return stable_ref_invalidations_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] std::uint64_t workspace_cow_epoch() const noexcept { return workspace_cow_epoch_; }
+    [[nodiscard]] std::uint64_t workspace_cow_epoch() const noexcept {
+        return workspace_cow_epoch_;
+    }
     void set_workspace_cow_epoch(std::uint64_t epoch) noexcept { workspace_cow_epoch_ = epoch; }
     [[nodiscard]] std::uint64_t pinned_across_boundaries() const noexcept {
         return pinned_across_boundaries_.load(std::memory_order_relaxed);

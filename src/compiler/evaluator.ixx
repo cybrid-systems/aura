@@ -3035,7 +3035,7 @@ public:
         const auto current_ver = defuse_version_snapshot();
         const auto current_bridge = current_bridge_epoch();
         const bool ok = validate_linear_ownership_state(linear_state, frame_version, current_ver, 0,
-                                                       current_bridge);
+                                                        current_bridge);
         if (!ok) {
             bump_linear_ownership_violation();
         } else {
@@ -4791,8 +4791,7 @@ public:
         for (const auto& pinned : cow_boundary_pinned_refs_) {
             if (pinned.workspace_id != parent_layer)
                 continue;
-            auto resolved =
-                wt->resolve_stable_ref(parent_layer, pinned, child_layer);
+            auto resolved = wt->resolve_stable_ref(parent_layer, pinned, child_layer);
             if (!resolved)
                 continue;
             auto child_ref = *resolved;
@@ -4801,9 +4800,9 @@ public:
             pin_stable_ref_for_cow_boundary(child_ref);
         }
     }
-    [[nodiscard]] bool validate_stable_ref_cross_cow_boundary(
-        const aura::ast::FlatAST::StableNodeRef& ref,
-        std::uint64_t current_cow_epoch) const noexcept {
+    [[nodiscard]] bool
+    validate_stable_ref_cross_cow_boundary(const aura::ast::FlatAST::StableNodeRef& ref,
+                                           std::uint64_t current_cow_epoch) const noexcept {
         if (!workspace_flat_)
             return false;
         workspace_flat_->bump_cross_boundary_validations();

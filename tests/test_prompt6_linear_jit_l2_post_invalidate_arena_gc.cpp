@@ -57,7 +57,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(jit_hash(cs, "gc-root-resync") >= 0, "gc-root-resync present");
 
     const auto gc0 = jit_hash(cs, "gc-root-resync");
-    const auto post0 = cs.metrics().linear_jit_post_invalidate_total.load(std::memory_order_relaxed);
+    const auto post0 =
+        cs.metrics().linear_jit_post_invalidate_total.load(std::memory_order_relaxed);
 
     std::println("\n--- AC2: setup linear define + invalidate ---");
     CHECK(cs.eval(std::string("(set-code \"") + k_linear_prog + "\")").has_value(),
@@ -65,7 +66,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current linear define");
     cs.public_invalidate_function("f");
     const auto gc1 = jit_hash(cs, "gc-root-resync");
-    const auto post1 = cs.metrics().linear_jit_post_invalidate_total.load(std::memory_order_relaxed);
+    const auto post1 =
+        cs.metrics().linear_jit_post_invalidate_total.load(std::memory_order_relaxed);
     std::println("  gc-root-resync: {} -> {} post-invalidate: {} -> {}", gc0, gc1, post0, post1);
     CHECK(gc1 > gc0, "gc-root-resync grew after invalidate");
     CHECK(post1 > post0, "linear_jit_post_invalidate_total grew after invalidate");

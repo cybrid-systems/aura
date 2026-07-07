@@ -69,8 +69,7 @@ int main() {
         CHECK(h && aura::compiler::types::is_hash(*h),
               "query:stable-ref-boundary-stats-hash returns hash");
         CHECK(boundary_hash(cs, "schema") == 738, "schema sentinel == 738");
-        CHECK(boundary_hash(cs, "cross-cow-invalidations") >= 0,
-              "cross-cow-invalidations present");
+        CHECK(boundary_hash(cs, "cross-cow-invalidations") >= 0, "cross-cow-invalidations present");
         CHECK(boundary_hash(cs, "pinned-across-boundaries") >= 0,
               "pinned-across-boundaries present");
     }
@@ -118,13 +117,13 @@ int main() {
         CHECK(setup_parent(cs), "loop setup");
         for (int round = 0; round < 3; ++round) {
             (void)cs.eval("(query:stable-ref 1)");
-            (void)cs.eval("(workspace:create (string-append \"child-\" (number->string "
-                          + std::to_string(round) + ")))");
+            (void)cs.eval("(workspace:create (string-append \"child-\" (number->string " +
+                          std::to_string(round) + ")))");
             auto ws_id = 1 + round;
             (void)cs.eval("(workspace:switch " + std::to_string(ws_id) + ")");
             (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(round + 10) + "\")");
-            auto valid = cs.eval(
-                "(let ((r (query:stable-ref 1))) (if (pair? r) (query:ref-valid? r) #f))");
+            auto valid =
+                cs.eval("(let ((r (query:stable-ref 1))) (if (pair? r) (query:ref-valid? r) #f))");
             CHECK(valid.has_value(), std::format("round {} ref-valid? in child", round));
             (void)cs.eval("(workspace:switch 0)");
         }

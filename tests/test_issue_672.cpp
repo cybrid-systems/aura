@@ -100,12 +100,16 @@ static void run_ac1_reachable(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_seven_fields(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: 7 fields present in the hash response ---");
-    const std::vector<std::string> keys = {"post-mutate-enforcements", "violations-caught",
-                                           "deopt-on-mismatch", "check-passes",
-                                           "leak-prevented", "recommended-action", "schema"};
+    const std::vector<std::string> keys = {"post-mutate-enforcements",
+                                           "violations-caught",
+                                           "deopt-on-mismatch",
+                                           "check-passes",
+                                           "leak-prevented",
+                                           "recommended-action",
+                                           "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(
-            std::format("(hash-ref (query:linear-ownership-enforcement-stats) '{}')", k));
+        auto f =
+            cs.eval(std::format("(hash-ref (query:linear-ownership-enforcement-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
@@ -153,8 +157,7 @@ static void run_ac5_violation_bumps_counter(aura::compiler::CompilerService& cs)
     // bumps) — the synthetic path requires a C++ test harness
     // (the public C++ API is the consumer surface). Marked as
     // best-effort: AC just verifies the field is wired.
-    auto violations =
-        hash_int(cs, "query:linear-ownership-enforcement-stats", "violations-caught");
+    auto violations = hash_int(cs, "query:linear-ownership-enforcement-stats", "violations-caught");
     CHECK(violations >= 0,
           std::format("violations-caught field is wired (>= 0, got {})", violations));
 }
@@ -167,11 +170,9 @@ static void run_ac6_pass_bumps_counter(aura::compiler::CompilerService& cs) {
 
 static void run_ac7_recommended_action_fresh(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: recommended-action is 0 on a fresh CS (no violations) ---");
-    auto action =
-        hash_int(cs, "query:linear-ownership-enforcement-stats", "recommended-action");
+    auto action = hash_int(cs, "query:linear-ownership-enforcement-stats", "recommended-action");
     // 0 = no action (no violations, no leaks).
-    CHECK(action == 0,
-          std::format("recommended-action == 0 on fresh CS (got {})", action));
+    CHECK(action == 0, std::format("recommended-action == 0 on fresh CS (got {})", action));
 }
 
 static void run_ac8_regression(aura::compiler::CompilerService& cs) {
@@ -224,6 +225,6 @@ int main() {
     }
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
-                  g_failed, g_passed + g_failed);
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

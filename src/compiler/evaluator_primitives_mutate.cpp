@@ -2806,13 +2806,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_->rollback_atomic_batch();
                 ev.atomic_batch_rollbacks_++;
                 ev.bump_edsl_nested_atomic_rollback();
-            if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
-                                         static_cast<std::size_t>(batch_snap_id)))
-                ev.bump_atomic_batch_snapshot_rollback();
-            ev.rollback_atomic_batch_pinning();
-            guard_ok = false;
-            return ev.make_merr(
-                "batch-unsupported-op",
+                if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                              static_cast<std::size_t>(batch_snap_id)))
+                    ev.bump_atomic_batch_snapshot_rollback();
+                ev.rollback_atomic_batch_pinning();
+                guard_ok = false;
+                return ev.make_merr(
+                    "batch-unsupported-op",
                     ("mutate:atomic-batch does not yet support '" + op_name +
                      "' (only :rebind / :replace-value / :tweak-literal; the others "
                      "need lockless helper extraction)")
@@ -2835,8 +2835,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ev.workspace_flat_->rollback_atomic_batch();
             ev.atomic_batch_rollbacks_++;
             ev.bump_edsl_nested_atomic_rollback();
-            if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
-                                         static_cast<std::size_t>(batch_snap_id)))
+            if (batch_snap_id >= 0 &&
+                ev.restore_workspace_snapshot_under_lock(static_cast<std::size_t>(batch_snap_id)))
                 ev.bump_atomic_batch_snapshot_rollback();
             ev.rollback_atomic_batch_pinning();
             guard_ok = false;

@@ -139,18 +139,20 @@ int main() {
         std::println("\n--- AC5: multi-round query → batch → eval loop ---");
         CHECK(setup_workspace(cs), "loop workspace setup");
         for (int round = 0; round < 3; ++round) {
-            (void)cs.eval("(workspace:snapshot (string-append \"round-\" (number->string "
-                          + std::to_string(round) + ")))");
-            auto ref_ok = cs.eval(
-                "(let ((r (query:stable-ref (car (query:defines-by-marker \"Define\"))))) "
-                "(if (pair? r) (query:ref-valid? r) #f))");
+            (void)cs.eval("(workspace:snapshot (string-append \"round-\" (number->string " +
+                          std::to_string(round) + ")))");
+            auto ref_ok =
+                cs.eval("(let ((r (query:stable-ref (car (query:defines-by-marker \"Define\"))))) "
+                        "(if (pair? r) (query:ref-valid? r) #f))");
             CHECK(ref_ok.has_value(), std::format("round {} stable-ref query", round));
             auto batch = cs.eval("(mutate:atomic-batch "
                                  "(list (list \"mutate:rebind\" \"acc\" \"" +
-                                 std::to_string(round + 1) + "\")) "
+                                 std::to_string(round + 1) +
+                                 "\")) "
                                  ":snapshot? #t \"loop\")");
             CHECK(batch.has_value(), std::format("round {} atomic batch", round));
-            CHECK(cs.eval("(eval-current)").has_value(), std::format("round {} eval-current", round));
+            CHECK(cs.eval("(eval-current)").has_value(),
+                  std::format("round {} eval-current", round));
         }
         const auto commits = cs.evaluator().atomic_batch_count();
         CHECK(commits >= 3, "multi-round loop produced batch commits");

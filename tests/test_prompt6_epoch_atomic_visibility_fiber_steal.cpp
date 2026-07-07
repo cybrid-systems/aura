@@ -65,17 +65,16 @@ static void run_matrix(CompilerService& cs) {
     CHECK(epoch_hash(cs, "schema") == 739, "schema == 739");
     CHECK(epoch_hash(cs, "stale-epoch-on-steal") >= 0, "stale-epoch-on-steal present");
     CHECK(epoch_hash(cs, "fence-enforced") >= 0, "fence-enforced present");
-    CHECK(epoch_hash(cs, "linear-violation-prevented") >= 0,
-          "linear-violation-prevented present");
+    CHECK(epoch_hash(cs, "linear-violation-prevented") >= 0, "linear-violation-prevented present");
 
     const auto fence0 = epoch_hash(cs, "fence-enforced");
     const auto stale0 = epoch_hash(cs, "stale-epoch-on-steal");
 
     std::println("\n--- AC2: fence-enforced bumps on epoch-sensitive path ---");
     auto r = cs.eval("(set-code \"(define (mk-adder n) (lambda (x) (+ x n)))"
-                       " (define add3 (mk-adder 3))\") "
-                       "(eval-current) "
-                       "(add3 7)");
+                     " (define add3 (mk-adder 3))\") "
+                     "(eval-current) "
+                     "(add3 7)");
     CHECK(r && is_int(*r) && as_int(*r) == 10, "(add3 7) == 10");
     (void)cs.evaluator().current_bridge_epoch();
     const auto fence1 = epoch_hash(cs, "fence-enforced");
@@ -84,11 +83,11 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: invalidate_function + epoch visibility ---");
     const auto refresh_before = cs.get_closure_stale_refresh_count();
-    const auto invalidate_before = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    const auto invalidate_before =
+        cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
     cs.public_invalidate_function("mk-adder");
-    const auto invalidate_after = cs.metrics().invalidate_function_calls.load(
-        std::memory_order_relaxed);
+    const auto invalidate_after =
+        cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
     const auto refresh_after = cs.get_closure_stale_refresh_count();
     CHECK(invalidate_after > invalidate_before,
           "invalidate_function_calls grew after public_invalidate_function");
@@ -103,9 +102,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after invalidate");
 
     auto post = cs.eval("(set-code \"(define (mk-adder n) (lambda (x) (+ x n)))"
-                          " (define add9 (mk-adder 9))\") "
-                          "(eval-current) "
-                          "(add9 1)");
+                        " (define add9 (mk-adder 9))\") "
+                        "(eval-current) "
+                        "(add9 1)");
     CHECK(post && is_int(*post) && as_int(*post) == 10,
           "post-invalidate apply safe (add9 1) == 10");
 
@@ -156,8 +155,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("  epoch-concurrency sum: {} -> {} stale-steal: {} -> {}", stats4a, stats4b,
                  stale0, stale1);
     CHECK(stats4b >= stats4a, "epoch-concurrency stats monotonic over stress");
-    CHECK(epoch_hash(cs, "fence-enforced") > fence0,
-          "fence-enforced grew over full matrix");
+    CHECK(epoch_hash(cs, "fence-enforced") > fence0, "fence-enforced grew over full matrix");
 
     std::println("\n--- AC6: query regression ---");
     auto closure_stats = cs.eval("(query:closure-stats)");
