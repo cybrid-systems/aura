@@ -1490,6 +1490,25 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> primitives_apply_closure_calls_total{0};
     std::atomic<std::uint64_t> primitives_apply_fastpath_wins_total{0};
 
+    // Issue #752: list/vector map/filter SoA hot-path observability
+    // (P0 stdlib-impl performance; refines #727, non-duplicative
+    // with #667 apply-loop counters and #506 IR SoA adoption).
+    //   - list_chain_traversals_total: cdr-walk steps in map/filter/
+    //     foldl hot loops (pair-chain pointer chasing cost).
+    //   - list_soa_hits_total: primitive fast-dispatch wins inside
+    //     map/filter/foldl (SoA-eligible / intrinsic-ready path;
+    //     proxy until dedicated ListView lands).
+    //   - list_intrinsic_dispatches_total: slot_lookup_fast wins
+    //     in apply_unary/apply_pred/apply_binary (direct PrimFn*
+    //     dispatch, bypassing apply_closure).
+    //   - list_estimated_cache_misses_total: advisory miss estimate
+    //     — one per chain step + one extra per closure dispatch in
+    //     list hot loops (pointer-chase + callback indirection).
+    std::atomic<std::uint64_t> list_chain_traversals_total{0};
+    std::atomic<std::uint64_t> list_soa_hits_total{0};
+    std::atomic<std::uint64_t> list_intrinsic_dispatches_total{0};
+    std::atomic<std::uint64_t> list_estimated_cache_misses_total{0};
+
     // Issue #668: math regex primitive error observability
     // (P1 stdlib-impl error consistency). Tracks every
     // PRIM_ERROR invocation inside the regex-match? /
