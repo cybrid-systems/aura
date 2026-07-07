@@ -44,6 +44,17 @@ static bool zerooverhead_stats_hash(CompilerService& cs) {
     return r && is_hash(*r);
 }
 
+// Issue #468: monotonic-counter view of (query:dead-coercion-
+// zerooverhead-stats) for AC8's "non-decreasing" assertion.
+// Reads the 'zerooverhead-wins' field from the hash and
+// returns it as a std::size_t for compare/monotonic checks.
+static std::size_t zerooverhead_stats(CompilerService& cs) {
+    auto r = cs.eval("(hash-ref (query:dead-coercion-zerooverhead-stats) 'zerooverhead-wins)");
+    if (!r || !is_int(*r))
+        return 0;
+    return static_cast<std::size_t>(as_int(*r));
+}
+
 static std::size_t count_cast_ops(const IRModule& mod) {
     std::size_t n = 0;
     for (const auto& f : mod.functions)

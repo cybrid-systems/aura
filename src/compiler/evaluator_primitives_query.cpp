@@ -257,7 +257,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(12);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -386,7 +386,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         std::uint64_t invalidations = 0;
         if (auto* ws = ev->workspace_flat())
             invalidations = ws->stable_ref_invalidations();
-        auto* ht = FlatHashTable::create(12);
+        auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1180,7 +1180,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 flat_rebuilds = ws->tag_arity_index_rebuilds();
                 flat_rebuild_time_us = ws->tag_arity_index_rebuild_time_us();
             }
-            auto* ht = FlatHashTable::create(12);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3507,8 +3507,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     (JIT/IR narrow-evidence elision synergy)
     add("query:task2-refinement-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t constraint =
@@ -3567,8 +3568,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - missed_conflict_prevented: delta_constraints_processed_total
     add("query:solve-delta-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t clean_conflicts =
@@ -3614,8 +3616,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - incremental_typecheck_auto_invocations_total (delta win vs full)
     add("query:type-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t delta_processed =
@@ -3656,8 +3659,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // specific TypePropagation + bit-width observability.
     add("query:type-propagation-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t runs = m->type_propagation_runs_.load(std::memory_order_relaxed);
@@ -3684,7 +3688,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(12);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3748,8 +3752,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - coercion_zerooverhead_win_total (per-run wins)
     add("query:coercion-zerooverhead-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t castop =
@@ -3773,8 +3778,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     occurrence-narrowing paths feeding coercion metadata)
     add("query:coercion-elim-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t total_castop =
@@ -3814,8 +3820,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // observability.
     add("query:linear-ownership-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t wire_borrows =
@@ -3840,8 +3847,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     (runtime linear ownership_state fast-path checks)
     add("query:linear-ownership-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t revalidate =
@@ -3866,8 +3874,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - leak_prevented: linear_leak_prevented_total
     add("query:linear-ownership-mutation-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t revalidations =
@@ -3889,8 +3898,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - post_mutate_enforcements: linear_post_mutate_enforcements_total
     add("query:linear-ownership-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t violations =
@@ -3914,8 +3924,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - deopt_on_invalidate: linear_deopt_on_invalidate_total
     add("query:linear-ownership-runtime-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t violations =
@@ -3963,7 +3974,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(12);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4115,7 +4126,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         auto* ev = Evaluator::get_query_evaluator();
         if (!ev)
             return make_void();
-        auto* ht = FlatHashTable::create(12);
+        auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -6498,8 +6509,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - mutation_impact_on_adt: adt_variant_mutate_impacts_total
     add("query:adt-exhaustiveness-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t checks = m->adt_exhaust_rechecks_total.load(std::memory_order_relaxed);
@@ -6520,8 +6532,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - adt_occurrence_narrow_in_match_total
     add("query:adt-match-exhaust-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t rechecks =
@@ -6693,7 +6706,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(12);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7154,8 +7167,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // mutate, provenance-hits, and safe-fallback counters.
     add("query:narrow-blame-stats", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         std::uint64_t stale_caught = 0;
         std::uint64_t blame_attached = 0;
         std::uint64_t invalidation = 0;
@@ -7180,8 +7194,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // post-mutate narrow consistency, and stale-check prevented.
     add("query:bidirectional-narrow-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t check_hits =
@@ -7256,8 +7271,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - stale_narrow_prevented: stale_check_narrow_prevented_total
     add("query:occurrence-narrow-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t narrow_recoveries =
@@ -7279,8 +7295,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // provenance observability).
     add("query:occurrence-narrowing-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        const auto* m = static_cast<const CompilerMetrics*>(
-            Evaluator::get_query_evaluator()->compiler_metrics());
+        auto* __qev_ = Evaluator::get_query_evaluator();
+        const auto* m =
+            __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
         if (!m)
             return make_int(0);
         const std::uint64_t stale_refreshes =

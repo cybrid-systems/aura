@@ -107,6 +107,14 @@ int main() {
     // AC6: related primitive regression
     {
         std::println("\n--- AC6: related stats regression ---");
+        // Re-register this service's Evaluator as the active
+        // query-evaluator for the current thread. The previous
+        // inner-scope `cs2` (AC5) cleared g_query_evaluator in
+        // its destructor (Issue #226: unbind thread-local on
+        // ~Evaluator), so the thread-local slot is null by
+        // here. Without re-registration, query:mutation-impact
+        // / query:mutation-impact-snapshot would see nullptr.
+        aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
         auto mis = cs.eval("(query:mutation-impact-snapshot)");
         auto mi = cs.eval("(query:mutation-impact)");
         CHECK(mis && aura::compiler::types::is_hash(*mis), "mutation-impact-snapshot regression");

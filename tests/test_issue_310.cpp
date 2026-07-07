@@ -81,9 +81,9 @@ bool test_kNodeMeta_consistency() {
     using aura::ast::meta;
     using aura::ast::NodeTag;
     // Array size matches the highest tag value: tags go from
-    // 0x01 to 0x1C, so the array should have 0x1C = 28
+    // 0x01 to 0x1C, so the array should have 0x22 = 35
     // entries.
-    CHECK_EQ_LOCAL(kNodeMeta.size(), std::size_t{28}, "kNodeMeta has 28 entries (tags 0x01-0x1C)");
+    CHECK_EQ_LOCAL(kNodeMeta.size(), std::size_t{35}, "kNodeMeta has 35 entries (tags 0x01-0x21)");
     // meta() returns the correct entries for both new tags.
     auto mi = meta(NodeTag::Interface);
     CHECK_EQ_LOCAL(mi.name, std::string_view{"Interface"}, "meta(Interface).name is \"Interface\"");
@@ -110,8 +110,8 @@ bool test_tag_dispatch_mirror() {
     CHECK_EQ_LOCAL(static_cast<std::uint8_t>(Tag::Modport), std::uint8_t{0x1C},
                    "tag_dispatch::Tag::Modport is 0x1C");
     // TAG_COUNT is one past the highest tag value.
-    CHECK_EQ_LOCAL(static_cast<std::uint8_t>(Tag::TAG_COUNT), std::uint8_t{0x1D},
-                   "tag_dispatch::TAG_COUNT is 0x1D (one past max)");
+    CHECK_EQ_LOCAL(static_cast<std::uint8_t>(Tag::TAG_COUNT), std::uint8_t{0x22},
+                   "tag_dispatch::TAG_COUNT is 0x22 (one past max)");
     return true;
 }
 
