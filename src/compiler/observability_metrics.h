@@ -1248,6 +1248,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_reflect_hygiene_validation_total{0};
     std::atomic<std::uint64_t> macro_hygiene_dirty_impact_total{0};
 
+    // Issue #712: macro subtree-level reflect validation. The
+    // (query:macro-reflect-validation-stats) primitive exposes:
+    //   - validation_calls                  calls to auto_validate on
+    //                                       MacroIntroduced subtrees
+    //   - schema_mismatches_caught          # of marker-state drifts
+    //                                       detected during post-mutate
+    //                                       reflect pass
+    //   - post_mutate_hygiene_drift         # of nodes that became
+    //                                       dirty AND macro-introduced
+    //                                       between committed snapshot
+    //                                       and current state
+    // (Non-duplicative with macro_reflect_hygiene_validation_total,
+    // which counts passes with macro_markers > 0 in the WHOLE
+    // workspace — #712 splits out subtree-level diagnostics.)
+    std::atomic<std::uint64_t> macro_reflect_validation_calls_total{0};
+    std::atomic<std::uint64_t> macro_reflect_schema_mismatches_caught_total{0};
+    std::atomic<std::uint64_t> macro_reflect_post_mutate_hygiene_drift_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

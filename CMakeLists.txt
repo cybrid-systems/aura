@@ -3064,6 +3064,16 @@ add_dependencies(all_test_issue_targets test_issue_710)
 aura_add_issue_test(test_issue_711)
 aura_issue_test_link_llvm_jit(test_issue_711)
 add_dependencies(all_test_issue_targets test_issue_711)
+# Issue #712: macro subtree reflect validation — subtree-level
+# diagnostics (validation-calls, schema-mismatches-caught,
+# post-mutate-hygiene-drift, schema-pass, schema=712) via the
+# new (query:macro-reflect-validation-stats) primitive. Pairs
+# with #488/#654 foundations. 6 ACs / 14 CHECKs: hash shape,
+# fresh-service zero state, schema sentinel, subtree walk after
+# workspace mutation, regression of #654 + #488 surfaces.
+aura_add_issue_test(test_issue_712)
+aura_issue_test_link_llvm_jit(test_issue_712)
+add_dependencies(all_test_issue_targets test_issue_712)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
