@@ -33,8 +33,8 @@
 #   5. If src/ changed (likely added/removed/renamed primitives),
 #      run `./build.py docs` to regen docs/generated/*.md, then
 #      `git add` any modified generated files.
-#   6. `git add` the modified files so the formatted content is what gets
-#      committed (no separate "format" noise commit).
+#   6. `git add` the modified C++/Python/generated files so the formatted
+#      content is what gets committed (no separate "format" noise commit).
 #   7. Final `clang-format --dry-run -Werror` and `ruff check` +
 #      `ruff format --check` — belt-and-suspenders so the commit message
 #      is honest even if auto-fix ever diverges from --check.
@@ -76,6 +76,9 @@ if [ -n "$cpp_files" ]; then
 
     echo "pre-commit: clang-format -i on $(echo "$cpp_files" | wc -l) staged C++ file(s)..."
     echo "$cpp_files" | xargs clang-format -i
+
+    # Re-stage so formatted content lands in this commit (same as ruff path).
+    echo "$cpp_files" | xargs git add
 
     echo "pre-commit: clang-format --dry-run -Werror (final check)..."
     echo "$cpp_files" | xargs clang-format --dry-run -Werror

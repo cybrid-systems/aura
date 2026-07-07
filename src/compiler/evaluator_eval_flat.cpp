@@ -3951,7 +3951,8 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
 }
 
 bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
-    if (id >= snapshot_sources_.size() || workspace_read_only_ || !workspace_flat_ || !workspace_pool_)
+    if (id >= snapshot_sources_.size() || workspace_read_only_ || !workspace_flat_ ||
+        !workspace_pool_)
         return false;
     last_set_code_error_kind_.clear();
     last_set_code_error_msg_.clear();

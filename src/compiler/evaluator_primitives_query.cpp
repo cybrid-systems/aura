@@ -565,8 +565,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // sub-workspace pinning + boundary validity observability for
     // concurrent AI orchestration. Complements #527
     // (stable-ref-cow-fiber-stats) and #457 (stable-ref-stats).
-    add("query:stable-ref-boundary-stats-hash",
-        [&ev, &string_heap](const auto&) -> EvalValue {
+    add("query:stable-ref-boundary-stats-hash", [&ev, &string_heap](const auto&) -> EvalValue {
         auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();

@@ -3068,8 +3068,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t enforcements =
             m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t violations =
@@ -3144,8 +3143,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto* m =
-            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t arena_forced =
             m ? m->linear_jit_arena_forced_post_mutate_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t drop_emitted =

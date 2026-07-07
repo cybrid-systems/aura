@@ -62,27 +62,27 @@ static void record_linear_jit_safety(CompilerMetrics* metrics, IROpcode opcode) 
         return;
     metrics->linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
     switch (opcode) {
-    case IROpcode::DropOp:
-        metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case IROpcode::ArenaPop:
-        metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(1,
-                                                                     std::memory_order_relaxed);
-        break;
-    case IROpcode::GuardShape:
-        metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(1,
-                                                                     std::memory_order_relaxed);
-        metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case IROpcode::Capture:
-    case IROpcode::CaptureRef:
-        metrics->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case IROpcode::MoveOp:
-        metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
-        break;
-    default:
-        break;
+        case IROpcode::DropOp:
+            metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case IROpcode::ArenaPop:
+            metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+            break;
+        case IROpcode::GuardShape:
+            metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+            metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case IROpcode::Capture:
+        case IROpcode::CaptureRef:
+            metrics->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case IROpcode::MoveOp:
+            metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        default:
+            break;
     }
 }
 
