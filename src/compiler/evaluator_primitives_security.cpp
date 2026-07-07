@@ -2277,6 +2277,78 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #667: query:primitives-apply-stats — list/map/filter
+    // apply hot-path observability (P1 stdlib-impl performance).
+    //
+    // The 3 counters track the list/map/filter apply_unary /
+    // apply_pred / apply_binary hot path called out in issue
+    // body Action #4 (lookup_hits / closure_calls / fastpath_win):
+    //   - lookup-hits           primitives_apply_lookup_hits_total
+    //       Bumped per slot_lookup_fast call inside the apply
+    //       helpers (per-element fast-path lookups). The
+    //       "lookup_hits" counter from Action #4.
+    //   - closure-calls         primitives_apply_closure_calls_total
+    //       Bumped per apply_closure call inside the apply
+    //       helpers (closure path, NOT primitive path). The
+    //       "closure_calls" counter from Action #4.
+    //   - fastpath-wins         primitives_apply_fastpath_wins_total
+    //       Bumped when slot_lookup_fast returns a non-null
+    //       PrimFn* (successful slot→fn dispatch — the
+    //       fastpath actually won). The "fastpath_win"
+    //       counter from Action #4.
+    //   - apply-events-total    (sum of 3, per-call derivation,
+    //       not a separate atomic)
+    //   - schema == 667
+    //
+    // Non-duplicative with #479 per-slot fastpath hit breakdown,
+    // #480 PrimMeta, #614 hotpath stability, #643 declarative
+    // macro, #633 demands. #667 covers the LIST/MAP/FILTER
+    // apply hot-path observability specifically.
+    add("query:primitives-apply-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t lookup_hits =
+            static_cast<std::int64_t>(ev.get_primitives_apply_lookup_hits());
+        const std::int64_t closure_calls =
+            static_cast<std::int64_t>(ev.get_primitives_apply_closure_calls());
+        const std::int64_t fastpath_wins =
+            static_cast<std::int64_t>(ev.get_primitives_apply_fastpath_wins());
+        const std::int64_t events_total = lookup_hits + closure_calls + fastpath_wins;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("lookup-hits", lookup_hits);
+        insert_kv("closure-calls", closure_calls);
+        insert_kv("fastpath-wins", fastpath_wins);
+        insert_kv("apply-events-total", events_total);
+        insert_kv("schema", 667);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #706: Scheduler StealBudget adaptive bias + LLM tail stats.
     add("query:scheduler-stealbudget-adaptive-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

@@ -6450,6 +6450,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:sv-defuse-stats",
             // Issue #665 — SV stability observability (P1)
             "query:sv-stability-stats",
+            // Issue #667 — list/map/filter apply hot-path
+            // observability (P1 stdlib-impl)
+            "query:primitives-apply-stats",
             // Issue #706 — Scheduler StealBudget adaptive bias
             "query:scheduler-stealbudget-adaptive-stats",
             // Issue #652 / #707 — Per-fiber stack/checkpoint pool
