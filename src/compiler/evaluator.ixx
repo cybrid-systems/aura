@@ -3734,6 +3734,39 @@ public:
                                                                        std::memory_order_relaxed);
         }
     }
+    // Issue #714: self-evolution closed-loop strategy recommendation
+    // counters backing the (query:self-evolution-closedloop-stats)
+    // primitive. Each bump records an Agent-facing decision point:
+    //   - safe:        hygiene risk detected, recommend conservative
+    //                  mutate (e.g. avoid touching MacroIntroduced
+    //                  subtrees until dirty impact settles)
+    //   - aggressive:  hygiene risk low + dirty impact == 0, recommend
+    //                  deep mutate (e.g. macro expansion / EDSL rewrites)
+    //   - balanced:    default — recommend the median-path mutate
+    //
+    // Phase 1 ships the bump helpers so future Guard dtor /
+    // mark_dirty_upward / reflect auto_validate hooks can call them
+    // at each decision point. The primitive derives the current
+    // "recommended mutation strategy" string from the highest of
+    // these three counters.
+    void bump_self_evo_strategy_recommend_safe() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->self_evo_strategy_recommend_safe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_self_evo_strategy_recommend_aggressive() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->self_evo_strategy_recommend_aggressive_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_self_evo_strategy_recommend_balanced() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->self_evo_strategy_recommend_balanced_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

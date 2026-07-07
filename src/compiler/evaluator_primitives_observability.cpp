@@ -4223,6 +4223,180 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #714: (query:self-evolution-closedloop-stats) — unified
+    // self-evolution observability primitive that correlates hygiene
+    // (MacroIntroduced count, violation rate), dirty impact (subtree
+    // affected), epoch drift (panic restamp proxy), reflect-validation
+    // pass rate, and mutation strategy recommendation counts into a
+    // single Agent-facing report + recommended_mutation_strategy string.
+    //
+    // (Non-duplicative with #654 macro-hygiene-fiber-panic-stats,
+    // #712 macro-reflect-validation-stats, #713 macro-jit-hygiene-
+    // stats, #488 schema-validation, #622 atomic-batch. #714 is the
+    // FIRST primitive that ties these signals together for an Agent
+    // to decide mutation strategy in a closed-loop self-evolution
+    // loop.)
+    //
+    // Fields (8 + sentinel):
+    //   - hygiene-macro-introduced-count   # of SyntaxMarker=MacroIntroduced
+    //                                      nodes in the current workspace
+    //                                      (0 on a fresh service; non-zero
+    //                                      requires a macro expansion walk —
+    //                                      exposed as 0 in Phase 1)
+    //   - hygiene-violation-rate           #violations / #macro_introduced
+    //                                      (scaled 0..1e6 to keep integer
+    //                                      math; 0 on a fresh service)
+    //   - dirty-subtree-impact             macro_hygiene_dirty_impact_total
+    //                                      (# of nodes that are BOTH dirty
+    //                                      AND macro-introduced — feeds the
+    //                                      "should I deep-validate this
+    //                                      subtree" decision)
+    //   - epoch-drift-detected             macro_hygiene_panic_restamp_total
+    //                                      (re-used as epoch drift proxy:
+    //                                      every panic restamp signals an
+    //                                      epoch boundary that may have
+    //                                      invalidated prior Agent decisions)
+    //   - reflect-validation-pass-rate     schema_validation_pass_count /
+    //                                      (schema_validation_pass_count +
+    //                                      schema_validation_fail_count + 1)
+    //                                      (scaled 0..1e6)
+    //   - recommended-mutation-strategy    "safe" / "aggressive" / "balanced"
+    //                                      — derived from the highest of
+    //                                      the three strategy recommendation
+    //                                      counters; default "balanced"
+    //   - strategy-safe-count              self_evo_strategy_recommend_safe_total
+    //   - strategy-aggressive-count        self_evo_strategy_recommend_aggressive_total
+    //   - strategy-balanced-count          self_evo_strategy_recommend_balanced_total
+    //   - schema == 714 (drift sentinel)
+    //
+    // Phase 1 ships the primitive + counters + derivation logic. The
+    // Guard dtor + mark_dirty_upward + reflect auto_validate hooks
+    // that bump the strategy counters at each decision point are
+    // follow-up work (each hook is a dedicated session). Mutation
+    // strategy hook primitives `(mutate:strategy-safe)` /
+    // `(mutate:strategy-aggressive)` and the correlation primitive
+    // `query:self-evo-impact-correlation (hygiene_vs_dirty,
+    // epoch_vs_success_rate)` are also follow-ups.
+    //
+    // Issue #714: routes through ev.primitives_.add (3-arg form) so
+    // we can attach PrimMeta with schema=714 + category=general +
+    // arity=0 + pure=true (same pattern as #712/#713).
+    ev.primitives_.add(
+        "query:self-evolution-closedloop-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t macro_introduced_count = 0; // Phase 1 stub — walk is follow-up
+            const std::int64_t hygiene_violation_rate =
+                0; // Phase 1 stub — derived from violations / total
+            const std::int64_t dirty_subtree_impact =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_dirty_impact_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t epoch_drift_detected =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_panic_restamp_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::uint64_t pass = ev.get_schema_validation_pass_count();
+            const std::uint64_t fail = ev.get_schema_validation_fail_count();
+            // reflect-validation-pass-rate scaled 0..1e6 (1.0 == 1e6)
+            const std::int64_t reflect_pass_rate =
+                static_cast<std::int64_t>((pass * 1000000ULL) / (pass + fail + 1ULL));
+            const std::int64_t strategy_safe =
+                m ? static_cast<std::int64_t>(
+                        m->self_evo_strategy_recommend_safe_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t strategy_aggressive =
+                m ? static_cast<std::int64_t>(m->self_evo_strategy_recommend_aggressive_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t strategy_balanced =
+                m ? static_cast<std::int64_t>(m->self_evo_strategy_recommend_balanced_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            // recommended_mutation_strategy: highest-count wins; ties go balanced (the
+            // safe default). Phase 2 hook will override this with hygiene-aware logic.
+            std::string recommended_strategy = "balanced";
+            const std::int64_t max_count =
+                std::max({strategy_safe, strategy_aggressive, strategy_balanced});
+            if (max_count > 0) {
+                if (strategy_safe == max_count && strategy_aggressive != max_count &&
+                    strategy_balanced != max_count) {
+                    recommended_strategy = "safe";
+                } else if (strategy_aggressive == max_count && strategy_safe != max_count &&
+                           strategy_balanced != max_count) {
+                    recommended_strategy = "aggressive";
+                } // else balanced (ties)
+            }
+            // Intern the strategy string in the evaluator's string heap
+            // so make_string returns a stable handle.
+            const std::uint64_t sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(recommended_strategy);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"hygiene-macro-introduced-count", make_int(macro_introduced_count)},
+                {"hygiene-violation-rate", make_int(hygiene_violation_rate)},
+                {"dirty-subtree-impact", make_int(dirty_subtree_impact)},
+                {"epoch-drift-detected", make_int(epoch_drift_detected)},
+                {"reflect-validation-pass-rate", make_int(reflect_pass_rate)},
+                {"recommended-mutation-strategy", make_string(sidx)},
+                {"strategy-safe-count", make_int(strategy_safe)},
+                {"strategy-aggressive-count", make_int(strategy_aggressive)},
+                {"strategy-balanced-count", make_int(strategy_balanced)},
+                {"schema", make_int(714)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Unified self-evolution closed-loop stats: hygiene (MacroIntroduced "
+                        "count + violation rate), dirty impact, epoch drift, reflect "
+                        "validation pass rate, recommended mutation strategy, and the "
+                        "per-strategy recommendation counts. The Agent uses this primitive "
+                        "to decide mutation strategy in a closed-loop self-evolution loop.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,
