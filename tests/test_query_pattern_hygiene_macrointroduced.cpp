@@ -43,8 +43,8 @@ static int k_stress_iters() {
 }
 
 static std::int64_t hash_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:pattern-ir-hygiene-closed-loop-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:pattern-ir-hygiene-closed-loop-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -112,8 +112,7 @@ bool test_respect_hygiene_keyword(CompilerService& cs) {
     CHECK(r2.has_value(), "(query:pattern :include-macro-introduced #f) recognized");
     const auto respect_cnt = result_count(cs, "(query:pattern \"*\" :respect-hygiene #t)");
     const auto include_cnt = result_count(cs, "(query:pattern \"*\" :include-macro-introduced #t)");
-    CHECK(respect_cnt == include_cnt,
-          ":respect-hygiene #t mirrors :include-macro-introduced #t");
+    CHECK(respect_cnt == include_cnt, ":respect-hygiene #t mirrors :include-macro-introduced #t");
     return true;
 }
 
@@ -198,14 +197,14 @@ bool test_combined_metrics_monotonic(CompilerService& cs) {
     const auto capture0 = hash_int(cs, "capture-prevented");
     const auto phs0 = cs.eval("(query:pattern-hygiene-stats)");
     const auto prod0 = cs.eval("(hash-ref (query:macro-production-hygiene-stats) "
-                                "'macro-production-hygiene-total')");
+                               "'macro-production-hygiene-total')");
     (void)cs.eval("(query:pattern \"*\")");
     (void)cs.eval("(query:pattern \"base\" :respect-hygiene #t)");
     cs.evaluator().ensure_macro_hygiene_contract();
     const auto capture1 = hash_int(cs, "capture-prevented");
     const auto phs1 = cs.eval("(query:pattern-hygiene-stats)");
     const auto prod1 = cs.eval("(hash-ref (query:macro-production-hygiene-stats) "
-                                "'macro-production-hygiene-total')");
+                               "'macro-production-hygiene-total')");
     CHECK(capture1 >= capture0,
           std::format("capture-prevented monotonic ({} -> {})", capture0, capture1));
     if (phs0 && phs1 && aura::compiler::types::is_int(*phs0) &&
@@ -239,8 +238,8 @@ bool test_fuzz_mutate_query_stress(CompilerService& cs) {
             next_query = i + query_every(rng);
         }
         if ((i & 31) == 0) {
-            std::string code = "(define stress-" + std::to_string(i) + " " +
-                               std::to_string(val_dist(rng)) + ")";
+            std::string code =
+                "(define stress-" + std::to_string(i) + " " + std::to_string(val_dist(rng)) + ")";
             (void)cs.eval(code);
         }
     }
