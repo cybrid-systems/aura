@@ -2031,6 +2031,99 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #663: query:hardware-backend-sv-stats — Hardware backend
+    // SV-specific observability primitive (P1 hardware_backend).
+    //
+    // The issue body Action #4 calls out
+    // `query:hardware-backend-sv-stats` with the verbatim field names
+    // `hook_calls`, `ppa_reemits`, `verification_triggers`. The 698
+    // primitive (query:hardware-backend-commercial-stats) covers
+    // SHARED atomics under different naming conventions
+    // (hook-calls, commercial-reemits, feedback-mutate-hits).
+    //
+    // This primitive ships the verbatim-name view requested by the
+    // issue body, exposing the SHARED counters under the names the
+    // issue body uses for AI-discoverability. No new atomics are
+    // added — the existing atomics are reused (the bump sites are
+    // already wired from #580/#277/#640/#698).
+    //
+    // Fields (4 + sentinel):
+    //   - hook-calls          hardware_backend_hook_calls_total
+    //   - ppa-reemits         commercial_reemits_total
+    //   - verification-triggers feedback_mutate_hits_total
+    //   - backend-events-total (sum of 3, per-call derivation)
+    //   - schema == 663
+    //
+    // Non-duplicative with #580 (hardware-backend-stats, the
+    // general-purpose view with derived pass-rate / recommendation
+    // fields), #698 (hardware-backend-commercial-stats, the
+    // commercial-loop view with ppa_savings + simulator_runs +
+    // diff_emits). #663 ships the verbatim-name view the issue
+    // body requested specifically.
+    add("query:hardware-backend-sv-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t hook_calls =
+            m ? static_cast<std::int64_t>(
+                    m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t ppa_reemits =
+            m ? static_cast<std::int64_t>(
+                    m->commercial_reemits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t verification_triggers =
+            m ? static_cast<std::int64_t>(
+                    m->feedback_mutate_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t events_total = hook_calls + ppa_reemits + verification_triggers;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"hook-calls", make_int(hook_calls)},
+            {"ppa-reemits", make_int(ppa_reemits)},
+            {"verification-triggers", make_int(verification_triggers)},
+            {"backend-events-total", make_int(events_total)},
+            {"schema", make_int(663)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #706: Scheduler StealBudget adaptive bias + LLM tail stats.
     add("query:scheduler-stealbudget-adaptive-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

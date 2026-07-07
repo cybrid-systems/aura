@@ -3084,6 +3084,19 @@ add_dependencies(all_test_issue_targets test_issue_661_sv_interface_structure_st
 aura_add_issue_test(test_issue_662_sva_structured_mutate)
 aura_issue_test_link_llvm_jit(test_issue_662_sva_structured_mutate)
 add_dependencies(all_test_issue_targets test_issue_662_sva_structured_mutate)
+# Issue #663: hardware backend SV-specific observability (P1).
+# Verbatim-name view of the issue body's Action #4
+# (hook_calls + ppa_reemits + verification_triggers). The 3
+# underlying atomics already exist + are bumped from
+# #580/#277/#640/#698 sites. Ships the (query:hardware-backend-
+# sv-stats, schema 663) primitive + 7-AC regression net:
+# schema, fields present, sum invariant, SV structural mutate
+# → hardware hook path, verification feedback path, regression on
+# #580/#698 hardware-backend primitives, cross-feature regression
+# on #661/#694 SV primitives.
+aura_add_issue_test(test_issue_663_hardware_backend_sv_stats)
+aura_issue_test_link_llvm_jit(test_issue_663_hardware_backend_sv_stats)
+add_dependencies(all_test_issue_targets test_issue_663_hardware_backend_sv_stats)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
