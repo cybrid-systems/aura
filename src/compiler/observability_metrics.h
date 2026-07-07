@@ -1266,6 +1266,35 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_reflect_schema_mismatches_caught_total{0};
     std::atomic<std::uint64_t> macro_reflect_post_mutate_hygiene_drift_total{0};
 
+    // Issue #713: macro hygiene violations detected in JIT deopt,
+    // AOT reload, and Interpreter fallback paths. The
+    // (query:macro-jit-hygiene-stats) primitive exposes:
+    //   - deopt_on_hygiene                  # of times JIT deopt was
+    //                                       triggered because a
+    //                                       source_marker=MacroIntroduced
+    //                                       call site tried to inline
+    //                                       into User code (or other
+    //                                       policy violation)
+    //   - aot_reload_marker_mismatches      # of times AOT reload
+    //                                       rejected/restamped a
+    //                                       module because its
+    //                                       source_marker column
+    //                                       drifted from the host's
+    //                                       expected markers
+    //   - interpreter_fallback_hygiene_hits # of times the IR
+    //                                       executor (interpreter
+    //                                       fallback path) hit a
+    //                                       source_marker=MacroIntroduced
+    //                                       dispatch and chose
+    //                                       conservative fallback
+    // (All three counters are 0 on a fresh service. The bump
+    // helpers are wired into aura_jit_bridge.cpp +
+    // evaluator.ixx fast paths; deopt wiring (LLVM IR emit hook)
+    // is a follow-up since it lives in the JIT code generator.)
+    std::atomic<std::uint64_t> macro_jit_hygiene_deopt_total{0};
+    std::atomic<std::uint64_t> macro_aot_reload_marker_mismatches_total{0};
+    std::atomic<std::uint64_t> macro_interpreter_fallback_hygiene_hits_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
