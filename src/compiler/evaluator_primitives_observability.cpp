@@ -821,6 +821,78 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #661: query:sv-interface-structure-stats — SV InterfaceIR
+    // + ModportIR structure observability (P1 EDA-SV).
+    //
+    // The 3 counters track the structured interface IR/ModportIR
+    // BUILDER shape (the foundations the issue body Action #4
+    // calls out: ports_count + modport_views + direction_changes):
+    //   - ports-count         sv_interface_ports_total
+    //       Bumped per Interface body port addition (lifetime
+    //       running total). Wired into `eda:parse-netlist`'s
+    //       interface parse path.
+    //   - modport-views       sv_interface_modport_views_total
+    //       Bumped per Modport view addition. Wired into
+    //       `eda:parse-netlist`'s modport parse path.
+    //   - direction-changes   sv_interface_direction_changes_total
+    //       Bumped per port direction change. Currently bumped
+    //       via the test-only helpers (the production wire via
+    //       `eda:set-port-direction` is follow-up work for
+    //       Action #3 in the issue body).
+    //   - interface-events-total
+    //       Sum of the 3 above (per-call derivation, not a
+    //       separate atomic). Lets dashboards show overall
+    //       interface-structure-event volume at a glance.
+    //   - schema == 661
+    //
+    // Non-duplicative with #640/#630/#539/#497/#498/#496 (those
+    // cover SVA, verification, and pattern scopes); #661 covers
+    // the interface IR/ModportIR BUILDER shape specifically.
+    add("query:sv-interface-structure-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t ports_count =
+            static_cast<std::int64_t>(ev.get_sv_interface_ports_total());
+        const std::int64_t modport_views =
+            static_cast<std::int64_t>(ev.get_sv_interface_modport_views_total());
+        const std::int64_t direction_changes =
+            static_cast<std::int64_t>(ev.get_sv_interface_direction_changes_total());
+        const std::int64_t events_total = ports_count + modport_views + direction_changes;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("ports-count", ports_count);
+        insert_kv("modport-views", modport_views);
+        insert_kv("direction-changes", direction_changes);
+        insert_kv("interface-events-total", events_total);
+        insert_kv("schema", 661);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #641: query:stable-ref-provenance-sv-stats —
     // Agent-discoverable structured dashboard for the
     // StableNodeRef Cross-Fiber Provenance Enforcement in
@@ -6333,6 +6405,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:pass-pipeline-dirtyaware-stats",
             // Issue #578 — Structured SV IR + query/mutate + dirty propagation completion
             "query:sv-structured-edsl-stats",
+            // Issue #661 — SV InterfaceIR + ModportIR structure observability
+            "query:sv-interface-structure-stats",
             // Issue #579 — Verification feedback → structured mutate closed-loop
             "query:verification-feedback-loop-stats",
             // Issue #580 — Hardware backend emit maturity + commercial interop

@@ -168,6 +168,13 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                         const auto mp = ws->add_modport(pool->intern(std::string(name)), ports);
                         ws->insert_child(last_iface, ws->get(last_iface).children.size(), mp);
                         ++parsed;
+                        // Issue #661: SV InterfaceIR + ModportIR structure
+                        // observability. Bump modport-views by 1 and
+                        // ports-count by the size of the modport's
+                        // port list. Direction-change wiring is the
+                        // follow-up (issue body Action #3).
+                        ev.bump_sv_interface_modport_views();
+                        ev.bump_sv_interface_ports(ports.size());
                     } else if (kind == "constraint" && parts.size() >= 3) {
                         const auto name = trim(parts[1]);
                         const auto expr = trim(parts[2]);
@@ -469,6 +476,13 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                                     ws->add_modport(pool->intern(std::string(name)), ports);
                                 ws->insert_child(last_iface, ws->get(last_iface).children.size(),
                                                  mp);
+                                // Issue #661: SV InterfaceIR + ModportIR
+                                // structure observability. (Second call
+                                // site — mirrors the first site at line ~165.)
+                                // Direction-change wiring is the follow-up
+                                // (issue body Action #3).
+                                ev.bump_sv_interface_modport_views();
+                                ev.bump_sv_interface_ports(ports.size());
                             } else if (kind == "constraint" && parts.size() >= 3) {
                                 const auto name = trim(parts[1]);
                                 const auto expr = trim(parts[2]);

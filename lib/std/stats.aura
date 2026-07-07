@@ -66,6 +66,8 @@
     "query:pass-pipeline-dirtyaware-stats"
     ; ── Issue #578 — Structured SV IR + query/mutate + dirty propagation completion ──
     "query:sv-structured-edsl-stats"
+    ; ── Issue #661 — SV InterfaceIR + ModportIR structure observability ──
+    "query:sv-interface-structure-stats"
     ; ── Issue #579 — Verification feedback → structured mutate closed-loop ──
     "query:verification-feedback-loop-stats"
     ; ── Issue #580 — Hardware backend emit maturity + commercial interop ──
