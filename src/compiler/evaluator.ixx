@@ -2924,6 +2924,40 @@ public:
             m->primitive_call_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #491 / #680 rebind observability: bump
+    // hotswap-invalidate + invalidate_function-calls on
+    // (mutate:rebind) without running the BFS cascade (the
+    // rebind path is lazy re-lower, not hard invalidate).
+    // Counters are observability-only relaxed atomics; the
+    // direct bump is safe alongside mark_define_dirty and
+    // doesn't interfere with dep_graph_ or invalidate_function.
+    inline void bump_rebind_invalidate() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            m->invalidate_function_calls.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Also bump the per-Evaluator precise-inval counter so
+        // query:hotswap-stats / query:jit-stats surfaces rebinds
+        // as a precise invalidation event. Mirrors the bump that
+        // finalize_define_mutate_invalidation(run_full_invalidate=true)
+        // performs inside the BFS cascade. Relaxed atomic, safe
+        // alongside the lazy mark_define_dirty path.
+        precise_define_inval_hits_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #683: linear ownership revalidate probe after
+        // rebind. The full revalidate path
+        // (run_linear_ownership_revalidate_after_invalidate)
+        // walks the AST + bumps safepoint probes; that's heavy.
+        // For the rebind path, the underlying invalidation has
+        // already been marked via mark_define_dirty, so we just
+        // bump the counter so observability surfaces the
+        // revalidate event. (The actual re-lower is still lazy.)
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_relower_revalidate_hits.fetch_add(1, std::memory_order_relaxed);
+            m->linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #614: primitives hot-path memory-stability counters.
     // Bumped by evaluator_primitives_list.cpp (pair pushes +
     // cdr walks) so the AI agent can correlate the

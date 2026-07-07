@@ -346,11 +346,15 @@ bool test_ac5_dep_graph_stable_across_rebinds() {
     }
 
     auto calls_after = cs.metrics().invalidate_function_calls.load(std::memory_order_relaxed);
-    // mutate:rebind does NOT call invalidate_function
-    // (it uses mark_define_dirty instead), so the counter
-    // should not have moved.
-    CHECK(calls_after == calls_before,
-          "mutate:rebind does not bump invalidate_function_calls (uses mark_define_dirty)");
+    // mutate:rebind uses mark_define_dirty (lazy re-lower) and
+    // does NOT call invalidate_function — but #491 / #680
+    // observability rebinds bump invalidate_function_calls +
+    // jit_hotswap_invalidate_total directly via
+    // bump_rebind_invalidate() so AI monitoring can see rebinds
+    // as invalidation events. The counter grows by 1 per rebind
+    // (no BFS cascade), and the actual IR re-lower is still lazy.
+    CHECK(calls_after - calls_before == 3,
+          "mutate:rebind bumps invalidate_function_calls (lazy +1 per rebind)");
 
     // After 3 rebinds, the dep_graph_ shape is preserved:
     // f is still defined, g is still defined, and the

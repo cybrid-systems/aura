@@ -1488,6 +1488,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.finalize_define_mutate_invalidation(flat, name, old_define,
                                                /*run_full_invalidate=*/false);
 
+        // Bump observability counters directly (without the BFS
+        // cascade) so query:jit-stats / query:hotswap-stats
+        // surface rebinds as invalidation events for AI
+        // monitoring. Counters are relaxed atomics, so the
+        // direct bump doesn't conflict with the lazy
+        // re-lower path above. Avoids running invalidate_function
+        // (which would re-do the BFS and risk over-counting in
+        // test_issue_401's per-evict assertion).
+        ev.bump_rebind_invalidate();
+
         // ── Auto-typecheck (Issue #107 / #526) ──────────────
         // Selective infer_flat_partial when the mutation log
         // has entries; full infer_flat fallback otherwise.

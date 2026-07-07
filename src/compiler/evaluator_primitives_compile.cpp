@@ -2293,6 +2293,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                                                       aura::ast::FlatAST::kCoverageFeedbackDirty);
                     ++marked;
                 }
+            } else {
+                // Non-integer line — bump the parse-error counter so
+                // query:verify-tool-stats surfaces malformed input.
+                ev.bump_verify_tool_parse_error();
             }
             i = (j < text.size()) ? j + 1 : j;
         }
@@ -2335,6 +2339,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                     ws->apply_verification_dirty_bits(nid, aura::ast::FlatAST::kAssertFailureDirty);
                     ++marked;
                 }
+            } else {
+                // Non-integer line — bump the parse-error counter so
+                // query:verify-tool-stats surfaces malformed input.
+                ev.bump_verify_tool_parse_error();
             }
             i = (j < text.size()) ? j + 1 : j;
         }

@@ -735,7 +735,7 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 # aura_jit.cpp. Link the JIT sources when LLVM is available
 # (same pattern as test_gc_evaluator_integration / test_ir).
 if(LLVM_FOUND)
-    target_sources(test_spec_jit PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    target_sources(test_spec_jit PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp src/compiler/aura_jit_bridge_stub.cpp)
     # Issue #278 follow-up: aura_jit.cpp references
     # aura_jit_prim_dispatch which lives in service.ixx. The
     # per-test binary can't import service.ixx cleanly (the
@@ -758,7 +758,8 @@ add_test(NAME test_spec_jit COMMAND test_spec_jit
 add_executable(test_jit_metrics tests/test_jit_metrics.cpp
     tests/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp)
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge_stub.cpp)
 target_include_directories(test_jit_metrics PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -781,7 +782,8 @@ add_test(NAME jit_metrics COMMAND test_jit_metrics
 add_executable(test_jit_concurrent_compile tests/test_jit_concurrent_compile.cpp
     tests/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp)
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge_stub.cpp)
 target_include_directories(test_jit_concurrent_compile PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -807,7 +809,8 @@ add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
 add_executable(test_jit_consistency tests/test_jit_consistency.cpp
     tests/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp)
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge_stub.cpp)
 target_include_directories(test_jit_consistency PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1119,6 +1122,7 @@ aura_issue_test_link_llvm_jit(test_issue_263)
 aura_add_issue_test(test_issue_264)
 aura_issue_test_link_llvm_jit_minimal(test_issue_264)
 aura_add_issue_test(test_issue_265)
+aura_issue_test_link_llvm_jit(test_issue_265)
 aura_add_issue_test(test_issue_266)
 aura_issue_test_link_llvm_jit(test_issue_266)
 # Issue #400: sym_id/structural rollback coverage closed loop.

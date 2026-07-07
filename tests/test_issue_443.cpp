@@ -5,8 +5,8 @@
 //            - query:verify-tool-stats returns an integer
 //            - verify:run-external-sim returns a string
 //            - cache hit bumps verify_tool_cache_hits_total
-//            - verify:parse-coverage marks nodes dirty
-//            - verify:parse-failures marks nodes dirty
+//            - verify:parse-coverage-feedback marks nodes dirty
+//            - verify:parse-assert-failure marks nodes dirty
 //            - (regression) prior #439/#447/#448 primitives
 //              still work
 
@@ -91,39 +91,39 @@ bool test_cache_hit() {
     return true;
 }
 
-// ── AC4: verify:parse-coverage marks nodes dirty ──
+// ── AC4: verify:parse-coverage-feedback marks nodes dirty ──
 bool test_parse_coverage() {
-    std::println("\n--- AC4: verify:parse-coverage marks nodes dirty ---");
+    std::println("\n--- AC4: verify:parse-coverage-feedback marks nodes dirty ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")")) {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(verify:parse-coverage \"0 hole_a\n2 hole_c\n\")");
+    auto r = cs.eval("(verify:parse-coverage-feedback \"0 hole_a\n2 hole_c\n\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
         return false;
     }
     const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count == 2, "verify:parse-coverage marks 2 nodes dirty (line-based format)");
+    CHECK(count == 2, "verify:parse-coverage-feedback marks 2 nodes dirty (line-based format)");
     return true;
 }
 
-// ── AC5: verify:parse-failures marks nodes dirty ──
+// ── AC5: verify:parse-assert-failure marks nodes dirty ──
 bool test_parse_failures() {
-    std::println("\n--- AC5: verify:parse-failures marks nodes dirty ---");
+    std::println("\n--- AC5: verify:parse-assert-failure marks nodes dirty ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define p 1) (define q 2)\")")) {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(verify:parse-failures \"1 fail_msg\")");
+    auto r = cs.eval("(verify:parse-assert-failure \"1 fail_msg\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
         return false;
     }
     const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count == 1, "verify:parse-failures marks 1 node dirty");
+    CHECK(count == 1, "verify:parse-assert-failure marks 1 node dirty");
     return true;
 }
 
@@ -143,7 +143,7 @@ bool test_parse_error() {
     const auto before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     // Empty line that doesn't start with an integer
     // → parse error.
-    auto r = cs.eval("(verify:parse-coverage \"not_a_number\")");
+    auto r = cs.eval("(verify:parse-coverage-feedback \"not_a_number\")");
     if (!r) {
         ++g_failed;
         return false;
