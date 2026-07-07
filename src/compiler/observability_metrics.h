@@ -1348,6 +1348,37 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_defuse_cross_refs_total{0};
     std::atomic<std::uint64_t> sv_defuse_incremental_updates_total{0};
 
+    // Issue #665: SV stability observability (P1 EDA-SV scalability).
+    // The 3 counters track the SV-tagged stability + scale activity
+    // that the issue body Action #4 calls out (dirty_traversal_depth /
+    // generation_wrap_sv / stable_ref_invalidation_sv):
+    //
+    //   - sv_dirty_traversal_depth_total:
+    //       Cumulative depth summed across all mark_dirty_upward
+    //       calls on SV-tagged nodes (Interface/Modport/SVA nodes).
+    //       Use depth_total / call_count to derive the average
+    //       depth called out in Action #4. Sum form (not avg) so
+    //       that the primitive can be computed in O(1) without
+    //       locking around a running average.
+    //
+    //   - sv_generation_wrap_total:
+    //       Bumped each time generation_wrap_sv_hits is detected on
+    //       an SV-tagged StableRef invalidation. The
+    //       "generation_wrap_sv_hits" counter from Action #4.
+    //
+    //   - sv_stable_ref_invalidation_total:
+    //       Bumped each time a StableRef tied to an SV-tagged node
+    //       (Interface/Modport/SVA) becomes invalid. The
+    //       "stable_ref_invalidation_sv" counter from Action #4.
+    //
+    // Non-duplicative with #641 StableRef cross-fiber provenance,
+    // #368/#392 generation fix, #336 mark_dirty_upward fast-path,
+    // #642 arena, #664 SV DefUse. #665 covers the SV-specific
+    // stability observability surface.
+    std::atomic<std::uint64_t> sv_dirty_traversal_depth_total{0};
+    std::atomic<std::uint64_t> sv_generation_wrap_total{0};
+    std::atomic<std::uint64_t> sv_stable_ref_invalidation_total{0};
+
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
     // paths? The aggregate counter above only answers

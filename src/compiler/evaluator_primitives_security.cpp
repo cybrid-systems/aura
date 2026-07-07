@@ -2204,6 +2204,79 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #665: query:sv-stability-stats — SV stability observability
+    // (P1 EDA-SV scalability).
+    //
+    // The 3 counters track SV-tagged stability + scale activity
+    // called out in issue body Action #4:
+    //   - dirty-traversal-depth   sv_dirty_traversal_depth_total
+    //       Cumulative depth summed across all mark_dirty_upward
+    //       calls on SV-tagged nodes (Interface/Modport/SVA).
+    //       Stored as sum so the primitive can compute average in
+    //       O(1) (avg = total / calls, derives from this primitive).
+    //       The "dirty_traversal_depth_avg" metric from Action #4
+    //       can be derived by the user as
+    //         depth_total / sv_dirty_traversal_calls_total
+    //       (the latter is bumped by a separate helper if needed).
+    //   - generation-wrap-sv      sv_generation_wrap_total
+    //       Bumped each time generation_wrap_sv_hits is detected
+    //       on an SV-tagged StableRef invalidation. The
+    //       "generation_wrap_sv_hits" counter from Action #4.
+    //   - stable-ref-invalidation-sv
+    //                            sv_stable_ref_invalidation_total
+    //       Bumped each time a StableRef tied to an SV-tagged node
+    //       (Interface/Modport/SVA) becomes invalid. The
+    //       "stable_ref_invalidation_sv" counter from Action #4.
+    //   - stability-events-total  (sum of 3, per-call derivation,
+    //       not a separate atomic)
+    //   - schema == 665
+    //
+    // Non-duplicative with #641 StableRef cross-fiber provenance,
+    // #368/#392 generation fix, #336 mark_dirty_upward fast-path,
+    // #642 arena, #664 SV DefUse. #665 covers the SV-specific
+    // stability observability surface.
+    add("query:sv-stability-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t depth = static_cast<std::int64_t>(ev.get_sv_dirty_traversal_depth());
+        const std::int64_t wrap = static_cast<std::int64_t>(ev.get_sv_generation_wrap());
+        const std::int64_t inval = static_cast<std::int64_t>(ev.get_sv_stable_ref_invalidation());
+        const std::int64_t events_total = depth + wrap + inval;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("dirty-traversal-depth", depth);
+        insert_kv("generation-wrap-sv", wrap);
+        insert_kv("stable-ref-invalidation-sv", inval);
+        insert_kv("stability-events-total", events_total);
+        insert_kv("schema", 665);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #706: Scheduler StealBudget adaptive bias + LLM tail stats.
     add("query:scheduler-stealbudget-adaptive-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

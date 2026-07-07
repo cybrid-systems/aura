@@ -3767,6 +3767,53 @@ public:
         }
         return 0;
     }
+    // Issue #665: SV stability observability (P1 EDA-SV scalability).
+    // The 3 bump helpers + 3 accessors back the (query:sv-stability-
+    // stats) primitive. Wired into mark_dirty_upward (SV-tagged path),
+    // generation_wrap detection (SV-tagged path), and StableRef
+    // invalidation (SV-tagged path). Initially bumped from test
+    // fixtures + planned production wiring for issue body Action #1
+    // (early-exit / special-case SV tags in mark_dirty_upward) +
+    // Action #2 (compact_nodes / restore subtree-gen scope for SV).
+    void bump_sv_dirty_traversal_depth(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_dirty_traversal_depth_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_generation_wrap(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_generation_wrap_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_stable_ref_invalidation(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_stable_ref_invalidation_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_sv_dirty_traversal_depth() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_dirty_traversal_depth_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_generation_wrap() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_generation_wrap_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_stable_ref_invalidation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_stable_ref_invalidation_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
