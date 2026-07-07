@@ -16,6 +16,8 @@
 
 #include "aura_jit_bridge.h"
 
+#include <atomic>
+
 extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
     (void)fn_name;
     // Stub: no-op in test binaries. The full implementation
@@ -29,4 +31,8 @@ extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
 extern "C" void aura_set_aot_metrics(void* metrics) {
     (void)metrics;
     // Stub.
+}
+
+extern "C" void aura_jit_epoch_acquire_fence(void) {
+    std::atomic_thread_fence(std::memory_order_acquire);
 }
