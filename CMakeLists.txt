@@ -3048,6 +3048,15 @@ add_dependencies(all_test_issue_targets test_issue_709)
 aura_add_issue_test(test_issue_710)
 aura_issue_test_link_llvm_jit(test_issue_710)
 add_dependencies(all_test_issue_targets test_issue_710)
+# Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
+# Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
+# + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
+# 2-define (+ x 1) arg → 42, 2-define inline lambda → 6, 1-define baseline
+# → 6, 3-define chain (fn-b+fn-c both call fn-a) → 6/10, redefine path
+# → 115. Non-duplicative with #402 bundle infra.
+aura_add_issue_test(test_issue_660_cache_define_bundle)
+aura_issue_test_link_llvm_jit(test_issue_660_cache_define_bundle)
+add_dependencies(all_test_issue_targets test_issue_660_cache_define_bundle)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
