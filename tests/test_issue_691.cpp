@@ -124,8 +124,8 @@ int main() {
         std::println("\n--- AC5: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 72,
-              "stats:count == 72");
+                  aura::compiler::types::as_int(*count) == 211,
+              "stats:count == 211");
     }
 
     // AC6: fiber stress

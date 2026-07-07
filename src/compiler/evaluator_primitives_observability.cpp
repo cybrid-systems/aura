@@ -26,6 +26,414 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 using namespace types;
 
+// Issue #560: canonical list of every registered *-stats observability
+// primitive. Single source of truth for both (stats:list) and
+// (stats:count). Adding a new (query:*-stats) primitive is one entry here
+// — the count and the enumeration both update automatically.
+//
+// The Aura stdlib (`lib/std/stats.aura`) mirrors this list at require
+// time, so AI agents can also call these primitives by name. When you add
+// a new entry here, also add a matching line to `lib/std/stats.aura` so the
+// EDSL discoverability surface stays in sync.
+static const std::vector<std::string> kObservabilityStatsPrimitives = {
+    // Issue #543 — EnvFrame dual-path
+    "query:envframe-dualpath-stats",
+    // Issue #547 — Pattern + MacroIntroduced hygiene
+    "query:pattern-index-stats",
+    // Issue #490 — lazy vs eager pattern-index rebuild observability
+    "query:pattern-index-rebuild-stats",
+    "query:pattern-hygiene-stats",
+    // Issue #486 — MacroIntroduced hygiene decision hash
+    "query:macro-hygiene-stats",
+    // Issue #548 — Panic-checkpoint lifecycle
+    "query:panic-checkpoint-lifecycle-stats",
+    // Issue #549 — Self-evolution stability
+    "query:self-evolution-stability-stats",
+    // Issue #550 — Typed mutation + dirty impact
+    "query:typed-mutation-stats",
+    "query:dirty-impact",
+    // Issue #573 — Task2 solve_delta + narrowing incremental
+    "query:typed-incremental-stats",
+    // Issue #608 — Incremental type reliability
+    "query:type-incremental-stats",
+    // Issue #509 — solve_delta touched_roots soundness
+    "query:constraint-delta-stats",
+    // Issue #628 — solve_delta clean-conflict safety
+    "query:solve-delta-safety-stats",
+    // Issue #467 — Per-node occurrence-dirty + blame chain
+    "query:occurrence-stats",
+    // Issue #495 — Task2 refinement closed-loop pillars
+    "query:task2-refinement-stats",
+    // Issue #609 — Occurrence narrow post-mutate recovery
+    "query:occurrence-narrow-stats",
+    // Issue #576 — Task2 occurrence blame + provenance
+    "query:occurrence-blame-stats",
+    // Issue #577 — Task2 ADT exhaustiveness + match narrowing
+    "query:adt-exhaustiveness-stats",
+    // Issue #454 — Reflection-to-EDSL bridge (FlatAST/marker)
+    "query:reflect-edsl-bridge-stats",
+    // Issue #551 — Reflect post-mutate
+    "query:reflect-postmutate-stats",
+    // Issue #593 — AST→query→IR MacroIntroduced hygiene closed loop
+    "query:pattern-ir-hygiene-closed-loop-stats",
+    // Issue #594 — Static reflection self-mod validation hook
+    "query:reflection-selfmod-stats",
+    // Issue #596 — Guard + panic checkpoint + reflect closed loop
+    "query:guard-panic-reflect-stats",
+    // Issue #599 — Compiler root epoch/version + GC synergy
+    "query:compiler-root-stats",
+    // Issue #600 — Per-block dirty + impact scope + closure bridge synergy
+    "query:incremental-closure-stats",
+    // Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps
+    "query:macro-hygiene-fiber-panic-stats",
+    // Issue #655 — EDSL core stability COW/atomic/query/mutate gaps
+    "query:edsl-core-stability-stats",
+    // Issue #657 — Compiler core incremental self-mod gaps
+    "query:compiler-core-incremental-stats",
+    // Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps
+    "query:highperf-cpp26-stats",
+    // Issue #659 — Type system typed-mutate incremental gaps
+    "query:typesystem-typed-mutate-stats",
+    // Issue #673 — Unified Runtime Observability Layer (P1)
+    // cross-module correlation primitive
+    "query:runtime-observability-correlated-stats",
+    // Issue #674 — Closed-loop self-evolution chaos stress
+    // outcome classifier primitive
+    "query:self-evolution-chaos-stats",
+    // Issue #597 — Macro+reflect+self-evo combined loop
+    "query:macro-reflect-self-evo-stats",
+    // Issue #488 — Guard impact snapshot hash
+    "query:mutation-impact-snapshot",
+    // Issue #504 — Guard impact log for AI decision loops
+    "query:mutation-boundary-log",
+    // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
+    "query:self-evolution-loop-stats",
+    // Issue #415 — DirtyReason verification categories +
+    // mark_dirty_upward propagation synthesis
+    "query:dirty-reason-propagation-stats",
+    // Issue #517 — Consolidated 3-pillar production priority meta
+    "query:consolidated-production-priority-stats",
+    // Issue #520 — Consolidated Top 5 production roadmap synthesis
+    "query:production-roadmap-stats",
+    // Issue #514 — Task6 Top 3 production-readiness synthesis
+    "query:ir-hygiene-stats",
+    "query:pattern-marker-stats",
+    "query:task6-production-readiness-stats",
+    // Issue #441 — Consolidated compiler/runtime P0 synthesis
+    "query:compiler-runtime-production-readiness-stats",
+    // Issue #634 — Commercial production readiness P0 synthesis
+    "query:commercial-production-readiness-stats",
+    // Issue #635 — Macro+reflect+self-evo commercial closed-loop
+    "query:macro-reflect-self-evo-commercial-stats",
+    // Issue #636 — EDSL workspace query/mutate commercial closed-loop
+    "query:edsl-query-mutate-commercial-stats",
+    // Issue #619 — Task6 macro+reflect+self-evo follow-up
+    "query:macro-reflect-self-evo-followup-stats",
+    // Issue #602 — Prompt6 memory-safety matrix
+    "query:prompt6-violation-count",
+    "query:prompt6-safety-score",
+    // Issue #570 — ShapeProfiler stability + deopt
+    "query:shape-stability-stats",
+    // Issue #492 — ShapeProfiler structured deopt/stability hash
+    "query:shape-profiler-stats",
+    // Issue #493 — EDSL hot-path bottleneck breakdown hash
+    "query:hotpath-bottleneck-stats",
+    // Issue #494 — Pass pipeline yield + dirty short-circuit hash
+    "query:pass-pipeline-stats",
+    // Issue #496 — Native SV NodeTag census + mutate counters
+    "query:sv-node-stats",
+    // Issue #571 — EvalValue v2 dispatch + contracts
+    "query:value-dispatch-stats",
+    // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
+    "query:soa-hotpath-adoption-stats",
+    // Issue #404 — IR SoA Phase 3 block_dirty incremental lowering
+    "query:ir-soa-incremental-stats",
+    // Issue #403 — IRInstruction rich metadata interpreter/JIT
+    "query:ir-metadata-stats",
+    // Issue #607 — Task4 high-perf hot-path matrix
+    "query:task4-hotpath-safety-score",
+    "query:task4-cache-locality-win",
+    "query:task4-mutation-stability",
+    // Issue #552 — EDSL stability
+    "query:edsl-stability-stats",
+    // Issue #553 — Atomic batch + mutation log
+    "query:mutation-log-stats",
+    // Issue #529 — Atomic batch + Guard rollback closed loop
+    "query:atomic-batch-rollback-stats",
+    // Issue #527 — StableNodeRef cross-COW/fiber closed loop
+    "query:stable-ref-cow-fiber-stats",
+    // Issue #400 — sym_id/structural rollback coverage
+    "query:mutation-rollback-coverage-stats",
+    // Issue #554 — Pattern index timing (same name as #547; unified)
+    // Issue #555 — Typed mutation Task1
+    "query:typed-mutation-stats-task1",
+    // Issue #556 — EDSL concurrency safety
+    "query:edsl-concurrency-stats",
+    // Issue #531 — Closure env safety
+    "query:closure-env-safety-stats",
+    // Issue #610 — Linear ownership post-mutate validation
+    "query:linear-ownership-mutation-stats",
+    // Issue #638 — Linear + GuardShape runtime safety post-mutate
+    "query:linear-ownership-safety-stats",
+    // Issue #598 — Runtime linear enforcement + invalidate hook
+    "query:linear-ownership-runtime-stats",
+    // Issue #575 — Task2 PerDefUse incremental linear ownership
+    "query:linear-ownership-incremental-stats",
+    // Pre-existing (Issue #288, #391, #447, #457, #459)
+    "query:query-stats",
+    "query:stale-ref-stats",
+    // Issue #489 — StableNodeRef enforcement in mutate/query hot paths
+    "query:stability-stats",
+    "query:atomic-batch-stats",
+    "query:stable-ref-stats",
+    // Issue #470 — StableNodeRef 4-field hash
+    "query:stable-ref-stats-hash",
+    // Issue #497 — Long-session StableRef lifecycle hash
+    "query:stable-ref-lifecycle-stats",
+    // Issue #498 — AI-native primitive metadata + skeleton ergonomics
+    "query:primitive-metadata",
+    // Issue #499 — EDA foundation primitives module observability
+    "query:eda-foundation-stats",
+    // Issue #500 — Work-stealing + MutationBoundary depth observability
+    "query:work-steal-stats",
+    "query:fiber-migration-stats",
+    "query:mutation-coordination-stats",
+    "query:envframe-stale-stats",
+    "query:envframe-bump-stats",
+    "query:dirty-subtree",
+    "query:epoch-stats",
+    "query:macro-introduced",
+    "query:by-marker",
+    // Compile: stats (Issue #560 enumeration source of truth)
+    "compile:compiler-cache-stats",
+    "compile:compiler-incremental-stats",
+    "compile:typecheck-stats",
+    "compile:jit-stats",
+    // Issue #491 — JIT opcode coverage + hot-swap safety hash
+    "query:jit-stats-hash",
+    "compile:arena-stats",
+    "compile:dead-coercion-stats",
+    // Issue #574 — coercion elimination summary
+    "query:coercion-elim-stats",
+    // Issue #468 — DeadCoercionEliminationPass zero-overhead
+    "query:dead-coercion-zerooverhead-stats",
+    "compile:per-defuse-index-stats",
+    "compile:mutator-dispatch-stats",
+    "compile:mutation-impact-stats",
+    "compile:inline-pass-stats",
+    "compile:type-cache-stats",
+    "compile:dirty-impact-stats",
+    // Primitive error (Issue #478)
+    "query:primitive-error-stats",
+    // Issue #583 — Registry + core primitives hot-path stats
+    "query:primitives-stats",
+    // Issue #480 — Self-describing primitive metadata closed loop
+    "query:primitive-meta-stats",
+    // Issue #405 — Arena auto-compaction orchestration signals
+    "query:arena-compaction-stats",
+    // Issue #406 — Pass Pipeline + Contracts hot-path stats
+    "query:pass-contracts-stats",
+    // Issue #407 — ShapeProfiler burst/deopt storm observability
+    "query:shape-deopt-burst-stats",
+    // Issue #408 — EDSL dirty propagation cost observability
+    "query:dirty-propagation-cost-stats",
+    // Issue #471 — SV-scale dirty propagation
+    "query:dirty-propagation-stats",
+    // Issue #414 — Long-term generation_/epoch management
+    "query:generation-epoch-stats",
+    // Issue #416 — AST SoA column compaction observability
+    "query:ast-column-compaction-stats",
+    // Issue #417 — MutationBoundary cross-TU invariant stats
+    "query:mutation-boundary-invariant-stats",
+    // Issue #418 — EnvFrame dual-path + stale policy stats
+    "query:envframe-dualpath-stale-stats",
+    // Issue #419 — Modular defuse_version + AOT dispatch stats
+    "query:defuse-version-stats",
+    // Issue #420 — MacroIntroduced end-to-end hygiene contract
+    "query:macro-hygiene-contract-stats",
+    // Issue #421 — query:pattern recursive MacroIntroduced filter
+    "query:pattern-macro-filter-stats",
+    // Issue #422 — Mutate-path hygiene violation detection
+    "query:hygiene-violation-stats",
+    // Issue #423 — query:pattern structural pre-index
+    "query:pattern-structural-index-stats",
+    // Issue #424 — StableNodeRef WorkspaceTree COW safety
+    "query:stable-ref-workspace-tree-stats",
+    // Issue #428 — closure bridge + bridge_epoch drift
+    "query:closure-stats",
+    // Issue #429 — IR SoA live dirty state
+    "query:soa-dirty-stats",
+    // Issue #430 — arena compaction hash variant
+    "query:arena-compaction-stats-hash",
+    // Issue #431 — C++26 Contracts/Concepts/consteval density
+    "query:cxx26-invariants",
+    // Issue #440 — consolidated Task 1 EDSL readiness
+    "query:edsl-readiness",
+    // Issue #444 — strategy evolution controller pheromone stats
+    "query:strategy-evolution-stats",
+    // Issue #445 — SEVA audit log (OpenClaw integration)
+    "query:seva-audit-log",
+    // Issue #446 — SEVA demo with metrics
+    "seva:run-demo-with-metrics",
+    // Issue #450 (sub-issue #441) — primitive perf stats
+    "query:primitive-perf-stats",
+    // Issue #452 — AOT hot-update + region filtering
+    "query:aot-stats",
+    // Issue #462 — ShapeAwareFoldingPass
+    "query:shape-folding-stats",
+    // Issue #463 — SoA Phase 2 adoption
+    "query:soa-adoption-stats",
+    // Issue #675 — CI reproducibility + sanitizer gates
+    "query:ci-reproducibility-stats",
+    // Issue #676 — sandbox capability + mutation audit
+    "query:security-stats",
+    "query:mutation-audit-log",
+    // Issue #464 — Arena auto-compaction lifecycle
+    "query:arena-auto-stats",
+    // Issue #677 — deployment / health / metrics export
+    "query:deployment-stats",
+    // Issue #465 — C++26 hot-path contracts + consteval
+    "query:cxx26-hotpath-invariants",
+    // Issue #507 — Task4 hot-path Contracts + consteval sites
+    "query:task4-hotpath-contracts",
+    // Issue #678 — PCV span lifetime safety in query layer
+    "query:span-lifetime-stats",
+    // Issue #679 — nested Guard + atomic-batch rollback alignment
+    "query:nested-guard-atomic-stats",
+    // Issue #680 — Define mutate IR/JIT/bridge invalidation
+    "query:define-mutate-ir-invalidation-stats",
+    // Issue #681 — compiler IRClosure/bridge epoch enforcement
+    "query:compiler-closure-inval-stats",
+    // Issue #682 — compiler IRClosure/EnvId GC root coordination
+    "query:compiler-gc-root-stats",
+    // Issue #683 — linear ownership + GC safepoint / steal integration
+    "query:linear-ownership-gc-stats",
+    // Issue #684 — IRSoA full wiring incremental stats
+    "query:irsoa-incremental-stats",
+    // Issue #685 — arena auto-compact policy + defrag/shape synergy
+    "query:arena-auto-compact-stats",
+    // Issue #686 — ShapeProfiler ring + Value dispatch + Pass dirty wiring
+    "query:shape-value-pass-stats",
+    // Issue #688 — Linear OwnershipEnv post-mutate typed-mutation
+    "query:linear-ownership-typed-mutate-stats",
+    // Issue #689 — Occurrence typing deep predicate + provenance
+    "query:occurrence-typing-mutate-stats",
+    // Issue #690 — Constraint typed-mutation reverify + blame
+    "query:constraint-typed-mutate-stats",
+    "query:constraint-delta-blame-stats",
+    // Issue #691 — CoercionMap + NarrowingRecord provenance
+    "query:coercion-narrowing-stats",
+    // Issue #692 — ADT exhaustiveness + pattern provenance typed-mutation
+    "query:adt-exhaustiveness-typed-mutate-stats",
+    // Issue #693 — Hardware backend SV commercial closed-loop
+    "query:hardware-backend-sv-closedloop-stats",
+    // Issue #694 — SVA structured AST tags + mutate stats
+    "query:sv-sva-structure-stats",
+    // Issue #695 — EDA-SV verification closed-loop stress
+    "query:eda-sv-closedloop-stress-stats",
+    // Issue #510 — EDA verification interop + feedback stats
+    "query:eda-verification-stats",
+    // Issue #511 — Workspace snapshot + checkpoint persistence stats
+    "query:workspace-snapshot-stats",
+    // Issue #512 — Runtime orchestration production-readiness stats
+    "query:runtime-orchestration-stats",
+    // Issue #513 — AOT hot-reload consolidated observability
+    "query:aot-hot-reload-stats",
+    // Issue #522 — AOT production hot-reload deployment tracker
+    "query:aot-production-reload-stats",
+    // Issue #523 — EnvFrame dual-path production safety tracker
+    "query:envframe-production-safety-stats",
+    // Issue #524 — Macro+hygiene production closed-loop tracker
+    "query:macro-production-hygiene-stats",
+    // Issue #525 — Guard post-mutate impact + reflect validation tracker
+    "query:guard-production-impact-stats",
+    // Issue #528 — Pattern index + hygiene production tracker
+    "query:pattern-production-index-stats",
+    // Issue #530 — Incremental re-lower + ir_cache/JIT production tracker
+    "query:incremental-production-relower-stats",
+    // Issue #532 — JIT opcode coverage + IR consistency + hot-swap safety
+    "query:jit-consistency-stats",
+    // Issue #533 — children_ columnar + IR SoA hot-path production tracker
+    "query:soa-production-columnar-stats",
+    // Issue #534 — Arena auto-compaction + defrag safepoint coordination
+    "query:arena-production-compaction-stats",
+    // Issue #535 — C++26 Contracts + consteval hot-path production tracker
+    "query:contracts-production-hotpath-stats",
+    // Issue #539 — SV verification feedback → structured mutate closed loop
+    "query:sv-production-verification-stats",
+    // Issue #540 — StableNodeRef + generation/mutation_log EDA stability
+    "query:eda-stability-stats",
+    // Issue #541 — query:pattern + DefUseIndex + hygiene SV verification
+    "query:pattern-sv-verification-stats",
+    // Issue #557 — Top 5 commercial test-coverage cluster tracker
+    "query:top5-commercial-coverage-stats",
+    // Issue #567 — Primitive governance + stdlib layering closing metrics
+    "query:primitives-governance-stats",
+    // Issue #568 — FlatAST children_ columnar SoA migration completion
+    "query:soa-children-columnar-migration-stats",
+    // Issue #569 — Arena auto-compact + defrag + fiber safepoint completion
+    "query:arena-auto-compact-defrag-stats",
+    // Issue #572 — Pass Pipeline DirtyAware + fold short-circuit completion
+    "query:pass-pipeline-dirtyaware-stats",
+    // Issue #578 — Structured SV IR + query/mutate + dirty propagation completion
+    "query:sv-structured-edsl-stats",
+    // Issue #661 — SV InterfaceIR + ModportIR structure observability
+    "query:sv-interface-structure-stats",
+    // Issue #579 — Verification feedback → structured mutate closed-loop
+    "query:verification-feedback-loop-stats",
+    // Issue #580 — Hardware backend emit maturity + commercial interop
+    "query:hardware-backend-stats",
+    // Issue #581 — StableNodeRef + dirty propagation SV SoC scalability
+    "query:stable-ref-sv-scale-stats",
+    // Issue #582 — EDA SV concurrency + atomic batch + fiber safety
+    "query:eda-concurrency-stats",
+    // Issue #583 — Registry + core primitives hot-path observability hash
+    "query:primitives-registry-core-stats",
+    // Issue #584 — Primitives hot-path AI-agent stress observability
+    "query:primitives-hotpath-stats",
+    // Issue #585 — Unified primitive error handling + recovery observability
+    "query:primitives-error-stats",
+    // Issue #586 — EDA/infrastructure primitives registry extension observability
+    "query:eda-primitives-stats",
+    // Issue #587 — AI-native primitives development support observability
+    "query:primitives-ai-native-stats",
+    // Issue #591 — Scheduler steal/GC safepoint mutation coordination observability
+    "query:scheduler-mutation-coord-stats",
+    // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
+    "query:consolidated-p0-production-stats",
+    // Issue #516 — Prompt6 memory/ownership/GC safety tracker
+    "query:prompt6-memory-safety-stats",
+    // Issue #519 — EDSL/EDA/SV verification closed-loop tracker
+    "query:edsl-eda-sv-closedloop-stats",
+    // Issue #521 — Multi-fiber orchestration + MutationBoundary safety
+    "query:multi-fiber-orchestration-stats",
+    // Issue #697 — Declarative primitives extension kit
+    "query:primitives-extension-stats",
+    // Issue #709 — Registry fast dispatch + capture discipline
+    "query:primitives-registry-stats",
+    // Issue #710 — verify_tool/diagnostic Guard + StableRef wiring
+    "query:verify-tool-guard-stats",
+    // Issue #698 — Hardware backend commercial interop
+    "query:hardware-backend-commercial-stats",
+    // Issue #663 — Hardware backend SV-specific observability
+    // (verbatim-name view of the issue body's Action #4)
+    "query:hardware-backend-sv-stats",
+    // Issue #664 — SV DefUse incremental observability (P1)
+    "query:sv-defuse-stats",
+    // Issue #665 — SV stability observability (P1)
+    "query:sv-stability-stats",
+    // Issue #667 — list/map/filter apply hot-path
+    // observability (P1 stdlib-impl)
+    "query:primitives-apply-stats",
+    // Issue #706 — Scheduler StealBudget adaptive bias
+    "query:scheduler-stealbudget-adaptive-stats",
+    // Issue #652 / #707 — Per-fiber stack/checkpoint pool
+    "query:per-fiber-stack-pool-stats",
+    // Issue #708 — AOT hot-reload refcount + checkpoint version
+    "query:aot-reload-stats",
+    "query:aot-checkpoint-version-stats",
+};
+
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
 
     auto meta_to_pair = [&ev](const PrimMeta& m) -> EvalValue {
@@ -6063,404 +6471,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // + (stats:count) helpers + for AI Agent observability
     // dashboards that want to enumerate all stats.
     add("stats:list", [&ev](const auto&) -> EvalValue {
-        const std::vector<std::string> stats = {
-            // Issue #543 — EnvFrame dual-path
-            "query:envframe-dualpath-stats",
-            // Issue #547 — Pattern + MacroIntroduced hygiene
-            "query:pattern-index-stats",
-            // Issue #490 — lazy vs eager pattern-index rebuild observability
-            "query:pattern-index-rebuild-stats",
-            "query:pattern-hygiene-stats",
-            // Issue #486 — MacroIntroduced hygiene decision hash
-            "query:macro-hygiene-stats",
-            // Issue #548 — Panic-checkpoint lifecycle
-            "query:panic-checkpoint-lifecycle-stats",
-            // Issue #549 — Self-evolution stability
-            "query:self-evolution-stability-stats",
-            // Issue #550 — Typed mutation + dirty impact
-            "query:typed-mutation-stats",
-            "query:dirty-impact",
-            // Issue #573 — Task2 solve_delta + narrowing incremental
-            "query:typed-incremental-stats",
-            // Issue #608 — Incremental type reliability
-            "query:type-incremental-stats",
-            // Issue #509 — solve_delta touched_roots soundness
-            "query:constraint-delta-stats",
-            // Issue #628 — solve_delta clean-conflict safety
-            "query:solve-delta-safety-stats",
-            // Issue #467 — Per-node occurrence-dirty + blame chain
-            "query:occurrence-stats",
-            // Issue #495 — Task2 refinement closed-loop pillars
-            "query:task2-refinement-stats",
-            // Issue #609 — Occurrence narrow post-mutate recovery
-            "query:occurrence-narrow-stats",
-            // Issue #576 — Task2 occurrence blame + provenance
-            "query:occurrence-blame-stats",
-            // Issue #577 — Task2 ADT exhaustiveness + match narrowing
-            "query:adt-exhaustiveness-stats",
-            // Issue #454 — Reflection-to-EDSL bridge (FlatAST/marker)
-            "query:reflect-edsl-bridge-stats",
-            // Issue #551 — Reflect post-mutate
-            "query:reflect-postmutate-stats",
-            // Issue #593 — AST→query→IR MacroIntroduced hygiene closed loop
-            "query:pattern-ir-hygiene-closed-loop-stats",
-            // Issue #594 — Static reflection self-mod validation hook
-            "query:reflection-selfmod-stats",
-            // Issue #596 — Guard + panic checkpoint + reflect closed loop
-            "query:guard-panic-reflect-stats",
-            // Issue #599 — Compiler root epoch/version + GC synergy
-            "query:compiler-root-stats",
-            // Issue #600 — Per-block dirty + impact scope + closure bridge synergy
-            "query:incremental-closure-stats",
-            // Issue #654 — Macro hygiene vs fiber/panic/AOT/SoA cross-cutting gaps
-            "query:macro-hygiene-fiber-panic-stats",
-            // Issue #655 — EDSL core stability COW/atomic/query/mutate gaps
-            "query:edsl-core-stability-stats",
-            // Issue #657 — Compiler core incremental self-mod gaps
-            "query:compiler-core-incremental-stats",
-            // Issue #658 — High-perf C++26 Arena/SoA/Value/Shape/Pass gaps
-            "query:highperf-cpp26-stats",
-            // Issue #659 — Type system typed-mutate incremental gaps
-            "query:typesystem-typed-mutate-stats",
-            // Issue #673 — Unified Runtime Observability Layer (P1)
-            // cross-module correlation primitive
-            "query:runtime-observability-correlated-stats",
-            // Issue #674 — Closed-loop self-evolution chaos stress
-            // outcome classifier primitive
-            "query:self-evolution-chaos-stats",
-            // Issue #597 — Macro+reflect+self-evo combined loop
-            "query:macro-reflect-self-evo-stats",
-            // Issue #488 — Guard impact snapshot hash
-            "query:mutation-impact-snapshot",
-            // Issue #504 — Guard impact log for AI decision loops
-            "query:mutation-boundary-log",
-            // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
-            "query:self-evolution-loop-stats",
-            // Issue #415 — DirtyReason verification categories +
-            // mark_dirty_upward propagation synthesis
-            "query:dirty-reason-propagation-stats",
-            // Issue #517 — Consolidated 3-pillar production priority meta
-            "query:consolidated-production-priority-stats",
-            // Issue #520 — Consolidated Top 5 production roadmap synthesis
-            "query:production-roadmap-stats",
-            // Issue #514 — Task6 Top 3 production-readiness synthesis
-            "query:ir-hygiene-stats",
-            "query:pattern-marker-stats",
-            "query:task6-production-readiness-stats",
-            // Issue #441 — Consolidated compiler/runtime P0 synthesis
-            "query:compiler-runtime-production-readiness-stats",
-            // Issue #634 — Commercial production readiness P0 synthesis
-            "query:commercial-production-readiness-stats",
-            // Issue #635 — Macro+reflect+self-evo commercial closed-loop
-            "query:macro-reflect-self-evo-commercial-stats",
-            // Issue #636 — EDSL workspace query/mutate commercial closed-loop
-            "query:edsl-query-mutate-commercial-stats",
-            // Issue #619 — Task6 macro+reflect+self-evo follow-up
-            "query:macro-reflect-self-evo-followup-stats",
-            // Issue #602 — Prompt6 memory-safety matrix
-            "query:prompt6-violation-count",
-            "query:prompt6-safety-score",
-            // Issue #570 — ShapeProfiler stability + deopt
-            "query:shape-stability-stats",
-            // Issue #492 — ShapeProfiler structured deopt/stability hash
-            "query:shape-profiler-stats",
-            // Issue #493 — EDSL hot-path bottleneck breakdown hash
-            "query:hotpath-bottleneck-stats",
-            // Issue #494 — Pass pipeline yield + dirty short-circuit hash
-            "query:pass-pipeline-stats",
-            // Issue #496 — Native SV NodeTag census + mutate counters
-            "query:sv-node-stats",
-            // Issue #571 — EvalValue v2 dispatch + contracts
-            "query:value-dispatch-stats",
-            // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
-            "query:soa-hotpath-adoption-stats",
-            // Issue #404 — IR SoA Phase 3 block_dirty incremental lowering
-            "query:ir-soa-incremental-stats",
-            // Issue #403 — IRInstruction rich metadata interpreter/JIT
-            "query:ir-metadata-stats",
-            // Issue #607 — Task4 high-perf hot-path matrix
-            "query:task4-hotpath-safety-score",
-            "query:task4-cache-locality-win",
-            "query:task4-mutation-stability",
-            // Issue #552 — EDSL stability
-            "query:edsl-stability-stats",
-            // Issue #553 — Atomic batch + mutation log
-            "query:mutation-log-stats",
-            // Issue #529 — Atomic batch + Guard rollback closed loop
-            "query:atomic-batch-rollback-stats",
-            // Issue #527 — StableNodeRef cross-COW/fiber closed loop
-            "query:stable-ref-cow-fiber-stats",
-            // Issue #400 — sym_id/structural rollback coverage
-            "query:mutation-rollback-coverage-stats",
-            // Issue #554 — Pattern index timing (same name as #547; unified)
-            // Issue #555 — Typed mutation Task1
-            "query:typed-mutation-stats-task1",
-            // Issue #556 — EDSL concurrency safety
-            "query:edsl-concurrency-stats",
-            // Issue #531 — Closure env safety
-            "query:closure-env-safety-stats",
-            // Issue #610 — Linear ownership post-mutate validation
-            "query:linear-ownership-mutation-stats",
-            // Issue #638 — Linear + GuardShape runtime safety post-mutate
-            "query:linear-ownership-safety-stats",
-            // Issue #598 — Runtime linear enforcement + invalidate hook
-            "query:linear-ownership-runtime-stats",
-            // Issue #575 — Task2 PerDefUse incremental linear ownership
-            "query:linear-ownership-incremental-stats",
-            // Pre-existing (Issue #288, #391, #447, #457, #459)
-            "query:query-stats",
-            "query:stale-ref-stats",
-            // Issue #489 — StableNodeRef enforcement in mutate/query hot paths
-            "query:stability-stats",
-            "query:atomic-batch-stats",
-            "query:stable-ref-stats",
-            // Issue #470 — StableNodeRef 4-field hash
-            "query:stable-ref-stats-hash",
-            // Issue #497 — Long-session StableRef lifecycle hash
-            "query:stable-ref-lifecycle-stats",
-            // Issue #498 — AI-native primitive metadata + skeleton ergonomics
-            "query:primitive-metadata",
-            // Issue #499 — EDA foundation primitives module observability
-            "query:eda-foundation-stats",
-            // Issue #500 — Work-stealing + MutationBoundary depth observability
-            "query:work-steal-stats",
-            "query:fiber-migration-stats",
-            "query:mutation-coordination-stats",
-            "query:envframe-stale-stats",
-            "query:envframe-bump-stats",
-            "query:dirty-subtree",
-            "query:epoch-stats",
-            "query:macro-introduced",
-            "query:by-marker",
-            // Compile: stats (Issue #560 enumeration source of truth)
-            "compile:compiler-cache-stats",
-            "compile:compiler-incremental-stats",
-            "compile:typecheck-stats",
-            "compile:jit-stats",
-            // Issue #491 — JIT opcode coverage + hot-swap safety hash
-            "query:jit-stats-hash",
-            "compile:arena-stats",
-            "compile:dead-coercion-stats",
-            // Issue #574 — coercion elimination summary
-            "query:coercion-elim-stats",
-            // Issue #468 — DeadCoercionEliminationPass zero-overhead
-            "query:dead-coercion-zerooverhead-stats",
-            "compile:per-defuse-index-stats",
-            "compile:mutator-dispatch-stats",
-            "compile:mutation-impact-stats",
-            "compile:inline-pass-stats",
-            "compile:type-cache-stats",
-            "compile:dirty-impact-stats",
-            // Primitive error (Issue #478)
-            "query:primitive-error-stats",
-            // Issue #583 — Registry + core primitives hot-path stats
-            "query:primitives-stats",
-            // Issue #480 — Self-describing primitive metadata closed loop
-            "query:primitive-meta-stats",
-            // Issue #405 — Arena auto-compaction orchestration signals
-            "query:arena-compaction-stats",
-            // Issue #406 — Pass Pipeline + Contracts hot-path stats
-            "query:pass-contracts-stats",
-            // Issue #407 — ShapeProfiler burst/deopt storm observability
-            "query:shape-deopt-burst-stats",
-            // Issue #408 — EDSL dirty propagation cost observability
-            "query:dirty-propagation-cost-stats",
-            // Issue #471 — SV-scale dirty propagation
-            "query:dirty-propagation-stats",
-            // Issue #414 — Long-term generation_/epoch management
-            "query:generation-epoch-stats",
-            // Issue #416 — AST SoA column compaction observability
-            "query:ast-column-compaction-stats",
-            // Issue #417 — MutationBoundary cross-TU invariant stats
-            "query:mutation-boundary-invariant-stats",
-            // Issue #418 — EnvFrame dual-path + stale policy stats
-            "query:envframe-dualpath-stale-stats",
-            // Issue #419 — Modular defuse_version + AOT dispatch stats
-            "query:defuse-version-stats",
-            // Issue #420 — MacroIntroduced end-to-end hygiene contract
-            "query:macro-hygiene-contract-stats",
-            // Issue #421 — query:pattern recursive MacroIntroduced filter
-            "query:pattern-macro-filter-stats",
-            // Issue #422 — Mutate-path hygiene violation detection
-            "query:hygiene-violation-stats",
-            // Issue #423 — query:pattern structural pre-index
-            "query:pattern-structural-index-stats",
-            // Issue #424 — StableNodeRef WorkspaceTree COW safety
-            "query:stable-ref-workspace-tree-stats",
-            // Issue #428 — closure bridge + bridge_epoch drift
-            "query:closure-stats",
-            // Issue #429 — IR SoA live dirty state
-            "query:soa-dirty-stats",
-            // Issue #430 — arena compaction hash variant
-            "query:arena-compaction-stats-hash",
-            // Issue #431 — C++26 Contracts/Concepts/consteval density
-            "query:cxx26-invariants",
-            // Issue #440 — consolidated Task 1 EDSL readiness
-            "query:edsl-readiness",
-            // Issue #444 — strategy evolution controller pheromone stats
-            "query:strategy-evolution-stats",
-            // Issue #445 — SEVA audit log (OpenClaw integration)
-            "query:seva-audit-log",
-            // Issue #446 — SEVA demo with metrics
-            "seva:run-demo-with-metrics",
-            // Issue #450 (sub-issue #441) — primitive perf stats
-            "query:primitive-perf-stats",
-            // Issue #452 — AOT hot-update + region filtering
-            "query:aot-stats",
-            // Issue #462 — ShapeAwareFoldingPass
-            "query:shape-folding-stats",
-            // Issue #463 — SoA Phase 2 adoption
-            "query:soa-adoption-stats",
-            // Issue #675 — CI reproducibility + sanitizer gates
-            "query:ci-reproducibility-stats",
-            // Issue #676 — sandbox capability + mutation audit
-            "query:security-stats",
-            "query:mutation-audit-log",
-            // Issue #464 — Arena auto-compaction lifecycle
-            "query:arena-auto-stats",
-            // Issue #677 — deployment / health / metrics export
-            "query:deployment-stats",
-            // Issue #465 — C++26 hot-path contracts + consteval
-            "query:cxx26-hotpath-invariants",
-            // Issue #507 — Task4 hot-path Contracts + consteval sites
-            "query:task4-hotpath-contracts",
-            // Issue #678 — PCV span lifetime safety in query layer
-            "query:span-lifetime-stats",
-            // Issue #679 — nested Guard + atomic-batch rollback alignment
-            "query:nested-guard-atomic-stats",
-            // Issue #680 — Define mutate IR/JIT/bridge invalidation
-            "query:define-mutate-ir-invalidation-stats",
-            // Issue #681 — compiler IRClosure/bridge epoch enforcement
-            "query:compiler-closure-inval-stats",
-            // Issue #682 — compiler IRClosure/EnvId GC root coordination
-            "query:compiler-gc-root-stats",
-            // Issue #683 — linear ownership + GC safepoint / steal integration
-            "query:linear-ownership-gc-stats",
-            // Issue #684 — IRSoA full wiring incremental stats
-            "query:irsoa-incremental-stats",
-            // Issue #685 — arena auto-compact policy + defrag/shape synergy
-            "query:arena-auto-compact-stats",
-            // Issue #686 — ShapeProfiler ring + Value dispatch + Pass dirty wiring
-            "query:shape-value-pass-stats",
-            // Issue #688 — Linear OwnershipEnv post-mutate typed-mutation
-            "query:linear-ownership-typed-mutate-stats",
-            // Issue #689 — Occurrence typing deep predicate + provenance
-            "query:occurrence-typing-mutate-stats",
-            // Issue #690 — Constraint typed-mutation reverify + blame
-            "query:constraint-typed-mutate-stats",
-            "query:constraint-delta-blame-stats",
-            // Issue #691 — CoercionMap + NarrowingRecord provenance
-            "query:coercion-narrowing-stats",
-            // Issue #692 — ADT exhaustiveness + pattern provenance typed-mutation
-            "query:adt-exhaustiveness-typed-mutate-stats",
-            // Issue #693 — Hardware backend SV commercial closed-loop
-            "query:hardware-backend-sv-closedloop-stats",
-            // Issue #694 — SVA structured AST tags + mutate stats
-            "query:sv-sva-structure-stats",
-            // Issue #695 — EDA-SV verification closed-loop stress
-            "query:eda-sv-closedloop-stress-stats",
-            // Issue #510 — EDA verification interop + feedback stats
-            "query:eda-verification-stats",
-            // Issue #511 — Workspace snapshot + checkpoint persistence stats
-            "query:workspace-snapshot-stats",
-            // Issue #512 — Runtime orchestration production-readiness stats
-            "query:runtime-orchestration-stats",
-            // Issue #513 — AOT hot-reload consolidated observability
-            "query:aot-hot-reload-stats",
-            // Issue #522 — AOT production hot-reload deployment tracker
-            "query:aot-production-reload-stats",
-            // Issue #523 — EnvFrame dual-path production safety tracker
-            "query:envframe-production-safety-stats",
-            // Issue #524 — Macro+hygiene production closed-loop tracker
-            "query:macro-production-hygiene-stats",
-            // Issue #525 — Guard post-mutate impact + reflect validation tracker
-            "query:guard-production-impact-stats",
-            // Issue #528 — Pattern index + hygiene production tracker
-            "query:pattern-production-index-stats",
-            // Issue #530 — Incremental re-lower + ir_cache/JIT production tracker
-            "query:incremental-production-relower-stats",
-            // Issue #532 — JIT opcode coverage + IR consistency + hot-swap safety
-            "query:jit-consistency-stats",
-            // Issue #533 — children_ columnar + IR SoA hot-path production tracker
-            "query:soa-production-columnar-stats",
-            // Issue #534 — Arena auto-compaction + defrag safepoint coordination
-            "query:arena-production-compaction-stats",
-            // Issue #535 — C++26 Contracts + consteval hot-path production tracker
-            "query:contracts-production-hotpath-stats",
-            // Issue #539 — SV verification feedback → structured mutate closed loop
-            "query:sv-production-verification-stats",
-            // Issue #540 — StableNodeRef + generation/mutation_log EDA stability
-            "query:eda-stability-stats",
-            // Issue #541 — query:pattern + DefUseIndex + hygiene SV verification
-            "query:pattern-sv-verification-stats",
-            // Issue #557 — Top 5 commercial test-coverage cluster tracker
-            "query:top5-commercial-coverage-stats",
-            // Issue #567 — Primitive governance + stdlib layering closing metrics
-            "query:primitives-governance-stats",
-            // Issue #568 — FlatAST children_ columnar SoA migration completion
-            "query:soa-children-columnar-migration-stats",
-            // Issue #569 — Arena auto-compact + defrag + fiber safepoint completion
-            "query:arena-auto-compact-defrag-stats",
-            // Issue #572 — Pass Pipeline DirtyAware + fold short-circuit completion
-            "query:pass-pipeline-dirtyaware-stats",
-            // Issue #578 — Structured SV IR + query/mutate + dirty propagation completion
-            "query:sv-structured-edsl-stats",
-            // Issue #661 — SV InterfaceIR + ModportIR structure observability
-            "query:sv-interface-structure-stats",
-            // Issue #579 — Verification feedback → structured mutate closed-loop
-            "query:verification-feedback-loop-stats",
-            // Issue #580 — Hardware backend emit maturity + commercial interop
-            "query:hardware-backend-stats",
-            // Issue #581 — StableNodeRef + dirty propagation SV SoC scalability
-            "query:stable-ref-sv-scale-stats",
-            // Issue #582 — EDA SV concurrency + atomic batch + fiber safety
-            "query:eda-concurrency-stats",
-            // Issue #583 — Registry + core primitives hot-path observability hash
-            "query:primitives-registry-core-stats",
-            // Issue #584 — Primitives hot-path AI-agent stress observability
-            "query:primitives-hotpath-stats",
-            // Issue #585 — Unified primitive error handling + recovery observability
-            "query:primitives-error-stats",
-            // Issue #586 — EDA/infrastructure primitives registry extension observability
-            "query:eda-primitives-stats",
-            // Issue #587 — AI-native primitives development support observability
-            "query:primitives-ai-native-stats",
-            // Issue #591 — Scheduler steal/GC safepoint mutation coordination observability
-            "query:scheduler-mutation-coord-stats",
-            // Issue #515 — Consolidated Top 5 P0 production-readiness tracker
-            "query:consolidated-p0-production-stats",
-            // Issue #516 — Prompt6 memory/ownership/GC safety tracker
-            "query:prompt6-memory-safety-stats",
-            // Issue #519 — EDSL/EDA/SV verification closed-loop tracker
-            "query:edsl-eda-sv-closedloop-stats",
-            // Issue #521 — Multi-fiber orchestration + MutationBoundary safety
-            "query:multi-fiber-orchestration-stats",
-            // Issue #697 — Declarative primitives extension kit
-            "query:primitives-extension-stats",
-            // Issue #709 — Registry fast dispatch + capture discipline
-            "query:primitives-registry-stats",
-            // Issue #710 — verify_tool/diagnostic Guard + StableRef wiring
-            "query:verify-tool-guard-stats",
-            // Issue #698 — Hardware backend commercial interop
-            "query:hardware-backend-commercial-stats",
-            // Issue #663 — Hardware backend SV-specific observability
-            // (verbatim-name view of the issue body's Action #4)
-            "query:hardware-backend-sv-stats",
-            // Issue #664 — SV DefUse incremental observability (P1)
-            "query:sv-defuse-stats",
-            // Issue #665 — SV stability observability (P1)
-            "query:sv-stability-stats",
-            // Issue #667 — list/map/filter apply hot-path
-            // observability (P1 stdlib-impl)
-            "query:primitives-apply-stats",
-            // Issue #706 — Scheduler StealBudget adaptive bias
-            "query:scheduler-stealbudget-adaptive-stats",
-            // Issue #652 / #707 — Per-fiber stack/checkpoint pool
-            "query:per-fiber-stack-pool-stats",
-            // Issue #708 — AOT hot-reload refcount + checkpoint version
-            "query:aot-reload-stats",
-            "query:aot-checkpoint-version-stats",
-        };
+        // See kObservabilityStatsPrimitives above (single source of truth).
+        const std::vector<std::string>& stats = kObservabilityStatsPrimitives;
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
         for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
@@ -6475,11 +6487,14 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #560: (stats:count) — companion to (stats:list).
     // Returns the # of registered *-stats primitives.
-    add("stats:count", [&ev](const auto&) -> EvalValue {
-        // Source of truth = (stats:list) entry count.
-        // 177 entries as of #659 ship (176 from #658 + 1 typesystem-typed-mutate-stats
-        // registration from #659).
-        return make_int(177);
+    add("stats:count", [](const auto&) -> EvalValue {
+        // Single source of truth = kObservabilityStatsPrimitives
+        // (the static list shared with (stats:list) above). Returns
+        // the literal element count at module-init time, so adding
+        // a new entry to the const list automatically updates
+        // (stats:count) without a second hardcoded literal to keep
+        // in sync.
+        return make_int(static_cast<std::int64_t>(kObservabilityStatsPrimitives.size()));
     });
 }
 

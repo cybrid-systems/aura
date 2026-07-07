@@ -115,8 +115,8 @@ bool test_stats_count() {
     std::println("\n--- AC9: stats:count ---");
     CompilerService cs;
     auto count = cs.eval("(stats:count)");
-    CHECK(count && is_int(*count) && aura::compiler::types::as_int(*count) == 102,
-          "stats:count == 102");
+    CHECK(count && is_int(*count) && aura::compiler::types::as_int(*count) == 211,
+          "stats:count == 211");
     return true;
 }
 
