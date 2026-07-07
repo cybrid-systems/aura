@@ -37,34 +37,39 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
             // (Linear e): wrap value in linear container (Owned=1)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit_with_metadata(aura::ir::IROpcode::LinearWrap, 0, 1, 0, 0, slot, inner);
+            const auto narrow = state.current_narrowing_evidence;
+            state.emit_with_metadata(aura::ir::IROpcode::LinearWrap, 0, 1, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Move: {
             // (move e): move ownership (Moved=4)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 4, 0, 0, slot, inner);
+            const auto narrow = state.current_narrowing_evidence;
+            state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 4, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Borrow: {
             // (& e): immutable borrow (Borrowed=2)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit_with_metadata(aura::ir::IROpcode::BorrowOp, 0, 2, 0, 0, slot, inner);
+            const auto narrow = state.current_narrowing_evidence;
+            state.emit_with_metadata(aura::ir::IROpcode::BorrowOp, 0, 2, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::MutBorrow: {
             // (&mut e): mutable borrow (MutBorrowed=3)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit_with_metadata(aura::ir::IROpcode::MutBorrowOp, 0, 3, 0, 0, slot, inner);
+            const auto narrow = state.current_narrowing_evidence;
+            state.emit_with_metadata(aura::ir::IROpcode::MutBorrowOp, 0, 3, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Drop: {
             // (drop e): explicit destruct (Moved=4 on drop site)
             auto inner = lower_inner(v.child(0));
-            state.emit_with_metadata(aura::ir::IROpcode::DropOp, 0, 4, 0, 0, inner, 0, 0);
+            const auto narrow = state.current_narrowing_evidence;
+            state.emit_with_metadata(aura::ir::IROpcode::DropOp, 0, 4, 0, narrow, inner, 0, 0);
             auto slot = state.alloc_local();
             state.emit(aura::ir::IROpcode::ConstVoid, slot);
             return slot;

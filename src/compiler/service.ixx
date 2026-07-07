@@ -37,6 +37,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include "jit_typed_mutation_stats.h"
+#include "linear_occurrence_mutate_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include <unistd.h>
 #include <sys/stat.h>
@@ -258,6 +259,8 @@ export struct EscapeAnalysisWrap {
                 if (block_dirty_fn_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
                     continue;
                 for (auto& instr : func.blocks[bi].instructions) {
+                    if (instr.linear_ownership_state != 0 && instr.narrow_evidence != 0)
+                        linear_occurrence_mutate::record_escape_violation_prevented();
                     flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
                                                {instr.operands[0], instr.operands[1],
                                                 instr.operands[2], instr.operands[3]},

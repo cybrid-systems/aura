@@ -109,6 +109,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:constraint-reverify-occurrence-stats",
     // Issue #746 — JIT typed-mutation narrow_evidence / linear / L2 propagation
     "query:jit-typed-mutation-stats",
+    // Issue #747 — Linear + Occurrence predicate-branch safety under typed mutate
+    "query:linear-occurrence-mutate-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -4275,6 +4277,66 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("linear-state-optimized", linear_opt);
         insert_kv("type-propagation-coverage", coverage_bp);
         insert_kv("schema", 746);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #747: query:linear-occurrence-mutate-stats — OwnershipEnv +
+    // Occurrence Typing predicate-branch linear safety under typed mutation
+    // (non-duplicative with #688 linear-ownership-typed-mutate, #689
+    // occurrence-typing-mutate, #746 jit-typed-mutation).
+    //
+    // Fields (3 + sentinel):
+    //   - revalidate-hits                 post-mutate linear∩occurrence revalidates
+    //   - escape-violations-prevented     escape/ownership violations caught early
+    //   - predicate-branch-linear-safe    ownership pass on narrowed predicate branches
+    //   - schema == 747
+    add("query:linear-occurrence-mutate-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t revalidates =
+            m ? static_cast<std::int64_t>(
+                    m->linear_occurrence_revalidate_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t escape_prev =
+            m ? static_cast<std::int64_t>(
+                    m->linear_occurrence_escape_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t branch_safe =
+            m ? static_cast<std::int64_t>(
+                    m->linear_occurrence_predicate_safe_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("revalidate-hits", revalidates);
+        insert_kv("escape-violations-prevented", escape_prev);
+        insert_kv("predicate-branch-linear-safe", branch_safe);
+        insert_kv("schema", 747);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
