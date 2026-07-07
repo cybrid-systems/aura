@@ -118,6 +118,9 @@ export class ConstraintSystem {
     // clean constraints that may be invalidated by cross-delta
     // unifications.
     std::unordered_set<std::uint32_t> touched_roots_;
+    // Issue #745: Union-Find roots from Occurrence-narrowed vars —
+    // boosted in effective_reverify_limit + priority scan order.
+    std::unordered_set<std::uint32_t> occurrence_priority_roots_;
     // Issue #536: optional hooks for Evaluator observability
     // (touched_roots snapshot + cross-delta CONFLICT detection).
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
@@ -126,6 +129,8 @@ export class ConstraintSystem {
     static constexpr std::size_t kReverifyCleanScanMax = 4096;
     std::uint64_t active_mutation_id_ = 0;
     void note_touched_var(aura::core::TypeId id);
+    [[nodiscard]] std::uint32_t union_find_rep_index(aura::core::TypeId id) const;
+    [[nodiscard]] int constraint_reverify_priority(std::size_t idx) const;
     bool constraint_references_touched(const Constraint& c) const;
     [[nodiscard]] std::size_t effective_reverify_limit() const noexcept;
     void record_cross_delta_blame_hit();
@@ -200,7 +205,7 @@ public:
     void set_active_mutation_id(std::uint64_t id) noexcept { active_mutation_id_ = id; }
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
-    void mark_touched_on_delta(aura::core::TypeId var);
+    void mark_touched_on_delta(aura::core::TypeId var, bool occurrence_narrow = false);
     [[nodiscard]] std::size_t touched_roots_size() const noexcept { return touched_roots_.size(); }
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.

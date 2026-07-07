@@ -532,6 +532,10 @@ struct CompilerMetrics {
     //     where active_mutation_id was set (auditable blame chain)
     std::atomic<std::uint64_t> reverify_truncated_total{0};
     std::atomic<std::uint64_t> constraint_blame_chain_complete_total{0};
+    // Issue #745: Occurrence-priority reverify in solve_delta.
+    std::atomic<std::uint64_t> constraint_reverify_narrow_hits_total{0};
+    std::atomic<std::uint64_t> constraint_reverify_timeout_prevented_total{0};
+    std::atomic<std::uint64_t> constraint_stale_blame_invalidation_total{0};
     // Issue #628: solve_delta safety observability.
     //   - solve_delta_full_solve_fallback_total: infer_flat
     //     used full solve() instead of solve_delta in an

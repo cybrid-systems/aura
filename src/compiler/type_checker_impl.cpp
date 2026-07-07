@@ -204,14 +204,12 @@ void ConstraintSystem::add(Constraint c) {
 // up. The dirty flag is append-only (no tombstoning); the
 // constraint is simply excluded from subsequent solve()
 // scans once mark_clean() or clear() is called.
-void ConstraintSystem::note_touched_var(TypeId id) {
+std::uint32_t ConstraintSystem::union_find_rep_index(TypeId id) const {
     if (!reg_.is_var(id) || id.index >= parent_.size())
-        return;
+        return UINT32_MAX;
     auto idx = static_cast<std::size_t>(id.index);
     if (parent_[idx] < 0)
-        parent_[idx] = static_cast<std::int64_t>(idx);
-    // Union-Find rep only — do not follow binding_, which
-    // would hide the var root after a concrete bind (#466).
+        return static_cast<std::uint32_t>(idx);
     auto p = static_cast<std::int64_t>(idx);
     while (static_cast<std::size_t>(p) < parent_.size() &&
            parent_[static_cast<std::size_t>(p)] >= 0 &&
@@ -219,24 +217,81 @@ void ConstraintSystem::note_touched_var(TypeId id) {
                static_cast<std::size_t>(p)) {
         p = parent_[static_cast<std::size_t>(p)];
     }
-    touched_roots_.insert(static_cast<std::uint32_t>(p));
+    return static_cast<std::uint32_t>(p);
 }
 
-void ConstraintSystem::mark_touched_on_delta(TypeId var) {
+void ConstraintSystem::note_touched_var(TypeId id) {
+    const auto rep = union_find_rep_index(id);
+    if (rep == UINT32_MAX)
+        return;
+    touched_roots_.insert(rep);
+}
+
+void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow) {
     note_touched_var(var);
+    if (!occurrence_narrow)
+        return;
+    const auto rep = union_find_rep_index(var);
+    if (rep != UINT32_MAX)
+        occurrence_priority_roots_.insert(rep);
 }
 
 std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
-    const std::size_t impact = dirty_count_ * 8 + touched_roots_.size() * 4;
+    const std::size_t impact = dirty_count_ * 8 + touched_roots_.size() * 4 +
+                               occurrence_priority_roots_.size() * 16;
     const std::size_t scaled = std::max(kReverifyCleanScanLimit, impact);
     return std::min(scaled, kReverifyCleanScanMax);
 }
 
 void ConstraintSystem::record_cross_delta_blame_hit() {
-    if (!metrics_ || active_mutation_id_ == 0)
+    if (!metrics_) {
         return;
+    }
     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+    if (active_mutation_id_ == 0) {
+        m->constraint_stale_blame_invalidation_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     m->constraint_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
+    if (idx >= constraints_.size())
+        return 0;
+    const auto& c = constraints_[idx];
+    int pri = 0;
+    auto score_var = [&](TypeId id) {
+        if (!id.valid())
+            return;
+        if (reg_.is_var(id)) {
+            const auto raw_rep = union_find_rep_index(id);
+            if (raw_rep != UINT32_MAX) {
+                if (occurrence_priority_roots_.count(raw_rep) > 0)
+                    pri = std::max(pri, 4);
+                else if (touched_roots_.count(raw_rep) > 0)
+                    pri = std::max(pri, 1);
+                auto it = var_to_constraints_.find(raw_rep);
+                if (it != var_to_constraints_.end()) {
+                    const auto deg =
+                        static_cast<int>(std::min<std::size_t>(it->second.size(), 8));
+                    pri += deg;
+                }
+            }
+        }
+        const auto norm = const_cast<ConstraintSystem*>(this)->find(id);
+        if (!reg_.is_var(norm))
+            return;
+        const auto rep = union_find_rep_index(norm);
+        if (rep == UINT32_MAX)
+            return;
+        if (occurrence_priority_roots_.count(rep) > 0)
+            pri = std::max(pri, 4);
+        else if (touched_roots_.count(rep) > 0)
+            pri = std::max(pri, 1);
+    };
+    score_var(c.lhs);
+    score_var(c.rhs);
+    return pri;
 }
 
 bool ConstraintSystem::constraint_references_touched(const Constraint& c) const {
@@ -255,18 +310,18 @@ bool ConstraintSystem::constraint_references_touched(const Constraint& c) const 
 }
 
 bool ConstraintSystem::reverify_clean_constraints_for_touched() {
-    if (touched_roots_.empty())
+    if (touched_roots_.empty() && occurrence_priority_roots_.empty())
         return true;
 
     const bool saved_record = delta_record_mode_;
     delta_record_mode_ = false;
 
     std::unordered_set<std::size_t> to_check;
-    to_check.reserve(touched_roots_.size() * 2);
-    for (auto root : touched_roots_) {
+    to_check.reserve((touched_roots_.size() + occurrence_priority_roots_.size()) * 2);
+    auto collect_clean_for_root = [&](std::uint32_t root) {
         auto it = var_to_constraints_.find(root);
         if (it == var_to_constraints_.end())
-            continue;
+            return;
         for (auto idx : it->second) {
             if (idx >= constraints_.size())
                 continue;
@@ -274,7 +329,14 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                 continue;
             to_check.insert(idx);
         }
-    }
+    };
+    for (auto root : touched_roots_)
+        collect_clean_for_root(root);
+    // Issue #745: always re-verify clean constraints tied to
+    // Occurrence-narrowed roots, even when this delta's unify
+    // only touched unrelated roots.
+    for (auto root : occurrence_priority_roots_)
+        collect_clean_for_root(root);
 
     const auto scan_limit = effective_reverify_limit();
     const bool truncated = to_check.size() > scan_limit;
@@ -286,12 +348,28 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
             m->reverify_truncated_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    if (!truncated && to_check.size() > kReverifyCleanScanLimit && metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->constraint_reverify_timeout_prevented_total.fetch_add(1,
+                                                                  std::memory_order_relaxed);
+    }
+
+    std::vector<std::pair<int, std::size_t>> ordered;
+    ordered.reserve(to_check.size());
+    for (auto idx : to_check)
+        ordered.emplace_back(constraint_reverify_priority(idx), idx);
+    std::sort(ordered.begin(), ordered.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
 
     std::size_t scanned = 0;
-    for (auto idx : to_check) {
+    for (const auto& [pri, idx] : ordered) {
         if (scanned++ >= scan_limit)
             break;
         const auto& c = constraints_[idx];
+        if (pri >= 4 && metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->constraint_reverify_narrow_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
         bool ok = false;
         if (c.kind == Constraint::EQUAL)
             ok = unify(c.lhs, c.rhs);
@@ -555,6 +633,12 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
             parent_[r2] = static_cast<std::int64_t>(r1);
             if (rank_[r1] == rank_[r2])
                 rank_[r1]++;
+            // Issue #745: preserve Occurrence-narrow priority across merges.
+            if (occurrence_priority_roots_.count(static_cast<std::uint32_t>(r2)) > 0 ||
+                occurrence_priority_roots_.count(static_cast<std::uint32_t>(r1)) > 0) {
+                occurrence_priority_roots_.insert(static_cast<std::uint32_t>(r1));
+                occurrence_priority_roots_.erase(static_cast<std::uint32_t>(r2));
+            }
             note_touched_var(TypeId{static_cast<std::uint32_t>(r1), 1});
             note_touched_var(TypeId{static_cast<std::uint32_t>(r2), 1});
             // Merge bindings: if r2 had a binding, move to r1
@@ -997,8 +1081,9 @@ void ConstraintSystem::clear() {
     dirty_count_ = 0;
     // Issue #409: reset the reverse map.
     var_to_constraints_.clear();
-    // Issue #466: reset touched-root tracking.
+    // Issue #466 / #745: reset touched-root + occurrence-priority tracking.
     touched_roots_.clear();
+    occurrence_priority_roots_.clear();
     fresh_counter_ = 0;
     first_free_var_ = 0;
 } // ═══════════════════════════════════════════════════════════
@@ -1926,7 +2011,7 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
         if (!nr.refined_type_str.empty()) {
             auto tid = reg_.lookup_type(nr.refined_type_str);
             if (tid.valid() && reg_.is_var(tid))
-                cs_.mark_touched_on_delta(tid);
+                cs_.mark_touched_on_delta(tid, true);
         }
     }
     for (auto if_id : occurrence_targets) {
@@ -1942,7 +2027,7 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
         bool join_used = false;
         auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
         if (occ && occ->refined_type.valid() && reg_.is_var(occ->refined_type))
-            cs_.mark_touched_on_delta(occ->refined_type);
+            cs_.mark_touched_on_delta(occ->refined_type, true);
     }
 }
 
