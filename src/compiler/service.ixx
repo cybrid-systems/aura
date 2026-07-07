@@ -34,6 +34,8 @@ module;
 #include "per_defuse_index.h"
 #include <atomic>
 #include "messaging_bridge.h"
+#include "core/arena_auto_policy_stats.h"
+#include "core/gc_hooks.h"
 #include <unistd.h>
 #include <sys/stat.h>
 #include <poll.h>
@@ -520,8 +522,29 @@ public:
         Evaluator::set_query_evaluator(&evaluator_);
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
-        // Issue #685: ShapeProfiler synergy on arena compact/defrag.
-        arena_.set_on_compact_hook([this]() { shape_profiler_.invalidate_all(); });
+        // Issue #685/#743: ShapeProfiler + IRSoA dirty synergy on compact/defrag.
+        arena_.set_on_compact_hook([this]() {
+            shape_profiler_.invalidate_all();
+            aura::core::arena_policy::record_shape_inval_on_compact();
+            for (auto& [_, entry] : ir_cache_v2_) {
+                entry.dirty = true;
+                entry.mark_all_blocks_dirty();
+            }
+        });
+        aura::gc_hooks::g_arena_auto_compact_trigger.store(+[]() noexcept {
+            auto* raw = aura::messaging::g_current_compiler_service;
+            if (!raw)
+                return;
+            auto& m = static_cast<CompilerService*>(raw)->metrics();
+            m.arena_auto_compact_trigger_total.fetch_add(1, std::memory_order_relaxed);
+        });
+        aura::gc_hooks::g_arena_fiber_safe_compact.store(+[]() noexcept {
+            auto* raw = aura::messaging::g_current_compiler_service;
+            if (!raw)
+                return;
+            auto& m = static_cast<CompilerService*>(raw)->metrics();
+            m.arena_live_move_yield_total.fetch_add(1, std::memory_order_relaxed);
+        });
         // Issue #686: shape stability loss / invalidate → IRSoA block_dirty_.
         shape_profiler_.set_dirty_hook([this](shape::FnKey fn_key, std::uint32_t dirty_scope) {
             (void)dirty_scope;
@@ -3260,6 +3283,7 @@ public:
 
     // Mark a module dirty when one of its IR dependencies changes.
     void mark_module_dirty(const std::string& changed_fn) {
+        aura::core::arena_policy::signal_dirty_cascade();
         for (auto& [mname, state] : module_states_) {
             if (state.deps.count(changed_fn)) {
                 state.dirty = true;

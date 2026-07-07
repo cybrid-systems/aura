@@ -12,6 +12,7 @@ module;
 #include <vector>
 #include "core/gc_hooks.h"
 #include "core/cpp26_contract_stats.h"
+#include "core/arena_auto_policy_stats.h"
 export module aura.core.arena;
 import std;
 
@@ -378,6 +379,8 @@ public:
         if (aura::gc_hooks::fiber_active()) {
             stats_.compaction_yield_checks++;
             aura::gc_hooks::safepoint_check();
+            aura::core::arena_policy::record_defrag_fiber_safe_hit();
+            aura::gc_hooks::notify_fiber_safe_compact();
         }
         std::size_t before = buffer_.size();
         std::size_t u = stats_.used;
@@ -449,6 +452,8 @@ public:
         if (aura::gc_hooks::fiber_active()) {
             stats_.compaction_yield_checks++;
             aura::gc_hooks::safepoint_check();
+            aura::core::arena_policy::record_defrag_fiber_safe_hit();
+            aura::gc_hooks::notify_fiber_safe_compact();
         }
         // Issue #300 Phase 3 + Issue #300 AC5 follow-up: the
         // request flag is cleared ONLY when defrag actually
@@ -604,6 +609,8 @@ private:
             }
             // Issue #658: tier exhausted — fall through to main pmr arena.
             arena_small_tier_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #743: tier pressure → defer live defrag at next safe point.
+            request_defrag();
             aura::core::cpp26::record_hotpath_invariant_hit();
         }
 
@@ -625,23 +632,31 @@ private:
     // require frag_high to act on want_defrag. small_high
     // still triggers compact() (no flag interaction).
     void maybe_auto_compact_on_alloc() noexcept {
-        static constexpr double kFragThreshold = 0.50;
+        static constexpr double kFragThreshold = 0.30;
         static constexpr double kSmallPoolThreshold = 0.85;
         const auto snap = stats();
         const bool small_high = small_pool_.utilization() >= kSmallPoolThreshold;
         const bool frag_high = snap.fragmentation_ratio() >= kFragThreshold;
         const bool want_defrag = defrag_requested();
-        // Three independent triggers; compact() path uses
-        // small_high OR frag_high. The want_defrag path
-        // additionally requires frag_high so we don't clear
-        // the request flag on a no-op defrag.
-        if (!small_high && !frag_high)
+        const bool dirty_cascade = aura::core::arena_policy::consume_dirty_cascade();
+        // Four independent triggers; compact() path uses
+        // small_high OR frag_high OR dirty_cascade. The
+        // want_defrag path additionally requires frag_high
+        // so we don't clear the request flag on a no-op defrag.
+        if (!small_high && !frag_high && !dirty_cascade)
             return;
-        if (want_defrag && !frag_high)
+        if (want_defrag && !frag_high && !dirty_cascade)
             return; // keep flag set for a future alloc
                     // that actually triggers fragmentation
 
-        stats_.compaction_yield_checks++;
+        if (aura::gc_hooks::fiber_active()) {
+            stats_.compaction_yield_checks++;
+            aura::gc_hooks::safepoint_check();
+            aura::core::arena_policy::record_defrag_fiber_safe_hit();
+            aura::gc_hooks::notify_fiber_safe_compact();
+        } else {
+            stats_.compaction_yield_checks++;
+        }
         const double frag_before = snap.fragmentation_ratio();
         std::size_t saved = 0;
         if (want_defrag) {
@@ -657,7 +672,10 @@ private:
             saved = compact();
         }
         stats_.auto_alloc_trigger_count++;
+        aura::core::arena_policy::record_auto_compact_trigger();
+        aura::gc_hooks::notify_auto_compact_trigger();
         const double frag_after = stats().fragmentation_ratio();
+        aura::core::arena_policy::record_fragmentation_post_mutate(frag_after);
         if (frag_before > frag_after) {
             stats_.frag_reduced_bp +=
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
@@ -669,6 +687,7 @@ private:
             return;
         on_compact_hook_();
         stats_.shape_inval_on_compact++;
+        aura::core::arena_policy::record_shape_inval_on_compact();
     }
 
     std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
@@ -835,19 +854,14 @@ public:
     // Returns bytes reclaimed (0 if no arena triggered).
     [[nodiscard]] std::size_t auto_compact_with_safety() {
         auto_compact_guard_call_count_.fetch_add(1, std::memory_order_relaxed);
-        // Fiber-safety check: actual fiber-context
-        // detection (g_current_fiber != nullptr) is
-        // a #464 follow-up — the counter is in place
-        // and the entry point exists, but the probe
-        // requires an aura.serve import that arena.ixx
-        // doesn't currently have. Cycle 2 adds the
-        // probe + the yield-during-compact integration.
-        // For now: bump the counter once per
-        // auto_compact_with_safety() call so the
-        // observability primitive has a non-zero
-        // signal to report when the entry point is
-        // exercised.
-        compaction_yield_checks_.fetch_add(1, std::memory_order_relaxed);
+        if (aura::gc_hooks::fiber_active()) {
+            compaction_yield_checks_.fetch_add(1, std::memory_order_relaxed);
+            aura::gc_hooks::safepoint_check();
+            aura::core::arena_policy::record_defrag_fiber_safe_hit();
+            aura::gc_hooks::notify_fiber_safe_compact();
+        } else {
+            compaction_yield_checks_.fetch_add(1, std::memory_order_relaxed);
+        }
         return adaptive_compact_all();
     }
 

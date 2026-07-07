@@ -2,6 +2,7 @@
 #include "scheduler.h"
 #include "gc_coordinator.h"
 #include "aura_platform.h"
+#include "core/gc_hooks.h"
 #include <unistd.h>
 
 import std;
@@ -401,6 +402,13 @@ int Scheduler::next_worker_id_load_aware() {
 
 void Scheduler::run() {
     g_scheduler = this;
+
+    // Issue #743: wire arena fiber-context probes for tests and
+    // serve paths that construct Scheduler without serve_async.
+    aura::gc_hooks::g_fiber_active.store(
+        +[]() noexcept { return aura::serve::g_current_fiber != nullptr; });
+    aura::gc_hooks::g_arena_safepoint_check.store(
+        +[]() noexcept { aura::serve::Fiber::check_gc_safepoint(); });
 
     // Link metrics to workers before starting
     for (size_t i = 0; i < workers_.size(); ++i) {

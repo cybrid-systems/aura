@@ -9,6 +9,7 @@ module;
 #include "compiler/shape.h"
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
+#include "core/arena_auto_policy_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 #include "primitives_detail.h"
@@ -98,6 +99,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:highperf-cpp26-stats",
     // Issue #742 — C++26 Contracts + consteval hot-path invariants
     "query:cpp26-contracts-stats",
+    // Issue #743 — Arena auto-compact + defrag + fiber safepoint + dirty/Shape
+    "query:arena-auto-policy-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
     "query:typesystem-typed-mutate-stats",
     // Issue #673 — Unified Runtime Observability Layer (P1)
@@ -4000,6 +4003,85 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("consteval-checks", consteval_checks);
         insert_kv("hotpath-invariant-hits", hotpath_hits);
         insert_kv("schema", 742);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #743: query:arena-auto-policy-stats — Arena auto-compact + live
+    // defrag + fiber safepoint + dirty/Shape closed loop (non-duplicative with
+    // #642 arena-auto-compaction-stats, #685 arena-auto-compact-stats,
+    // #569 arena-auto-compact-defrag-stats).
+    //
+    // Fields (5 + sentinel):
+    //   - auto-compact-triggers     alloc-path + group adaptive triggers
+    //   - defrag-fiber-safe-hits    fiber-context compact/defrag safepoints
+    //   - fragmentation-post-mutate post-mutate frag ratio (basis points)
+    //   - shape-inval-on-compact    ShapeProfiler + on_compact_hook fires
+    //   - env-reval-success         env resync after compact invalidation
+    //   - schema == 743
+    add("query:arena-auto-policy-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t auto_triggers =
+            aura::core::arena_policy::auto_compact_triggers_total.load(std::memory_order_relaxed);
+        std::uint64_t defrag_fiber_safe =
+            aura::core::arena_policy::defrag_fiber_safe_hits_total.load(std::memory_order_relaxed);
+        const std::uint64_t frag_post =
+            aura::core::arena_policy::fragmentation_post_mutate_bp.load(std::memory_order_relaxed);
+        std::uint64_t shape_inval =
+            aura::core::arena_policy::shape_inval_on_compact_total.load(std::memory_order_relaxed);
+        std::uint64_t env_reval =
+            aura::core::arena_policy::env_reval_success_total.load(std::memory_order_relaxed);
+        if (ev.arena_) {
+            const auto s = ev.arena_->stats();
+            auto_triggers += s.auto_alloc_trigger_count;
+            shape_inval += s.shape_inval_on_compact;
+        }
+        if (ev.arena_group_) {
+            auto_triggers += ev.arena_group_->auto_compact_trigger_count();
+            const auto ag = ev.arena_group_->auto_compact_policy_stats();
+            auto_triggers += ag.auto_triggers;
+            shape_inval += ag.shape_inval_on_compact;
+        }
+        if (ev.compiler_metrics()) {
+            auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            env_reval += m->incremental_closure_env_version_resync_total.load(
+                std::memory_order_relaxed);
+        }
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("auto-compact-triggers",
+                  static_cast<std::int64_t>(auto_triggers));
+        insert_kv("defrag-fiber-safe-hits",
+                  static_cast<std::int64_t>(defrag_fiber_safe));
+        insert_kv("fragmentation-post-mutate", static_cast<std::int64_t>(frag_post));
+        insert_kv("shape-inval-on-compact", static_cast<std::int64_t>(shape_inval));
+        insert_kv("env-reval-success", static_cast<std::int64_t>(env_reval));
+        insert_kv("schema", 743);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
