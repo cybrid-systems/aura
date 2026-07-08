@@ -201,8 +201,11 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                 break;
             line_start = line_end + 1;
         }
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->eda_foundation_parse_total.fetch_add(parsed, std::memory_order_relaxed);
+            if (parsed > 0)
+                m->eda_infra_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+        }
         return make_int(static_cast<std::int64_t>(parsed));
     });
 
@@ -266,6 +269,7 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
             m->eda_foundation_mutate_total.fetch_add(1, std::memory_order_relaxed);
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
             m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->eda_infra_structured_mutate_total.fetch_add(1, std::memory_order_relaxed);
         }
         ws->bump_sv_mutate_success();
         return make_bool(true);
@@ -316,6 +320,7 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->eda_foundation_feedback_total.fetch_add(1, std::memory_order_relaxed);
             m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->eda_infra_feedback_ingest_total.fetch_add(1, std::memory_order_relaxed);
         }
         return make_bool(true);
     });
@@ -512,6 +517,7 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->eda_load_sv_total.fetch_add(1, std::memory_order_relaxed);
             m->eda_foundation_parse_total.fetch_add(parsed, std::memory_order_relaxed);
+            m->eda_infra_parse_success_total.fetch_add(1, std::memory_order_relaxed);
         }
         auto reason_idx = ev.string_heap_.size();
         ev.string_heap_.emplace_back("");
@@ -638,10 +644,13 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
             const int success =
                 (coverage_pct != 0 || assertion_pass != 0 || assertion_fail != 0) ? 1 : 0;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                if (success)
+                if (success) {
                     m->eda_parse_verification_result_total.fetch_add(1, std::memory_order_relaxed);
-                else
+                    m->eda_infra_feedback_ingest_total.fetch_add(1, std::memory_order_relaxed);
+                    m->eda_infra_cosim_invoke_total.fetch_add(1, std::memory_order_relaxed);
+                } else {
                     m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             return build_hash_eda({{"path", path_ev},
                                    {"coverage-pct", make_int(coverage_pct)},
@@ -649,6 +658,133 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                                    {"assertion-fail", make_int(assertion_fail)},
                                    {"success", make_int(success)}});
         });
+
+    // Issue #841: (eda:ingest-result path) — structured co-sim result
+    // ingest alias over (eda:parse-verification-result). Shares the same
+    // parser + metrics wiring so Agent loops can use a semantic name.
+    add("eda:ingest-result", [&ev, build_hash_eda](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+            return build_hash_eda({{"path", make_string(0)},
+                                   {"coverage-pct", make_int(0)},
+                                   {"assertion-pass", make_int(0)},
+                                   {"assertion-fail", make_int(0)},
+                                   {"success", make_int(0)}});
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size()) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+            return build_hash_eda({{"path", make_string(0)},
+                                   {"coverage-pct", make_int(0)},
+                                   {"assertion-pass", make_int(0)},
+                                   {"assertion-fail", make_int(0)},
+                                   {"success", make_int(0)}});
+        }
+        const auto& path = ev.string_heap_[idx];
+        auto path_ev = make_string(idx);
+        struct stat st;
+        if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+            return build_hash_eda({{"path", path_ev},
+                                   {"coverage-pct", make_int(0)},
+                                   {"assertion-pass", make_int(0)},
+                                   {"assertion-fail", make_int(0)},
+                                   {"success", make_int(0)}});
+        }
+        std::ifstream f(path);
+        if (!f) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+            return build_hash_eda({{"path", path_ev},
+                                   {"coverage-pct", make_int(0)},
+                                   {"assertion-pass", make_int(0)},
+                                   {"assertion-fail", make_int(0)},
+                                   {"success", make_int(0)}});
+        }
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        auto extract_int = [&](const std::string& blob, std::string_view key) -> std::int64_t {
+            auto pos = blob.find(std::string(key));
+            while (pos != std::string::npos) {
+                auto colon = blob.find(':', pos);
+                if (colon == std::string::npos)
+                    return 0;
+                auto start = colon + 1;
+                while (start < blob.size() && std::isspace(static_cast<unsigned char>(blob[start])))
+                    ++start;
+                if (start >= blob.size() || !std::isdigit(static_cast<unsigned char>(blob[start])))
+                    return 0;
+                std::int64_t v = 0;
+                while (start < blob.size() &&
+                       std::isdigit(static_cast<unsigned char>(blob[start]))) {
+                    v = v * 10 + (blob[start] - '0');
+                    ++start;
+                }
+                return v;
+            }
+            return 0;
+        };
+        const auto cov = extract_int(text, "coverage-percent");
+        const auto cov2 = extract_int(text, "coverage_pct");
+        const auto pass = extract_int(text, "assertions-pass");
+        const auto pass2 = extract_int(text, "passed");
+        const auto fail = extract_int(text, "assertions-fail");
+        const auto fail2 = extract_int(text, "failed");
+        const auto coverage_pct = cov != 0 ? cov : cov2;
+        const auto assertion_pass = pass != 0 ? pass : pass2;
+        const auto assertion_fail = fail != 0 ? fail : fail2;
+        const int success =
+            (coverage_pct != 0 || assertion_pass != 0 || assertion_fail != 0) ? 1 : 0;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            if (success) {
+                m->eda_parse_verification_result_total.fetch_add(1, std::memory_order_relaxed);
+                m->eda_infra_feedback_ingest_total.fetch_add(1, std::memory_order_relaxed);
+                m->eda_infra_cosim_invoke_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                m->eda_parse_verification_failure_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return build_hash_eda({{"path", path_ev},
+                               {"coverage-pct", make_int(coverage_pct)},
+                               {"assertion-pass", make_int(assertion_pass)},
+                               {"assertion-fail", make_int(assertion_fail)},
+                               {"success", make_int(success)}});
+    });
+
+    // Issue #841: (eda:invoke-simulator path) — co-simulation bridge stub.
+    // Validates the simulator script/config path exists, bumps cosim metrics,
+    // and returns a small status hash for Agent branching.
+    add("eda:invoke-simulator", [&ev, build_hash_eda](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) {
+            return build_hash_eda(
+                {{"path", make_string(0)}, {"status-ok", make_int(0)}, {"reason", make_string(0)}});
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size()) {
+            return build_hash_eda(
+                {{"path", make_string(0)}, {"status-ok", make_int(0)}, {"reason", make_string(0)}});
+        }
+        const auto& path = ev.string_heap_[idx];
+        auto path_ev = make_string(idx);
+        struct stat st;
+        if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+            auto reason_idx = ev.string_heap_.size();
+            ev.string_heap_.emplace_back("missing-or-not-regular-file");
+            return build_hash_eda({{"path", path_ev},
+                                   {"status-ok", make_int(0)},
+                                   {"reason", make_string(reason_idx)}});
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->eda_infra_cosim_invoke_total.fetch_add(1, std::memory_order_relaxed);
+            m->commercial_simulator_runs_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        auto reason_idx = ev.string_heap_.size();
+        ev.string_heap_.emplace_back("");
+        return build_hash_eda(
+            {{"path", path_ev}, {"status-ok", make_int(1)}, {"reason", make_string(reason_idx)}});
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

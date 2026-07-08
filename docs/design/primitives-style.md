@@ -101,6 +101,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:dead-coercion-elision-stats)`    | 799    | narrow_evidence CastOp elision + zero-overhead savings (5 fields) |
 | `(query:linear-postmutate-fidelity-stats)` | 800  | linear ownership post-mutate / steal / EnvFrame fidelity (5 fields) |
 | `(query:type-incremental-fidelity-stats)` | 798  | ConstraintSystem incremental fidelity under Guard/steal (5 fields) |
+| `(query:eda-infra-stats)`                | 841    | EDA production infrastructure parse/mutate/feedback/co-sim (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -166,6 +167,16 @@ Distinct from `(query:linear-ownership-gc-compiler-stats)` (#763): #800 tracks p
 - `schema` — 798 (drift sentinel)
 
 Distinct from `(query:type-incremental-stats)` (#608): #798 tracks Guard/steal/MutationBoundary coordination and blame completeness; #608 is the general incremental type reliability sum.
+
+### `(query:eda-infra-stats)` fields (#841)
+
+- `parse-success-hits` — `eda_infra_parse_success_total` (successful SV/SVA parse via `eda:parse-netlist` / `eda:load-sv`)
+- `structured-mutate-hits` — `eda_infra_structured_mutate_total` (Guard + StableRef structured SVA/RTL mutate)
+- `feedback-ingest-hits` — `eda_infra_feedback_ingest_total` (structured verification feedback ingest)
+- `cosim-invoke-hits` — `eda_infra_cosim_invoke_total` (co-simulation bridge via `eda:invoke-simulator` / `eda:ingest-result`)
+- `schema` — 841 (drift sentinel)
+
+Distinct from `(query:eda-foundation-stats)` (#499): #841 tracks production closed-loop reliability (parse/mutate/feedback/co-sim); #499 is the foundational primitive call totals.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
