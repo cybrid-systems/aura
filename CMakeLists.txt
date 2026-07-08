@@ -3241,6 +3241,23 @@ add_dependencies(all_test_issue_targets test_issue_721)
 aura_add_issue_test(test_issue_722)
 aura_issue_test_link_llvm_jit(test_issue_722)
 add_dependencies(all_test_issue_targets test_issue_722)
+# Issue #723: value-dispatch stats primitive (Pass pipeline +
+# Value v2 + Shape history integration) — 4 atomics + 4 bump
+# helpers + (query:value-dispatch-stats, schema 723) primitive
+# (5-entry hash: 4 fields + schema sentinel). Pairs with the existing
+# pass_manager.ixx Wraps / value.ixx v2 / shape_profiler.cpp history
+# infrastructure; #723 tracks the integration outcomes as separate
+# counters the Agent can consume to decide Pass short-circuit / deopt.
+# 5 ACs / 33 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#722.
+# Real DirtyAware impl for Wraps + static_asserts + Contracts
+# expansion + shape history ring_buffer replacement + deopt_hook
+# wiring + partial dirty IRSoA + high shape churn mutate test are
+# all follow-up (each is a dedicated session in pass_manager.ixx +
+# value.ixx + value_tags.h + shape_profiler.cpp).
+aura_add_issue_test(test_issue_723)
+aura_issue_test_link_llvm_jit(test_issue_723)
+add_dependencies(all_test_issue_targets test_issue_723)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

@@ -5486,6 +5486,132 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #723: (query:value-dispatch-stats) — Pass pipeline
+    // DirtyAware + Value v2 + Shape history integration counters
+    // (non-duplicative with #658 Gaps 3/5 broad and #687 coercion
+    // Pass; #723 is the FIRST observability surface that tracks
+    // Value v2 dispatch + shape history integration outcomes
+    // as separate counters).
+    //
+    // Fields (4 + sentinel):
+    //   - dispatch-calls          value_dispatch_calls_total
+    //                             (# of times classify / is_* / as_*
+    //                              / dispatch entry points were
+    //                              called — proxy for value dispatch
+    //                              traffic)
+    //   - unknown-tags            value_unknown_tag_total
+    //                             (# of times classify encountered
+    //                              an unknown tag — bumped by
+    //                              value_tags.h contract violation
+    //                              path — proxy for "how often
+    //                              dispatch misclass happens")
+    //   - v2-string-collisions    value_v2_string_collisions_total
+    //                             (# of v2 string collisions —
+    //                              proxy for "how saturated the
+    //                              v2 string heap is")
+    //   - shape-history-shifts    shape_history_shift_total
+    //                             (# of times the shape history
+    //                              ring buffer / SoA column
+    //                              shifted — proxy for "how
+    //                              churned shape classification
+    //                              is")
+    //   - schema == 723
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual DirtyAware implementation for ConstantFoldingWrap /
+    // ArityWrap / Wraps + static_asserts + Contracts expansion +
+    // shape history ring buffer replacement + deopt_hook wiring
+    // to JIT/service dirty scope are follow-up work (each is a
+    // dedicated session in pass_manager.ixx + value.ixx +
+    // value_tags.h + shape_profiler.cpp).
+    //
+    // Issue #723: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=723 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#722).
+    ev.primitives_.add(
+        "query:value-dispatch-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t dispatch_calls =
+                m ? static_cast<std::int64_t>(
+                        m->value_dispatch_calls_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t unknown_tags =
+                m ? static_cast<std::int64_t>(
+                        m->value_unknown_tag_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t v2_string_collisions =
+                m ? static_cast<std::int64_t>(
+                        m->value_v2_string_collisions_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t shape_history_shifts =
+                m ? static_cast<std::int64_t>(
+                        m->shape_history_shift_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"dispatch-calls", make_int(dispatch_calls)},
+                {"unknown-tags", make_int(unknown_tags)},
+                {"v2-string-collisions", make_int(v2_string_collisions)},
+                {"shape-history-shifts", make_int(shape_history_shifts)},
+                {"schema", make_int(723)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Pass pipeline DirtyAware + Value v2 + Shape history integration "
+                        "counters: dispatch calls, unknown tags (contract violations), "
+                        "v2 string collisions (heap saturation), and shape history "
+                        "shifts (classification churn). Pairs with the existing "
+                        "pass_manager.ixx Wraps / value.ixx v2 / shape_profiler.cpp "
+                        "history infrastructure; #723 exposes the integration outcomes "
+                        "as separate counters the Agent can consume to decide whether "
+                        "to enable Pass short-circuit or trigger deopt.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,
