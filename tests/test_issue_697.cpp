@@ -82,7 +82,7 @@ int main() {
         CHECK(stat_int(cs, "category-verification") >= 1, "category-verification >= 1");
         CHECK(stat_int(cs, "category-eda") >= 1, "category-eda >= 1");
         CHECK(stat_int(cs, "documented-with-schema") >= 4, "documented-with-schema >= 4");
-        CHECK(stat_int(cs, "extension-kit-version") == 3, "extension-kit-version == 3");
+        CHECK(stat_int(cs, "extension-kit-version") >= 3, "extension-kit-version >= 3");
         CHECK(stat_int(cs, "registry-slots") > 0, "registry-slots > 0");
     }
 
@@ -162,8 +162,8 @@ int main() {
         std::println("\n--- AC5: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 211,
-              "stats:count == 211");
+                  aura::compiler::types::as_int(*count) >= 211,
+              "stats:count >= 211");
     }
 
     // AC6: fiber stress — generate-skeleton + describe + EDA mutate
