@@ -9955,8 +9955,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         m->ir_marker_loss_events_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t jit_hygiene_violations_prevented =
-                m ? static_cast<std::int64_t>(
-                        m->ir_hygiene_jit_violations_prevented_total.load(std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(m->ir_hygiene_jit_violations_prevented_total.load(
+                        std::memory_order_relaxed))
                   : 0;
             const std::int64_t marker_propagation_hits =
                 m ? static_cast<std::int64_t>(
