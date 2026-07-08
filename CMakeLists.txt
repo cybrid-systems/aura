@@ -3117,6 +3117,22 @@ add_dependencies(all_test_issue_targets test_issue_714)
 aura_add_issue_test(test_issue_715)
 aura_issue_test_link_llvm_jit(test_issue_715)
 add_dependencies(all_test_issue_targets test_issue_715)
+# Issue #716: pattern matcher observability primitive —
+# 3 atomics + 3 bump helpers + (query:pattern-stats, schema 716)
+# primitive (4-entry hash: 3 fields + schema sentinel). Pairs with
+# #547/#490/#621/#654 tag_arity_index_* which track the index
+# itself — #716 tracks the matcher call path + hygiene filter +
+# fast-path promotion as separate signals.
+# 5 ACs / 24 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility (incl. bulk filter bump
+# with N>1 argument + default-arg single bump), regression of
+# #712 + #713 + #714 + #715. Real is_macro_introduced() skip wiring
+# in query_matcher.cpp + real pattern_index_ lookup + fast-path
+# promotion + benchmark on 10k+ node AST are all follow-up (each
+# is a dedicated session).
+aura_add_issue_test(test_issue_716)
+aura_issue_test_link_llvm_jit(test_issue_716)
+add_dependencies(all_test_issue_targets test_issue_716)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

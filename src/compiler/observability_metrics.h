@@ -1354,6 +1354,41 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stable_ref_cross_layer_mismatch_total{0};
     std::atomic<std::uint64_t> stable_ref_cow_boundary_pins_total{0};
 
+    // Issue #716: pattern matcher observability counters for
+    // (query:pattern-stats). Exposes matcher-level signals that
+    // complement the existing tag_arity_index_* counters (#547 /
+    // #490 / #621 / #654):
+    //   - pattern_matcher_calls_total     # of query:pattern /
+    //                                     query:where / query:filter
+    //                                     invocations (lifetime)
+    //   - pattern_macro_intro_filtered_total
+    //                                    # of AST nodes skipped
+    //                                     by is_macro_introduced()
+    //                                     hygiene filter during
+    //                                     pattern matching (proxy
+    //                                     for "how much user-focused
+    //                                     noise the matcher avoided")
+    //   - pattern_fast_path_hits_total    # of simple tag+arity
+    //                                     queries served from
+    //                                     cache without full
+    //                                     pattern traversal
+    //
+    // Phase 1 ships the counters + bump helpers + the
+    // primitive. The actual is_macro_introduced() skip wiring
+    // in query_matcher.cpp hot path + the cache promotion +
+    // configurable hygiene filter mode (user-focused vs
+    // macro-aware) are follow-up (each is a dedicated session
+    // in evaluator_primitives_query.cpp + query_matcher.cpp).
+    //
+    // Non-duplicative with the existing tag_arity_index_*
+    // counters which track the index itself (#547 + #554 + #621
+    // #654); #716 is the FIRST observability surface that
+    // tracks the matcher call path + hygiene filter + fast-path
+    // promotion as separate signals.
+    std::atomic<std::uint64_t> pattern_matcher_calls_total{0};
+    std::atomic<std::uint64_t> pattern_macro_intro_filtered_total{0};
+    std::atomic<std::uint64_t> pattern_fast_path_hits_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
