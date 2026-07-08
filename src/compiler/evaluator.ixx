@@ -4069,6 +4069,35 @@ public:
             m->closed_loop_feedback_mutate_rounds_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #728: unified structured error + provenance + recovery
+    // observability counters backing the (query:unified-error-stats)
+    // primitive. These are public so future evaluator_primitives_*.cpp
+    // refactors + new (primitive:error) / (with-error) / (primitive:try)
+    // primitives + Guard auto-capture can call them at each decision
+    // point (structured error constructed / provenance captured /
+    // recovery succeeded). Pairs with #585 (query:primitives-error-stats)
+    // but tracks the *unified* model specifically — structured
+    // ErrorValue hits + provenance StableNodeRef capture + recovery
+    // success — not the coarse error-rate / panic-recovery / rollback
+    // surface.
+    void bump_unified_error_structured_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->unified_error_structured_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_unified_error_provenance_captured() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->unified_error_provenance_captured_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_unified_error_recovery_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->unified_error_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
