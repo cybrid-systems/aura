@@ -114,35 +114,32 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     auto r = cs.eval("(query:aot-safe-swap-boundary-stats)");
     CHECK(r && aura::compiler::types::is_hash(*r),
           "(query:aot-safe-swap-boundary-stats) returns a hash");
-    const std::vector<std::string> keys = {"safe-boundary-hits", "refcount-swaps",
-                                           "region-violations-prevented",
-                                           "concurrent-safe-reloads", "deopt-on-steal", "schema"};
+    const std::vector<std::string> keys = {
+        "safe-boundary-hits",      "refcount-swaps", "region-violations-prevented",
+        "concurrent-safe-reloads", "deopt-on-steal", "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:aot-safe-swap-boundary-stats) '{}')", k));
+        auto f = cs.eval(std::format("(hash-ref (query:aot-safe-swap-boundary-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto boundary = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)",
-                                         "safe-boundary-hits");
+    const auto boundary =
+        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "safe-boundary-hits");
     CHECK(boundary == 0,
           std::format("safe-boundary-hits = {} (expected 0 on fresh service)", boundary));
-    const auto swaps =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "refcount-swaps");
+    const auto swaps = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "refcount-swaps");
     CHECK(swaps == 0, std::format("refcount-swaps = {} (expected 0 on fresh service)", swaps));
-    const auto region = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)",
-                                       "region-violations-prevented");
+    const auto region =
+        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "region-violations-prevented");
     CHECK(region == 0,
           std::format("region-violations-prevented = {} (expected 0 on fresh service)", region));
     const auto conc_safe =
         hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "concurrent-safe-reloads");
     CHECK(conc_safe == 0,
           std::format("concurrent-safe-reloads = {} (expected 0 on fresh service)", conc_safe));
-    const auto deopt =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "deopt-on-steal");
+    const auto deopt = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "deopt-on-steal");
     CHECK(deopt == 0, std::format("deopt-on-steal = {} (expected 0 on fresh service)", deopt));
 }
 
@@ -170,38 +167,33 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_aot_safe_boundary_hit();
     ev.bump_aot_safe_boundary_hit();
     ev.bump_aot_safe_boundary_hit();
-    const auto boundary = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)",
-                                         "safe-boundary-hits");
+    const auto boundary =
+        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "safe-boundary-hits");
     CHECK(boundary == 7,
           std::format("after 7 safe-boundary-hit bumps: safe-boundary-hits = {} (expected 7)",
                       boundary));
     // The other 4 fields must remain 0 since we only bumped the new atomic.
-    const auto swaps =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "refcount-swaps");
-    CHECK(swaps == 0, std::format(
-                           "refcount-swaps = {} (expected 0 after only safe-boundary bumps)",
-                           swaps));
-    const auto region = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)",
-                                       "region-violations-prevented");
-    CHECK(region == 0,
-          std::format(
-              "region-violations-prevented = {} (expected 0 after only safe-boundary bumps)",
-              region));
+    const auto swaps = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "refcount-swaps");
+    CHECK(swaps == 0,
+          std::format("refcount-swaps = {} (expected 0 after only safe-boundary bumps)", swaps));
+    const auto region =
+        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "region-violations-prevented");
+    CHECK(
+        region == 0,
+        std::format("region-violations-prevented = {} (expected 0 after only safe-boundary bumps)",
+                    region));
     const auto conc_safe =
         hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "concurrent-safe-reloads");
     CHECK(conc_safe == 0,
-          std::format(
-              "concurrent-safe-reloads = {} (expected 0 after only safe-boundary bumps)",
-              conc_safe));
-    const auto deopt =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "deopt-on-steal");
-    CHECK(deopt == 0, std::format("deopt-on-steal = {} (expected 0 after only safe-boundary bumps)",
-                                  deopt));
+          std::format("concurrent-safe-reloads = {} (expected 0 after only safe-boundary bumps)",
+                      conc_safe));
+    const auto deopt = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "deopt-on-steal");
+    CHECK(deopt == 0,
+          std::format("deopt-on-steal = {} (expected 0 after only safe-boundary bumps)", deopt));
 }
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
-    std::println(
-        "\n--- AC5: regression — #712..#731 sibling primitives unaffected ---");
+    std::println("\n--- AC5: regression — #712..#731 sibling primitives unaffected ---");
     auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
     auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
     auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
@@ -252,8 +244,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
     const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
-    CHECK(jit_schema == 713,
-          std::format("jit schema = {} (expected 713, no drift)", jit_schema));
+    CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
         hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
     CHECK(self_evo_schema == 714,
@@ -268,9 +259,9 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
         hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
-    CHECK(fiber_boundary_schema == 717,
-          std::format("fiber-boundary schema = {} (expected 717, no drift)",
-                      fiber_boundary_schema));
+    CHECK(
+        fiber_boundary_schema == 717,
+        std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
         hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
     CHECK(incremental_schema == 718,
@@ -278,34 +269,30 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                       incremental_schema));
     const auto closure_env_schema =
         hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "schema");
-    CHECK(closure_env_schema == 719,
-          std::format("closure-env-epoch schema = {} (expected 719, no drift)",
-                      closure_env_schema));
+    CHECK(
+        closure_env_schema == 719,
+        std::format("closure-env-epoch schema = {} (expected 719, no drift)", closure_env_schema));
     const auto jit_parity_schema =
         hash_int_field(cs, "(query:jit-interpreter-parity-stats)", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema = hash_int_field(cs, "(query:arena-integration-stats)", "schema");
     CHECK(arena_schema == 722,
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
-    const auto value_dispatch_schema =
-        hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
-    CHECK(value_dispatch_schema == 723,
-          std::format("value-dispatch schema = {} (expected 723, no drift)",
-                      value_dispatch_schema));
+    const auto value_dispatch_schema = hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
+    CHECK(
+        value_dispatch_schema == 723,
+        std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
         hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
-    const auto unified_error_schema =
-        hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto unified_error_schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
     CHECK(unified_error_schema == 728,
-          std::format("unified-error schema = {} (expected 728, no drift)",
-                      unified_error_schema));
+          std::format("unified-error schema = {} (expected 728, no drift)", unified_error_schema));
     const auto arena_concurrent_schema =
         hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "schema");
     CHECK(arena_concurrent_schema == 731,
@@ -317,8 +304,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
 
 int main() {
     using namespace aura_issue_732_detail;
-    std::println(
-        "=== Issue #732: AOT safe-swap-boundary observability (scope-limited close) ===");
+    std::println("=== Issue #732: AOT safe-swap-boundary observability (scope-limited close) ===");
 
     {
         aura::compiler::CompilerService cs;

@@ -9775,17 +9775,20 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         m->aot_safe_boundary_hits_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t refcount_swaps =
-                m ? static_cast<std::int64_t>(m->aot_refcount_swaps_.load(std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(
+                        m->aot_refcount_swaps_.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t region_violations_prevented =
-                m ? static_cast<std::int64_t>(m->aot_region_mismatch_.load(std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(
+                        m->aot_region_mismatch_.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t concurrent_safe_reloads =
                 m ? static_cast<std::int64_t>(
                         m->aot_concurrent_safe_reloads_.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t deopt_on_steal =
-                m ? static_cast<std::int64_t>(m->aot_deopt_on_steal_.load(std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(
+                        m->aot_deopt_on_steal_.load(std::memory_order_relaxed))
                   : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"safe-boundary-hits", make_int(safe_boundary_hits)},
