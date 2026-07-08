@@ -755,6 +755,7 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
     ev->transfer_mutation_stack_to_current_fiber();
     ev->probe_arena_auto_policy_on_fiber_transition();
     ev->bump_concurrent_safety_gc_safepoint_during_steal();
+    ev->bump_linear_postmutate_post_rollback_revalidate();
 }
 
 // Issue #683: linear ownership enforcement on work-steal.

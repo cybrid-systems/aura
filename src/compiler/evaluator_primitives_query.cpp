@@ -4049,6 +4049,80 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(violations + deopt_mismatch + enforcements));
     });
 
+    // Issue #800: query:linear-postmutate-fidelity-stats — linear ownership
+    // post-mutate / rollback / steal / EnvFrame fidelity dashboard
+    // (refines #793/#792/#784/#791; non-duplicative with #763 gc-compiler
+    // stats and #638 linear-ownership-safety-stats).
+    //
+    // Fields (4 + sentinel):
+    //   - post-rollback-revalidate-hits  linear_postmutate_post_rollback_revalidate_total
+    //   - escape-violations-prevented    linear_postmutate_escape_violations_prevented_total
+    //   - guard-boundary-linear-safe     linear_postmutate_guard_boundary_linear_safe_total
+    //   - env-version-sync               linear_postmutate_env_version_sync_total
+    //   - schema == 800
+    add("query:linear-postmutate-fidelity-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::int64_t post_rollback =
+                m ? static_cast<std::int64_t>(
+                        m->linear_postmutate_post_rollback_revalidate_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t escape_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->linear_postmutate_escape_violations_prevented_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_safe =
+                m ? static_cast<std::int64_t>(
+                        m->linear_postmutate_guard_boundary_linear_safe_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t env_sync =
+                m ? static_cast<std::int64_t>(
+                        m->linear_postmutate_env_version_sync_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("post-rollback-revalidate-hits", post_rollback);
+            insert_kv("escape-violations-prevented", escape_prevented);
+            insert_kv("guard-boundary-linear-safe", guard_safe);
+            insert_kv("env-version-sync", env_sync);
+            insert_kv("schema", 800);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #598: query:linear-ownership-runtime-stats. Returns the
     // sum of 4 runtime linear enforcement counters spanning
     // Interpreter/JIT hot-path + invalidate_function integration

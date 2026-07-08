@@ -99,6 +99,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:orchestration-llm-bottleneck-stats)` | 754 | LLM-bottleneck adaptive steal + GC safepoint tuning (6 fields) |
 | `(query:concurrent-safety-full-cycle-stats)` | 755 | MutationBoundary + steal + AOT + GC full-cycle safety (6 fields) |
 | `(query:dead-coercion-elision-stats)`    | 799    | narrow_evidence CastOp elision + zero-overhead savings (5 fields) |
+| `(query:linear-postmutate-fidelity-stats)` | 800  | linear ownership post-mutate / steal / EnvFrame fidelity (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -144,6 +145,16 @@ Distinct from `(query:self-evolution-chaos-stats)` (#674): #674 classifies chaos
 - `schema` — 799 (drift sentinel)
 
 Distinct from `(query:dead-coercion-elim-stats)` (#687): #799 is the narrow_evidence elision closed-loop dashboard for typed mutation; #687 is the general zero-overhead elimination summary.
+
+### `(query:linear-postmutate-fidelity-stats)` fields (#800)
+
+- `post-rollback-revalidate-hits` — `linear_postmutate_post_rollback_revalidate_total` (OwnershipEnv re-validate after rollback/steal)
+- `escape-violations-prevented` — `linear_postmutate_escape_violations_prevented_total` (caught use-after-move / escape violations)
+- `guard-boundary-linear-safe` — `linear_postmutate_guard_boundary_linear_safe_total` (linear invariant held at Guard/steal probe)
+- `env-version-sync` — `linear_postmutate_env_version_sync_total` (EnvFrame version_ validated under materialize/steal)
+- `schema` — 800 (drift sentinel)
+
+Distinct from `(query:linear-ownership-gc-compiler-stats)` (#763): #800 tracks post-mutate fidelity under Guard/steal/rollback; #763 tracks compiler IRClosure GC root registration.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

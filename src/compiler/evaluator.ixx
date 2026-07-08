@@ -4722,6 +4722,65 @@ public:
                 1, std::memory_order_relaxed);
         }
     }
+    // Issue #800: linear ownership post-mutate fidelity stats.
+    void bump_linear_postmutate_post_rollback_revalidate(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_postmutate_post_rollback_revalidate_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_linear_postmutate_escape_violations_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_postmutate_escape_violations_prevented_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_linear_postmutate_guard_boundary_linear_safe(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_postmutate_guard_boundary_linear_safe_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_linear_postmutate_env_version_sync(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_postmutate_env_version_sync_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_linear_postmutate_post_rollback_revalidate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->linear_postmutate_post_rollback_revalidate_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_linear_postmutate_escape_violations_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->linear_postmutate_escape_violations_prevented_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_linear_postmutate_guard_boundary_linear_safe() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->linear_postmutate_guard_boundary_linear_safe_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_linear_postmutate_env_version_sync() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->linear_postmutate_env_version_sync_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
