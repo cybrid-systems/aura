@@ -4273,6 +4273,41 @@ public:
             m->envframe_gc_stale_desync_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #757: fine-grained MacroIntroduced provenance
+    // tracking + dynamic inliner policy + AI-queryable
+    // hygiene violation correlation counters backing the
+    // (query:macro-hygiene-provenance-stats) primitive. These
+    // are public so future ast.ixx FlatAST + marker column +
+    // query primitives + InlinePass in lowering + aura_jit +
+    // MutationBoundaryGuard + macro_expansion.cpp can call
+    // them at each decision point (provenance captured at
+    // clone_macro_body / QueryExpr :marker MacroIntroduced
+    // :provenance filter hits / hygiene:set-inliner-respect-
+    // macro! primitive call / InlinePass respect_macro_hygiene_
+    // dynamic check / hygiene_violation_by_macro correlation).
+    // Pairs with the existing #654 (query:macro-hygiene-fiber-
+    // panic-stats 5 fields) but tracks the *fine-grained
+    // provenance + dynamic inliner policy + per-macro
+    // correlation* specifically — provenance captured,
+    // inliner policy violation firings, per-macro hygiene
+    // violation correlation, query-filter hits — not the
+    // coarse panic-restamp / provenance-violations /
+    // macro-expand-checkpoints / reflect-hygiene-validation /
+    // hygiene-dirty-impact surface.
+    void bump_macro_hygiene_provenance_captured() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_provenance_captured_total.fetch_add(1,
+                                                                 std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_hygiene_inliner_policy_violation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_inliner_policy_violations_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

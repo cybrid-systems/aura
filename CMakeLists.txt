@@ -3453,6 +3453,44 @@ add_dependencies(all_test_issue_targets test_issue_735)
 aura_add_issue_test(test_issue_756)
 aura_issue_test_link_llvm_jit(test_issue_756)
 add_dependencies(all_test_issue_targets test_issue_756)
+# Issue #757: fine-grained MacroIntroduced provenance tracking
+# + dynamic inliner policy + AI-queryable hygiene violation
+# correlation observability primitive — 2 atomics + 2 bump
+# helpers + (query:macro-hygiene-provenance-stats, schema 757)
+# primitive (5-entry hash: 4 fields + schema sentinel). Pairs
+# with the existing #654 query:macro-hygiene-fiber-panic-stats
+# 5-field hash + #458 query:pattern-hygiene-stats basic count
+# + #373 mutate hygiene guard flat.is_macro_introduced + #750
+# query:reflection-schema-stats runtime reflection validate;
+# #757 covers the *fine-grained provenance + dynamic inliner
+# policy + per-macro correlation* specifically — provenance
+# captured at clone_macro_body, inliner policy violation
+# firings, per-macro hygiene violation correlation, query-
+# filter hits — as separate per-decision-point counters the
+# Agent consumes to monitor and tune macro hygiene in self-evo
+# loops.
+# 5 ACs / 54 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#756.
+# Real ast.ixx FlatAST + provenance_ column or extended marker
+# (macro_def_node_id or sym + gensym history) populated in
+# clone_macro_body success path + QueryExpr :marker MacroIntroduced
+# :provenance macro-name filter support + (query:macro-hygiene-
+# provenance node-id) function primitive + (hygiene:set-inliner-
+# respect-macro! #t/#f [subtree]) primitive + InlinePass respect_
+# macro_hygiene_ dynamic check from EDSL/primitive + Guard
+# integration with hygiene_violation_by_macro correlation +
+# enhance query:mutation-impact-snapshot and hygiene-stats with
+# macro_provenance_map + inliner_policy_violations + hygiene_
+# violation_by_macro + tests/test_macro_hygiene_provenance_
+# inliner_policy_ai.cpp harness (define macro with nested,
+# mutate under different policies) + SEVA demo extension +
+# docs are all follow-up (each is a dedicated session in ast.ixx
+# + query_matcher + evaluator_primitives_query.cpp + InlinePass
+# + aura_jit.cpp + MutationBoundaryGuard + new test + SEVA demo
+# + docs).
+aura_add_issue_test(test_issue_757)
+aura_issue_test_link_llvm_jit(test_issue_757)
+add_dependencies(all_test_issue_targets test_issue_757)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

@@ -1043,6 +1043,106 @@ struct CompilerMetrics {
     // + new test + chaos stress + docs).
     std::atomic<std::uint64_t> envframe_desync_panic_count_total{0};
     std::atomic<std::uint64_t> envframe_gc_stale_desync_hits_total{0};
+
+    // Issue #757: fine-grained MacroIntroduced provenance
+    // tracking + dynamic inliner policy + AI-queryable hygiene
+    // violation correlation counters backing the
+    // (query:macro-hygiene-provenance-stats) primitive. These
+    // are public so future ast.ixx FlatAST + marker column +
+    // query primitives + InlinePass in lowering + aura_jit +
+    // MutationBoundaryGuard + macro_expansion.cpp can call
+    // them at each decision point (provenance captured at
+    // clone_macro_body / QueryExpr :marker MacroIntroduced
+    // :provenance filter hits / hygiene:set-inliner-respect-
+    // macro! primitive call / InlinePass respect_macro_hygiene_
+    // dynamic check / hygiene_violation_by_macro correlation).
+    //
+    // Non-duplicative with the existing #654 (query:macro-
+    // hygiene-fiber-panic-stats 5 fields: panic-restamp /
+    // provenance-violations / macro-expand-checkpoints /
+    // reflect-hygiene-validation / hygiene-dirty-impact) +
+    // #458 (query:pattern-hygiene-stats basic count) + #373
+    // (mutate hygiene guard — flat.is_macro_introduced internal
+    // check) + #750 (query:reflection-schema-stats runtime
+    // reflection validate).
+    // #757 is the FIRST observability surface that tracks the
+    // *fine-grained provenance + dynamic inliner policy +
+    // per-macro correlation* specifically — provenance captured
+    // at clone_macro_body, inliner policy violation firings,
+    // per-macro hygiene violation correlation, query-filter hits
+    // — as separate per-decision-point counters the Agent
+    // consumes to monitor and tune macro hygiene in self-evo
+    // loops.
+    //
+    //   - macro_hygiene_provenance_captured_total: # of times
+    //                                             provenance
+    //                                             (macro_def_node_id
+    //                                             or sym + gensym
+    //                                             history) was
+    //                                             successfully
+    //                                             populated on
+    //                                             a MacroIntroduced
+    //                                             node at clone_
+    //                                             macro_body
+    //                                             success path.
+    //                                             Proxy for "how
+    //                                             often fine-
+    //                                             grained
+    //                                             provenance is
+    //                                             tracked".
+    //   - macro_hygiene_inliner_policy_violations_total: # of
+    //                                                 times the
+    //                                                 InlinePass
+    //                                                 respect_
+    //                                                 macro_hygiene_
+    //                                                 policy was
+    //                                                 violated
+    //                                                 (e.g. dynamic
+    //                                                 policy via
+    //                                                 hygiene:set-
+    //                                                 inliner-
+    //                                                 respect-
+    //                                                 macro!
+    //                                                 said #f but
+    //                                                 the inliner
+    //                                                 still
+    //                                                 inlined a
+    //                                                 macro-
+    //                                                 introduced
+    //                                                 call site,
+    //                                                 or vice versa).
+    //                                                 Proxy for
+    //                                                 "how often
+    //                                                 dynamic
+    //                                                 inliner
+    //                                                 policy +
+    //                                                 static
+    //                                                 respect_
+    //                                                 macro_
+    //                                                 hygiene_
+    //                                                 disagree".
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual ast.ixx FlatAST + provenance_ column or
+    // extended marker (macro_def_node_id or sym + gensym history)
+    // populated in clone_macro_body success path + QueryExpr
+    // :marker MacroIntroduced :provenance macro-name filter
+    // support + (query:macro-hygiene-provenance node-id) function
+    // primitive + (hygiene:set-inliner-respect-macro! #t/#f
+    // [subtree]) primitive + InlinePass respect_macro_hygiene_
+    // dynamic check from EDSL/primitive + Guard integration with
+    // hygiene_violation_by_macro correlation +
+    // tests/test_macro_hygiene_provenance_inliner_policy_ai.cpp
+    // harness (define macro with nested, mutate under different
+    // policies → assert provenance query accurate, inliner policy
+    // respected/tuned, metrics, no silent drift, TSan clean) +
+    // SEVA demo with macro-generated verification code + policy
+    // tuning demo + docs are all follow-up (each is a dedicated
+    // session in ast.ixx + query_matcher + evaluator_primitives_
+    // query.cpp + InlinePass + aura_jit.cpp + MutationBoundaryGuard
+    // + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> macro_hygiene_provenance_captured_total{0};
+    std::atomic<std::uint64_t> macro_hygiene_inliner_policy_violations_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +
