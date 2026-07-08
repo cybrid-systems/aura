@@ -3916,6 +3916,37 @@ public:
             m->dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #720: JIT/Interpreter parity counters backing the
+    // (query:jit-interpreter-parity-stats) primitive. These are
+    // public so future aura_jit.cpp lower() + FlatInstruction
+    // conversion + unhandled hook + GuardShape/linear full consume
+    // + JIT->CompilerService deopt/invalidate wiring can call them
+    // at each decision point (unhandled spike / metadata mismatch
+    // / deopt-on-mutate / interpreter fallback).
+    void bump_jit_unhandled_opcode_spike() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_unhandled_opcode_spikes_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_metadata_mismatch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_metadata_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_deopt_on_mutate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_deopt_on_mutate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_fallback_to_interpreter() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_fallback_to_interpreter_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

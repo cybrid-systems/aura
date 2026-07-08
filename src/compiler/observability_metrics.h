@@ -1532,6 +1532,54 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> gc_root_sync_total{0};
     std::atomic<std::uint64_t> dangling_prevented_total{0};
 
+    // Issue #720: JIT/Interpreter parity observability counters
+    // for (query:jit-interpreter-parity-stats). Exposes the
+    // JIT-side hot-path drift signals that the existing
+    // unhandled_opcode_count / fallback_count metrics in
+    // aura_jit.cpp cannot differentiate (those are aggregate
+    // per-function totals; #720 splits by *cause*):
+    //   - jit_unhandled_opcode_spikes_total  # of times an
+    //                                        unhandled_opcode spike
+    //                                        crossed the per-function
+    //                                        threshold post-mutation
+    //                                        (triggers JIT->service
+    //                                        invalidate hook + deopt)
+    //   - jit_metadata_mismatch_total       # of times metadata
+    //                                        (linear_ownership_state /
+    //                                        shape_id / narrow_evidence
+    //                                        / source_marker) drift was
+    //                                        detected between IRSoA /
+    //                                        AoS and the JIT's
+    //                                        FlatInstruction
+    //   - jit_deopt_on_mutate_total          # of times JIT deopt was
+    //                                        triggered by a mutate /
+    //                                        invalidate event (forced
+    //                                        Interpreter fallback +
+    //                                        async recompile request
+    //                                        via CompilerService hook)
+    //   - jit_fallback_to_interpreter_total # of explicit fallbacks
+    //                                        to Interpreter (proxy
+    //                                        for "how often the JIT
+    //                                        decided to give up on
+    //                                        hot path post-mutation")
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual FlatInstruction metadata extension + unhandled
+    // hook + GuardShape/linear full consume + deopt->service wiring
+    // + JIT->CompilerService invalidate hook are follow-up work
+    // (each is a dedicated session in aura_jit.cpp + aura_jit.h +
+    // aura_jit_bridge.cpp + service.ixx + ir_executor_impl.cpp).
+    //
+    // Non-duplicative with the existing unhandled_opcode_count /
+    // fallback_count metrics in aura_jit.cpp (which are aggregate
+    // per-function lifetime totals); #720 splits by *cause* and
+    // adds the post-mutation spike + metadata drift signals that
+    // the JIT hot path needs to surface for production stability.
+    std::atomic<std::uint64_t> jit_unhandled_opcode_spikes_total{0};
+    std::atomic<std::uint64_t> jit_metadata_mismatch_total{0};
+    std::atomic<std::uint64_t> jit_deopt_on_mutate_total{0};
+    std::atomic<std::uint64_t> jit_fallback_to_interpreter_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

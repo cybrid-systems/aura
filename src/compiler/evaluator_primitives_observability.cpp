@@ -5118,6 +5118,135 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #720: (query:jit-interpreter-parity-stats) — JIT hot
+    // path drift counters (non-duplicative with the aggregate
+    // unhandled_opcode_count / fallback_count metrics in
+    // aura_jit.cpp; #720 splits by *cause* and adds post-mutation
+    // spike + metadata drift signals).
+    //
+    // Fields (4 + sentinel):
+    //   - unhandled-opcode-spikes  jit_unhandled_opcode_spikes_total
+    //                              (# of times an unhandled_opcode
+    //                               spike crossed the per-function
+    //                               threshold post-mutation —
+    //                               triggers JIT->service invalidate
+    //                               hook + deopt)
+    //   - metadata-mismatches      jit_metadata_mismatch_total
+    //                              (# of times metadata
+    //                               (linear_ownership_state /
+    //                                shape_id / narrow_evidence /
+    //                                source_marker) drift was
+    //                                detected between IRSoA /
+    //                                AoS and the JIT's
+    //                                FlatInstruction)
+    //   - deopt-on-mutate          jit_deopt_on_mutate_total
+    //                              (# of times JIT deopt was
+    //                               triggered by a mutate /
+    //                               invalidate event — forced
+    //                               Interpreter fallback + async
+    //                               recompile request via
+    //                               CompilerService hook)
+    //   - fallback-to-interpreter  jit_fallback_to_interpreter_total
+    //                              (# of explicit fallbacks to
+    //                               Interpreter — proxy for "how
+    //                               often the JIT decided to give
+    //                               up on hot path post-mutation")
+    //   - schema == 720
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual FlatInstruction metadata extension + unhandled
+    // hook + GuardShape/linear full consume + deopt->service wiring
+    // + JIT->CompilerService invalidate hook are follow-up work
+    // (each is a dedicated session in aura_jit.cpp + aura_jit.h +
+    // aura_jit_bridge.cpp + service.ixx + ir_executor_impl.cpp).
+    //
+    // Issue #720: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=720 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#719).
+    ev.primitives_.add(
+        "query:jit-interpreter-parity-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t unhandled_spikes =
+                m ? static_cast<std::int64_t>(
+                        m->jit_unhandled_opcode_spikes_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t metadata_mismatches =
+                m ? static_cast<std::int64_t>(
+                        m->jit_metadata_mismatch_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t deopt_on_mutate =
+                m ? static_cast<std::int64_t>(
+                        m->jit_deopt_on_mutate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t fallback_to_interpreter =
+                m ? static_cast<std::int64_t>(
+                        m->jit_fallback_to_interpreter_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"unhandled-opcode-spikes", make_int(unhandled_spikes)},
+                {"metadata-mismatches", make_int(metadata_mismatches)},
+                {"deopt-on-mutate", make_int(deopt_on_mutate)},
+                {"fallback-to-interpreter", make_int(fallback_to_interpreter)},
+                {"schema", make_int(720)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "JIT/Interpreter parity counters: unhandled opcode spikes "
+                        "(post-mutation threshold crossings), metadata mismatches "
+                        "(linear_ownership_state / shape_id / narrow_evidence / "
+                        "source_marker drift between IRSoA/AoS and FlatInstruction), "
+                        "deopts on mutate, and explicit Interpreter fallbacks. Pairs "
+                        "with the aggregate unhandled_opcode_count / fallback_count "
+                        "metrics in aura_jit.cpp; #720 splits by cause and adds the "
+                        "post-mutation spike + metadata drift signals.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,
