@@ -4157,6 +4157,52 @@ public:
             m->aot_safe_boundary_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #733: macro marker propagation + IR/JIT hygiene
+    // enforcement counters backing the (query:ir-marker-hygiene-stats)
+    // primitive. These are public so future lowering_impl.cpp +
+    // emit paths + ir_soa.ixx + aura_jit.cpp + aura_jit_runtime.cpp
+    // + ir_executor.ixx can call them at each decision point
+    // (IRInstruction creation from AST node propagates marker /
+    // IRFunction marker set from root AST marker / marker-loss
+    // detected at hot path / JIT conservative policy applied on
+    // MacroIntroduced / marker-propagation successful across all
+    // emit sites). Pairs with the existing #714 (query:self-evolution-
+    // closedloop-stats — ref drift + rollback + feedback mutate
+    // rounds) but tracks the *marker propagation + IR/JIT enforcement*
+    // specifically — user-instrs vs macro-introduced-instrs split,
+    // marker-loss events, JIT hygiene violations prevented, marker
+    // propagation hits — not the coarse closed-loop reliability
+    // surface.
+    void bump_ir_marker_user_instr() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_marker_user_instrs_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_marker_macro_introduced_instr() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_marker_macro_introduced_instrs_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_marker_loss_event() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_marker_loss_events_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_hygiene_jit_violation_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_hygiene_jit_violations_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_hygiene_marker_propagation_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_hygiene_marker_propagation_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

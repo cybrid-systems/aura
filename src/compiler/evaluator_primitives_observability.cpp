@@ -503,6 +503,11 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // observability (non-duplicative with #708 / #644 / #590 coarse
     // AOT stats; #732 tracks per-decision-point safe-swap signals).
     "query:aot-safe-swap-boundary-stats",
+    // Issue #733 — Macro SyntaxMarker propagation + IR/JIT hygiene
+    // enforcement observability (non-duplicative with #714 / #455 /
+    // #373 coarse macro stats; #733 tracks per-decision-point
+    // marker propagation + IR/JIT enforcement signals).
+    "query:ir-marker-hygiene-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -9815,6 +9820,175 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "safe-swap adoption rate the Agent consumes to decide "
                         "whether to defer reload until next safe-swap point or "
                         "trigger safe-reload API.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #733: (query:ir-marker-hygiene-stats) — Macro SyntaxMarker
+    // propagation + IR/JIT hygiene enforcement observability for
+    // Task6 macro-heavy self-evolution reliability (non-duplicative
+    // with #714 (query:self-evolution-closedloop-stats — ref drift +
+    // rollback success + feedback mutate rounds) + #455 (ir marker
+    // snapshot — internal mechanics, no observability surface) + #373
+    // (mutate hygiene guard — flat.is_macro_introduced internal check).
+    // #733 covers the *marker propagation + IR/JIT enforcement*
+    // specifically across the entire compile/execution pipeline
+    // (macro expand → AST → lowering → IR → JIT hot-path → Interpreter)
+    // as separate per-decision-point counters.
+    //
+    // Fields (5 + sentinel):
+    //   - user-instrs                  ir_marker_user_instrs_total
+    //                                   (# of IRInstructions created
+    //                                    with marker=User — proxy for
+    //                                    "how much IR traffic is
+    //                                    user-authored")
+    //   - macro-introduced-instrs      ir_marker_macro_introduced_instrs_total
+    //                                   (# of IRInstructions created
+    //                                    with marker=MacroIntroduced
+    //                                    — proxy for "how much IR
+    //                                    traffic is macro-authored,
+    //                                    the hygiene scope")
+    //   - marker-loss-events           ir_marker_loss_events_total
+    //                                   (# of times marker propagation
+    //                                    failed at emit path —
+    //                                    closure / PrimCall arg /
+    //                                    linear op / cached define
+    //                                    path that did not copy AST
+    //                                    marker → IR source_marker /
+    //                                    IRFunction marker — proxy for
+    //                                    "how many macro-introduced
+    //                                    sub-exprs lost their hygiene
+    //                                    marker through the pipeline")
+    //   - jit-hygiene-violations-prevented
+    //                                  ir_hygiene_jit_violations_prevented_total
+    //                                   (# of times the JIT conservative
+    //                                    policy fired on MacroIntroduced
+    //                                    source_marker — prevented
+    //                                    aggressive deopt-elide /
+    //                                    respected hygiene in closure
+    //                                    capture / forced Interpreter
+    //                                    fallback or extra epoch check
+    //                                    — proxy for "how often the
+    //                                    JIT hot-path consults marker
+    //                                    + applies conservative policy")
+    //   - marker-propagation-hits      ir_hygiene_marker_propagation_hits_total
+    //                                   (# of times marker propagation
+    //                                    succeeded across all emit
+    //                                    sites via propagate_marker_
+    //                                    from_ast helper — proxy for
+    //                                    "how often the hygiene marker
+    //                                    survives the pipeline")
+    //   - schema == 733
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual propagate_marker_from_ast helper in lowering_impl.cpp
+    // + ir_soa.ixx marker_ column + aura_jit.cpp + aura_jit_runtime.cpp
+    // + ir_executor.ixx conservative policy on source_marker==
+    // MacroIntroduced + IRFunction creation marker-from-root-AST-
+    // marker in service/lowering + tests/test_macro_marker_propagation_
+    // ir_jit_post_mutate.cpp harness (define macro that introduces
+    // lambda + mutate inside it under fiber + JIT hot path) + #674
+    // stress integration + SEVA macro-heavy cases are all follow-up
+    // work (each is a dedicated session in lowering_impl.cpp +
+    // ir_soa.ixx + aura_jit.cpp + aura_jit_runtime.cpp + ir_executor.ixx
+    // + new test + chaos stress + SEVA demo + docs).
+    //
+    // Issue #733: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=733 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#732).
+    ev.primitives_.add(
+        "query:ir-marker-hygiene-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 6-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t user_instrs =
+                m ? static_cast<std::int64_t>(
+                        m->ir_marker_user_instrs_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t macro_introduced_instrs =
+                m ? static_cast<std::int64_t>(
+                        m->ir_marker_macro_introduced_instrs_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t marker_loss_events =
+                m ? static_cast<std::int64_t>(
+                        m->ir_marker_loss_events_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t jit_hygiene_violations_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->ir_hygiene_jit_violations_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t marker_propagation_hits =
+                m ? static_cast<std::int64_t>(
+                        m->ir_hygiene_marker_propagation_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"user-instrs", make_int(user_instrs)},
+                {"macro-introduced-instrs", make_int(macro_introduced_instrs)},
+                {"marker-loss-events", make_int(marker_loss_events)},
+                {"jit-hygiene-violations-prevented", make_int(jit_hygiene_violations_prevented)},
+                {"marker-propagation-hits", make_int(marker_propagation_hits)},
+                {"schema", make_int(733)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Macro SyntaxMarker propagation + IR/JIT hygiene enforcement "
+                        "observability: user-instrs vs macro-introduced-instrs "
+                        "(IR traffic split by marker), marker-loss-events (emit "
+                        "paths that failed to copy AST marker), "
+                        "jit-hygiene-violations-prevented (conservative policy "
+                        "firings on MacroIntroduced), marker-propagation-hits "
+                        "(successful AST-to-IR marker propagation). Pairs with "
+                        "the existing #714 query:self-evolution-closedloop-stats "
+                        "closed-loop reliability hash and #455 internal marker "
+                        "snapshot but tracks the *marker propagation + IR/JIT "
+                        "enforcement* specifically as separate per-decision-"
+                        "point counters. #733 exposes the hygiene fidelity "
+                        "the Agent consumes to decide whether to add "
+                        "propagate_marker_from_ast helpers, force Interpreter "
+                        "fallback, or trigger re-lower-with-marker on mutate.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
