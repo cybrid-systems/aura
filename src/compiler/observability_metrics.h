@@ -1231,6 +1231,95 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> edsl_hygiene_invariants_held_total{0};
     std::atomic<std::uint64_t> edsl_schema_fail_by_type_total{0};
     std::atomic<std::uint64_t> edsl_macro_correlated_violations_total{0};
+    // Issue #759: unified 'code-as-data' closed-loop maturity
+    // metrics backing the (query:code-as-data-maturity-stats)
+    // primitive. These are public so future
+    // tests/test_task6_code_as_data_closedloop_harness.cpp +
+    // SEVA demo + SLO deployment + clone_macro_body marker
+    // propagation sampling wire-up + MutationBoundaryGuard
+    // rollback hygiene-safe observation wire-up +
+    // runtime_validate_edsl_struct macro/EDSL schema coverage
+    // wire-up + Prometheus text/OTLP exporter can call them at
+    // each decision point (fidelity sample / drift detected /
+    // rollback hygiene preserved / reflect schema coverage on
+    // macro-generated or EDSL-mutated subtree / dirty/epoch
+    // correlation hit / concurrent fiber stress success).
+    //
+    // Non-duplicative with the existing #757 (query:macro-hygiene-
+    // provenance-stats — 4 fields: provenance-captured /
+    // inliner-policy-violations / provenance-violations / hygiene-
+    // dirty-impact) which covers macro body hygiene observability,
+    // and #758 (query:edsl-reflection-stats — 4 fields: validated-
+    // edsl / hygiene-invariants-held / schema-fail-by-type /
+    // macro-correlated-violations) which covers EDSL struct +
+    // macro hygiene invariant correlation specifically. #759 is
+    // the FIRST observability surface that tracks the *code-as-data
+    // closed-loop maturity composite* — marker propagation fidelity
+    // (drift / samples), Guard rollback hygiene safety (safe /
+    // attempts), reflection schema coverage on macro/EDSL
+    // subtrees (covered / total), concurrent fiber stress success
+    // — as separate per-decision-point counters the Agent
+    // consumes to monitor the integrated macro + reflect + EDSL
+    // self-evo loop production readiness.
+    //
+    //   - code_as_data_fidelity_samples_total: total marker
+    //                                           propagation
+    //                                           fidelity check
+    //                                           samples (denominator
+    //                                           for fidelity_pct
+    //                                           derivation).
+    //   - code_as_data_fidelity_drift_total: samples where marker
+    //                                        propagation drift was
+    //                                        detected (drift /
+    //                                        samples = inverse
+    //                                        fidelity rate).
+    //   - code_as_data_rollback_hygiene_safe_total: Guard rollback
+    //                                               events that
+    //                                               preserved
+    //                                               hygiene
+    //                                               invariants (+
+    //                                               StableRef
+    //                                               validity) — safe
+    //                                               / attempts =
+    //                                               guard_rollback_
+    //                                               hygiene_safe_pct.
+    //   - code_as_data_reflect_schema_macro_edsl_total: reflect
+    //                                                   schema
+    //                                                   validation
+    //                                                   calls on
+    //                                                   macro-generated
+    //                                                   or EDSL-
+    //                                                   mutated subtrees
+    //                                                   (covered /
+    //                                                   total = reflection
+    //                                                   schema coverage
+    //                                                   on macro/EDSL
+    //                                                   ratio).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual tests/test_task6_code_as_data_closedloop_
+    // harness.cpp multi-fiber stress test (random macro expansion
+    // deep nesting + EDSL struct mutate under Guard + simulated
+    // reflect validate + panic/rollback injection + steal during
+    // boundary → assert fidelity metrics stay high, no hygiene
+    // drift post-rollback, schema coverage tracks, TSan/ASan
+    // clean) + wire marker provenance (from #757) + runtime
+    // reflect validate (from #758) + Guard rollback path to feed
+    // the maturity stats (auto-update on every successful self-
+    // mod boundary) + SLO / (query:code-as-data-slo) with
+    // thresholds (e.g. fidelity >99%, coverage >95%, trigger
+    // self-heal or alert on breach) + Prometheus text or OTLP
+    // deployment exporter + Task6 health score composite + SEVA
+    // extension with macro-generated + user-EDSL verification
+    // code under load + CI gate on harness passing with fidelity
+    // thresholds + docs are all follow-up work (each is a
+    // dedicated session in observability_metrics.h +
+    // evaluator_primitives_observability.cpp + new test harness
+    // + SEVA demo + docs).
+    std::atomic<std::uint64_t> code_as_data_fidelity_samples_total{0};
+    std::atomic<std::uint64_t> code_as_data_fidelity_drift_total{0};
+    std::atomic<std::uint64_t> code_as_data_rollback_hygiene_safe_total{0};
+    std::atomic<std::uint64_t> code_as_data_reflect_schema_macro_edsl_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

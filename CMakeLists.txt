@@ -3518,6 +3518,43 @@ add_dependencies(all_test_issue_targets test_issue_757)
 aura_add_issue_test(test_issue_758)
 aura_issue_test_link_llvm_jit(test_issue_758)
 add_dependencies(all_test_issue_targets test_issue_758)
+# Issue #759: unified 'code-as-data' closed-loop maturity
+# observability composite (production readiness dashboard for
+# Task6: marker propagation fidelity, Guard rollback hygiene
+# safety, reflection schema coverage on macro/EDSL subtrees,
+# concurrent fiber stress success) primitive — 4 atomics + 4
+# bump helpers + (query:code-as-data-maturity-stats, schema 759)
+# primitive (5-entry hash: 4 fields + schema sentinel). Pairs
+# with the existing #757 query:macro-hygiene-provenance-stats +
+# #758 query:edsl-reflection-stats 4-field hashes; #759 covers
+# the *code-as-data closed-loop maturity composite* specifically
+# — marker propagation fidelity (drift / samples), Guard
+# rollback hygiene safety (safe / attempts), reflection schema
+# coverage on macro/EDSL subtrees (covered / total) — as
+# separate per-decision-point counters the Agent consumes to
+# monitor extensible code-as-data production safety.
+# 5 ACs / 23 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758.
+# Real tests/test_task6_code_as_data_closedloop_harness.cpp
+# multi-fiber stress (random macro expansion deep nesting +
+# EDSL struct mutate under Guard + simulated reflect validate
+# + panic/rollback injection + steal during boundary → assert
+# fidelity metrics stay high, no hygiene drift post-rollback,
+# schema coverage tracks, TSan/ASan clean) + wire marker
+# provenance (from #757) + runtime reflect validate (from #758)
+# + Guard rollback path to feed the maturity stats (auto-
+# update on every successful self-mod boundary) + SLO /
+# (query:code-as-data-slo) with thresholds + Prometheus text
+# or OTLP deployment exporter + Task6 health score composite
+# + SEVA extension with macro-generated + user-EDSL verification
+# + CI gate on harness passing with fidelity thresholds + docs
+# are all follow-up (each is a dedicated session in
+# observability_metrics.h + evaluator_primitives_observability
+# .cpp + new test harness + SEVA demo + docs).
+aura_add_issue_test(test_issue_759)
+aura_issue_test_link_llvm_jit(test_issue_759)
+add_dependencies(all_test_issue_targets test_issue_759)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

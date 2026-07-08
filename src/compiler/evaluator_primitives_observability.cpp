@@ -536,6 +536,13 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // EDSL struct validate + macro hygiene invariant correlation
     // signals).
     "query:edsl-reflection-stats",
+    // Issue #759 — Unified 'code-as-data' closed-loop maturity
+    // observability (composite health score for the integrated
+    // macro + reflect + EDSL self-evo loop; production readiness
+    // dashboard for Task6: marker propagation fidelity, Guard
+    // rollback hygiene safety, reflection schema coverage on
+    // macro/EDSL subtrees, concurrent fiber stress success).
+    "query:code-as-data-maturity-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -10672,6 +10679,180 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "extension adoption rate the Agent consumes to decide "
                         "whether to define new DEFINE_STRUCT types or trigger "
                         "hygiene invariant checks under Guard commit.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #759: (query:code-as-data-maturity-stats) — unified
+    // 'code-as-data' closed-loop maturity observability composite
+    // (production readiness dashboard for Task6) for monitoring
+    // the integrated macro + reflect + EDSL self-evo loop health
+    // (non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats — 4 fields: provenance-captured / inliner-policy-
+    // violations / provenance-violations / hygiene-dirty-impact)
+    // which covers macro body hygiene observability + #758
+    // (query:edsl-reflection-stats — 4 fields: validated-edsl /
+    // hygiene-invariants-held / schema-fail-by-type /
+    // macro-correlated-violations) which covers EDSL struct +
+    // macro hygiene invariant correlation). #759 covers the
+    // *code-as-data closed-loop maturity composite* — marker
+    // propagation fidelity (drift / samples), Guard rollback
+    // hygiene safety (safe / attempts), reflection schema coverage
+    // on macro/EDSL subtrees (covered / total), concurrent fiber
+    // stress success — as separate per-decision-point counters
+    // the Agent consumes to monitor extensible code-as-data
+    // production safety in self-evo loops.
+    //
+    // Fields (4 + sentinel):
+    //   - fidelity-samples
+    //                                code_as_data_fidelity_samples_total
+    //                                (total marker propagation
+    //                                 fidelity check samples —
+    //                                 denominator for fidelity_pct
+    //                                 derivation: drift / samples
+    //                                 = 1 - fidelity_rate)
+    //   - fidelity-drift
+    //                                code_as_data_fidelity_drift_total
+    //                                (# of samples where marker
+    //                                 propagation drift detected
+    //                                 — proxy for "how often does
+    //                                 MacroIntroduced provenance
+    //                                 drift across self-mod
+    //                                 boundaries")
+    //   - guard-rollback-hygiene-safe
+    //                                code_as_data_rollback_hygiene_safe_total
+    //                                (# of Guard rollback events
+    //                                 that preserved hygiene
+    //                                 invariants + StableRef
+    //                                 validity — safe / attempts
+    //                                 = guard_rollback_hygiene_safe_pct)
+    //   - reflect-schema-macro-edsl
+    //                                code_as_data_reflect_schema_macro_edsl_total
+    //                                (# of reflect schema
+    //                                 validation calls on
+    //                                 macro-generated or EDSL-
+    //                                 mutated subtrees — covered
+    //                                 / total = reflection schema
+    //                                 coverage on macro/EDSL ratio)
+    //   - schema == 759
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual tests/test_task6_code_as_data_closedloop_
+    // harness.cpp multi-fiber stress test (random macro expansion
+    // deep nesting + EDSL struct mutate under Guard + simulated
+    // reflect validate + panic/rollback injection + steal during
+    // boundary → assert fidelity metrics stay high, no hygiene
+    // drift post-rollback, schema coverage tracks, TSan/ASan
+    // clean) + wire marker provenance (from #757) + runtime
+    // reflect validate (from #758) + Guard rollback path to feed
+    // the maturity stats (auto-update on every successful self-
+    // mod boundary) + SLO / (query:code-as-data-slo) with
+    // thresholds (e.g. fidelity >99%, coverage >95%, trigger
+    // self-heal or alert on breach) + Prometheus text or OTLP
+    // deployment exporter + Task6 health score composite + SEVA
+    // extension with macro-generated + user-EDSL verification
+    // code under load + CI gate on harness passing with fidelity
+    // thresholds + docs are all follow-up work (each is a
+    // dedicated session in observability_metrics.h +
+    // evaluator_primitives_observability.cpp + new test harness
+    // + SEVA demo + docs).
+    //
+    // Issue #759: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=759 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#758).
+    ev.primitives_.add(
+        "query:code-as-data-maturity-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t fidelity_samples =
+                m ? static_cast<std::int64_t>(
+                        m->code_as_data_fidelity_samples_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t fidelity_drift =
+                m ? static_cast<std::int64_t>(
+                        m->code_as_data_fidelity_drift_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_rollback_hygiene_safe =
+                m ? static_cast<std::int64_t>(
+                        m->code_as_data_rollback_hygiene_safe_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t reflect_schema_macro_edsl =
+                m ? static_cast<std::int64_t>(m->code_as_data_reflect_schema_macro_edsl_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"fidelity-samples", make_int(fidelity_samples)},
+                {"fidelity-drift", make_int(fidelity_drift)},
+                {"guard-rollback-hygiene-safe", make_int(guard_rollback_hygiene_safe)},
+                {"reflect-schema-macro-edsl", make_int(reflect_schema_macro_edsl)},
+                {"schema", make_int(759)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Unified 'code-as-data' closed-loop maturity observability "
+                        "composite (production readiness dashboard for Task6): "
+                        "fidelity-samples (total marker propagation fidelity check "
+                        "samples — denominator for fidelity_pct derivation), "
+                        "fidelity-drift (samples where marker propagation drift "
+                        "detected — drift / samples = 1 - fidelity_rate), "
+                        "guard-rollback-hygiene-safe (Guard rollback events that "
+                        "preserved hygiene invariants + StableRef validity — safe / "
+                        "attempts = guard_rollback_hygiene_safe_pct), "
+                        "reflect-schema-macro-edsl (reflect schema validation calls "
+                        "on macro-generated or EDSL-mutated subtrees — covered / "
+                        "total = reflection schema coverage on macro/EDSL ratio). "
+                        "Pairs with the existing #757 query:macro-hygiene-"
+                        "provenance-stats 4-field hash + #758 query:edsl-reflection-"
+                        "stats 4-field hash but tracks the *code-as-data closed-loop "
+                        "maturity composite* specifically as separate per-decision-"
+                        "point counters. #759 exposes the integrated macro + reflect "
+                        "+ EDSL self-evo loop production health the Agent consumes "
+                        "to decide whether to trigger self-heal, alert on SLO "
+                        "breach, or roll out additional task6 themes.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
