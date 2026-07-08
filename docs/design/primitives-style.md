@@ -100,6 +100,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:concurrent-safety-full-cycle-stats)` | 755 | MutationBoundary + steal + AOT + GC full-cycle safety (6 fields) |
 | `(query:dead-coercion-elision-stats)`    | 799    | narrow_evidence CastOp elision + zero-overhead savings (5 fields) |
 | `(query:linear-postmutate-fidelity-stats)` | 800  | linear ownership post-mutate / steal / EnvFrame fidelity (5 fields) |
+| `(query:type-incremental-fidelity-stats)` | 798  | ConstraintSystem incremental fidelity under Guard/steal (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -155,6 +156,16 @@ Distinct from `(query:dead-coercion-elim-stats)` (#687): #799 is the narrow_evid
 - `schema` — 800 (drift sentinel)
 
 Distinct from `(query:linear-ownership-gc-compiler-stats)` (#763): #800 tracks post-mutate fidelity under Guard/steal/rollback; #763 tracks compiler IRClosure GC root registration.
+
+### `(query:type-incremental-fidelity-stats)` fields (#798)
+
+- `cross-delta-blame-complete` — `type_incremental_cross_delta_blame_complete_total` (cross-delta conflicts with auditable `active_mutation_id` blame chain)
+- `reverify-truncated-under-guard` — `type_incremental_reverify_truncated_under_guard_total` (clean-constraint reverify scan capped while MutationBoundary active)
+- `epoch-sync-hits` — `type_incremental_epoch_sync_hits_total` (touched-root / narrow delta marks under Guard boundary)
+- `blame-chain-length` — `type_incremental_blame_chain_length_total` (cumulative blame chain steps on cross-delta hits)
+- `schema` — 798 (drift sentinel)
+
+Distinct from `(query:type-incremental-stats)` (#608): #798 tracks Guard/steal/MutationBoundary coordination and blame completeness; #608 is the general incremental type reliability sum.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

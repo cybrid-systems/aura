@@ -4781,6 +4781,64 @@ public:
         }
         return 0;
     }
+    // Issue #798: ConstraintSystem incremental fidelity stats.
+    void bump_type_incremental_cross_delta_blame_complete(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->type_incremental_cross_delta_blame_complete_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_type_incremental_reverify_truncated_under_guard(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->type_incremental_reverify_truncated_under_guard_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_type_incremental_epoch_sync_hits(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->type_incremental_epoch_sync_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_type_incremental_blame_chain_length(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->type_incremental_blame_chain_length_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_type_incremental_cross_delta_blame_complete() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->type_incremental_cross_delta_blame_complete_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t
+    get_type_incremental_reverify_truncated_under_guard() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->type_incremental_reverify_truncated_under_guard_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_type_incremental_epoch_sync_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->type_incremental_epoch_sync_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_type_incremental_blame_chain_length() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->type_incremental_blame_chain_length_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
