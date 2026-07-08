@@ -3821,6 +3821,34 @@ public:
             m->pattern_fast_path_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #717: fiber-safe MutationBoundaryGuard recovery
+    // counters backing the (query:fiber-boundary-violation-stats)
+    // primitive. These are public so future MutationBoundaryGuard
+    // dtor / panic_checkpoint wiring + fiber-mutation paths can
+    // call them at each decision point (rollback / yield-resume /
+    // recovery-failure). The primitive currently exposes them as
+    // raw counters so the Agent can compute its own derived
+    // statistics (recovery_success_rate = yield_resumes /
+    // (yield_resumes + recovery_failures); rollback_rate =
+    // rollbacks / guard_entries).
+    void bump_mutation_boundary_rollback() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_rollbacks_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_boundary_yield_resume() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_yield_resumes_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_boundary_recovery_failure() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_recovery_failures_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

@@ -3133,6 +3133,22 @@ add_dependencies(all_test_issue_targets test_issue_715)
 aura_add_issue_test(test_issue_716)
 aura_issue_test_link_llvm_jit(test_issue_716)
 add_dependencies(all_test_issue_targets test_issue_716)
+# Issue #717: fiber-boundary violation stats primitive —
+# 3 atomics + 3 bump helpers + (query:fiber-boundary-violation-stats,
+# schema 717) primitive (4-entry hash: 3 fields + schema sentinel).
+# Pairs with #438 query:fiber-migration-stats which tracks the
+# SCHEDULER side (steal-attempts / boundary-violations / defers);
+# #717 tracks the GUARD side (rollback / yield-resume / recovery-
+# failure) as a separate signal.
+# 5 ACs / 22 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712 + #713 +
+# #714 + #715 + #716. Real fiber-context check on guard dtor +
+# panic_checkpoint per-fiber mutation_stack_ snapshot + multi-fiber
+# yield+resume tests + AI orchestration rollback docs are all
+# follow-up (each is a dedicated session).
+aura_add_issue_test(test_issue_717)
+aura_issue_test_link_llvm_jit(test_issue_717)
+add_dependencies(all_test_issue_targets test_issue_717)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

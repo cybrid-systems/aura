@@ -1389,6 +1389,49 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pattern_macro_intro_filtered_total{0};
     std::atomic<std::uint64_t> pattern_fast_path_hits_total{0};
 
+    // Issue #717: fiber-safe MutationBoundaryGuard recovery
+    // counters for (query:fiber-boundary-violation-stats).
+    // Complements the existing #438 fiber-migration-stats
+    // (which tracks steal-attempts + boundary-violations +
+    // deferred counts) with RECOVERY-side signals:
+    //   - mutation_boundary_rollbacks_total  # of times the
+    //                                        MutationBoundaryGuard
+    //                                        dtor triggered a
+    //                                        rollback (fiber-
+    //                                        aware epoch bump +
+    //                                        dirty clear +
+    //                                        StableRef remap)
+    //   - mutation_boundary_yield_resumes_total
+    //                                      # of times a fiber
+    //                                        successfully resumed
+    //                                        after yielding at a
+    //                                        boundary (yield reason
+    //                                        was stolen/deferred +
+    //                                        resume + re-entry
+    //                                        succeeded)
+    //   - mutation_boundary_recovery_failures_total
+    //                                      # of times recovery
+    //                                        FAILED: partial dirty
+    //                                        state detected, leaked
+    //                                        StableRef, defuse_version_
+    //                                        drift across resume
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual fiber-context check on guard dtor +
+    // panic_checkpoint integration with per-fiber mutation_stack_
+    // snapshot + targeted multi-fiber tests are follow-up work
+    // (each is a dedicated session in evaluator_fiber_mutation.cpp
+    // + evaluator_primitives_mutate.cpp).
+    //
+    // Non-duplicative with #438 fiber-migration-stats (#438
+    // tracks steal-attempts / boundary-violations / defer counts
+    // from the SCHEDULER side; #717 tracks rollback / resume /
+    // recovery-failure counts from the GUARD side — these are
+    // complementary signals, not redundant).
+    std::atomic<std::uint64_t> mutation_boundary_rollbacks_total{0};
+    std::atomic<std::uint64_t> mutation_boundary_yield_resumes_total{0};
+    std::atomic<std::uint64_t> mutation_boundary_recovery_failures_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
