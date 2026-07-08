@@ -1673,6 +1673,59 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_auto_compact_triggers_total{0};
     std::atomic<std::uint64_t> arena_fragmentation_post_mutate{0};
 
+    // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
+    // history observability counters for (query:value-dispatch-stats).
+    // Exposes the Pass/Value/Shape integration signals that complement
+    // the existing pass_manager.ixx Wraps/Contracts, value.ixx v2
+    // tagged encoding, and shape_profiler.cpp history + stability
+    // logic without overlapping #658 Gaps 3/5 broad or #687
+    // coercion Pass:
+    //   - value_dispatch_calls_total     # of times classify /
+    //                                    is_* / as_* / dispatch
+    //                                    entry points were called
+    //                                    (proxy for "how much value
+    //                                    dispatch traffic the
+    //                                    pipeline is moving")
+    //   - value_unknown_tag_total        # of times classify
+    //                                    encountered an unknown
+    //                                    tag (bumped by value_tags.h
+    //                                    contract violation path —
+    //                                    proxy for "how often
+    //                                    dispatch misclass happens")
+    //   - value_v2_string_collisions_total
+    //                                   # of v2 string collisions
+    //                                    (two distinct interned
+    //                                    strings hashing to the same
+    //                                    value_idx — proxy for
+    //                                    "how saturated the v2
+    //                                    string heap is")
+    //   - shape_history_shift_total      # of times the shape
+    //                                    history ring buffer /
+    //                                    SoA column shifted
+    //                                    (proxy for "how churned
+    //                                    shape classification is"
+    //                                    — Agent uses this to
+    //                                    decide whether to enable
+    //                                    Pass short-circuit)
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual DirtyAware implementation for ConstantFoldingWrap /
+    // ArityWrap / Wraps + static_asserts + Contracts expansion +
+    // shape history ring buffer replacement + deopt_hook wiring
+    // to JIT/service dirty scope are follow-up work (each is a
+    // dedicated session in pass_manager.ixx + value.ixx +
+    // value_tags.h + shape_profiler.cpp).
+    //
+    // Non-duplicative with the existing pass_manager.ixx Wraps
+    // (static dispatch counters, no observable signals for value /
+    // shape internals); #723 is the FIRST observability surface
+    // that tracks Value v2 dispatch + shape history integration
+    // outcomes as separate counters.
+    std::atomic<std::uint64_t> value_dispatch_calls_total{0};
+    std::atomic<std::uint64_t> value_unknown_tag_total{0};
+    std::atomic<std::uint64_t> value_v2_string_collisions_total{0};
+    std::atomic<std::uint64_t> shape_history_shift_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

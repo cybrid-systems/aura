@@ -4012,6 +4012,36 @@ public:
             m->arena_fragmentation_post_mutate.store(ratio_scaled, std::memory_order_relaxed);
         }
     }
+    // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
+    // history observability counters backing the (query:value-dispatch-
+    // stats) primitive. These are public so future pass_manager.ixx
+    // + value.ixx + value_tags.h + shape_profiler.cpp hot-path wiring
+    // can call them at each decision point (dispatch call /
+    // unknown tag / v2 string collision / shape history shift).
+    void bump_value_dispatch_call() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->value_dispatch_calls_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_value_unknown_tag() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->value_unknown_tag_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_value_v2_string_collision() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->value_v2_string_collisions_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_shape_history_shift() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->shape_history_shift_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
