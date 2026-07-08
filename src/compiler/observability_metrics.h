@@ -2884,6 +2884,94 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_marker_loss_events_total{0};
     std::atomic<std::uint64_t> ir_hygiene_jit_violations_prevented_total{0};
     std::atomic<std::uint64_t> ir_hygiene_marker_propagation_hits_total{0};
+
+    // Issue #735: MacroIntroduced provenance in StableNodeRef +
+    // targeted dirty/rollback for macro subtrees observability
+    // counters backing the (query:macro-provenance-stats) primitive.
+    // These are public so future ast.ixx StableNodeRef + make_ref +
+    // MutationBoundaryGuard + mark_dirty_upward + evaluator_primitives_
+    // mutate.cpp can call them at each decision point
+    // (StableNodeRef captured with macro_introduced_at_capture +
+    // original_macro_expansion_id populated / dirty propagation
+    // targeted to macro-subtree / rollback success on macro subtree
+    // hygiene drift detected / is_macro_introduced hot-path consult).
+    //
+    // Non-duplicative with #714 (query:self-evolution-closedloop-
+    // stats ref drift + rollback + feedback mutate rounds) + #717
+    // (query:fiber-boundary-violation-stats — fiber/Guard boundary
+    // invariants) + #392 (subtree gen — internal subtree mechanism)
+    // + #373 (mutate hygiene guard — flat.is_macro_introduced internal
+    // check) + the existing #733 (query:ir-marker-hygiene-stats — IR-
+    // level marker propagation) + #750 (query:reflection-schema-stats
+    // — runtime reflection validate).
+    // #735 is the FIRST observability surface that tracks the
+    // *MacroIntroduced provenance + targeted macro-subtree handling*
+    // specifically — capture-time provenance in StableNodeRef,
+    // targeted dirty/rollback for macro subtrees, dirty-impact on
+    // macro-subtree count, rollback success rate — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // precise macro handling in long-running self-evo loops.
+    //
+    //   - macro_provenance_captured_total: # of times StableNodeRef
+    //                                      capture populated
+    //                                      macro_introduced_at_capture
+    //                                      + original_macro_expansion_id
+    //                                      fields (proxy for "how
+    //                                      often provenance is
+    //                                      tracked on capture").
+    //   - macro_provenance_is_macro_introduced_total: # of times the
+    //                                                  is_macro_
+    //                                                  introduced
+    //                                                  hot-path
+    //                                                  consult fired
+    //                                                  on a StableRef
+    //                                                  (proxy for
+    //                                                  "how often the
+    //                                                  macro check
+    //                                                  actually
+    //                                                  fires at hot
+    //                                                  path").
+    //   - macro_provenance_dirty_impact_total: # of dirty propagations
+    //                                          targeted to macro
+    //                                          subtree (via
+    //                                          original_macro_
+    //                                          expansion_id) instead
+    //                                          of whole subtree.
+    //                                          Proxy for "how often
+    //                                          we avoid over-
+    //                                          invalidation via
+    //                                          provenance-aware
+    //                                          dirty".
+    //   - macro_provenance_rollback_success_total: # of successful
+    //                                            rollback that
+    //                                            preserved macro
+    //                                            marker during
+    //                                            restore_children
+    //                                            (proxy for "how
+    //                                            often targeted
+    //                                            macro-subtree
+    //                                            rollback fired
+    //                                            cleanly").
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual ast.ixx StableNodeRef + macro_introduced_at_capture
+    // + original_macro_expansion_id fields + is_valid_subtree
+    // macro_provenance_check + MutationBoundaryGuard +
+    // rollback_macro_subtree_provenance + mark_dirty_upward targeted
+    // macro-subtree + dirty/epoch interaction strengthening
+    // (verify/macro dirty cascade respect MacroIntroduced provenance
+    // for incremental re-lower) + StableRef / hygiene stats
+    // correlation enhancement + tests/test_macro_provenance_stable_
+    // ref_rollback_self_evo.cpp harness (nested macro expand +
+    // multi-round mutate:rebind inside macro body under fiber steal
+    // / panic / Guard fail) + SEVA macro cases + #674 chaos stress
+    // integration + docs are all follow-up (each is a dedicated
+    // session in ast.ixx + mutate.cpp + evaluator_primitives_mutate.cpp
+    // + new test + SEVA demo + chaos stress + docs).
+    std::atomic<std::uint64_t> macro_provenance_captured_total{0};
+    std::atomic<std::uint64_t> macro_provenance_is_macro_introduced_total{0};
+    std::atomic<std::uint64_t> macro_provenance_dirty_impact_total{0};
+    std::atomic<std::uint64_t> macro_provenance_rollback_success_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

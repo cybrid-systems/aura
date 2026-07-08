@@ -3388,6 +3388,40 @@ add_dependencies(all_test_issue_targets test_issue_732)
 aura_add_issue_test(test_issue_733)
 aura_issue_test_link_llvm_jit(test_issue_733)
 add_dependencies(all_test_issue_targets test_issue_733)
+# Issue #735: MacroIntroduced provenance in StableNodeRef +
+# targeted dirty/rollback for macro subtrees observability
+# primitive — 4 atomics + 4 bump helpers +
+# (query:macro-provenance-stats, schema 735) primitive
+# (5-entry hash: 4 fields + schema sentinel). Pairs with the
+# existing #714 query:self-evolution-closedloop-stats ref-drift
+# + #717 query:fiber-boundary-violation-stats + #392 subtree
+# gen + #373 mutate hygiene guard + #733 query:ir-marker-
+# hygiene-stats IR-level marker propagation + #750 query:reflection-
+# schema-stats runtime reflection validate; #735 covers the
+# *MacroIntroduced provenance + targeted macro-subtree handling*
+# specifically — capture-time provenance in StableNodeRef,
+# hot-path consult, targeted dirty propagation, rollback success —
+# as separate per-decision-point counters the Agent consumes to
+# monitor precise macro handling in long-running self-evo loops.
+# 5 ACs / 54 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#733.
+# Real ast.ixx StableNodeRef + macro_introduced_at_capture +
+# original_macro_expansion_id fields + is_valid_subtree
+# macro_provenance_check + MutationBoundaryGuard + rollback_macro_
+# subtree_provenance + mark_dirty_upward targeted macro-subtree +
+# dirty/epoch interaction strengthening (verify/macro dirty cascade
+# respect MacroIntroduced provenance for incremental re-lower) +
+# StableRef / hygiene stats correlation enhancement +
+# tests/test_macro_provenance_stable_ref_rollback_self_evo.cpp
+# harness (nested macro expand + multi-round mutate:rebind inside
+# macro body under fiber steal / panic / Guard fail) + SEVA macro
+# cases + #674 chaos stress integration + docs are all follow-up
+# (each is a dedicated session in ast.ixx + mutate.cpp +
+# evaluator_primitives_mutate.cpp + new test + SEVA demo + chaos
+# stress + docs).
+aura_add_issue_test(test_issue_735)
+aura_issue_test_link_llvm_jit(test_issue_735)
+add_dependencies(all_test_issue_targets test_issue_735)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
