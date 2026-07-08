@@ -975,6 +975,74 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_cross_fiber_stale_total{0};
     std::atomic<std::uint64_t> envframe_version_mismatch_post_steal_total{0};
     std::atomic<std::uint64_t> envframe_dualpath_repair_total{0};
+
+    // Issue #756: EnvFrame dual-path consistency enforcement +
+    // desync panic policy + GCEnvWalkFn stale handling under
+    // concurrent mutation/steal counters backing the
+    // (query:envframe-dualpath-policy-stats) primitive. These
+    // are public so future evaluator.ixx + evaluator_env.cpp +
+    // gc_coordinator can call them at each decision point
+    // (mandatory ensure_envframe_dual_path_consistency call in
+    // walk_env_frames / GCEnvWalkFn / materialize_call_env /
+    // post-rollback paths / desync panic / desync log-and-sync /
+    // GCEnvWalkFn stale handling / concurrent steal/resume
+    // re-ensure).
+    //
+    // Non-duplicative with the existing #647 (query:envframe-
+    // dualpath-stale-stats-hash — 3 fields: cross-fiber-stale /
+    // version-mismatch / dualpath-repair + schema=647) + #418
+    // (query:envframe-dualpath-stale-stats legacy int) +
+    // #647 (query:envframe-dualpath-stats base flat-int) +
+    // existing envframe_desync_detected_ + envframe_gc_walk_
+    // safe_skips_ internal atomics.
+    // #756 is the FIRST observability surface that tracks the
+    // *desync panic policy + GCEnvWalkFn stale handling*
+    // specifically — desync-panic-count (panic strict mode
+    // firings) + gc-stale-desync-hits (GC walk detected stale
+    // + concurrent steal) — as separate per-decision-point
+    // counters the Agent consumes to monitor SoA EnvFrame
+    // dual-path production safety under concurrency.
+    //
+    //   - envframe_desync_panic_count_total: # of times the
+    //                                        strict-panic policy
+    //                                        fired on EnvFrame
+    //                                        dual-path desync
+    //                                        (length/order mismatch
+    //                                        detected + panic /
+    //                                        structured error with
+    //                                        provenance). Proxy
+    //                                        for "how often the
+    //                                        strict-panic policy
+    //                                        fired in production".
+    //   - envframe_gc_stale_desync_hits_total: # of times the
+    //                                          GCEnvWalkFn stale
+    //                                          check detected a
+    //                                          dual-path desync
+    //                                          (version_ stale +
+    //                                          length/order
+    //                                          mismatch) under
+    //                                          concurrent
+    //                                          steal/mutate.
+    //                                          Proxy for "how
+    //                                          often GC walk
+    //                                          detected stale
+    //                                          EnvFrame under
+    //                                          concurrency".
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual mandatory ensure_envframe_dual_path_consistency
+    // call in walk_env_frames / GCEnvWalkFn / materialize_call_env
+    // / post-rollback paths + strict-panic vs log-and-sync policy
+    // flag + GCEnvWalkFn stale + concurrent steal/resume
+    // re-ensure + tests/test_envframe_dualpath_consistency_
+    // concurrent_steal_gc.cpp harness (heavy mutate + steal + GC
+    // under dual-path load → assert no desync or caught cleanly +
+    // metrics + TSan clean) + #674 + #731 chaos stress
+    // integration + docs are all follow-up (each is a dedicated
+    // session in evaluator.ixx + evaluator_env.cpp + gc_coordinator
+    // + new test + chaos stress + docs).
+    std::atomic<std::uint64_t> envframe_desync_panic_count_total{0};
+    std::atomic<std::uint64_t> envframe_gc_stale_desync_hits_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +
