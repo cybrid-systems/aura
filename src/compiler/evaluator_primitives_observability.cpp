@@ -116,6 +116,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:linear-occurrence-mutate-stats",
     // Issue #748 — SV verification EDSL structured mutate + dirty re-emit closed-loop
     "query:sv-verification-structure-stats",
+    // Issue #801 — SV commercial emit fidelity stats
+    "query:sv-commercial-emit-fidelity-stats",
     // Issue #750 — Runtime reflection schema validation for macro/EDSL mutate
     "query:reflection-schema-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
@@ -6514,6 +6516,72 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("emit-fidelity-pass", emit_pass);
         insert_kv("emit-fidelity-fail", emit_fail);
         insert_kv("schema", 748);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #801: query:sv-commercial-emit-fidelity-stats — commercial SV emit
+    // roundtrip + dirty re-emit fidelity dashboard (refines #772/#748/#725;
+    // non-duplicative with query:sv-verification-structure-stats #748).
+    //
+    // Fields (4 + sentinel):
+    //   - emit-parse-success-hits          sv_commercial_emit_parse_success_total
+    //   - roundtrip-mismatch-prevented     sv_commercial_emit_roundtrip_mismatch_prevented_total
+    //   - dirty-reemit-hits                sv_commercial_emit_dirty_reemit_total
+    //   - commercial-tool-compatible-hits    sv_commercial_emit_tool_compatible_total
+    //   - schema == 801
+    add("query:sv-commercial-emit-fidelity-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t parse_success =
+            m ? static_cast<std::int64_t>(
+                    m->sv_commercial_emit_parse_success_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t mismatch_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->sv_commercial_emit_roundtrip_mismatch_prevented_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dirty_reemit =
+            m ? static_cast<std::int64_t>(
+                    m->sv_commercial_emit_dirty_reemit_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t tool_compatible =
+            m ? static_cast<std::int64_t>(
+                    m->sv_commercial_emit_tool_compatible_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("emit-parse-success-hits", parse_success);
+        insert_kv("roundtrip-mismatch-prevented", mismatch_prevented);
+        insert_kv("dirty-reemit-hits", dirty_reemit);
+        insert_kv("commercial-tool-compatible-hits", tool_compatible);
+        insert_kv("schema", 801);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

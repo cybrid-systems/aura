@@ -125,6 +125,8 @@ void maybe_hardware_feedback(Evaluator& ev, aura::ast::NodeId node) {
                 m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
             m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
         }
+        ev.record_sv_commercial_emit_fidelity(validation.ok, true,
+                                              !reemit.commercial_do_stub.empty());
     }
 }
 
@@ -785,6 +787,46 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
         return build_hash_eda(
             {{"path", path_ev}, {"status-ok", make_int(1)}, {"reason", make_string(reason_idx)}});
     });
+
+    // Issue #801: (eda:validate-sv-emit-roundtrip node-id [simulator])
+    // — re-emit SV for a verification node, run validate_sv_emit roundtrip
+    // stub, record commercial emit fidelity metrics, return status hash.
+    add("eda:validate-sv-emit-roundtrip",
+        [&ev, build_hash_eda](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return build_hash_eda({{"node-id", make_int(-1)},
+                                       {"emit-ok", make_int(0)},
+                                       {"emit-len", make_int(0)},
+                                       {"roundtrip-ok", make_int(0)}});
+            auto* ws = ev.workspace_flat();
+            auto* pool = ev.workspace_pool();
+            if (!ws || !pool)
+                return build_hash_eda({{"node-id", make_int(as_int(a[0]))},
+                                       {"emit-ok", make_int(0)},
+                                       {"emit-len", make_int(0)},
+                                       {"roundtrip-ok", make_int(0)}});
+            const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            if (!ws->is_live_node(nid))
+                return build_hash_eda({{"node-id", make_int(static_cast<std::int64_t>(nid))},
+                                       {"emit-ok", make_int(0)},
+                                       {"emit-len", make_int(0)},
+                                       {"roundtrip-ok", make_int(0)}});
+            std::string_view simulator = "vcs";
+            if (a.size() >= 2 && is_string(a[1])) {
+                const auto sim_idx = as_string_idx(a[1]);
+                if (sim_idx < ev.string_heap_.size())
+                    simulator = ev.string_heap_[sim_idx];
+            }
+            const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
+            const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
+            ev.record_sv_commercial_emit_fidelity(validation.ok, true,
+                                                  !reemit.commercial_do_stub.empty());
+            return build_hash_eda(
+                {{"node-id", make_int(static_cast<std::int64_t>(nid))},
+                 {"emit-ok", make_int(reemit.sv_text.empty() ? 0 : 1)},
+                 {"emit-len", make_int(static_cast<std::int64_t>(reemit.sv_text.size()))},
+                 {"roundtrip-ok", make_int(validation.ok ? 1 : 0)}});
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

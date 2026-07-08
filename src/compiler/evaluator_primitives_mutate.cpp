@@ -107,6 +107,8 @@ namespace {
                                                    std::memory_order_relaxed);
                 }
             }
+            ev.record_sv_commercial_emit_fidelity(validation.ok, true,
+                                                  !reemit.commercial_do_stub.empty());
         }
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
