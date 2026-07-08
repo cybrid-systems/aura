@@ -4297,15 +4297,14 @@ public:
     void bump_macro_hygiene_provenance_captured() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->macro_hygiene_provenance_captured_total.fetch_add(1,
-                                                                 std::memory_order_relaxed);
+            m->macro_hygiene_provenance_captured_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     void bump_macro_hygiene_inliner_policy_violation() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->macro_hygiene_inliner_policy_violations_total.fetch_add(
-                1, std::memory_order_relaxed);
+            m->macro_hygiene_inliner_policy_violations_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
     }
     void bump_macro_hygiene_dirty_impact() noexcept {

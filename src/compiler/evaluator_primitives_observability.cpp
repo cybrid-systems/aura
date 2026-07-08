@@ -10457,18 +10457,15 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                                      : nullptr;
             const std::int64_t provenance_captured =
                 m ? static_cast<std::int64_t>(
-                        m->macro_hygiene_provenance_captured_total.load(
-                            std::memory_order_relaxed))
+                        m->macro_hygiene_provenance_captured_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t inliner_policy_violations =
-                m ? static_cast<std::int64_t>(
-                        m->macro_hygiene_inliner_policy_violations_total.load(
-                            std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(m->macro_hygiene_inliner_policy_violations_total.load(
+                        std::memory_order_relaxed))
                   : 0;
             const std::int64_t provenance_violations =
-                m ? static_cast<std::int64_t>(
-                        m->macro_hygiene_provenance_violations_total.load(
-                            std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(m->macro_hygiene_provenance_violations_total.load(
+                        std::memory_order_relaxed))
                   : 0;
             const std::int64_t hygiene_dirty_impact =
                 m ? static_cast<std::int64_t>(
