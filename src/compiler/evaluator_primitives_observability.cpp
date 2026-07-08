@@ -10123,9 +10123,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const std::int64_t is_macro_introduced_consults =
-                m ? static_cast<std::int64_t>(
-                        m->macro_provenance_is_macro_introduced_total.load(
-                            std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(m->macro_provenance_is_macro_introduced_total.load(
+                        std::memory_order_relaxed))
                   : 0;
             const std::int64_t provenance_captured =
                 m ? static_cast<std::int64_t>(
@@ -10137,8 +10136,7 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                   : 0;
             const std::int64_t rollback_success =
                 m ? static_cast<std::int64_t>(
-                        m->macro_provenance_rollback_success_total.load(
-                            std::memory_order_relaxed))
+                        m->macro_provenance_rollback_success_total.load(std::memory_order_relaxed))
                   : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"is-macro-introduced-consults", make_int(is_macro_introduced_consults)},
