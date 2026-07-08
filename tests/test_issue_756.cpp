@@ -117,8 +117,7 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"desync-panic-count", "gc-stale-desync-hits",
                                            "dualpath-repair", "version-mismatch", "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:envframe-dualpath-policy-stats) '{}')", k));
+        auto f = cs.eval(std::format("(hash-ref (query:envframe-dualpath-policy-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
@@ -127,16 +126,14 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
     const auto panic =
         hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "desync-panic-count");
-    CHECK(panic == 0,
-          std::format("desync-panic-count = {} (expected 0 on fresh service)", panic));
+    CHECK(panic == 0, std::format("desync-panic-count = {} (expected 0 on fresh service)", panic));
     const auto gc_stale =
         hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "gc-stale-desync-hits");
     CHECK(gc_stale == 0,
           std::format("gc-stale-desync-hits = {} (expected 0 on fresh service)", gc_stale));
     const auto repair =
         hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "dualpath-repair");
-    CHECK(repair == 0,
-          std::format("dualpath-repair = {} (expected 0 on fresh service)", repair));
+    CHECK(repair == 0, std::format("dualpath-repair = {} (expected 0 on fresh service)", repair));
     const auto mismatch =
         hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "version-mismatch");
     CHECK(mismatch == 0,
@@ -145,8 +142,7 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 756 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "schema");
+    const auto schema = hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "schema");
     CHECK(schema == 756, std::format("schema = {} (expected 756)", schema));
 }
 
@@ -180,19 +176,18 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     // The other 2 fields must remain 0 since we only bumped the 2 new atomics.
     const auto repair =
         hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "dualpath-repair");
-    CHECK(repair == 0,
-          std::format(
-              "dualpath-repair = {} (expected 0 after only desync/gc-stale bumps)", repair));
+    CHECK(
+        repair == 0,
+        std::format("dualpath-repair = {} (expected 0 after only desync/gc-stale bumps)", repair));
     const auto mismatch =
         hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "version-mismatch");
     CHECK(mismatch == 0,
-          std::format(
-              "version-mismatch = {} (expected 0 after only desync/gc-stale bumps)", mismatch));
+          std::format("version-mismatch = {} (expected 0 after only desync/gc-stale bumps)",
+                      mismatch));
 }
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
-    std::println(
-        "\n--- AC5: regression — #712..#735 sibling primitives unaffected ---");
+    std::println("\n--- AC5: regression — #712..#735 sibling primitives unaffected ---");
     auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
     auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
     auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
@@ -252,8 +247,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
     const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
-    CHECK(jit_schema == 713,
-          std::format("jit schema = {} (expected 713, no drift)", jit_schema));
+    CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
         hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
     CHECK(self_evo_schema == 714,
@@ -268,9 +262,9 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
         hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
-    CHECK(fiber_boundary_schema == 717,
-          std::format("fiber-boundary schema = {} (expected 717, no drift)",
-                      fiber_boundary_schema));
+    CHECK(
+        fiber_boundary_schema == 717,
+        std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
         hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
     CHECK(incremental_schema == 718,
@@ -278,34 +272,30 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                       incremental_schema));
     const auto closure_env_schema =
         hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "schema");
-    CHECK(closure_env_schema == 719,
-          std::format("closure-env-epoch schema = {} (expected 719, no drift)",
-                      closure_env_schema));
+    CHECK(
+        closure_env_schema == 719,
+        std::format("closure-env-epoch schema = {} (expected 719, no drift)", closure_env_schema));
     const auto jit_parity_schema =
         hash_int_field(cs, "(query:jit-interpreter-parity-stats)", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema = hash_int_field(cs, "(query:arena-integration-stats)", "schema");
     CHECK(arena_schema == 722,
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
-    const auto value_dispatch_schema =
-        hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
-    CHECK(value_dispatch_schema == 723,
-          std::format("value-dispatch schema = {} (expected 723, no drift)",
-                      value_dispatch_schema));
+    const auto value_dispatch_schema = hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
+    CHECK(
+        value_dispatch_schema == 723,
+        std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
         hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
-    const auto unified_error_schema =
-        hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto unified_error_schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
     CHECK(unified_error_schema == 728,
-          std::format("unified-error schema = {} (expected 728, no drift)",
-                      unified_error_schema));
+          std::format("unified-error schema = {} (expected 728, no drift)", unified_error_schema));
     const auto arena_concurrent_schema =
         hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "schema");
     CHECK(arena_concurrent_schema == 731,
@@ -317,8 +307,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("aot-safe-swap schema = {} (expected 732, no drift)", aot_safe_schema));
     const auto ir_marker_schema = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "schema");
     CHECK(ir_marker_schema == 733,
-          std::format("ir-marker-hygiene schema = {} (expected 733, no drift)",
-                      ir_marker_schema));
+          std::format("ir-marker-hygiene schema = {} (expected 733, no drift)", ir_marker_schema));
     const auto macro_provenance_schema =
         hash_int_field(cs, "(query:macro-provenance-stats)", "schema");
     CHECK(macro_provenance_schema == 735,
