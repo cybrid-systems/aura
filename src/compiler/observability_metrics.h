@@ -1623,6 +1623,56 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_soa_dirty_cascade_to_shape_total{0};
     std::atomic<std::uint64_t> ir_soa_pcv_wiring_savings_bytes_total{0};
 
+    // Issue #722: Arena tier/dtor/compact integration observability
+    // counters for (query:arena-integration-stats). Exposes the
+    // hot-path integration signals that complement the existing
+    // ArenaStats (compaction_count / fragmentation_ratio /
+    // defrag_requested_) and request_defrag / clear in arena.ixx
+    // without overlapping #658 Gap1 broad or #642 high-level:
+    //   - arena_tier_fallbacks_total         # of times the
+    //                                         SmallObjectPool tier
+    //                                         (16/32/64B) was
+    //                                         exhausted and the
+    //                                         allocator fell back to
+    //                                         pmr
+    //   - arena_dtor_dirty_hooks_total       # of times the dtor
+    //                                         thunk triggered a
+    //                                         dirty/shape hook on
+    //                                         reset / compact (proxy
+    //                                         for "how many small
+    //                                         nodes invalidated
+    //                                         shape on destroy")
+    //   - arena_auto_compact_triggers_total  # of times the
+    //                                         auto-compact policy
+    //                                         triggered compact/defrag
+    //                                         from fragmentation +
+    //                                         yield_check or dirty
+    //                                         cascade (no manual
+    //                                         request_defrag call)
+    //   - arena_fragmentation_post_mutate    fragmentation ratio
+    //                                         after mutate (scaled
+    //                                         0..1e6 — 0 = no
+    //                                         fragmentation,
+    //                                         1e6 = 100%)
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual fallback dirty-mark hook + dtor-to-shape wiring
+    // + auto-compact policy from fragmentation/yield + IR cache
+    // stats merge are follow-up work (each is a dedicated session
+    // in arena.ixx + ShapeProfiler + ir_cache_pure + service.ixx).
+    //
+    // Non-duplicative with the existing ArenaStats in arena.ixx
+    // (compaction_count / fragmentation_ratio / defrag_requested_
+    // are *internal* aggregate metrics); #722 is the FIRST
+    // observability surface that exposes Arena ↔ dirty/shape
+    // integration signals as separate counters the Agent can
+    // consume to decide whether to force defrag or trust the
+    // auto-compact policy.
+    std::atomic<std::uint64_t> arena_tier_fallbacks_total{0};
+    std::atomic<std::uint64_t> arena_dtor_dirty_hooks_total{0};
+    std::atomic<std::uint64_t> arena_auto_compact_triggers_total{0};
+    std::atomic<std::uint64_t> arena_fragmentation_post_mutate{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

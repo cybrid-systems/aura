@@ -3225,6 +3225,22 @@ add_dependencies(all_test_issue_targets test_issue_720)
 aura_add_issue_test(test_issue_721)
 aura_issue_test_link_llvm_jit(test_issue_721)
 add_dependencies(all_test_issue_targets test_issue_721)
+# Issue #722: Arena tier/dtor/compact integration observability
+# primitive — 4 atomics + 4 bump helpers + (query:arena-integration-stats,
+# schema 722) primitive (5-entry hash: 4 fields + schema sentinel).
+# Pairs with the existing ArenaStats in arena.ixx (internal aggregate
+# metrics); #722 exposes Arena <-> dirty/shape integration signals
+# as separate counters the Agent can consume.
+# 5 ACs / 30 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility (incl. fragmentation setter
+# with scaled-ratio value + setter overwrite edge case), regression
+# of #712..#721. Real fallback dirty-mark hook + dtor-to-shape
+# integration + auto-compact policy + 10k+ small node stress test
+# are all follow-up (each is a dedicated session in arena.ixx +
+# ShapeProfiler + ir_cache_pure + service.ixx).
+aura_add_issue_test(test_issue_722)
+aura_issue_test_link_llvm_jit(test_issue_722)
+add_dependencies(all_test_issue_targets test_issue_722)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
