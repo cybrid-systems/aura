@@ -4307,6 +4307,49 @@ public:
                                                                        std::memory_order_relaxed);
         }
     }
+    // Issue #758: runtime auto_validate bridge for user-defined
+    // EDSL structs under MutationBoundaryGuard with macro hygiene
+    // invariant correlation counters backing the
+    // (query:edsl-reflection-stats) primitive. These are public
+    // so future reflect.hh + new runtime_reflect_edsl_bridge.cpp +
+    // evaluator_primitives_mutate.cpp can call them at each
+    // decision point (runtime_validate_edsl_struct call on
+    // EDSL-tagged nodes pre-commit / auto_validate pass / fail /
+    // hygiene invariants held / MacroIntroduced descendants verified
+    // for valid provenance / hygiene invariant correlation /
+    // dirty/epoch cascade on violation / mutation-impact-snapshot
+    // correlation). Pairs with the existing #750 (query:reflection-
+    // schema-stats — 4 fields: validated / hygiene-invariants-held /
+    // schema-violations / stale-validation-prevented) but tracks
+    // the *user-defined EDSL struct + macro hygiene invariant
+    // correlation* specifically — per-type EDSL struct pass,
+    // MacroIntroduced descendants verified for valid provenance,
+    // per-type EDSL struct fail, macro_def_id-correlated violations
+    // — not the general macro body schema validation surface.
+    void bump_edsl_validated() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_validated_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_edsl_hygiene_invariants_held() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_hygiene_invariants_held_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_edsl_schema_fail_by_type() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_schema_fail_by_type_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_edsl_macro_correlated_violation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->edsl_macro_correlated_violations_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

@@ -3491,6 +3491,33 @@ add_dependencies(all_test_issue_targets test_issue_756)
 aura_add_issue_test(test_issue_757)
 aura_issue_test_link_llvm_jit(test_issue_757)
 add_dependencies(all_test_issue_targets test_issue_757)
+# Issue #758: runtime auto_validate bridge for user-defined EDSL
+# structs (DEFINE_STRUCT / custom nodes) under MutationBoundaryGuard
+# with macro hygiene invariant correlation observability
+# primitive — 4 atomics + 4 bump helpers +
+# (query:edsl-reflection-stats, schema 758) primitive (5-entry
+# hash: 4 fields + schema sentinel). Pairs with the existing
+# #750 query:reflection-schema-stats 4-field hash + (reflect:validate-
+# macro-body) + (reflect:validate-edsl) primitives; #758 covers the
+# *user-defined EDSL struct + macro hygiene invariant correlation*
+# specifically — per-type EDSL struct pass, MacroIntroduced
+# descendants verified for valid provenance, per-type EDSL struct
+# fail, macro_def_id-correlated violations — as separate per-decision-
+# point counters the Agent consumes to monitor extensible EDSL
+# struct production safety in self-evo loops.
+# 5 ACs / 24 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #735/#756/#757.
+# Real reflect.hh + new runtime_reflect_edsl_bridge.cpp +
+# runtime_validate_edsl_struct + MutationBoundaryGuard integration
+# + (reflect:validate-edsl node-id [type]) with optional type arg +
+# tests/test_reflection_edsl_struct_validate_guard_mutate.cpp harness +
+# SEVA custom EDSL demo + dirty/epoch cascade on violation + docs
+# are all follow-up (each is a dedicated session in reflect.hh +
+# runtime_reflect_edsl_bridge.cpp + evaluator_primitives_mutate.cpp +
+# new test + SEVA demo + docs).
+aura_add_issue_test(test_issue_758)
+aura_issue_test_link_llvm_jit(test_issue_758)
+add_dependencies(all_test_issue_targets test_issue_758)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

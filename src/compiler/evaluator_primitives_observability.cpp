@@ -528,6 +528,14 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // point fine-grained provenance + dynamic inliner policy +
     // per-macro correlation signals).
     "query:macro-hygiene-provenance-stats",
+    // Issue #758 — Runtime auto_validate bridge for user-defined
+    // EDSL structs (DEFINE_STRUCT / custom nodes) under
+    // MutationBoundaryGuard with macro hygiene invariant
+    // correlation observability (non-duplicative with #750
+    // general macro schema stats; #758 tracks per-decision-point
+    // EDSL struct validate + macro hygiene invariant correlation
+    // signals).
+    "query:edsl-reflection-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -10498,6 +10506,172 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "rate the Agent consumes to decide whether to enable "
                         "fine-grained provenance tracking or trigger inliner-policy "
                         "tuning under Guard.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #758: (query:edsl-reflection-stats) — runtime
+    // auto_validate bridge for user-defined EDSL structs
+    // (DEFINE_STRUCT / custom nodes) under MutationBoundaryGuard
+    // with macro hygiene invariant correlation observability
+    // for production extensible EDSL in self-evolving AI code
+    // (non-duplicative with #750 (query:reflection-schema-stats —
+    // 4 fields: validated / hygiene-invariants-held / schema-
+    // violations / stale-validation-prevented) which covers
+    // general macro body schema validation + (reflect:validate-
+    // macro-body node-id) + (reflect:validate-edsl node-id)
+    // primitives). #758 covers the *user-defined EDSL struct +
+    // macro hygiene invariant correlation* specifically —
+    // per-type EDSL struct pass, MacroIntroduced descendants
+    // verified for valid provenance, per-type EDSL struct fail,
+    // macro_def_id-correlated violations — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // extensible EDSL struct production safety in self-evo
+    // loops.
+    //
+    // Fields (4 + sentinel):
+    //   - validated-edsl             edsl_validated_total
+    //                                 (# of EDSL struct auto_validate
+    //                                  pass firings under Guard
+    //                                  commit — proxy for "how
+    //                                  many user-defined EDSL
+    //                                  structs were successfully
+    //                                  validated")
+    //   - hygiene-invariants-held    edsl_hygiene_invariants_held_total
+    //                                 (# of times all
+    //                                  MacroIntroduced descendants
+    //                                  of an EDSL struct had
+    //                                  valid provenance + no
+    //                                  capture violation + marker
+    //                                  consistency — proxy for
+    //                                  "how often the hygiene
+    //                                  invariant holds under EDSL
+    //                                  mutate")
+    //   - schema-fail-by-type        edsl_schema_fail_by_type_total
+    //                                 (# of EDSL struct
+    //                                  auto_validate fail firings
+    //                                  — proxy for "how often the
+    //                                  EDSL struct validation
+    //                                  caught a schema violation")
+    //   - macro-correlated-violations edsl_macro_correlated_violations_total
+    //                                 (# of hygiene violations
+    //                                  correlated to specific
+    //                                  macro_def_id — proxy for
+    //                                  "how often a macro-
+    //                                  introduced descendant of
+    //                                  an EDSL struct failed the
+    //                                  hygiene check")
+    //   - schema == 758
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual reflect.hh + new runtime_reflect_edsl_bridge.cpp
+    // + runtime_validate_edsl_struct(flat, root_id, edsl_type_name)
+    // uses reflect_members to walk expected layout + reconstruct
+    // temp struct from AST payload/children + call auto_validate +
+    // verify MacroIntroduced descendants + MutationBoundaryGuard
+    // integration on EDSL-tagged nodes before commit +
+    // (reflect:validate-edsl node-id [type]) primitive with
+    // optional type arg + tests/test_reflection_edsl_struct_
+    // validate_guard_mutate.cpp harness (user EDSL struct define
+    // via macro + mutate under Guard → assert validate catches bad
+    // schema/hygiene, ok=false, metrics, TSan clean) + SEVA custom
+    // EDSL demo + dirty/epoch cascade on violation + mutation-
+    // impact-snapshot correlation + docs are all follow-up work
+    // (each is a dedicated session in reflect.hh + runtime_reflect_
+    // edsl_bridge.cpp + evaluator_primitives_mutate.cpp + new test
+    // + SEVA demo + docs).
+    //
+    // Issue #758: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=758 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#757).
+    ev.primitives_.add(
+        "query:edsl-reflection-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t validated_edsl =
+                m ? static_cast<std::int64_t>(
+                        m->edsl_validated_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_invariants_held =
+                m ? static_cast<std::int64_t>(
+                        m->edsl_hygiene_invariants_held_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t schema_fail_by_type =
+                m ? static_cast<std::int64_t>(
+                        m->edsl_schema_fail_by_type_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t macro_correlated_violations =
+                m ? static_cast<std::int64_t>(
+                        m->edsl_macro_correlated_violations_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"validated-edsl", make_int(validated_edsl)},
+                {"hygiene-invariants-held", make_int(hygiene_invariants_held)},
+                {"schema-fail-by-type", make_int(schema_fail_by_type)},
+                {"macro-correlated-violations", make_int(macro_correlated_violations)},
+                {"schema", make_int(758)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Runtime auto_validate bridge for user-defined EDSL structs "
+                        "(DEFINE_STRUCT / custom nodes) under MutationBoundaryGuard "
+                        "with macro hygiene invariant correlation observability: "
+                        "validated-edsl (per-type EDSL struct pass), "
+                        "hygiene-invariants-held (MacroIntroduced descendants "
+                        "verified for valid provenance), schema-fail-by-type (per-type "
+                        "EDSL struct fail), macro-correlated-violations (hygiene "
+                        "violations correlated to macro_def_id). Pairs with the "
+                        "existing #750 query:reflection-schema-stats 4-field hash "
+                        "but tracks the *user-defined EDSL struct + macro hygiene "
+                        "invariant correlation* specifically as separate "
+                        "per-decision-point counters. #758 exposes the EDSL "
+                        "extension adoption rate the Agent consumes to decide "
+                        "whether to define new DEFINE_STRUCT types or trigger "
+                        "hygiene invariant checks under Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
