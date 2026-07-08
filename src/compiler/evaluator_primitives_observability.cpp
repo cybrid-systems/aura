@@ -499,6 +499,10 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // coarse arena stats; #731 tracks per-decision-point concurrent
     // safety signals).
     "query:arena-concurrent-compact-stats",
+    // Issue #732 — AOT hot-reload safe-swap at MutationBoundary
+    // observability (non-duplicative with #708 / #644 / #590 coarse
+    // AOT stats; #732 tracks per-decision-point safe-swap signals).
+    "query:aot-safe-swap-boundary-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -9654,6 +9658,160 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "the Agent consumes to decide whether to enable concurrent "
                         "compact under fiber contention or trigger panic-restore "
                         "more aggressively.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #732: (query:aot-safe-swap-boundary-stats) — AOT
+    // hot-reload safe-swap at MutationBoundary observability for
+    // production zero-downtime multi-agent orchestration (non-
+    // duplicative with #708 (query:aot-reload-stats 5-7 field
+    // high-level reload summary — attempts / success / stale /
+    // refcount_swaps / region_violations / deopt-on-steal /
+    // concurrent-safe-reloads) + #644 (query:aot-reload-func-
+    // table-stats enforcement with ref-bump / ref-decrement /
+    // region-reapply) + #590 (query:aot-hotupdate-stats 3 atomics).
+    // #732 covers the *safe-swap at MutationBoundary* specifically
+    // — reloads that fired at the outermost safe-swap point (NOT
+    // mid-mutation) — as the per-decision-point signal the Agent
+    // consumes to monitor safe-swap adoption rate + zero-downtime
+    // orchestration quality.
+    //
+    // Fields (5 + sentinel):
+    //   - safe-boundary-hits          aot_safe_boundary_hits_total
+    //                                 (# of AOT reloads that fired at
+    //                                  outermost MutationBoundary
+    //                                  safe-swap point — proxy for
+    //                                  "how often reload landed at a
+    //                                  true safe point vs. was
+    //                                  deferred / raced")
+    //   - refcount-swaps              aot_refcount_swaps_
+    //                                 (# of atomic func_table
+    //                                  refcount swaps — read from
+    //                                  existing #708 atomic for
+    //                                  cross-reference with the
+    //                                  high-level summary)
+    //   - region-violations-prevented aot_region_mismatch_
+    //                                 (# of region mismatches
+    //                                  detected + prevented on reload
+    //                                  — read from existing #708
+    //                                  atomic; close to #708's
+    //                                  region-violations field)
+    //   - concurrent-safe-reloads     aot_concurrent_safe_reloads_
+    //                                 (# of concurrent safe reloads
+    //                                  — read from existing #708
+    //                                  atomic; cross-reference with
+    //                                  high-level summary)
+    //   - deopt-on-steal              aot_deopt_on_steal_
+    //                                 (# of deopts triggered on fiber
+    //                                  steal — read from existing
+    //                                  #708 atomic; cross-reference)
+    //   - schema == 732
+    //
+    // Phase 1 ships the primitive + counter + bump helper.
+    // The actual atomic func_table refcount swap protocol in
+    // aura_jit_bridge.cpp aura_reload_aot_module + per-region
+    // isolation enforcement on reload + aura_aot_request_safe_reload()
+    // API + MutationBoundaryGuard outermost exit hook + GraceEpoch
+    // defer-old-decrement after grace period + tests/test_aot_hot_swap_
+    // refcount_region_guard_safe.cpp harness (multi-agent different
+    // regions + AOT emit + mutate + concurrent apply + reload at
+    // boundary) + #674 concurrent stress integration + docs are
+    // all follow-up work (each is a dedicated session in
+    // aura_jit_bridge.cpp + MutationBoundaryGuard + fiber.cpp + new
+    // test + chaos stress + docs).
+    //
+    // Issue #732: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=732 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#728 / #731).
+    ev.primitives_.add(
+        "query:aot-safe-swap-boundary-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 6-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t safe_boundary_hits =
+                m ? static_cast<std::int64_t>(
+                        m->aot_safe_boundary_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t refcount_swaps =
+                m ? static_cast<std::int64_t>(m->aot_refcount_swaps_.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t region_violations_prevented =
+                m ? static_cast<std::int64_t>(m->aot_region_mismatch_.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t concurrent_safe_reloads =
+                m ? static_cast<std::int64_t>(
+                        m->aot_concurrent_safe_reloads_.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t deopt_on_steal =
+                m ? static_cast<std::int64_t>(m->aot_deopt_on_steal_.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"safe-boundary-hits", make_int(safe_boundary_hits)},
+                {"refcount-swaps", make_int(refcount_swaps)},
+                {"region-violations-prevented", make_int(region_violations_prevented)},
+                {"concurrent-safe-reloads", make_int(concurrent_safe_reloads)},
+                {"deopt-on-steal", make_int(deopt_on_steal)},
+                {"schema", make_int(732)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "AOT hot-reload safe-swap at MutationBoundary observability: "
+                        "safe-boundary-hits (per-reload mutation-boundary safe-swap "
+                        "firings), refcount-swaps + region-violations-prevented + "
+                        "concurrent-safe-reloads + deopt-on-steal (cross-reference "
+                        "with #708 query:aot-reload-stats high-level summary). Pairs "
+                        "with the existing #708 query:aot-reload-stats 5-7 field "
+                        "hash + #644 query:aot-reload-func-table-stats enforcement "
+                        "primitive + #590 query:aot-hotupdate-stats 3 atomics but "
+                        "tracks the *safe-swap at MutationBoundary* specifically "
+                        "as separate per-decision-point counters. #732 exposes the "
+                        "safe-swap adoption rate the Agent consumes to decide "
+                        "whether to defer reload until next safe-swap point or "
+                        "trigger safe-reload API.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

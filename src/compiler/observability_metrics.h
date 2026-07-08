@@ -2739,6 +2739,52 @@ struct CompilerMetrics {
     // Issue #653: bridge_epoch vs func-table epoch mismatch on
     // restore_post_yield_or_rollback / fiber resume validate.
     std::atomic<std::uint64_t> aot_bridge_epoch_mismatches_{0};
+
+    // Issue #732: AOT hot-reload safe-swap at MutationBoundary
+    // observability counter backing the
+    // (query:aot-safe-swap-boundary-stats) primitive. This is
+    // public so future aura_jit_bridge.cpp aura_reload_aot_module
+    // + MutationBoundaryGuard outermost exit hook + fiber.cpp
+    // resume() / transfer hooks can call it at the safe-swap
+    // decision point (reload successfully fired at outermost
+    // MutationBoundary).
+    //
+    // Non-duplicative with the existing #708 (query:aot-reload-stats
+    // high-level 5-7 field reload summary — attempts / success /
+    // stale / refcount_swaps / region_violations / deopt-on-steal /
+    // concurrent-safe-reloads) + #644 (query:aot-reload-func-table-
+    // stats enforcement-track with ref-bump / ref-decrement /
+    // region-reapply) + #590 (query:aot-hotupdate-stats 3 atomics).
+    // #732 is the FIRST observability surface that tracks the
+    // *safe-swap at MutationBoundary* specifically — i.e., reloads
+    // that fired at the outermost safe-swap point (NOT mid-mutation),
+    // as the per-decision-point signal the Agent consumes to monitor
+    // safe-swap adoption rate + zero-downtime orchestration quality.
+    //
+    //   - aot_safe_boundary_hits_total: # of AOT reloads that fired
+    //                                   at outermost MutationBoundary
+    //                                   safe-swap point (the
+    //                                   "right place" — no concurrent
+    //                                   fiber has unsaved mutation
+    //                                   state, all func_table entries
+    //                                   are reachable). Proxy for
+    //                                   "how often reload landed at
+    //                                   a true safe point vs. was
+    //                                   deferred / raced".
+    //
+    // Phase 1 ships the counter + bump helper + the primitive.
+    // The actual atomic func_table refcount swap protocol in
+    // aura_jit_bridge.cpp aura_reload_aot_module + per-region
+    // isolation enforcement on reload + aura_aot_request_safe_reload()
+    // API + MutationBoundaryGuard outermost exit hook + GraceEpoch
+    // defer-old-decrement after grace period + tests/test_aot_hot_swap_
+    // refcount_region_guard_safe.cpp harness (multi-agent different
+    // regions + AOT emit + mutate + concurrent apply + reload at
+    // boundary) + #674 concurrent stress integration + docs are
+    // all follow-up (each is a dedicated session in aura_jit_bridge.cpp
+    // + MutationBoundaryGuard + fiber.cpp + new test + chaos stress +
+    // docs).
+    std::atomic<std::uint64_t> aot_safe_boundary_hits_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

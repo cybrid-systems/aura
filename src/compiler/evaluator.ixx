@@ -4135,6 +4135,28 @@ public:
             m->arena_races_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #732: AOT hot-reload safe-swap at MutationBoundary
+    // observability counter backing the
+    // (query:aot-safe-swap-boundary-stats) primitive. Public so
+    // future aura_jit_bridge.cpp aura_reload_aot_module +
+    // MutationBoundaryGuard outermost exit hook + fiber.cpp
+    // resume() / transfer hooks can call it at the safe-swap
+    // decision point (reload successfully fired at outermost
+    // MutationBoundary safe-swap point). Pairs with #708
+    // (query:aot-reload-stats 5-7 field high-level summary)
+    // + #644 (query:aot-reload-func-table-stats enforcement
+    // with ref-bump / ref-decrement / region-reapply) + #590
+    // (query:aot-hotupdate-stats 3 atomics) but tracks the
+    // *safe-swap at MutationBoundary* specifically — reloads
+    // that fired at the outermost safe-swap point (NOT mid-
+    // mutation) — not the coarse reload summary / refcount
+    // protocol / hot-update counters.
+    void bump_aot_safe_boundary_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_safe_boundary_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
