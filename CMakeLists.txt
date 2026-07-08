@@ -3719,6 +3719,53 @@ add_dependencies(all_test_issue_targets test_issue_762)
 aura_add_issue_test(test_issue_763)
 aura_issue_test_link_llvm_jit(test_issue_763)
 add_dependencies(all_test_issue_targets test_issue_763)
+# Issue #764: compiler Arena AST / shared_ptr<FlatAST> lifetime
+# safety vs GC-managed Env/Closure in closure_bridge_
+# observability primitive — 4 atomics + 4 bump helpers +
+# (query:compiler-arena-closure-lifetime-stats, schema 764)
+# primitive (5-entry hash: 4 fields + schema sentinel). Pairs
+# with the existing #757 query:macro-hygiene-provenance-stats +
+# #758 query:edsl-reflection-stats +
+# #759 query:code-as-data-maturity-stats +
+# #760 query:pattern-performance-stats +
+# #761 query:mutate-batch-stats +
+# #762 query:workspace-closedloop-orchestration-stats +
+# #763 query:linear-ownership-gc-compiler-stats 4-field hashes;
+# #764 covers the *compiler Arena AST / shared_ptr<FlatAST>
+# lifetime vs GC-managed Env/Closure in closure_bridge_*
+# composite specifically — arena AST root hits, bridge
+# shared_ptr pinned, cross-lifetime violations prevented,
+# invalidate AST refresh count — as separate per-decision-point
+# counters the Agent consumes to monitor cross-lifetime
+# production safety in incremental AI mutation flows.
+# 5 ACs / 33 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758/#759/#760/#761/#762/#763.
+# Real service.ixx invalidate_function + LoweringState on
+# re-lower impact for affected closure_bridge entries retain/
+# refresh shared_ptr<FlatAST> snapshot before Arena reset + bump
+# bridge_epoch + notify GC to root the old AST temporarily if
+# live closures reference it + evaluator_gc.cpp + gc_coordinator
+# explicit root registration for active IRClosure
+# shared_ptr<FlatAST> + on GC safepoint/compact validate Arena
+# liveness or pin AST nodes + lowering_impl.cpp
+# set_closure_bridge_ptr + apply_closure capture Arena epoch
+# or generation + on apply verify AST nodes still valid (via
+# marker or size check) or fallback safely + wire to
+# MutationBoundaryGuard for cross-request safety +
+# tests/test_prompt6_arena_ast_sharedptr_closure_bridge_gc_
+# lifetime.cpp harness (quote/lambda define + heavy mutate:rebind
+# + Arena reset + GC compact/steal + live closure apply → assert
+# AST valid or safe fallback, no UAF/leak, roots correct,
+# TSan/ASan clean) + SEVA arena/closure bridge demo + sync with
+# bridge_epoch + mutation_epoch_ + Env version_ + extend
+# EscapeAnalysis for AST node escape in bridge + CI gate + docs
+# are all follow-up (each is a dedicated session in
+# service.ixx + evaluator_gc.cpp + lowering_impl.cpp + new test
+# + SEVA demo + docs).
+aura_add_issue_test(test_issue_764)
+aura_issue_test_link_llvm_jit(test_issue_764)
+add_dependencies(all_test_issue_targets test_issue_764)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

@@ -576,6 +576,15 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // surface that tracks the compiler IRClosure + EnvFrame +
     // invalidate runtime linear enforcement composite).
     "query:linear-ownership-gc-compiler-stats",
+    // Issue #764 — Arena AST / shared_ptr<FlatAST> lifetime safety
+    // vs GC-managed Env/Closure in closure_bridge_ under
+    // incremental re-lower + mutation (non-duplicative with #741
+    // DepGraph/bridge/Env version, #731 Arena concurrent compact,
+    // #749 StableRef COW, #756 EnvFrame dual — #764 is the FIRST
+    // observability surface that tracks the compiler Arena AST /
+    // shared_ptr<FlatAST> lifetime vs GC-managed Env/Closure in
+    // closure_bridge_ composite).
+    "query:compiler-arena-closure-lifetime-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -11559,6 +11568,189 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "compiler maturation production health the Agent consumes "
                         "to decide whether to force re-emit, register GC roots, "
                         "or trigger linear runtime check under invalidate path.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #764: (query:compiler-arena-closure-lifetime-stats) —
+    // Arena AST / shared_ptr<FlatAST> lifetime safety vs GC-managed
+    // Env/Closure in closure_bridge_ under incremental re-lower +
+    // mutation (non-duplicative with #757 / #758 / #759 / #760 /
+    // #761 / #762 / #763 coarse observability surfaces). #764
+    // covers the *compiler Arena AST / shared_ptr<FlatAST>
+    // lifetime vs GC-managed Env/Closure in closure_bridge_*
+    // composite specifically — arena AST root hits, bridge
+    // shared_ptr pinned, cross-lifetime violations prevented,
+    // invalidate AST refresh count — as separate per-decision-
+    // point counters the Agent consumes to monitor cross-lifetime
+    // production safety in incremental AI mutation flows.
+    //
+    // Fields (4 + sentinel):
+    //   - root-hits
+    //                                compiler_arena_closure_lifetime_root_hits_total
+    //                                (# of arena AST root hits
+    //                                 during GC walk via
+    //                                 closure_bridge_ / live-
+    //                                 closure list — proxy for
+    //                                 "how many live AST roots
+    //                                 are correctly registered
+    //                                 against the GC")
+    //   - bridge-sharedptr-pinned
+    //                                compiler_arena_closure_lifetime_bridge_sharedptr_pinned_total
+    //                                (# of bridge shared_ptr
+    //                                 <FlatAST> pinned before
+    //                                 Arena reset — proxy for
+    //                                 invalidate path correctly
+    //                                 retaining the old AST
+    //                                 snapshot to keep live
+    //                                 closures valid)
+    //   - cross-violations-prevented
+    //                                compiler_arena_closure_lifetime_cross_violations_prevented_total
+    //                                (# of cross-lifetime
+    //                                 violations prevented at
+    //                                 apply-time via AST validity
+    //                                 check (marker / size) or
+    //                                 safe fallback — proxy for
+    //                                 "how many use-after-
+    //                                 Arena-reset violations did
+    //                                 the runtime guard prevent
+    //                                 in bridge closure apply")
+    //   - invalidate-ast-refresh
+    //                                compiler_arena_closure_lifetime_invalidate_ast_refresh_total
+    //                                (# of invalidate AST
+    //                                 refresh snapshots taken
+    //                                 before Arena reset — paired
+    //                                 with sharedptr_pinned
+    //                                 above)
+    //   - schema == 764
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual service.ixx invalidate_function + LoweringState
+    // on re-lower impact for affected closure_bridge entries
+    // retain/refresh shared_ptr<FlatAST> snapshot before Arena
+    // reset + bump bridge_epoch + notify GC to root the old AST
+    // temporarily if live closures reference it + evaluator_gc
+    // .cpp + gc_coordinator explicit root registration for
+    // active IRClosure shared_ptr<FlatAST> + on GC safepoint/
+    // compact validate Arena liveness or pin AST nodes +
+    // lowering_impl.cpp set_closure_bridge_ptr + apply_closure
+    // capture Arena epoch or generation + on apply verify AST
+    // nodes still valid (via marker or size check) or fallback
+    // safely + wire to MutationBoundaryGuard for cross-request
+    // safety + tests/test_prompt6_arena_ast_sharedptr_closure_
+    // bridge_gc_lifetime.cpp harness (quote/lambda define +
+    // heavy mutate:rebind + Arena reset + GC compact/steal +
+    // live closure apply → assert AST valid or safe fallback,
+    // no UAF/leak, roots correct, TSan/ASan clean) + SEVA
+    // arena/closure bridge demo + sync with bridge_epoch +
+    // mutation_epoch_ + Env version_ + extend EscapeAnalysis
+    // for AST node escape in bridge + CI gate + docs are all
+    // follow-up work.
+    //
+    // Issue #764: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=764 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#763).
+    ev.primitives_.add(
+        "query:compiler-arena-closure-lifetime-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t root_hits =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_arena_closure_lifetime_root_hits_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t bridge_sharedptr_pinned =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_arena_closure_lifetime_bridge_sharedptr_pinned_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cross_violations_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_arena_closure_lifetime_cross_violations_prevented_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t invalidate_ast_refresh =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_arena_closure_lifetime_invalidate_ast_refresh_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"root-hits", make_int(root_hits)},
+                {"bridge-sharedptr-pinned", make_int(bridge_sharedptr_pinned)},
+                {"cross-violations-prevented", make_int(cross_violations_prevented)},
+                {"invalidate-ast-refresh", make_int(invalidate_ast_refresh)},
+                {"schema", make_int(764)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Compiler Arena AST / shared_ptr<FlatAST> lifetime safety vs "
+                        "GC-managed Env/Closure in closure_bridge_ under incremental "
+                        "re-lower + mutation: root-hits (# of arena AST root hits "
+                        "during GC walk via closure_bridge_ / live-closure list — "
+                        "proxy for \"how many live AST roots are correctly registered "
+                        "against the GC\"), bridge-sharedptr-pinned (# of bridge "
+                        "shared_ptr<FlatAST> pinned before Arena reset — proxy for "
+                        "invalidate path correctly retaining the old AST snapshot "
+                        "to keep live closures valid), cross-violations-prevented "
+                        "(# of cross-lifetime violations prevented at apply-time via "
+                        "AST validity check (marker / size) or safe fallback — proxy "
+                        "for \"how many use-after-Arena-reset violations did the "
+                        "runtime guard prevent in bridge closure apply\"), "
+                        "invalidate-ast-refresh (# of invalidate AST refresh "
+                        "snapshots taken before Arena reset — paired with "
+                        "sharedptr_pinned above). Pairs with the existing #757 + "
+                        "#758 + #759 + #760 + #761 + #762 + #763 4-field "
+                        "observability hashes but tracks the *compiler Arena AST / "
+                        "shared_ptr<FlatAST> lifetime vs GC-managed Env/Closure in "
+                        "closure_bridge_* composite specifically as separate "
+                        "per-decision-point counters. #764 exposes the cross-"
+                        "lifetime production health the Agent consumes to decide "
+                        "whether to refresh the bridge AST, pin shared_ptr, or "
+                        "trigger apply-time validity check under Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
