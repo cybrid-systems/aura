@@ -494,6 +494,11 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // observability (non-duplicative with #478 / #585 coarse error
     // stats; #728 tracks per-decision-point unified-model signals).
     "query:unified-error-stats",
+    // Issue #731 — Arena + SoA + EnvFrame concurrent compaction
+    // safety observability (non-duplicative with #722 / #743 / #604
+    // coarse arena stats; #731 tracks per-decision-point concurrent
+    // safety signals).
+    "query:arena-concurrent-compact-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -9507,6 +9512,148 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "the Agent consumes to decide whether to migrate legacy "
                         "make_primitive_error call sites or trigger more recovery "
                         "primitives.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #731: (query:arena-concurrent-compact-stats) — Arena +
+    // SoA + EnvFrame concurrent compaction safety observability for
+    // production multi-fiber steal/resume + panic checkpoint integration
+    // (non-duplicative with #722 arena tier integration stats + #743
+    // arena auto-compact policy + fiber safepoint + #647 EnvFrame
+    // dual-path + #648 panic checkpoint fiber + #685 auto-compact
+    // policy + #604 Arena auto-compact fiber/GC safepoint). #731 covers
+    // the *concurrent* safety specifically: scheduler-safepoint
+    // coordination + EnvFrame GCEnvWalkFn revalidation + panic-rollback-
+    // compact integration + race prevention.
+    //
+    // Fields (4 + sentinel):
+    //   - concurrent-compacts     arena_concurrent_compacts_total
+    //                             (# of successful concurrent compacts
+    //                              with safepoint coordination — proxy
+    //                              for "how often the arena can safely
+    //                              compact under fiber contention")
+    //   - envframe-revalidations  arena_envframe_revalidations_total
+    //                             (# of times an EnvId in env_frames_
+    //                              SoA was revalidated post-compact via
+    //                              GCEnvWalkFn — proxy for "how often
+    //                              post-compact EnvFrame consistency
+    //                              is verified")
+    //   - panic-rollback-compact-hits
+    //                            arena_panic_rollback_compact_hits_total
+    //                             (# of panic checkpoint auto-rollbacks
+    //                              that fired under a concurrent compact
+    //                              — proxy for "how often panic restore
+    //                              detected an inconsistent compact +
+    //                              triggered rollback")
+    //   - races-prevented         arena_races_prevented_total
+    //                             (# of times a race was prevented
+    //                              via safepoint + deferred — proxy
+    //                              for "how often steal/resume vs
+    //                              compact race was safely deferred")
+    //   - schema == 731
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual concurrent compact / defrag safepoint coordination
+    // in arena.ixx + GCEnvWalkFn EnvFrame revalidation in evaluator_gc.cpp
+    // + fiber.cpp resume() / transfer hook integration + panic checkpoint
+    // snapshot integration + tests/test_arena_concurrent_compact_envframe_
+    // fiber_steal.cpp harness (heavy alloc / mutate under 10+ fibers +
+    // steal + periodic compact + panic injection) + #674 stress extension
+    // are all follow-up work (each is a dedicated session in arena.ixx +
+    // gc_coordinator + evaluator_gc.cpp + fiber.cpp + panic_checkpoint +
+    // new test + chaos stress + docs).
+    //
+    // Issue #731: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=731 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#728).
+    ev.primitives_.add(
+        "query:arena-concurrent-compact-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t concurrent_compacts =
+                m ? static_cast<std::int64_t>(
+                        m->arena_concurrent_compacts_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t envframe_revalidations =
+                m ? static_cast<std::int64_t>(
+                        m->arena_envframe_revalidations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t panic_rollback_compact_hits =
+                m ? static_cast<std::int64_t>(
+                        m->arena_panic_rollback_compact_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t races_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->arena_races_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"concurrent-compacts", make_int(concurrent_compacts)},
+                {"envframe-revalidations", make_int(envframe_revalidations)},
+                {"panic-rollback-compact-hits", make_int(panic_rollback_compact_hits)},
+                {"races-prevented", make_int(races_prevented)},
+                {"schema", make_int(731)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Arena + SoA + EnvFrame concurrent compaction safety "
+                        "observability: concurrent-compacts (safepoint-coordinated "
+                        "compacts), envframe-revalidations (post-compact EnvId "
+                        "GCEnvWalkFn walks), panic-rollback-compact-hits (panic "
+                        "restore detected inconsistent compact + triggered rollback), "
+                        "races-prevented (steal/resume vs compact race safely deferred). "
+                        "Pairs with the existing #722 query:arena-integration-stats "
+                        "tier hash and #743 Arena auto-compact policy + fiber safepoint "
+                        "primitive but tracks the *concurrent* safety specifically as "
+                        "separate per-decision-point counters. #731 exposes the "
+                        "concurrent-compaction adoption rate + panic-rollback-coverage "
+                        "the Agent consumes to decide whether to enable concurrent "
+                        "compact under fiber contention or trigger panic-restore "
+                        "more aggressively.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

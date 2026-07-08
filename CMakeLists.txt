@@ -3305,6 +3305,32 @@ add_dependencies(all_test_issue_targets test_issue_726)
 aura_add_issue_test(test_issue_728)
 aura_issue_test_link_llvm_jit(test_issue_728)
 add_dependencies(all_test_issue_targets test_issue_728)
+# Issue #731: Arena + SoA + EnvFrame concurrent compaction safety
+# observability primitive — 4 atomics + 4 bump helpers +
+# (query:arena-concurrent-compact-stats, schema 731) primitive
+# (5-entry hash: 4 fields + schema sentinel). Pairs with the
+# existing #722 query:arena-integration-stats tier hash and #743
+# Arena auto-compact policy + fiber safepoint primitive; #731
+# covers the *concurrent* safety specifically — scheduler-safepoint
+# coordination + EnvFrame GCEnvWalkFn revalidation + panic-rollback-
+# compact integration + race prevention — as separate per-decision-
+# point counters the Agent consumes to monitor production memory
+# stability under multi-fiber steal/resume + concurrent compact.
+# 5 ACs / 41 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#728.
+# Real concurrent compact / defrag safepoint coordination in
+# arena.ixx + GCEnvWalkFn EnvFrame revalidation in evaluator_gc.cpp
+# + fiber.cpp resume() / transfer hook integration + panic
+# checkpoint snapshot integration + new
+# tests/test_arena_concurrent_compact_envframe_fiber_steal.cpp
+# harness (heavy alloc / mutate under 10+ fibers + steal + periodic
+# compact + panic injection) + #674 chaos stress integration + docs
+# are all follow-up (each is a dedicated session in arena.ixx +
+# gc_coordinator + evaluator_gc.cpp + fiber.cpp + panic_checkpoint
+# + new test + chaos stress + docs).
+aura_add_issue_test(test_issue_731)
+aura_issue_test_link_llvm_jit(test_issue_731)
+add_dependencies(all_test_issue_targets test_issue_731)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

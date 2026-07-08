@@ -1858,6 +1858,69 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> unified_error_provenance_captured_total{0};
     std::atomic<std::uint64_t> unified_error_recovery_success_total{0};
 
+    // Issue #731: Arena + SoA + EnvFrame concurrent compaction safety
+    // counters backing the (query:arena-concurrent-compact-stats)
+    // primitive. These are public so future arena.ixx + gc_coordinator +
+    // evaluator_gc.cpp concurrent compact / defrag success path
+    // + fiber.cpp resume() / transfer hooks + panic checkpoint
+    // integration can call them at each decision point (concurrent
+    // compact acquired / EnvFrame revalidation completed / panic
+    // rollback fired on compact / race prevented).
+    //
+    // Non-duplicative with the existing #722 (query:arena-integration-stats
+    // tier integration) + #743 (Arena auto-compact policy + fiber safepoint
+    // + dirty/Shape closed loop) + #647 EnvFrame dual-path + #648 panic
+    // checkpoint fiber + #685 auto-compact policy + #464/430/405 arena
+    // compaction lifecycle + #604 Arena auto-compact fiber/GC safepoint.
+    // #731 is the FIRST observability surface that tracks the *concurrent*
+    // safety specifically: scheduler-safepoint coordination + EnvFrame
+    // GCEnvWalkFn revalidation + panic-rollback-compact integration +
+    // race prevention, as separate per-decision-point counters the
+    // Agent can consume to monitor production memory stability under
+    // multi-fiber steal/resume + concurrent compact.
+    //
+    //   - arena_concurrent_compacts_total: # of successful concurrent
+    //                                       compacts (scheduled with
+    //                                       safepoint coordination —
+    //                                       not racing with active steals
+    //                                       or env_frames_ walks).
+    //                                       Proxy for "how often the
+    //                                       arena can safely compact
+    //                                       under fiber contention".
+    //   - arena_envframe_revalidations_total: # of times an EnvId in
+    //                                          env_frames_ SoA was
+    //                                          revalidated post-compact
+    //                                          via GCEnvWalkFn (proxy
+    //                                          for "how often post-compact
+    //                                          EnvFrame consistency is
+    //                                          verified").
+    //   - arena_panic_rollback_compact_hits_total: # of panic checkpoint
+    //                                              auto-rollbacks that
+    //                                              fired under a concurrent
+    //                                              compact (panic restore
+    //                                              path detected an
+    //                                              inconsistent compact
+    //                                              + triggered rollback).
+    //   - arena_races_prevented_total: # of times a race was prevented
+    //                                  (steal/resume vs compact race
+    //                                  detected via safepoint + deferred
+    //                                  to next-safe-point).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual concurrent compact / defrag safepoint coordination
+    // in arena.ixx + GCEnvWalkFn EnvFrame revalidation in evaluator_gc.cpp
+    // + fiber.cpp resume() / transfer hook integration + panic checkpoint
+    // snapshot integration + tests/test_arena_concurrent_compact_envframe_
+    // fiber_steal.cpp harness (heavy alloc / mutate under 10+ fibers +
+    // steal + periodic compact + panic injection) + #674 stress extension
+    // are all follow-up (each is a dedicated session in arena.ixx +
+    // gc_coordinator + evaluator_gc.cpp + fiber.cpp + panic_checkpoint +
+    // new test + chaos stress + docs).
+    std::atomic<std::uint64_t> arena_concurrent_compacts_total{0};
+    std::atomic<std::uint64_t> arena_envframe_revalidations_total{0};
+    std::atomic<std::uint64_t> arena_panic_rollback_compact_hits_total{0};
+    std::atomic<std::uint64_t> arena_races_prevented_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
