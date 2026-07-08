@@ -5362,6 +5362,130 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #722: (query:arena-integration-stats) — Arena
+    // tier/dtor/compact integration counters (non-duplicative
+    // with the existing ArenaStats in arena.ixx which are
+    // *internal* aggregate metrics; #722 is the FIRST
+    // observability surface that exposes Arena ↔ dirty/shape
+    // integration signals as separate counters the Agent can
+    // consume).
+    //
+    // Fields (4 + sentinel):
+    //   - tier-fallbacks            arena_tier_fallbacks_total
+    //                                (# of times the SmallObjectPool
+    //                                 tier 16/32/64B was exhausted
+    //                                 and the allocator fell back
+    //                                 to pmr)
+    //   - dtor-dirty-hooks          arena_dtor_dirty_hooks_total
+    //                                (# of times the dtor thunk
+    //                                 triggered a dirty/shape hook
+    //                                 on reset / compact)
+    //   - auto-compact-triggers     arena_auto_compact_triggers_total
+    //                                (# of times the auto-compact
+    //                                 policy triggered compact/defrag
+    //                                 from fragmentation +
+    //                                 yield_check or dirty cascade
+    //                                 — no manual request_defrag call)
+    //   - fragmentation-post-mutate arena_fragmentation_post_mutate
+    //                                (fragmentation ratio after mutate
+    //                                 — scaled 0..1e6; 0 = no frag,
+    //                                 1e6 = 100%)
+    //   - schema == 722
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual fallback dirty-mark hook + dtor-to-shape wiring
+    // + auto-compact policy from fragmentation/yield + IR cache
+    // stats merge are follow-up work (each is a dedicated session
+    // in arena.ixx + ShapeProfiler + ir_cache_pure + service.ixx).
+    //
+    // Issue #722: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=722 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#721).
+    ev.primitives_.add(
+        "query:arena-integration-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t tier_fallbacks =
+                m ? static_cast<std::int64_t>(
+                        m->arena_tier_fallbacks_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dtor_dirty_hooks =
+                m ? static_cast<std::int64_t>(
+                        m->arena_dtor_dirty_hooks_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t auto_compact_triggers =
+                m ? static_cast<std::int64_t>(
+                        m->arena_auto_compact_triggers_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t fragmentation_post_mutate =
+                m ? static_cast<std::int64_t>(
+                        m->arena_fragmentation_post_mutate.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"tier-fallbacks", make_int(tier_fallbacks)},
+                {"dtor-dirty-hooks", make_int(dtor_dirty_hooks)},
+                {"auto-compact-triggers", make_int(auto_compact_triggers)},
+                {"fragmentation-post-mutate", make_int(fragmentation_post_mutate)},
+                {"schema", make_int(722)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Arena tier/dtor/compact integration counters: tier "
+                        "fallbacks (SmallObjectPool tier exhaustion), dtor-triggered "
+                        "dirty hooks, auto-compact triggers (fragmentation + "
+                        "yield_check driven), and fragmentation-post-mutate ratio "
+                        "(scaled 0..1e6). Pairs with the existing ArenaStats in "
+                        "arena.ixx (internal aggregate metrics); #722 exposes "
+                        "Arena <-> dirty/shape integration signals as separate "
+                        "counters the Agent can consume to decide whether to force "
+                        "defrag or trust the auto-compact policy.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,

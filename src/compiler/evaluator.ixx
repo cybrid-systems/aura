@@ -3976,6 +3976,42 @@ public:
             m->ir_soa_pcv_wiring_savings_bytes_total.fetch_add(bytes, std::memory_order_relaxed);
         }
     }
+    // Issue #722: Arena tier/dtor/compact integration counters
+    // backing the (query:arena-integration-stats) primitive. These
+    // are public so future arena.ixx create/try_allocate overflow +
+    // reset + dtor thunk + auto-compact policy + ShapeProfiler +
+    // ir_cache_pure wiring can call them at each decision point
+    // (tier fallback / dtor-triggered dirty hook / auto-compact
+    // trigger / fragmentation update).
+    //
+    // The fragmentation setter takes a value (not delta) because
+    // the ratio is a snapshot, not a cumulative count. The caller
+    // is responsible for scaling the float ratio to 0..1e6 before
+    // passing.
+    void bump_arena_tier_fallback() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_tier_fallbacks_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_dtor_dirty_hook() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_dtor_dirty_hooks_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_auto_compact_trigger() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_auto_compact_triggers_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void set_arena_fragmentation_post_mutate(std::uint64_t ratio_scaled) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_fragmentation_post_mutate.store(ratio_scaled, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
