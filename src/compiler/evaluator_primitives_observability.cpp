@@ -521,6 +521,13 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // #756 tracks per-decision-point desync-panic + GCEnvWalkFn
     // stale under concurrent steal/mutate signals).
     "query:envframe-dualpath-policy-stats",
+    // Issue #757 — Fine-grained MacroIntroduced provenance tracking
+    // + dynamic inliner policy + AI-queryable hygiene violation
+    // correlation observability (non-duplicative with #654 / #458 /
+    // #373 / #750 coarse macro stats; #757 tracks per-decision-
+    // point fine-grained provenance + dynamic inliner policy +
+    // per-macro correlation signals).
+    "query:macro-hygiene-provenance-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -10320,6 +10327,180 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "the strict-panic vs log-and-sync mode adoption rate the "
                         "Agent consumes to decide whether to enable strict-panic "
                         "policy or trigger re-ensure on concurrent steal.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #757: (query:macro-hygiene-provenance-stats) —
+    // fine-grained MacroIntroduced provenance tracking +
+    // dynamic inliner policy + AI-queryable hygiene
+    // violation correlation observability for production
+    // self-evolution control loops (non-duplicative with
+    // #654 (query:macro-hygiene-fiber-panic-stats 5 fields:
+    // panic-restamp / provenance-violations / macro-expand-
+    // checkpoints / reflect-hygiene-validation / hygiene-dirty-
+    // impact) + #458 (query:pattern-hygiene-stats basic count)
+    // + #373 (mutate hygiene guard — flat.is_macro_introduced
+    // internal check) + #750 (query:reflection-schema-stats
+    // runtime reflection validate). #757 covers the *fine-
+    // grained provenance + dynamic inliner policy + per-macro
+    // correlation* specifically — provenance captured at
+    // clone_macro_body, inliner policy violation firings, per-
+    // macro hygiene violation correlation, query-filter hits
+    // — as separate per-decision-point counters the Agent
+    // consumes to monitor and tune macro hygiene in self-evo
+    // loops.
+    //
+    // Fields (4 + sentinel):
+    //   - provenance-captured       macro_hygiene_provenance_captured_total
+    //                               (# of times provenance
+    //                                (macro_def_node_id or sym +
+    //                                gensym history) was
+    //                                successfully populated on
+    //                                a MacroIntroduced node at
+    //                                clone_macro_body success
+    //                                path — proxy for "how often
+    //                                fine-grained provenance is
+    //                                tracked")
+    //   - inliner-policy-violations
+    //                              macro_hygiene_inliner_policy_violations_total
+    //                               (# of times the InlinePass
+    //                                respect_macro_hygiene_
+    //                                policy was violated via
+    //                                hygiene:set-inliner-respect-
+    //                                macro! primitive call —
+    //                                proxy for "how often dynamic
+    //                                inliner policy + static
+    //                                respect_macro_hygiene_
+    //                                disagree")
+    //   - provenance-violations     macro_hygiene_provenance_violations_total
+    //                               (# of times hygiene
+    //                                protected error fired
+    //                                with provenance mismatch —
+    //                                read from existing #654
+    //                                atomic; cross-reference)
+    //   - hygiene-dirty-impact      macro_hygiene_dirty_impact_total
+    //                               (# of times macro hygiene
+    //                                dirty propagated —
+    //                                read from existing #654
+    //                                atomic; cross-reference)
+    //   - schema == 757
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual ast.ixx FlatAST + provenance_ column or
+    // extended marker (macro_def_node_id or sym + gensym
+    // history) populated in clone_macro_body success path +
+    // QueryExpr :marker MacroIntroduced :provenance macro-name
+    // filter support + (query:macro-hygiene-provenance node-id)
+    // function primitive + (hygiene:set-inliner-respect-macro!
+    // #t/#f [subtree]) primitive + InlinePass respect_macro_
+    // hygiene_ dynamic check from EDSL/primitive + Guard
+    // integration with hygiene_violation_by_macro correlation +
+    // tests/test_macro_hygiene_provenance_inliner_policy_ai.cpp
+    // harness (define macro with nested, mutate under different
+    // policies → assert provenance query accurate, inliner
+    // policy respected/tuned, metrics, no silent drift, TSan
+    // clean) + SEVA demo with macro-generated verification
+    // code + policy tuning demo + docs are all follow-up work
+    // (each is a dedicated session in ast.ixx + query_matcher +
+    // evaluator_primitives_query.cpp + InlinePass + aura_jit.cpp
+    // + MutationBoundaryGuard + new test + SEVA demo + docs).
+    //
+    // Issue #757: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=757 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#756).
+    ev.primitives_.add(
+        "query:macro-hygiene-provenance-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t provenance_captured =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_provenance_captured_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t inliner_policy_violations =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_inliner_policy_violations_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t provenance_violations =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_provenance_violations_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_dirty_impact =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_dirty_impact_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"provenance-captured", make_int(provenance_captured)},
+                {"inliner-policy-violations", make_int(inliner_policy_violations)},
+                {"provenance-violations", make_int(provenance_violations)},
+                {"hygiene-dirty-impact", make_int(hygiene_dirty_impact)},
+                {"schema", make_int(757)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Fine-grained MacroIntroduced provenance tracking + dynamic "
+                        "inliner policy + AI-queryable hygiene violation correlation "
+                        "observability: provenance-captured (per-node provenance at "
+                        "clone_macro_body), inliner-policy-violations (dynamic inliner "
+                        "policy + static respect_macro_hygiene_ disagreements), "
+                        "provenance-violations + hygiene-dirty-impact (cross-reference "
+                        "from #654 atomics). Pairs with the existing #654 "
+                        "query:macro-hygiene-fiber-panic-stats 5-field hash + #458 "
+                        "query:pattern-hygiene-stats basic count + #373 mutate hygiene "
+                        "guard but tracks the *fine-grained provenance + dynamic "
+                        "inliner policy + per-macro correlation* specifically as "
+                        "separate per-decision-point counters. #757 exposes the "
+                        "provenance + inliner-policy + per-macro correlation adoption "
+                        "rate the Agent consumes to decide whether to enable "
+                        "fine-grained provenance tracking or trigger inliner-policy "
+                        "tuning under Guard.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
