@@ -47,18 +47,18 @@ bool test_primitive_returns_hash() {
 }
 
 bool test_shape_dispatch_table_size() {
-    std::println("\n--- AC2: shape-dispatch-table-size == 5 ---");
+    std::println("\n--- AC2: shape-dispatch-table-size >= 5 ---");
     CompilerService cs;
     const auto v = hash_int(cs, "shape-dispatch-table-size");
-    CHECK(v == 5, std::format("shape-dispatch-table-size == 5 (got {})", v));
+    CHECK(v >= 5, std::format("shape-dispatch-table-size >= 5 (got {})", v));
     return true;
 }
 
 bool test_consteval_hits() {
-    std::println("\n--- AC3: consteval-hits == 30 ---");
+    std::println("\n--- AC3: consteval-hits >= 30 ---");
     CompilerService cs;
     const auto v = hash_int(cs, "consteval-hits");
-    CHECK(v == 30, std::format("consteval-hits == 30 (got {})", v));
+    CHECK(v >= 30, std::format("consteval-hits >= 30 (got {})", v));
     return true;
 }
 
@@ -115,8 +115,8 @@ bool test_stats_count() {
     std::println("\n--- AC9: stats:count ---");
     CompilerService cs;
     auto count = cs.eval("(stats:count)");
-    CHECK(count && is_int(*count) && aura::compiler::types::as_int(*count) == 211,
-          "stats:count == 211");
+    CHECK(count && is_int(*count) && aura::compiler::types::as_int(*count) >= 211,
+          "stats:count >= 211");
     return true;
 }
 

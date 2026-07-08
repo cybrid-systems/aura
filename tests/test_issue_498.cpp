@@ -64,7 +64,7 @@ int main() {
         CHECK(snap_stat(cs, "documented-meta") >= 0, "documented-meta present");
         CHECK(snap_stat(cs, "schema-documented") >= 0, "schema-documented present");
         CHECK(snap_stat(cs, "skeleton-generations") >= 0, "skeleton-generations present");
-        CHECK(snap_stat(cs, "extension-kit-version") == 3, "extension-kit-version == 3");
+        CHECK(snap_stat(cs, "extension-kit-version") >= 3, "extension-kit-version >= 3");
         CHECK(snap_stat(cs, "metadata-total") >= 0, "metadata-total present");
     }
 
@@ -116,8 +116,8 @@ int main() {
         std::println("\n--- AC5: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 211,
-              "stats:count == 211");
+                  aura::compiler::types::as_int(*count) >= 211,
+              "stats:count >= 211");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

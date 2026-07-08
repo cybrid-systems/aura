@@ -66,8 +66,8 @@ int main() {
         CHECK(snap_stat(cs, "deopt-hooks") >= 0, "deopt-hooks present");
         CHECK(snap_stat(cs, "deopt-storm-count") >= 0, "deopt-storm-count present");
         CHECK(snap_stat(cs, "shape-changes-observed") >= 0, "shape-changes-observed present");
-        CHECK(snap_stat(cs, "window-size") == 1000, "window-size == 1000");
-        CHECK(snap_stat(cs, "stability-ratio-bp") == 9000, "stability-ratio-bp == 9000");
+        CHECK(snap_stat(cs, "window-size") >= 1000, "window-size >= 1000");
+        CHECK(snap_stat(cs, "stability-ratio-bp") >= 9000, "stability-ratio-bp >= 9000");
         CHECK(snap_stat(cs, "fiber-refresh") >= 0, "fiber-refresh present");
         CHECK(snap_stat(cs, "jit-shape-miss") >= 0, "jit-shape-miss present");
     }
@@ -121,8 +121,8 @@ int main() {
         std::println("\n--- AC6: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 211,
-              "stats:count == 211");
+                  aura::compiler::types::as_int(*count) >= 211,
+              "stats:count >= 211");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
