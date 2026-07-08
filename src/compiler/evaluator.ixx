@@ -4229,8 +4229,7 @@ public:
     void bump_macro_provenance_is_macro_introduced() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->macro_provenance_is_macro_introduced_total.fetch_add(1,
-                                                                   std::memory_order_relaxed);
+            m->macro_provenance_is_macro_introduced_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     void bump_macro_provenance_dirty_impact() const noexcept {
@@ -4242,8 +4241,7 @@ public:
     void bump_macro_provenance_rollback_success() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->macro_provenance_rollback_success_total.fetch_add(1,
-                                                                 std::memory_order_relaxed);
+            m->macro_provenance_rollback_success_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     void bump_macro_hygiene_dirty_impact() noexcept {
