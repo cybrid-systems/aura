@@ -7875,6 +7875,21 @@ public:
             wf->release_children_for_teardown();
         if (current_ast_ && current_ast_ != evaluator_.workspace_flat())
             current_ast_->release_children_for_teardown();
+        // Issue #765 (ASan-verify fix): reset the global
+        // g_current_compiler_service hook so the arena
+        // auto-compact-trigger + fiber-safe-compact lambdas
+        // stored in aura::gc_hooks don't dereference a
+        // dangling this-pointer after the last CompilerService
+        // in a test scope goes out of scope. Without this
+        // reset, a subsequent arena auto-compact (e.g. a
+        // small allocator cap hit) reads from the destroyed
+        // CompilerService's metrics() — ASan flags it as
+        // stack-use-after-scope on the lambda's local 'raw'
+        // stack frame. Always reset if we still own it;
+        // never blindly zero (other services may have set
+        // it concurrently in a multi-service scenario).
+        if (aura::messaging::g_current_compiler_service == this)
+            aura::messaging::g_current_compiler_service = nullptr;
     }
 
     // Issue #411 fu1 follow-up #2: per-DefUseIndex caller
