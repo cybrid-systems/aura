@@ -1479,6 +1479,59 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_full_fallback_total{0};
     std::atomic<std::uint64_t> incremental_time_saved_us_total{0};
 
+    // Issue #719: Prompt 6 closure/EnvFrame epoch + linear ownership
+    // + GC root sync safety counters for
+    // (query:closure-env-epoch-safety-stats). Exposes the
+    // runtime-guard outcomes that prevent dangling closures,
+    // stale EnvFrame version_, linear ownership violations,
+    // and GC-root drift after invalidate_function / mutate:
+    // rebind / set-body in long-running AI agent loops:
+    //   - closure_epoch_mismatch_total   # of times apply_closure
+    //                                    detected a stale
+    //                                    bridge_epoch (closure
+    //                                    captured pre-invalidate)
+    //                                    before dispatching to
+    //                                    the map or bridge path
+    //   - linear_violation_post_mutate_total
+    //                                    # of times GuardShape /
+    //                                    Linear* op handler /
+    //                                    JIT PrimCall/Capture
+    //                                    detected a linear
+    //                                    ownership_state != 0
+    //                                    with epoch/version
+    //                                    mismatch post-mutate
+    //   - gc_root_sync_total             # of ScopedCompilerRoot
+    //                                    register/unregister
+    //                                    syncs triggered from
+    //                                    invalidate_function /
+    //                                    MutationBoundaryGuard dtor
+    //   - dangling_prevented_total       # of times a UAF /
+    //                                    dangling situation was
+    //                                    prevented by the runtime
+    //                                    guard (proxy for "how
+    //                                    many silent corruptions
+    //                                    the guard caught")
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual epoch/version check in apply_closure hot path,
+    // IRClosure/closure_bridge_ management on invalidate,
+    // linear_ownership_state runtime guard in GuardShape/Linear
+    // op handlers / JIT, and ScopedCompilerRoot GC hook are
+    // follow-up work (each is a dedicated session in
+    // evaluator_eval_flat.cpp + service.ixx + evaluator_gc.cpp +
+    // ir_executor_impl.cpp + aura_jit*.cpp).
+    //
+    // Non-duplicative with the existing #672 linear_stats
+    // (which tracks compile-time linear type errors) and #681
+    // epoch enforcement (which is IR-level metadata); #719 is
+    // the FIRST observability surface that tracks runtime
+    // closure/EnvFrame/linear/GC safety outcomes in apply_closure
+    // and JIT hot paths as separate signals.
+    std::atomic<std::uint64_t> closure_epoch_mismatch_total{0};
+    std::atomic<std::uint64_t> linear_violation_post_mutate_total{0};
+    std::atomic<std::uint64_t> gc_root_sync_total{0};
+    std::atomic<std::uint64_t> dangling_prevented_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

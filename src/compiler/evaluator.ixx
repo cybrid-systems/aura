@@ -3884,6 +3884,38 @@ public:
             m->incremental_time_saved_us_total.fetch_add(us, std::memory_order_relaxed);
         }
     }
+    // Issue #719: Prompt 6 closure/EnvFrame epoch + linear ownership
+    // + GC root sync safety counters backing the
+    // (query:closure-env-epoch-safety-stats) primitive. These are
+    // public so future apply_closure hot path + invalidate_function
+    // hook + GuardShape/Linear op handlers + JIT PrimCall/Capture +
+    // ScopedCompilerRoot register/unregister wiring can call them
+    // at each decision point (mismatch detected / linear violation
+    // caught / GC root sync / dangling prevented).
+    void bump_closure_epoch_mismatch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->closure_epoch_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_linear_violation_post_mutate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->linear_violation_post_mutate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_gc_root_sync() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->gc_root_sync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_dangling_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
