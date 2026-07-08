@@ -102,6 +102,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:linear-postmutate-fidelity-stats)` | 800  | linear ownership post-mutate / steal / EnvFrame fidelity (5 fields) |
 | `(query:type-incremental-fidelity-stats)` | 798  | ConstraintSystem incremental fidelity under Guard/steal (5 fields) |
 | `(query:eda-infra-stats)`                | 841    | EDA production infrastructure parse/mutate/feedback/co-sim (5 fields) |
+| `(query:sv-commercial-emit-fidelity-stats)` | 801 | SV commercial emit roundtrip + dirty re-emit fidelity (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -177,6 +178,16 @@ Distinct from `(query:type-incremental-stats)` (#608): #798 tracks Guard/steal/M
 - `schema` — 841 (drift sentinel)
 
 Distinct from `(query:eda-foundation-stats)` (#499): #841 tracks production closed-loop reliability (parse/mutate/feedback/co-sim); #499 is the foundational primitive call totals.
+
+### `(query:sv-commercial-emit-fidelity-stats)` fields (#801)
+
+- `emit-parse-success-hits` — `sv_commercial_emit_parse_success_total` (`validate_sv_emit` roundtrip pass)
+- `roundtrip-mismatch-prevented` — `sv_commercial_emit_roundtrip_mismatch_prevented_total` (local validator caught drift)
+- `dirty-reemit-hits` — `sv_commercial_emit_dirty_reemit_total` (dirty-triggered incremental re-emit)
+- `commercial-tool-compatible-hits` — `sv_commercial_emit_tool_compatible_total` (emit + commercial stub accepted)
+- `schema` — 801 (drift sentinel)
+
+Distinct from `(query:sv-verification-structure-stats)` (#748): #801 tracks commercial-tool interop fidelity; #748 tracks structural mutate + emit pass/fail totals.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

@@ -4892,6 +4892,78 @@ public:
         }
         return 0;
     }
+    // Issue #801: SV commercial emit fidelity stats.
+    void record_sv_commercial_emit_fidelity(bool validation_ok, bool dirty_reemit,
+                                            bool commercial_stub = true) const noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (dirty_reemit)
+            m->sv_commercial_emit_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
+        if (validation_ok) {
+            m->sv_commercial_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+            if (commercial_stub)
+                m->sv_commercial_emit_tool_compatible_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            m->sv_commercial_emit_roundtrip_mismatch_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_commercial_emit_parse_success(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_commercial_emit_parse_success_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_commercial_emit_roundtrip_mismatch_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_commercial_emit_roundtrip_mismatch_prevented_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_commercial_emit_dirty_reemit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_commercial_emit_dirty_reemit_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_commercial_emit_tool_compatible(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_commercial_emit_tool_compatible_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_sv_commercial_emit_parse_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_commercial_emit_parse_success_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t
+    get_sv_commercial_emit_roundtrip_mismatch_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_commercial_emit_roundtrip_mismatch_prevented_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_commercial_emit_dirty_reemit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_commercial_emit_dirty_reemit_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_commercial_emit_tool_compatible() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_commercial_emit_tool_compatible_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

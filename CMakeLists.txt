@@ -3843,6 +3843,14 @@ add_dependencies(all_test_issue_targets test_typechecker_incremental_guard_steal
 aura_add_issue_test(test_eda_production_infra)
 aura_issue_test_link_llvm_jit(test_eda_production_infra)
 add_dependencies(all_test_issue_targets test_eda_production_infra)
+# Issue #801: SV commercial emit fidelity + roundtrip stub + dirty re-emit.
+# 4 CompilerMetrics atomics (sv_commercial_emit_*_total) +
+# (query:sv-commercial-emit-fidelity-stats, schema 801) + bump wiring in
+# maybe_hardware_feedback / mutate feedback / eda:validate-sv-emit-roundtrip.
+# 8 ACs. Non-duplicative with #772/#748/#725.
+aura_add_issue_test(test_sv_verification_commercial_emit_fidelity)
+aura_issue_test_link_llvm_jit(test_sv_verification_commercial_emit_fidelity)
+add_dependencies(all_test_issue_targets test_sv_verification_commercial_emit_fidelity)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

@@ -2595,6 +2595,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                             std::memory_order_relaxed);
                     }
                 }
+                ev.record_sv_commercial_emit_fidelity(validation.ok, true,
+                                                      !reemit.commercial_do_stub.empty());
             }
         }
         ev.bump_verify_tool_feedback_mutate_success();
@@ -2640,6 +2642,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                                                std::memory_order_relaxed);
             }
         }
+        ev.record_sv_commercial_emit_fidelity(validation.ok, false,
+                                              !reemit.commercial_do_stub.empty());
         return make_bool(true);
     });
 

@@ -635,6 +635,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eda_infra_structured_mutate_total{0};
     std::atomic<std::uint64_t> eda_infra_feedback_ingest_total{0};
     std::atomic<std::uint64_t> eda_infra_cosim_invoke_total{0};
+    // Issue #801: SV commercial emit fidelity observability (refines #772/#748/#725;
+    // non-duplicative with query:sv-verification-structure-stats #748).
+    //   - sv_commercial_emit_parse_success_total: validate_sv_emit roundtrip pass.
+    //   - sv_commercial_emit_roundtrip_mismatch_prevented_total: local validator
+    //     caught emit drift before commercial tool ingest.
+    //   - sv_commercial_emit_dirty_reemit_total: dirty-triggered incremental re-emit.
+    //   - sv_commercial_emit_tool_compatible_total: emit accepted with commercial stub.
+    std::atomic<std::uint64_t> sv_commercial_emit_parse_success_total{0};
+    std::atomic<std::uint64_t> sv_commercial_emit_roundtrip_mismatch_prevented_total{0};
+    std::atomic<std::uint64_t> sv_commercial_emit_dirty_reemit_total{0};
+    std::atomic<std::uint64_t> sv_commercial_emit_tool_compatible_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
