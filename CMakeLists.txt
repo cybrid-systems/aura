@@ -3358,6 +3358,36 @@ add_dependencies(all_test_issue_targets test_issue_731)
 aura_add_issue_test(test_issue_732)
 aura_issue_test_link_llvm_jit(test_issue_732)
 add_dependencies(all_test_issue_targets test_issue_732)
+# Issue #733: Macro SyntaxMarker propagation + IR/JIT hygiene
+# enforcement observability primitive — 5 atomics + 5 bump
+# helpers + (query:ir-marker-hygiene-stats, schema 733)
+# primitive (6-entry hash: 5 fields + schema sentinel). Pairs
+# with #714 (query:self-evolution-closedloop-stats ref-drift +
+# rollback + feedback-mutate-rounds) + #455 (internal ir marker
+# snapshot) + #373 (mutate hygiene guard flat.is_macro_
+# introduced internal check); #733 covers the *marker
+# propagation + IR/JIT enforcement* specifically across the
+# entire compile/execution pipeline (macro expand -> AST ->
+# lowering -> IR -> JIT hot-path -> Interpreter) as separate
+# per-decision-point counters the Agent consumes to monitor
+# hygiene fidelity.
+# 5 ACs / 53 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#732.
+# Real propagate_marker_from_ast helper in lowering_impl.cpp +
+# ir_soa.ixx marker_ column + aura_jit.cpp + aura_jit_runtime.cpp
+# + ir_executor.ixx conservative policy on source_marker==
+# MacroIntroduced + IRFunction creation marker-from-root-AST-
+# marker in service/lowering + tests/test_macro_marker_
+# propagation_ir_jit_post_mutate.cpp harness (define macro that
+# introduces lambda + mutate inside it under fiber + JIT hot
+# path) + #674 chaos stress integration + SEVA macro-heavy
+# cases are all follow-up (each is a dedicated session in
+# lowering_impl.cpp + ir_soa.ixx + aura_jit.cpp + aura_jit_
+# runtime.cpp + ir_executor.ixx + new test + chaos stress +
+# SEVA demo + docs).
+aura_add_issue_test(test_issue_733)
+aura_issue_test_link_llvm_jit(test_issue_733)
+add_dependencies(all_test_issue_targets test_issue_733)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

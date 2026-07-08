@@ -2785,6 +2785,105 @@ struct CompilerMetrics {
     // + MutationBoundaryGuard + fiber.cpp + new test + chaos stress +
     // docs).
     std::atomic<std::uint64_t> aot_safe_boundary_hits_total{0};
+
+    // Issue #733: macro marker propagation + IR/JIT hygiene
+    // enforcement counters backing the (query:ir-marker-hygiene-stats)
+    // primitive. These are public so future lowering_impl.cpp +
+    // emit paths + ir_soa.ixx + aura_jit.cpp + aura_jit_runtime.cpp
+    // + ir_executor.ixx can call them at each decision point
+    // (IRInstruction creation from AST node propagates marker /
+    // IRFunction marker set from root AST marker / marker-loss
+    // detected at hot path / JIT conservative policy applied on
+    // MacroIntroduced / marker-propagation successful across all
+    // emit sites).
+    //
+    // Non-duplicative with #714 (query:self-evolution-closedloop-
+    // stats — ref drift + rollback success + feedback mutate rounds)
+    // + #455 (ir marker snapshot — internal mechanics, no
+    // observability surface) + #373 (mutate hygiene guard —
+    // flat.is_macro_introduced internal check). #733 is the FIRST
+    // observability surface that tracks the *marker propagation +
+    // IR/JIT enforcement* specifically as separate per-decision-
+    // point counters the Agent consumes to monitor hygiene fidelity
+    // across the entire compile/execution pipeline (macro expand →
+    // AST → lowering → IR → JIT hot-path → Interpreter).
+    //
+    //   - ir_marker_user_instrs_total: # of IRInstructions created
+    //                                  with marker=User (proxy for
+    //                                  "how much IR traffic is
+    //                                  user-authored").
+    //   - ir_marker_macro_introduced_instrs_total: # of IRInstructions
+    //                                              created with
+    //                                              marker=MacroIntroduced
+    //                                              (proxy for "how
+    //                                              much IR traffic
+    //                                              is macro-authored
+    //                                              — the hygiene
+    //                                              scope").
+    //   - ir_marker_loss_events_total: # of times marker propagation
+    //                                  failed at emit path (e.g. a
+    //                                  closure body / PrimCall arg /
+    //                                  linear op / cached define path
+    //                                  that did not copy AST marker
+    //                                  → IR source_marker / IRFunction
+    //                                  marker). Proxy for "how many
+    //                                  macro-introduced sub-exprs
+    //                                  lost their hygiene marker
+    //                                  through the pipeline".
+    //   - ir_hygiene_jit_violations_prevented_total: # of times the JIT
+    //                                                conservative policy
+    //                                                fired on a
+    //                                                MacroIntroduced
+    //                                                source_marker
+    //                                                (prevented
+    //                                                aggressive deopt-
+    //                                                elide / respected
+    //                                                hygiene in
+    //                                                closure capture /
+    //                                                forced Interpreter
+    //                                                fallback or extra
+    //                                                epoch check).
+    //                                                Proxy for "how
+    //                                                often the JIT
+    //                                                hot-path consults
+    //                                                marker + applies
+    //                                                conservative
+    //                                                policy".
+    //   - ir_hygiene_marker_propagation_hits_total: # of times marker
+    //                                              propagation
+    //                                              succeeded across
+    //                                              all emit sites
+    //                                              (closure / PrimCall
+    //                                              / linear / cached
+    //                                              define paths all
+    //                                              copied AST marker
+    //                                              → IR source_marker
+    //                                              / IRFunction
+    //                                              marker via
+    //                                              propagate_marker_
+    //                                              from_ast helper).
+    //                                              Proxy for "how
+    //                                              often the hygiene
+    //                                              marker survives
+    //                                              the pipeline".
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual propagate_marker_from_ast helper in lowering_impl.cpp
+    // + ir_soa.ixx marker_ column + aura_jit.cpp + aura_jit_runtime.cpp
+    // + ir_executor.ixx conservative policy on source_marker==
+    // MacroIntroduced + IRFunction creation marker-from-root-AST-
+    // marker in service/lowering + tests/test_macro_marker_propagation_
+    // ir_jit_post_mutate.cpp harness (define macro that introduces
+    // lambda + mutate inside it under fiber + JIT hot path) + #674
+    // stress integration + SEVA macro-heavy cases are all follow-up
+    // (each is a dedicated session in lowering_impl.cpp + ir_soa.ixx
+    // + aura_jit.cpp + aura_jit_runtime.cpp + ir_executor.ixx + new
+    // test + chaos stress + SEVA demo + docs).
+    std::atomic<std::uint64_t> ir_marker_user_instrs_total{0};
+    std::atomic<std::uint64_t> ir_marker_macro_introduced_instrs_total{0};
+    std::atomic<std::uint64_t> ir_marker_loss_events_total{0};
+    std::atomic<std::uint64_t> ir_hygiene_jit_violations_prevented_total{0};
+    std::atomic<std::uint64_t> ir_hygiene_marker_propagation_hits_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
