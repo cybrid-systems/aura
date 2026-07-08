@@ -1726,6 +1726,71 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> value_v2_string_collisions_total{0};
     std::atomic<std::uint64_t> shape_history_shift_total{0};
 
+    // Issue #726: verification feedback-driven closed-loop self-
+    // evolution reliability counters for
+    // (query:closed-loop-reliability-stats). Exposes the multi-
+    // round verification feedback -> mutate -> re-verify loop
+    // reliability signals that complement the existing VerifyDirty
+    // / VerificationDirtyReason + mark_dirty_verification helpers
+    // (#437 / #469) + SEVA demo + #695/#696 stress harness +
+    // #697 declarative kit without overlapping the #748
+    // SV verification structure stats (which covers the structural
+    // mutate + emit + dirty re-emit side; #726 covers the closed-
+    // loop reliability side):
+    //   - closed_loop_ref_drift_prevented_total  # of times a
+    //                                            StableNodeRef
+    //                                            drift across
+    //                                            verification
+    //                                            feedback mutate
+    //                                            was prevented by
+    //                                            the runtime guard
+    //                                            (proxy for "how
+    //                                            many silent
+    //                                            ref invalidations
+    //                                            the guard caught")
+    //   - closed_loop_rollback_success_total    # of successful
+    //                                            rollbacks on
+    //                                            verification
+    //                                            feedback mutate
+    //                                            (MutationBoundaryGuard
+    //                                            dtor + panic
+    //                                            restore + epoch
+    //                                            bump fired
+    //                                            cleanly)
+    //   - closed_loop_feedback_mutate_rounds_total
+    //                                          # of feedback
+    //                                            parse ->
+    //                                            mutate ->
+    //                                            re-verify rounds
+    //                                            completed in
+    //                                            the closed loop
+    //                                            (proxy for "how
+    //                                            many autonomous
+    //                                            SEVA iterations
+    //                                            the agent ran
+    //                                            successfully")
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual verify:parse-coverage-feedback / parse-assert-failure
+    // / parse-formal-cex / mutate:from-verification-feedback primitives
+    // + closed-loop controller (seva:run-closed-loop) + enhanced
+    // subtree StableNodeRef validation in MutationBoundaryGuard +
+    // backend re-emit tie-in (#725) are follow-up work (each is
+    // a dedicated session in evaluator_primitives_verify*.cpp or
+    // new verify_primitives module + MutationBoundaryGuard + ast
+    // dirty + new test harness + SEVA demo extension + docs).
+    //
+    // Non-duplicative with the existing #748 SV verification
+    // structure stats primitive (which covers structural mutate
+    // + emit + dirty re-emit); #726 is the FIRST observability
+    // surface that tracks closed-loop multi-round reliability
+    // outcomes (ref drift prevention + rollback success + feedback
+    // mutate rounds) as separate counters the Agent can consume
+    // to monitor SEVA self-evolution stability.
+    std::atomic<std::uint64_t> closed_loop_ref_drift_prevented_total{0};
+    std::atomic<std::uint64_t> closed_loop_rollback_success_total{0};
+    std::atomic<std::uint64_t> closed_loop_feedback_mutate_rounds_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
