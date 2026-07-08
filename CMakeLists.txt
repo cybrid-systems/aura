@@ -3188,6 +3188,24 @@ add_dependencies(all_test_issue_targets test_issue_718)
 aura_add_issue_test(test_issue_719)
 aura_issue_test_link_llvm_jit(test_issue_719)
 add_dependencies(all_test_issue_targets test_issue_719)
+# Issue #720: JIT/Interpreter parity stats primitive — 4 atomics + 4
+# bump helpers + (query:jit-interpreter-parity-stats, schema 720)
+# primitive (5-entry hash: 4 fields + schema sentinel). Pairs with
+# the aggregate unhandled_opcode_count / fallback_count metrics in
+# aura_jit.cpp; #720 splits by *cause* (unhandled spike vs metadata
+# mismatch vs deopt-on-mutate vs interpreter fallback) and adds
+# post-mutation drift signals.
+# 5 ACs / 29 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712 + #713 +
+# #714 + #715 + #716 + #717 + #718 + #719. Real FlatInstruction
+# metadata extension + unhandled hook + GuardShape/linear full
+# consume + deopt->service wiring + PrimCall/closure/linear fast-path
+# coverage + opcode + metadata parity test matrix are all follow-up
+# (each is a dedicated session in aura_jit.cpp + aura_jit.h +
+# aura_jit_bridge.cpp + service.ixx + ir_executor_impl.cpp).
+aura_add_issue_test(test_issue_720)
+aura_issue_test_link_llvm_jit(test_issue_720)
+add_dependencies(all_test_issue_targets test_issue_720)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
