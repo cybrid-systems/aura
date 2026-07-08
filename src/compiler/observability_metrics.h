@@ -2007,6 +2007,173 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dead_coercion_elision_evidence_hits_total{0};
     std::atomic<std::uint64_t> dead_coercion_elision_narrowing_stable_paths_total{0};
     std::atomic<std::uint64_t> dead_coercion_elision_runtime_check_savings_total{0};
+    // Issue #765: Full DepEntry quote/lambda tracking + impact_scope
+    // propagation to bridge_epoch bump, EnvFrame version re-stamp
+    // and linear state refresh in LoweringState/invalidate
+    // (refine/extend #741, non-duplicative). These are public so
+    // future ir_cache_pure.ixx compute_dependencies + compute_
+    // impact_scope + service dep_graph_ extend DepEntry to flag
+    // quote/lambda-introduced nodes (via source_marker or Define
+    // with quote); in impact_scope, prioritize or specially mark
+    // blocks with closure_bridge or linear nodes for full
+    // bridge/Env/linear refresh + service.ixx invalidate_function
+    // + LoweringState on re-lower of impacted quote/lambda blocks:
+    // bump bridge_epoch, re-stamp captured EnvFrame version_ (via
+    // materialize or owner walk), re-emit linear_ownership_state
+    // via emit_with_metadata for affected Linear* ops; integrate
+    // with DirtyAwarePass for targeted linear dirty + lowering_
+    // impl.cpp Variable + set_closure_bridge_ptr + emit paths in
+    // cache-hit for define with quote/lambda, propagate
+    // linear_state from original; on re-lower impact, refresh
+    // bridge shared_ptr with updated linear metadata +
+    // tests/test_prompt2_6_dep_quote_lambda_impact_linear_bridge_
+    // env.cpp harness (define with quote + lambda capturing
+    // linear + mutate inside body → impact_scope + partial
+    // re-lower + live closure apply → assert bridge/Env/linear
+    // fresh, no stale ownership/hygiene, metrics, TSan clean) +
+    // SEVA quote/lambda linear demo + CI gate can call them at
+    // each decision point (DepEntry quote/lambda hit / bridge_
+    // epoch bump on impact / EnvFrame version refresh /
+    // linear_ownership_state refresh).
+    //
+    // Non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats), #758 (query:edsl-reflection-stats), #759 (query:
+    // code-as-data-maturity-stats), #760 (query:pattern-perfor-
+    // mance-stats), #761 (query:mutate-batch-stats), #762 (query:
+    // workspace-closedloop-orchestration-stats), #763 (query:
+    // linear-ownership-gc-compiler-stats), #764 (query:compiler-
+    // arena-closure-lifetime-stats) which cover macro body
+    // hygiene + EDSL struct + macro hygiene invariant correlation
+    // + code-as-data closed-loop maturity + query:pattern
+    // performance + end-to-end atomic batch mutate + Workspace
+    // closed-loop orchestration + linear ownership + GC + compiler
+    // maturation + Arena AST lifetime surfaces. #765 is the FIRST
+    // observability surface that tracks the *incremental
+    // compilation safety for quote/lambda/closure-heavy defines
+    // composite* — DepEntry quote/lambda hit (impact_scope
+    // prioritization signal), bridge_epoch bump on impact
+    // (cross-bridge freshness), EnvFrame version refresh
+    // (captured-env freshness), linear state refreshed
+    // (linear_ownership_state re-emit freshness) — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // fine-grained incremental compilation + ownership safety
+    // production-readiness.
+    //
+    //   - incremental_quote_lambda_dep_hits_total: # of DepEntry
+    //                                              quote/lambda-
+    //                                              introduced
+    //                                              node hits
+    //                                              during
+    //                                              impact_scope
+    //                                              (proxy for
+    //                                              "how often
+    //                                              the
+    //                                              incremental
+    //                                              compiler
+    //                                              identifies
+    //                                              a quote/
+    //                                              lambda node
+    //                                              as affected").
+    //   - incremental_quote_lambda_bridge_epoch_bump_total: # of
+    //                                                   bridge_
+    //                                                   epoch
+    //                                                   bumps
+    //                                                   on
+    //                                                   impact
+    //                                                   re-lower
+    //                                                   of
+    //                                                   quote/
+    //                                                   lambda
+    //                                                   blocks
+    //                                                   (proxy for
+    //                                                   "how
+    //                                                   often the
+    //                                                   invalidate
+    //                                                   path
+    //                                                   correctly
+    //                                                   bumps
+    //                                                   bridge
+    //                                                   epoch to
+    //                                                   keep live
+    //                                                   closures
+    //                                                   fresh").
+    //   - incremental_quote_lambda_env_version_refresh_total: # of
+    //                                                      EnvFrame
+    //                                                      version
+    //                                                      refreshes
+    //                                                      on
+    //                                                      impact
+    //                                                      re-lower
+    //                                                      (proxy
+    //                                                      for
+    //                                                      "how
+    //                                                      often
+    //                                                      the
+    //                                                      invalidate
+    //                                                      path
+    //                                                      correctly
+    //                                                      re-
+    //                                                      stamps
+    //                                                      captured
+    //                                                      EnvFrame
+    //                                                      version_
+    //                                                      to keep
+    //                                                      GC walk
+    //                                                      safe").
+    //   - incremental_quote_lambda_linear_state_refreshed_total:
+    //                                                 # of
+    //                                                 linear_
+    //                                                 ownership_
+    //                                                 state
+    //                                                 re-emits
+    //                                                 via
+    //                                                 emit_with_
+    //                                                 metadata
+    //                                                 for
+    //                                                 affected
+    //                                                 Linear*
+    //                                                 ops
+    //                                                 on
+    //                                                 impact
+    //                                                 (proxy for
+    //                                                 "how often
+    //                                                 the
+    //                                                 invalidate
+    //                                                 path
+    //                                                 correctly
+    //                                                 refreshes
+    //                                                 linear_
+    //                                                 ownership_
+    //                                                 state
+    //                                                 metadata
+    //                                                 to keep
+    //                                                 AI self-
+    //                                                 mod safe").
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual ir_cache_pure.ixx compute_dependencies + compute_
+    // impact_scope + service dep_graph_ DepEntry quote/lambda
+    // flag + impact_scope priority for closure_bridge/linear
+    // blocks + service.ixx invalidate_function + LoweringState
+    // bridge_epoch bump + EnvFrame version_ re-stamp + linear_
+    // ownership_state re-emit + DirtyAwarePass integration +
+    // lowering_impl.cpp Variable cache-hit + set_closure_bridge_
+    // ptr + emit paths linear_state propagation + bridge shared_
+    // ptr refresh + tests/test_prompt2_6_dep_quote_lambda_impact_
+    // linear_bridge_env.cpp harness (define with quote + lambda
+    // capturing linear + mutate inside body → impact_scope +
+    // partial re-lower + live closure apply → assert bridge/Env/
+    // linear fresh, no stale ownership/hygiene, metrics, TSan
+    // clean) + SEVA quote/lambda linear demo + sync epochs with
+    // mutation_epoch_ + wire to pass_manager DirtyAware +
+    // EscapeAnalysis for linear in quote contexts + CI gate + docs
+    // are all follow-up work (each is a dedicated session in
+    // ir_cache_pure.ixx + service.ixx + lowering_impl.cpp + new
+    // test + SEVA demo + docs).
+    std::atomic<std::uint64_t> incremental_quote_lambda_dep_hits_total{0};
+    std::atomic<std::uint64_t> incremental_quote_lambda_bridge_epoch_bump_total{0};
+    std::atomic<std::uint64_t> incremental_quote_lambda_env_version_refresh_total{0};
+    std::atomic<std::uint64_t> incremental_quote_lambda_linear_state_refreshed_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

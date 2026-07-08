@@ -587,6 +587,16 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // shared_ptr<FlatAST> lifetime vs GC-managed Env/Closure in
     // closure_bridge_ composite).
     "query:compiler-arena-closure-lifetime-stats",
+    // Issue #765 — Full DepEntry quote/lambda tracking + impact_
+    // scope propagation to bridge_epoch bump, EnvFrame version
+    // re-stamp and linear state refresh in LoweringState/
+    // invalidate (refine/extend #741, non-duplicative — #765 is
+    // the FIRST observability surface that tracks the incremental
+    // compilation safety for quote/lambda/closure-heavy defines
+    // composite specifically: DepEntry quote/lambda hit, bridge_
+    // epoch bump on impact, EnvFrame version refresh, linear state
+    // refreshed).
+    "query:incremental-quote-lambda-linear-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -11753,6 +11763,185 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "lifetime production health the Agent consumes to decide "
                         "whether to refresh the bridge AST, pin shared_ptr, or "
                         "trigger apply-time validity check under Guard commit.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #765: (query:incremental-quote-lambda-linear-stats) —
+    // Full DepEntry quote/lambda tracking + impact_scope
+    // propagation to bridge_epoch bump, EnvFrame version re-stamp
+    // and linear state refresh in LoweringState/invalidate
+    // (non-duplicative with #757 / #758 / #759 / #760 / #761 / #762
+    // / #763 / #764 coarse observability surfaces). #765 covers
+    // the *incremental compilation safety for quote/lambda/closure-
+    // heavy defines composite* specifically — DepEntry quote/lambda
+    // hit, bridge_epoch bump on impact, EnvFrame version refresh,
+    // linear state refreshed — as separate per-decision-point
+    // counters the Agent consumes to monitor fine-grained
+    // incremental compilation + ownership safety production-
+    // readiness.
+    //
+    // Fields (4 + sentinel):
+    //   - dep-quote-lambda-hits
+    //                                incremental_quote_lambda_dep_hits_total
+    //                                (# of DepEntry quote/lambda-
+    //                                 introduced node hits during
+    //                                 impact_scope — proxy for
+    //                                 "how often the incremental
+    //                                 compiler identifies a quote/
+    //                                 lambda node as affected")
+    //   - bridge-epoch-bump-on-impact
+    //                                incremental_quote_lambda_bridge_epoch_bump_total
+    //                                (# of bridge_epoch bumps on
+    //                                 impact re-lower of quote/
+    //                                 lambda blocks — proxy for
+    //                                 invalidate path correctly
+    //                                 bumping bridge epoch to
+    //                                 keep live closures fresh)
+    //   - env-version-refresh
+    //                                incremental_quote_lambda_env_version_refresh_total
+    //                                (# of EnvFrame version
+    //                                 refreshes on impact re-lower
+    //                                 — proxy for invalidate path
+    //                                 correctly re-stamping
+    //                                 captured EnvFrame version_
+    //                                 to keep GC walk safe)
+    //   - linear-state-refreshed
+    //                                incremental_quote_lambda_linear_state_refreshed_total
+    //                                (# of linear_ownership_state
+    //                                 re-emits via emit_with_
+    //                                 metadata for affected Linear*
+    //                                 ops on impact — proxy for
+    //                                 invalidate path correctly
+    //                                 refreshing linear_ownership_
+    //                                 state metadata to keep AI
+    //                                 self-mod safe)
+    //   - schema == 765
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual ir_cache_pure.ixx compute_dependencies + compute_
+    // impact_scope + service dep_graph_ DepEntry quote/lambda
+    // flag + impact_scope priority for closure_bridge/linear
+    // blocks + service.ixx invalidate_function + LoweringState
+    // bridge_epoch bump + EnvFrame version_ re-stamp + linear_
+    // ownership_state re-emit + DirtyAwarePass integration +
+    // lowering_impl.cpp Variable cache-hit + set_closure_bridge_
+    // ptr + emit paths linear_state propagation + bridge shared_
+    // ptr refresh + tests/test_prompt2_6_dep_quote_lambda_impact_
+    // linear_bridge_env.cpp harness + SEVA quote/lambda linear
+    // demo + sync epochs with mutation_epoch_ + wire to pass_manager
+    // DirtyAware + EscapeAnalysis for linear in quote contexts + CI
+    // gate + docs are all follow-up work.
+    //
+    // Issue #765: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=765 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#764).
+    ev.primitives_.add(
+        "query:incremental-quote-lambda-linear-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t dep_quote_lambda_hits =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_quote_lambda_dep_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t bridge_epoch_bump_on_impact =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_quote_lambda_bridge_epoch_bump_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t env_version_refresh =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_quote_lambda_env_version_refresh_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t linear_state_refreshed =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_quote_lambda_linear_state_refreshed_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"dep-quote-lambda-hits", make_int(dep_quote_lambda_hits)},
+                {"bridge-epoch-bump-on-impact", make_int(bridge_epoch_bump_on_impact)},
+                {"env-version-refresh", make_int(env_version_refresh)},
+                {"linear-state-refreshed", make_int(linear_state_refreshed)},
+                {"schema", make_int(765)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Full DepEntry quote/lambda tracking + impact_scope "
+                        "propagation to bridge_epoch bump, EnvFrame version "
+                        "re-stamp and linear state refresh in LoweringState/"
+                        "invalidate (refine/extend #741, non-duplicative): "
+                        "dep-quote-lambda-hits (# of DepEntry quote/lambda-"
+                        "introduced node hits during impact_scope — proxy "
+                        "for \"how often the incremental compiler identifies "
+                        "a quote/lambda node as affected\"), bridge-epoch-"
+                        "bump-on-impact (# of bridge_epoch bumps on impact "
+                        "re-lower of quote/lambda blocks — proxy for "
+                        "invalidate path correctly bumping bridge epoch to "
+                        "keep live closures fresh), env-version-refresh (# "
+                        "of EnvFrame version refreshes on impact re-lower — "
+                        "proxy for invalidate path correctly re-stamping "
+                        "captured EnvFrame version_ to keep GC walk safe), "
+                        "linear-state-refreshed (# of linear_ownership_state "
+                        "re-emits via emit_with_metadata for affected "
+                        "Linear* ops on impact — proxy for invalidate path "
+                        "correctly refreshing linear_ownership_state "
+                        "metadata to keep AI self-mod safe). Pairs with the "
+                        "existing #757 + #758 + #759 + #760 + #761 + #762 + "
+                        "#763 + #764 4-field observability hashes but tracks "
+                        "the *incremental compilation safety for quote/"
+                        "lambda/closure-heavy defines composite* specifically "
+                        "as separate per-decision-point counters. #765 "
+                        "exposes the incremental compilation + ownership "
+                        "safety production health the Agent consumes to "
+                        "decide whether to trigger quote/lambda re-lower, "
+                        "bridge_epoch bump, or linear state refresh under "
+                        "Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

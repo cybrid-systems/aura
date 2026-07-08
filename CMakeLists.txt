@@ -3775,6 +3775,49 @@ add_dependencies(all_test_issue_targets test_issue_764)
 aura_add_issue_test(test_dead_coercion_elision_narrow_evidence)
 aura_issue_test_link_llvm_jit(test_dead_coercion_elision_narrow_evidence)
 add_dependencies(all_test_issue_targets test_dead_coercion_elision_narrow_evidence)
+# Issue #765: Full DepEntry quote/lambda tracking + impact_scope
+# propagation to bridge_epoch bump, EnvFrame version re-stamp
+# and linear state refresh observability primitive — 4 atomics
+# + 4 bump helpers + (query:incremental-quote-lambda-linear-
+# stats, schema 765) primitive (5-entry hash: 4 fields + schema
+# sentinel). Pairs with the existing #757 query:macro-hygiene-
+# provenance-stats + #758 query:edsl-reflection-stats +
+# #759 query:code-as-data-maturity-stats +
+# #760 query:pattern-performance-stats +
+# #761 query:mutate-batch-stats +
+# #762 query:workspace-closedloop-orchestration-stats +
+# #763 query:linear-ownership-gc-compiler-stats +
+# #764 query:compiler-arena-closure-lifetime-stats 4-field
+# hashes; #765 covers the *incremental compilation safety for
+# quote/lambda/closure-heavy defines composite* specifically —
+# DepEntry quote/lambda hit, bridge_epoch bump on impact, EnvFrame
+# version refresh, linear state refreshed — as separate per-
+# decision-point counters the Agent consumes to monitor fine-
+# grained incremental compilation + ownership safety production-
+# readiness.
+# 5 ACs / 35 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758/#759/#760/#761/#762/#763/#764.
+# Real ir_cache_pure.ixx compute_dependencies + compute_impact_
+# scope + service dep_graph_ DepEntry quote/lambda flag + impact_
+# scope priority for closure_bridge/linear blocks + service.ixx
+# invalidate_function + LoweringState bridge_epoch bump + EnvFrame
+# version_ re-stamp + linear_ownership_state re-emit + DirtyAware
+# Pass integration + lowering_impl.cpp Variable cache-hit + set_
+# closure_bridge_ptr + emit paths linear_state propagation + bridge
+# shared_ptr refresh + tests/test_prompt2_6_dep_quote_lambda_
+# impact_linear_bridge_env.cpp harness (define with quote + lambda
+# capturing linear + mutate inside body → impact_scope + partial
+# re-lower + live closure apply → assert bridge/Env/linear fresh,
+# no stale ownership/hygiene, metrics, TSan clean) + SEVA quote/
+# lambda linear demo + sync epochs with mutation_epoch_ + wire to
+# pass_manager DirtyAware + EscapeAnalysis for linear in quote
+# contexts + CI gate + docs are all follow-up (each is a
+# dedicated session in ir_cache_pure.ixx + service.ixx +
+# lowering_impl.cpp + new test + SEVA demo + docs).
+aura_add_issue_test(test_issue_765)
+aura_issue_test_link_llvm_jit(test_issue_765)
+add_dependencies(all_test_issue_targets test_issue_765)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
