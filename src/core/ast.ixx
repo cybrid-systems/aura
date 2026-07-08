@@ -5186,6 +5186,14 @@ public:
         // (ast.is_valid() and ast.generation()), so no friend
         // access is needed.
         bool is_valid_in(const FlatAST& ast) const noexcept;
+        // Issue #715: cross-layer StableNodeRef validity check
+        // for WorkspaceTree multi-workspace setups. Combines
+        // is_valid_in(ast) + workspace_id match + COW epoch
+        // match (unless pin_for_cow was called). Pure read;
+        // does not update last_validated_generation or bump
+        // any counters. Body in src/core/ast_stability.cpp.
+        bool is_valid_in_layer(const FlatAST& ast,
+                               std::uint32_t target_workspace_id = 0) const noexcept;
         bool validate_with_provenance(const FlatAST& ast) noexcept;
 
         // Issue #497: refresh gen/wrap from a still-live node id when

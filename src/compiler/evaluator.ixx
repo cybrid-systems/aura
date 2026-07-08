@@ -3768,6 +3768,32 @@ public:
             m->self_evo_strategy_recommend_balanced_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #715: StableNodeRef cross-layer validation counters
+    // backing the (query:stable-ref-layer-stats) primitive. The
+    // is_valid_in_layer() helper on StableNodeRef is pure read
+    // and does NOT bump these counters itself (allocation-free,
+    // safe in tight loops); callers that want per-call
+    // observability can route through these helpers at each
+    // decision point (e.g. inside MutationBoundaryGuard on
+    // rebind, or at workspace merge time).
+    void bump_stable_ref_cross_layer_validation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_cross_layer_validations_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_stable_ref_cross_layer_mismatch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_cross_layer_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_stable_ref_cow_boundary_pin() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_cow_boundary_pins_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
