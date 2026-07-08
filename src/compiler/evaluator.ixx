@@ -4098,6 +4098,43 @@ public:
             m->unified_error_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #731: Arena + SoA + EnvFrame concurrent compaction safety
+    // counters backing the (query:arena-concurrent-compact-stats)
+    // primitive. These are public so future arena.ixx + gc_coordinator +
+    // evaluator_gc.cpp concurrent compact / defrag success path + fiber.cpp
+    // resume() / transfer hooks + panic checkpoint integration can call
+    // them at each decision point (concurrent compact acquired / EnvFrame
+    // revalidation completed / panic rollback fired on compact / race
+    // prevented). Pairs with #722 (query:arena-integration-stats tier
+    // integration) and #743 (Arena auto-compact policy + fiber safepoint)
+    // but tracks the *concurrent* safety specifically — scheduler-safepoint
+    // coordination + EnvFrame GCEnvWalkFn revalidation + panic-rollback-
+    // compact integration + race prevention — not the coarse tier/
+    // policy surface.
+    void bump_arena_concurrent_compact() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_concurrent_compacts_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_envframe_revalidation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_envframe_revalidations_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_panic_rollback_compact_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_panic_rollback_compact_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_race_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_races_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
