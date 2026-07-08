@@ -4964,6 +4964,59 @@ public:
         }
         return 0;
     }
+    // Issue #802: SV verification self-evolution closed-loop stats.
+    void bump_sv_self_evo_feedback_parse(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_self_evo_feedback_parse_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_self_evo_structured_mutate(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_self_evo_structured_mutate_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_self_evo_closed_loop_rounds(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_self_evo_closed_loop_rounds_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_self_evo_convergence_hits(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_self_evo_convergence_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_sv_self_evo_feedback_parse() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_self_evo_feedback_parse_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_self_evo_structured_mutate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_self_evo_structured_mutate_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_self_evo_closed_loop_rounds() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_sv_self_evo_convergence_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

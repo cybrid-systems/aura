@@ -103,6 +103,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:type-incremental-fidelity-stats)` | 798  | ConstraintSystem incremental fidelity under Guard/steal (5 fields) |
 | `(query:eda-infra-stats)`                | 841    | EDA production infrastructure parse/mutate/feedback/co-sim (5 fields) |
 | `(query:sv-commercial-emit-fidelity-stats)` | 801 | SV commercial emit roundtrip + dirty re-emit fidelity (5 fields) |
+| `(query:sv-verification-self-evolution-stats)` | 802 | feedback-driven SV self-evolution closed-loop (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -188,6 +189,16 @@ Distinct from `(query:eda-foundation-stats)` (#499): #841 tracks production clos
 - `schema` — 801 (drift sentinel)
 
 Distinct from `(query:sv-verification-structure-stats)` (#748): #801 tracks commercial-tool interop fidelity; #748 tracks structural mutate + emit pass/fail totals.
+
+### `(query:sv-verification-self-evolution-stats)` fields (#802)
+
+- `feedback-parse-hits` — `sv_self_evo_feedback_parse_total` (`verify:parse-coverage-feedback` / assert / formal-cex)
+- `structured-mutate-hits` — `sv_self_evo_structured_mutate_total` (`mutate:from-verification-feedback` successes)
+- `closed-loop-rounds` — `sv_self_evo_closed_loop_rounds_total` (orchestrated self-evolution rounds)
+- `convergence-hits` — `sv_self_evo_convergence_hits_total` (successful feedback→mutate→re-verify rounds)
+- `schema` — 802 (drift sentinel)
+
+Distinct from `(query:closed-loop-reliability-stats)` (#726): #802 tracks structured feedback parse + mutate orchestration; #726 tracks ref-drift/rollback/feedback-round reliability.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

@@ -646,6 +646,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_commercial_emit_roundtrip_mismatch_prevented_total{0};
     std::atomic<std::uint64_t> sv_commercial_emit_dirty_reemit_total{0};
     std::atomic<std::uint64_t> sv_commercial_emit_tool_compatible_total{0};
+    // Issue #802: SV verification feedback-driven self-evolution observability
+    // (refines #774/#726/#748; non-duplicative with query:closed-loop-reliability-stats).
+    //   - sv_self_evo_feedback_parse_total: verify:parse-coverage/assert/formal-cex hits.
+    //   - sv_self_evo_structured_mutate_total: mutate:from-verification-feedback successes.
+    //   - sv_self_evo_closed_loop_rounds_total: closed-loop orchestration rounds.
+    //   - sv_self_evo_convergence_hits_total: successful feedback→mutate→re-verify rounds.
+    std::atomic<std::uint64_t> sv_self_evo_feedback_parse_total{0};
+    std::atomic<std::uint64_t> sv_self_evo_structured_mutate_total{0};
+    std::atomic<std::uint64_t> sv_self_evo_closed_loop_rounds_total{0};
+    std::atomic<std::uint64_t> sv_self_evo_convergence_hits_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

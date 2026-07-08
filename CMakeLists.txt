@@ -3851,6 +3851,14 @@ add_dependencies(all_test_issue_targets test_eda_production_infra)
 aura_add_issue_test(test_sv_verification_commercial_emit_fidelity)
 aura_issue_test_link_llvm_jit(test_sv_verification_commercial_emit_fidelity)
 add_dependencies(all_test_issue_targets test_sv_verification_commercial_emit_fidelity)
+# Issue #802: SV verification feedback-driven self-evolution closed-loop.
+# 4 CompilerMetrics atomics (sv_self_evo_*_total) +
+# (query:sv-verification-self-evolution-stats, schema 802) + bump wiring in
+# verify:parse-* / mutate:from-verification-feedback / eda:run-verification-feedback.
+# 8 ACs. Non-duplicative with #774/#726/#748.
+aura_add_issue_test(test_sv_verification_self_evolution_closed_loop_reliability)
+aura_issue_test_link_llvm_jit(test_sv_verification_self_evolution_closed_loop_reliability)
+add_dependencies(all_test_issue_targets test_sv_verification_self_evolution_closed_loop_reliability)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

@@ -118,6 +118,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:sv-verification-structure-stats",
     // Issue #801 — SV commercial emit fidelity stats
     "query:sv-commercial-emit-fidelity-stats",
+    // Issue #802 — SV verification self-evolution closed-loop stats
+    "query:sv-verification-self-evolution-stats",
     // Issue #750 — Runtime reflection schema validation for macro/EDSL mutate
     "query:reflection-schema-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
@@ -6582,6 +6584,71 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("dirty-reemit-hits", dirty_reemit);
         insert_kv("commercial-tool-compatible-hits", tool_compatible);
         insert_kv("schema", 801);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #802: query:sv-verification-self-evolution-stats — feedback-driven
+    // structured self-evolution closed-loop dashboard (refines #774/#726/#748;
+    // non-duplicative with query:closed-loop-reliability-stats #726).
+    //
+    // Fields (4 + sentinel):
+    //   - feedback-parse-hits       sv_self_evo_feedback_parse_total
+    //   - structured-mutate-hits    sv_self_evo_structured_mutate_total
+    //   - closed-loop-rounds        sv_self_evo_closed_loop_rounds_total
+    //   - convergence-hits          sv_self_evo_convergence_hits_total
+    //   - schema == 802
+    add("query:sv-verification-self-evolution-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t feedback_parse =
+            m ? static_cast<std::int64_t>(
+                    m->sv_self_evo_feedback_parse_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t structured_mutate =
+            m ? static_cast<std::int64_t>(
+                    m->sv_self_evo_structured_mutate_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t closed_loop_rounds =
+            m ? static_cast<std::int64_t>(
+                    m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t convergence =
+            m ? static_cast<std::int64_t>(
+                    m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("feedback-parse-hits", feedback_parse);
+        insert_kv("structured-mutate-hits", structured_mutate);
+        insert_kv("closed-loop-rounds", closed_loop_rounds);
+        insert_kv("convergence-hits", convergence);
+        insert_kv("schema", 802);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
