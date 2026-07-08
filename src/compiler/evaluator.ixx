@@ -4569,6 +4569,52 @@ public:
             m->linear_ownership_gc_env_version_resync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #764: Arena AST / shared_ptr<FlatAST> lifetime safety
+    // vs GC-managed Env/Closure in closure_bridge_ under
+    // incremental re-lower + mutation. These are public so future
+    // service.ixx invalidate_function + LoweringState + evaluator_
+    // gc.cpp + gc_coordinator + lowering_impl.cpp set_closure_
+    // bridge_ptr + apply_closure + tests/test_prompt6_arena_ast_
+    // sharedptr_closure_bridge_gc_lifetime.cpp harness can call
+    // them at each decision point. Pairs with the existing #757
+    // (macro-hygiene-provenance 2 new atomics) + #758 (edsl-
+    // reflection 4 atomics) + #759 (code-as-data-maturity 4
+    // atomics) + #760 (pattern-performance 4 atomics) + #761
+    // (mutate-batch 4 atomics) + #762 (workspace-closedloop 4
+    // atomics) + #763 (linear-ownership-gc-compiler 4 atomics) but
+    // tracks the *compiler Arena AST / shared_ptr<FlatAST> lifetime
+    // vs GC-managed Env/Closure in closure_bridge_* composite
+    // specifically — arena AST root hits, bridge shared_ptr pinned,
+    // cross-lifetime violations prevented, invalidate AST refresh
+    // count — not the per-component surfaces.
+    void bump_compiler_arena_closure_lifetime_root_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_arena_closure_lifetime_root_hits_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_arena_closure_lifetime_bridge_sharedptr_pinned() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_arena_closure_lifetime_bridge_sharedptr_pinned_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_arena_closure_lifetime_cross_violation_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_arena_closure_lifetime_cross_violations_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_arena_closure_lifetime_invalidate_ast_refresh() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_arena_closure_lifetime_invalidate_ast_refresh_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

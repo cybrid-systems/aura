@@ -1824,6 +1824,174 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_ownership_gc_root_stale_hits_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_violations_prevented_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_env_version_resync_total{0};
+    // Issue #764: Arena AST / shared_ptr<FlatAST> lifetime safety
+    // vs GC-managed Env/Closure in closure_bridge_ under
+    // incremental re-lower + mutation (non-duplicative with #741
+    // DepGraph/bridge/Env version, #731 Arena concurrent compact,
+    // #749 StableRef COW, #756 EnvFrame dual). These are public
+    // so future service.ixx invalidate_function + LoweringState
+    // on re-lower impact for affected closure_bridge entries
+    // retain/refresh shared_ptr<FlatAST> snapshot before Arena
+    // reset + bump bridge_epoch and notify GC to root the old
+    // AST temporarily if live closures reference it +
+    // evaluator_gc.cpp + gc_coordinator explicit root
+    // registration for active IRClosure shared_ptr<FlatAST> (via
+    // closure_bridge_ walk or live-closure list); on GC
+    // safepoint/compact, validate Arena liveness or pin AST
+    // nodes + lowering_impl.cpp set_closure_bridge_ptr +
+    // apply_closure capture Arena epoch or generation; on apply,
+    // verify AST nodes still valid (via marker or size check) or
+    // fallback safely + tests/test_prompt6_arena_ast_sharedptr_
+    // closure_bridge_gc_lifetime.cpp harness (quote/lambda define
+    // + heavy mutate:rebind + Arena reset + GC compact/steal +
+    // live closure apply → assert AST valid or safe fallback, no
+    // UAF/leak, roots correct, TSan/ASan clean) + SEVA arena/
+    // closure bridge demo + CI gate can call them at each
+    // decision point (arena AST root hits / bridge shared_ptr
+    // pinned / cross-lifetime violations prevented / invalidate
+    // AST refresh).
+    //
+    // Non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats), #758 (query:edsl-reflection-stats), #759 (query:
+    // code-as-data-maturity-stats), #760 (query:pattern-perfor-
+    // mance-stats), #761 (query:mutate-batch-stats), #762 (query:
+    // workspace-closedloop-orchestration-stats), #763 (query:
+    // linear-ownership-gc-compiler-stats) which cover macro body
+    // hygiene + EDSL struct + macro hygiene invariant correlation
+    // + code-as-data closed-loop maturity + query:pattern
+    // performance + end-to-end atomic batch mutate + Workspace
+    // closed-loop orchestration + linear ownership + GC + compiler
+    // maturation surfaces. #764 is the FIRST observability surface
+    // that tracks the *compiler Arena AST / shared_ptr<FlatAST>
+    // lifetime vs GC-managed Env/Closure in closure_bridge_*
+    // composite — arena AST root hits (GC walk find live AST
+    // roots), bridge shared_ptr pinned (Arena reset protection),
+    // cross-lifetime violations prevented (apply-time AST validity
+    // check fallback), invalidate AST refresh count (re-lower
+    // snapshot before reset) — as separate per-decision-point
+    // counters the Agent consumes to monitor cross-lifetime
+    // production safety in incremental AI mutation flows.
+    //
+    //   - compiler_arena_closure_lifetime_root_hits_total: # of
+    //                                                  arena AST
+    //                                                  root hits
+    //                                                  during GC
+    //                                                  walk via
+    //                                                  closure_
+    //                                                  bridge_ /
+    //                                                  live-
+    //                                                  closure
+    //                                                  list (proxy
+    //                                                  for "how
+    //                                                  many live
+    //                                                  AST roots
+    //                                                  are correctly
+    //                                                  registered
+    //                                                  against the
+    //                                                  GC" — high
+    //                                                  value =
+    //                                                  UAF/leak
+    //                                                  prevention
+    //                                                  signal).
+    //   - compiler_arena_closure_lifetime_bridge_sharedptr_pinned_total:
+    //                                                # of bridge
+    //                                                shared_ptr
+    //                                                <FlatAST>
+    //                                                pinned
+    //                                                before
+    //                                                Arena reset
+    //                                                (proxy for
+    //                                                "how often
+    //                                                does the
+    //                                                invalidate
+    //                                                path
+    //                                                correctly
+    //                                                retain the
+    //                                                old AST
+    //                                                snapshot to
+    //                                                keep live
+    //                                                closures
+    //                                                valid"
+    //                                                — high
+    //                                                value =
+    //                                                cross-lifetime
+    //                                                safety
+    //                                                signal).
+    //   - compiler_arena_closure_lifetime_cross_violations_prevented_total:
+    //                                                   # of
+    //                                                   cross-
+    //                                                   lifetime
+    //                                                   violations
+    //                                                   prevented
+    //                                                   at apply-
+    //                                                   time via
+    //                                                   AST
+    //                                                   validity
+    //                                                   check (via
+    //                                                   marker or
+    //                                                   size check)
+    //                                                   or safe
+    //                                                   fallback
+    //                                                   (proxy for
+    //                                                   "how many
+    //                                                   use-after-
+    //                                                   Arena-reset
+    //                                                   violations
+    //                                                   did the
+    //                                                   runtime
+    //                                                   guard
+    //                                                   prevent in
+    //                                                   bridge
+    //                                                   closure
+    //                                                   apply"
+    //                                                   — high
+    //                                                   value =
+    //                                                   safety net
+    //                                                   firings).
+    //   - compiler_arena_closure_lifetime_invalidate_ast_refresh_total:
+    //                                                # of
+    //                                                invalidate
+    //                                                AST
+    //                                                refresh
+    //                                                snapshots
+    //                                                taken before
+    //                                                Arena reset
+    //                                                (proxy for
+    //                                                "how often
+    //                                                does the
+    //                                                invalidate
+    //                                                path correctly
+    //                                                refresh the
+    //                                                bridge AST
+    //                                                snapshot"
+    //                                                — paired
+    //                                                with sharedptr_
+    //                                                pinned above).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual service.ixx invalidate_function + LoweringState
+    // on re-lower impact for affected closure_bridge entries
+    // retain/refresh shared_ptr<FlatAST> snapshot before Arena
+    // reset + bump bridge_epoch + notify GC to root the old AST
+    // temporarily if live closures reference it + evaluator_gc
+    // .cpp + gc_coordinator explicit root registration for
+    // active IRClosure shared_ptr<FlatAST> + on GC safepoint/
+    // compact validate Arena liveness or pin AST nodes +
+    // lowering_impl.cpp set_closure_bridge_ptr + apply_closure
+    // capture Arena epoch or generation + on apply verify AST
+    // nodes still valid (via marker or size check) or fallback
+    // safely + wire to MutationBoundaryGuard for cross-request
+    // safety + tests/test_prompt6_arena_ast_sharedptr_closure_
+    // bridge_gc_lifetime.cpp harness + SEVA arena/closure bridge
+    // demo + sync with bridge_epoch + mutation_epoch_ + Env
+    // version_ + extend EscapeAnalysis for AST node escape in
+    // bridge + CI gate + docs are all follow-up work (each is a
+    // dedicated session in service.ixx + evaluator_gc.cpp +
+    // lowering_impl.cpp + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> compiler_arena_closure_lifetime_root_hits_total{0};
+    std::atomic<std::uint64_t> compiler_arena_closure_lifetime_bridge_sharedptr_pinned_total{0};
+    std::atomic<std::uint64_t> compiler_arena_closure_lifetime_cross_violations_prevented_total{0};
+    std::atomic<std::uint64_t> compiler_arena_closure_lifetime_invalidate_ast_refresh_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +
