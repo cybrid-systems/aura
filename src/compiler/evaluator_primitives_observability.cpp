@@ -4863,6 +4863,128 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #718: (query:incremental-relower-stats) — fine-grained
+    // per-block re-lower observability counters (non-duplicative
+    // with #196 per-block dirty tracking + #426/#460 pure helpers
+    // + #687 DeadCoercionEliminationPass; #718 is the FIRST
+    // observability surface that exposes the partial-vs-full
+    // re-lower decision outcomes as separate signals).
+    //
+    // Fields (4 + sentinel):
+    //   - impact-blocks-hit      incremental_impact_blocks_hit_total
+    //                            (# of times compute_impact_scope
+    //                             returned >=1 affected block for a
+    //                             mutate:rebind / set-body request)
+    //   - partial-relowers       incremental_partial_relower_total
+    //                            (# of times should_partial_relower
+    //                             returned true (1..7 dirty blocks)
+    //                             and the pipeline took the partial
+    //                             path)
+    //   - full-fallbacks         incremental_full_fallback_total
+    //                            (# of times the pipeline took the
+    //                             FULL re-lower path — 8+ dirty
+    //                             blocks or no impact_scope data)
+    //   - time-saved-us          incremental_time_saved_us_total
+    //                            (cumulative time saved in microseconds
+    //                             by choosing partial over full re-lower)
+    //   - schema == 718
+    //
+    // Phase 1 ships the primitive + counters + bump helpers + the
+    // pure should_partial_relower helper in ir_cache_pure.ixx.
+    // The actual compute_impact_scope call + block_dirty_ bit
+    // setting inside service.ixx::invalidate_function + the
+    // partial re-lower decision in lowering_impl.cpp::lower_to_ir_
+    // with_cache + the pass_manager.ixx::run_incremental_pipeline
+    // short-circuit are follow-up work (each is a dedicated
+    // session).
+    //
+    // Issue #718: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=718 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#717).
+    ev.primitives_.add(
+        "query:incremental-relower-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t impact_blocks_hit =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_impact_blocks_hit_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t partial_relowers =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_partial_relower_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t full_fallbacks =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_full_fallback_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t time_saved_us =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_time_saved_us_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"impact-blocks-hit", make_int(impact_blocks_hit)},
+                {"partial-relowers", make_int(partial_relowers)},
+                {"full-fallbacks", make_int(full_fallbacks)},
+                {"time-saved-us", make_int(time_saved_us)},
+                {"schema", make_int(718)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Fine-grained per-block re-lower observability counters: "
+                        "impact_scope hits, partial re-lower decisions, full "
+                        "fallbacks, and cumulative time saved. Pairs with the "
+                        "ir_cache_pure::should_partial_relower() helper (Phase 1 "
+                        "ships the pure decision function + these counters); the "
+                        "actual service.ixx::invalidate_function + lowering_impl."
+                        "cpp::lower_to_ir_with_cache + pass_manager.ixx::run_"
+                        "incremental_pipeline wiring is follow-up work.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,

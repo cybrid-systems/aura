@@ -3849,6 +3849,41 @@ public:
             m->mutation_boundary_recovery_failures_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #718: fine-grained per-block re-lower observability
+    // counters backing the (query:incremental-relower-stats)
+    // primitive. These are public so future service.ixx::
+    // invalidate_function + lowering_impl.cpp::lower_to_ir_with_
+    // cache + pass_manager.ixx::run_incremental_pipeline wiring
+    // can call them at each decision point (impact_scope hit /
+    // partial re-lower / full fallback / time saved estimate).
+    //
+    // The time-saved bump helper takes a microsecond value so the
+    // caller can record the estimated savings (full_relower_cost -
+    // partial_relower_cost) without having to track it locally.
+    void bump_incremental_impact_blocks_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_impact_blocks_hit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_partial_relower() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_partial_relower_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_full_fallback() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_time_saved_us(std::uint64_t us) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_time_saved_us_total.fetch_add(us, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

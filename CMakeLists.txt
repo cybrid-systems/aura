@@ -3149,6 +3149,25 @@ add_dependencies(all_test_issue_targets test_issue_716)
 aura_add_issue_test(test_issue_717)
 aura_issue_test_link_llvm_jit(test_issue_717)
 add_dependencies(all_test_issue_targets test_issue_717)
+# Issue #718: incremental fine-grained per-block re-lower — pure
+# helper + atomics + primitive. Phase 1 ships:
+#   - ir_cache_pure::should_partial_relower (0 / 1..7 / 8+ decision)
+#   - 4 atomics (impact-blocks-hit / partial-relowers / full-fallbacks
+#     / time-saved-us)
+#   - 4 bump helpers
+#   - (query:incremental-relower-stats, schema 718) primitive
+#   - test_issue_718.cpp (6 ACs)
+# Real invalidate_function wiring + lower_to_ir_with_cache partial
+# re-lower + pass_manager short-circuit + large-define mutate test
+# are follow-up (each is a dedicated session in service.ixx +
+# lowering_impl.cpp + pass_manager.ixx).
+# 6 ACs / 30 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility (incl. bulk time-saved bump),
+# should_partial_relower pure helper behavior across 4 buckets
+# (0/1-7/8+), regression of #712 + #713 + #714 + #715 + #716 + #717.
+aura_add_issue_test(test_issue_718)
+aura_issue_test_link_llvm_jit(test_issue_718)
+add_dependencies(all_test_issue_targets test_issue_718)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

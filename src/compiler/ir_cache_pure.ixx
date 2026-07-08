@@ -290,4 +290,32 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     return s;
 }
 
+// Issue #718: partial-relower decision helper. Returns true
+// when the dirty block mask should trigger a partial re-lower
+// (1..7 dirty blocks, per the estimate_relower_blocks
+// heuristic) instead of a full re-lower (8+ dirty blocks) or
+// no-op (0 dirty blocks). Pure read on a per-function block
+// dirty mask; takes the count directly to avoid coupling to
+// a specific vector layout.
+//
+// Used by:
+//   - service.ixx::invalidate_function: decide between partial
+//     re-lower + JIT hot-swap vs full re-lower
+//   - lowering_impl.cpp::lower_to_ir_with_cache: short-circuit
+//     re-emit on clean blocks
+//   - pass_manager.ixx::run_incremental_pipeline: skip
+//     optimization passes on blocks that did not change
+//
+// The decision is consistent with estimate_relower_blocks:
+// same 0 / 1..7 / 8+ bucketing. Centralizing the threshold
+// here makes it easy to tune (e.g. raise to 16 if perf
+// profiles show 8..15 are still cheaper than full re-lower).
+[[nodiscard]] constexpr bool should_partial_relower(std::size_t dirty_count) noexcept {
+    if (dirty_count == 0)
+        return false;
+    if (dirty_count >= 8)
+        return false;
+    return true;
+}
+
 } // namespace aura::compiler
