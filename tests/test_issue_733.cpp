@@ -113,9 +113,12 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     auto r = cs.eval("(query:ir-marker-hygiene-stats)");
     CHECK(r && aura::compiler::types::is_hash(*r),
           "(query:ir-marker-hygiene-stats) returns a hash");
-    const std::vector<std::string> keys = {
-        "user-instrs", "macro-introduced-instrs", "marker-loss-events",
-        "jit-hygiene-violations-prevented", "marker-propagation-hits", "schema"};
+    const std::vector<std::string> keys = {"user-instrs",
+                                           "macro-introduced-instrs",
+                                           "marker-loss-events",
+                                           "jit-hygiene-violations-prevented",
+                                           "marker-propagation-hits",
+                                           "schema"};
     for (const auto& k : keys) {
         auto f = cs.eval(std::format("(hash-ref (query:ir-marker-hygiene-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
@@ -124,21 +127,19 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto user =
-        hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "user-instrs");
+    const auto user = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "user-instrs");
     CHECK(user == 0, std::format("user-instrs = {} (expected 0 on fresh service)", user));
     const auto macro =
         hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "macro-introduced-instrs");
     CHECK(macro == 0,
           std::format("macro-introduced-instrs = {} (expected 0 on fresh service)", macro));
     const auto loss = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "marker-loss-events");
-    CHECK(loss == 0,
-          std::format("marker-loss-events = {} (expected 0 on fresh service)", loss));
-    const auto jit_h = hash_int_field(cs, "(query:ir-marker-hygiene-stats)",
-                                      "jit-hygiene-violations-prevented");
-    CHECK(jit_h == 0,
-          std::format("jit-hygiene-violations-prevented = {} (expected 0 on fresh service)",
-                      jit_h));
+    CHECK(loss == 0, std::format("marker-loss-events = {} (expected 0 on fresh service)", loss));
+    const auto jit_h =
+        hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "jit-hygiene-violations-prevented");
+    CHECK(
+        jit_h == 0,
+        std::format("jit-hygiene-violations-prevented = {} (expected 0 on fresh service)", jit_h));
     const auto prop =
         hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "marker-propagation-hits");
     CHECK(prop == 0,
@@ -183,29 +184,27 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_ir_hygiene_marker_propagation_hit();
     ev.bump_ir_hygiene_marker_propagation_hit();
     ev.bump_ir_hygiene_marker_propagation_hit();
-    const auto user =
-        hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "user-instrs");
+    const auto user = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "user-instrs");
     const auto macro =
         hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "macro-introduced-instrs");
     const auto loss = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "marker-loss-events");
-    const auto jit_h = hash_int_field(cs, "(query:ir-marker-hygiene-stats)",
-                                      "jit-hygiene-violations-prevented");
+    const auto jit_h =
+        hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "jit-hygiene-violations-prevented");
     const auto prop =
         hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "marker-propagation-hits");
-    CHECK(user == 4,
-          std::format("after 4 user-instr bumps: user-instrs = {} (expected 4)", user));
+    CHECK(user == 4, std::format("after 4 user-instr bumps: user-instrs = {} (expected 4)", user));
     CHECK(macro == 5,
           std::format("after 5 macro-introduced-instr bumps: macro-introduced-instrs = {} "
                       "(expected 5)",
                       macro));
-    CHECK(loss == 2,
-          std::format("after 2 marker-loss-event bumps: marker-loss-events = {} (expected 2)",
-                      loss));
-    CHECK(jit_h == 3,
-          std::format(
-              "after 3 jit-violation-prevented bumps: jit-hygiene-violations-prevented = {} "
-              "(expected 3)",
-              jit_h));
+    CHECK(
+        loss == 2,
+        std::format("after 2 marker-loss-event bumps: marker-loss-events = {} (expected 2)", loss));
+    CHECK(
+        jit_h == 3,
+        std::format("after 3 jit-violation-prevented bumps: jit-hygiene-violations-prevented = {} "
+                    "(expected 3)",
+                    jit_h));
     CHECK(prop == 6,
           std::format("after 6 marker-propagation-hit bumps: marker-propagation-hits = {} "
                       "(expected 6)",
@@ -213,8 +212,7 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 }
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
-    std::println(
-        "\n--- AC5: regression — #712..#732 sibling primitives unaffected ---");
+    std::println("\n--- AC5: regression — #712..#732 sibling primitives unaffected ---");
     auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
     auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
     auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
@@ -268,8 +266,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
     const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
-    CHECK(jit_schema == 713,
-          std::format("jit schema = {} (expected 713, no drift)", jit_schema));
+    CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
         hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
     CHECK(self_evo_schema == 714,
@@ -284,9 +281,9 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
         hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
-    CHECK(fiber_boundary_schema == 717,
-          std::format("fiber-boundary schema = {} (expected 717, no drift)",
-                      fiber_boundary_schema));
+    CHECK(
+        fiber_boundary_schema == 717,
+        std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
         hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
     CHECK(incremental_schema == 718,
@@ -294,34 +291,30 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                       incremental_schema));
     const auto closure_env_schema =
         hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "schema");
-    CHECK(closure_env_schema == 719,
-          std::format("closure-env-epoch schema = {} (expected 719, no drift)",
-                      closure_env_schema));
+    CHECK(
+        closure_env_schema == 719,
+        std::format("closure-env-epoch schema = {} (expected 719, no drift)", closure_env_schema));
     const auto jit_parity_schema =
         hash_int_field(cs, "(query:jit-interpreter-parity-stats)", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema = hash_int_field(cs, "(query:arena-integration-stats)", "schema");
     CHECK(arena_schema == 722,
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
-    const auto value_dispatch_schema =
-        hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
-    CHECK(value_dispatch_schema == 723,
-          std::format("value-dispatch schema = {} (expected 723, no drift)",
-                      value_dispatch_schema));
+    const auto value_dispatch_schema = hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
+    CHECK(
+        value_dispatch_schema == 723,
+        std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
         hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
-    const auto unified_error_schema =
-        hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto unified_error_schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
     CHECK(unified_error_schema == 728,
-          std::format("unified-error schema = {} (expected 728, no drift)",
-                      unified_error_schema));
+          std::format("unified-error schema = {} (expected 728, no drift)", unified_error_schema));
     const auto arena_concurrent_schema =
         hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "schema");
     CHECK(arena_concurrent_schema == 731,
@@ -337,8 +330,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
 
 int main() {
     using namespace aura_issue_733_detail;
-    std::println(
-        "=== Issue #733: IR marker hygiene observability (scope-limited close) ===");
+    std::println("=== Issue #733: IR marker hygiene observability (scope-limited close) ===");
 
     {
         aura::compiler::CompilerService cs;
