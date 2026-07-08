@@ -2189,6 +2189,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_postmutate_escape_violations_prevented_total{0};
     std::atomic<std::uint64_t> linear_postmutate_guard_boundary_linear_safe_total{0};
     std::atomic<std::uint64_t> linear_postmutate_env_version_sync_total{0};
+    // Issue #798: ConstraintSystem incremental fidelity under Guard/steal
+    // (P0 typed mutation; refines #792/#793/#466/#409; non-duplicative with
+    // #608 type-incremental-stats and #509 constraint-delta-stats).
+    //   - type_incremental_cross_delta_blame_complete_total: cross-delta
+    //     conflicts with auditable active_mutation_id blame chain.
+    //   - type_incremental_reverify_truncated_under_guard_total: clean-
+    //     constraint reverify scan capped while MutationBoundary active.
+    //   - type_incremental_epoch_sync_hits_total: touched-root / narrow
+    //     delta marks under Guard boundary (epoch sync proxy).
+    //   - type_incremental_blame_chain_length_total: cumulative blame
+    //     chain steps recorded on cross-delta hits.
+    std::atomic<std::uint64_t> type_incremental_cross_delta_blame_complete_total{0};
+    std::atomic<std::uint64_t> type_incremental_reverify_truncated_under_guard_total{0};
+    std::atomic<std::uint64_t> type_incremental_epoch_sync_hits_total{0};
+    std::atomic<std::uint64_t> type_incremental_blame_chain_length_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

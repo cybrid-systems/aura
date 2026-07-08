@@ -3826,6 +3826,15 @@ add_dependencies(all_test_issue_targets test_issue_765)
 aura_add_issue_test(test_linear_ownership_postmutate_guard_steal_envframe)
 aura_issue_test_link_llvm_jit(test_linear_ownership_postmutate_guard_steal_envframe)
 add_dependencies(all_test_issue_targets test_linear_ownership_postmutate_guard_steal_envframe)
+# Issue #798: ConstraintSystem incremental fidelity under Guard/steal.
+# 4 CompilerMetrics atomics (type_incremental_*_total) +
+# (query:type-incremental-fidelity-stats, schema 798) + bump wiring in
+# mark_touched_on_delta / record_cross_delta_blame_hit /
+# reverify_clean_constraints_for_touched. 8 ACs. Non-duplicative with
+# #792/#793/#608/#509.
+aura_add_issue_test(test_typechecker_incremental_guard_steal_fidelity)
+aura_issue_test_link_llvm_jit(test_typechecker_incremental_guard_steal_fidelity)
+add_dependencies(all_test_issue_targets test_typechecker_incremental_guard_steal_fidelity)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

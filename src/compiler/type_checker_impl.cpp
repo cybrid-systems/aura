@@ -22,6 +22,9 @@ import aura.core.mutation;
 // for O(uses) re-inference routing. The header is shared
 // with CompilerService (see per_defuse_index.h).
 #include "per_defuse_index.h"
+
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+
 // Issue #409: full CompilerMetrics definition so
 // solve_delta_impl can bump the new per-#409 counters
 // (delta_constraints_processed_total /
@@ -257,6 +260,10 @@ void ConstraintSystem::note_touched_var(TypeId id) {
 
 void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow) {
     note_touched_var(var);
+    if (occurrence_narrow && metrics_ && aura_evaluator_mutation_boundary_depth() > 0) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->type_incremental_epoch_sync_hits_total.fetch_add(1, std::memory_order_relaxed);
+    }
     if (!occurrence_narrow)
         return;
     const auto rep = union_find_rep_index(var);
@@ -281,6 +288,8 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
         return;
     }
     m->constraint_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+    m->type_incremental_cross_delta_blame_complete_total.fetch_add(1, std::memory_order_relaxed);
+    m->type_incremental_blame_chain_length_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
@@ -373,6 +382,10 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         m->delta_conflict_reverify_total.fetch_add(1, std::memory_order_relaxed);
         if (truncated) {
             m->reverify_truncated_total.fetch_add(1, std::memory_order_relaxed);
+            if (aura_evaluator_mutation_boundary_depth() > 0) {
+                m->type_incremental_reverify_truncated_under_guard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
         }
     }
     if (!truncated && to_check.size() > kReverifyCleanScanLimit && metrics_) {

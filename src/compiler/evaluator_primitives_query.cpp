@@ -3770,6 +3770,80 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             static_cast<std::int64_t>(delta_processed + occ_recovery + narrow_hits + delta_win));
     });
 
+    // Issue #798: query:type-incremental-fidelity-stats — ConstraintSystem
+    // incremental fidelity under Guard/steal/MutationBoundary (refines #792/#793/
+    // #466/#409; non-duplicative with #608 type-incremental-stats and #509
+    // constraint-delta-stats).
+    //
+    // Fields (4 + sentinel):
+    //   - cross-delta-blame-complete  type_incremental_cross_delta_blame_complete_total
+    //   - reverify-truncated-under-guard
+    //       type_incremental_reverify_truncated_under_guard_total
+    //   - epoch-sync-hits             type_incremental_epoch_sync_hits_total
+    //   - blame-chain-length          type_incremental_blame_chain_length_total
+    //   - schema == 798
+    add("query:type-incremental-fidelity-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::int64_t cross_delta_blame =
+                m ? static_cast<std::int64_t>(
+                        m->type_incremental_cross_delta_blame_complete_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t reverify_truncated =
+                m ? static_cast<std::int64_t>(
+                        m->type_incremental_reverify_truncated_under_guard_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t epoch_sync =
+                m ? static_cast<std::int64_t>(
+                        m->type_incremental_epoch_sync_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t blame_chain =
+                m ? static_cast<std::int64_t>(m->type_incremental_blame_chain_length_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("cross-delta-blame-complete", cross_delta_blame);
+            insert_kv("reverify-truncated-under-guard", reverify_truncated);
+            insert_kv("epoch-sync-hits", epoch_sync);
+            insert_kv("blame-chain-length", blame_chain);
+            insert_kv("schema", 798);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #305: query:type-propagation-stats. Returns the
     // sum of 4 TypeId/TypeScheme propagation observability
     // counters from the shared CompilerMetrics struct (EDA
