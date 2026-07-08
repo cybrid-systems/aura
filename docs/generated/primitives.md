@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**801** registrations scanned from `src/**/*.cpp`.
+**804** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 126 primitives (16%)
-- **core**: 209 primitives (26%)
-- **internal-observable**: 319 primitives (40%)
+- **core**: 211 primitives (26%)
+- **internal-observable**: 320 primitives (40%)
 - **convenience**: 147 primitives (18%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (319)
+## Query: (320)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -103,6 +103,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:eda-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-foundation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-hw-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:eda-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-primitives-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:eda-sv-closedloop-stress-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -807,9 +808,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `dirty:reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:summary` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 
-## Eda: (10)
+## Eda: (12)
 
 - `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:ingest-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
+- `eda:invoke-simulator` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:load-sv` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:mutate-add-instance` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:parse-netlist` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
@@ -1066,7 +1069,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (209)
+### Core builtins (must remain primitive) (211)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1140,6 +1143,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
 - `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:ingest-result` — `src/compiler/evaluator_primitives_eda.cpp`
+- `eda:invoke-simulator` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:load-sv` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:mutate-add-instance` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:parse-netlist` — `src/compiler/evaluator_primitives_eda.cpp`
@@ -1278,7 +1283,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (319)
+### Internal observable (stats/counters) (320)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1360,6 +1365,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:eda-concurrency-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-foundation-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-hw-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:eda-infra-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-primitives-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:eda-sv-closedloop-stress-stats` — `src/compiler/evaluator_primitives_security.cpp`

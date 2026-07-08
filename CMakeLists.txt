@@ -3835,6 +3835,14 @@ add_dependencies(all_test_issue_targets test_linear_ownership_postmutate_guard_s
 aura_add_issue_test(test_typechecker_incremental_guard_steal_fidelity)
 aura_issue_test_link_llvm_jit(test_typechecker_incremental_guard_steal_fidelity)
 add_dependencies(all_test_issue_targets test_typechecker_incremental_guard_steal_fidelity)
+# Issue #841: EDA production infrastructure observability + co-sim bridge.
+# 4 CompilerMetrics atomics (eda_infra_*_total) +
+# (query:eda-infra-stats, schema 841) + bump wiring in evaluator_primitives_eda
+# + eda:ingest-result / eda:invoke-simulator primitives. 8 ACs.
+# Non-duplicative with #499/#616/#837.
+aura_add_issue_test(test_eda_production_infra)
+aura_issue_test_link_llvm_jit(test_eda_production_infra)
+add_dependencies(all_test_issue_targets test_eda_production_infra)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

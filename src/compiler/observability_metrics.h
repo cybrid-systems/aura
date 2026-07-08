@@ -621,6 +621,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eda_load_sv_failure_total{0};
     std::atomic<std::uint64_t> eda_parse_verification_result_total{0};
     std::atomic<std::uint64_t> eda_parse_verification_failure_total{0};
+    // Issue #841: EDA production infrastructure observability (refines #499/#616;
+    // non-duplicative with query:eda-foundation-stats and query:eda-hw-stats).
+    //   - eda_infra_parse_success_total: successful SV/SVA parse paths
+    //     (eda:parse-netlist / eda:load-sv).
+    //   - eda_infra_structured_mutate_total: provenance-safe structured
+    //     SVA/RTL mutate under Guard (eda:mutate-add-instance and kin).
+    //   - eda_infra_feedback_ingest_total: structured verification feedback
+    //     ingest (eda:parse-verification-result / eda:ingest-result).
+    //   - eda_infra_cosim_invoke_total: co-simulation bridge invocations
+    //     (eda:invoke-simulator + result ingest).
+    std::atomic<std::uint64_t> eda_infra_parse_success_total{0};
+    std::atomic<std::uint64_t> eda_infra_structured_mutate_total{0};
+    std::atomic<std::uint64_t> eda_infra_feedback_ingest_total{0};
+    std::atomic<std::uint64_t> eda_infra_cosim_invoke_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

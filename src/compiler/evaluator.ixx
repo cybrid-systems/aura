@@ -4839,6 +4839,59 @@ public:
         }
         return 0;
     }
+    // Issue #841: EDA production infrastructure stats.
+    void bump_eda_infra_parse_success(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->eda_infra_parse_success_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_eda_infra_structured_mutate(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->eda_infra_structured_mutate_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_eda_infra_feedback_ingest(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->eda_infra_feedback_ingest_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_eda_infra_cosim_invoke(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->eda_infra_cosim_invoke_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_eda_infra_parse_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->eda_infra_parse_success_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_eda_infra_structured_mutate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->eda_infra_structured_mutate_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_eda_infra_feedback_ingest() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->eda_infra_feedback_ingest_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_eda_infra_cosim_invoke() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->eda_infra_cosim_invoke_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
