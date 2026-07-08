@@ -1143,6 +1143,94 @@ struct CompilerMetrics {
     // + new test + SEVA demo + docs).
     std::atomic<std::uint64_t> macro_hygiene_provenance_captured_total{0};
     std::atomic<std::uint64_t> macro_hygiene_inliner_policy_violations_total{0};
+
+    // Issue #758: runtime auto_validate bridge for user-defined
+    // EDSL structs (DEFINE_STRUCT / custom nodes) under
+    // MutationBoundaryGuard with macro hygiene invariant
+    // correlation counters backing the
+    // (query:edsl-reflection-stats) primitive. These are
+    // public so future reflect.hh + new runtime_reflect_edsl_
+    // bridge.cpp + evaluator_primitives_mutate.cpp can call them
+    // at each decision point (runtime_validate_edsl_struct call
+    // on EDSL-tagged nodes pre-commit / auto_validate pass / fail
+    // / hygiene invariants held / MacroIntroduced descendants
+    // verified for valid provenance / hygiene invariant correlation
+    // / dirty/epoch cascade on violation / mutation-impact-
+    // snapshot correlation).
+    //
+    // Non-duplicative with the existing #750 (query:reflection-
+    // schema-stats — 4 fields: validated / hygiene-invariants-
+    // held / schema-violations / stale-validation-prevented)
+    // which covers general macro body schema validation +
+    // (reflect:validate-macro-body node-id) + (reflect:validate-
+    // edsl node-id) primitives. #758 is the FIRST observability
+    // surface that tracks the *user-defined EDSL struct +
+    // macro hygiene invariant correlation* specifically —
+    // validated_edsl (per-type EDSL struct pass), hygiene_
+    // invariants_held (MacroIntroduced descendants verified
+    // for valid provenance + no capture violation + marker
+    // consistency), schema_fail_by_type (per-type EDSL struct
+    // fail), macro_correlated_violations (hygiene violations
+    // correlated to specific macro_def_id) — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // extensible EDSL struct production safety in self-evo
+    // loops.
+    //
+    //   - edsl_validated_total: # of EDSL struct auto_validate
+    //                           pass firings under Guard commit
+    //                           (proxy for "how many user-defined
+    //                           EDSL structs were successfully
+    //                           validated").
+    //   - edsl_hygiene_invariants_held_total: # of times all
+    //                                          MacroIntroduced
+    //                                          descendants of an
+    //                                          EDSL struct had
+    //                                          valid provenance /
+    //                                          no capture violation
+    //                                          / marker consistency
+    //                                          (proxy for "how often
+    //                                          the hygiene invariant
+    //                                          holds under EDSL
+    //                                          mutate").
+    //   - edsl_schema_fail_by_type_total: # of EDSL struct
+    //                                     auto_validate fail
+    //                                     firings (broken down by
+    //                                     type via the type-aware
+    //                                     path; total counter for
+    //                                     the primitive).
+    //   - edsl_macro_correlated_violations_total: # of hygiene
+    //                                            violations
+    //                                            correlated to
+    //                                            specific
+    //                                            macro_def_id
+    //                                            (i.e. which macro
+    //                                            introduced the
+    //                                            problematic
+    //                                            descendant that
+    //                                            failed the
+    //                                            hygiene check).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual reflect.hh + new runtime_reflect_edsl_bridge.cpp
+    // + runtime_validate_edsl_struct(flat, root_id, edsl_type_name)
+    // uses reflect_members to walk expected layout + reconstruct
+    // temp struct from AST payload/children + call auto_validate +
+    // verify MacroIntroduced descendants + MutationBoundaryGuard
+    // integration on EDSL-tagged nodes before commit +
+    // (reflect:validate-edsl node-id [type]) primitive with
+    // optional type arg + tests/test_reflection_edsl_struct_
+    // validate_guard_mutate.cpp harness (user EDSL struct define
+    // via macro + mutate under Guard → assert validate catches bad
+    // schema/hygiene, ok=false, metrics, TSan clean) + SEVA custom
+    // EDSL demo + dirty/epoch cascade on violation + mutation-
+    // impact-snapshot correlation + docs are all follow-up (each
+    // is a dedicated session in reflect.hh + runtime_reflect_edsl_
+    // bridge.cpp + evaluator_primitives_mutate.cpp + new test +
+    // SEVA demo + docs).
+    std::atomic<std::uint64_t> edsl_validated_total{0};
+    std::atomic<std::uint64_t> edsl_hygiene_invariants_held_total{0};
+    std::atomic<std::uint64_t> edsl_schema_fail_by_type_total{0};
+    std::atomic<std::uint64_t> edsl_macro_correlated_violations_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +
