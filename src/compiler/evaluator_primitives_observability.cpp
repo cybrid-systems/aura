@@ -10293,8 +10293,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         m->envframe_dualpath_repair_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t version_mismatch =
-                m ? static_cast<std::int64_t>(
-                        m->envframe_version_mismatch_post_steal_total.load(std::memory_order_relaxed))
+                m ? static_cast<std::int64_t>(m->envframe_version_mismatch_post_steal_total.load(
+                        std::memory_order_relaxed))
                   : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"desync-panic-count", make_int(desync_panic_count)},
