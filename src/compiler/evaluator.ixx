@@ -4615,6 +4615,63 @@ public:
                 1, std::memory_order_relaxed);
         }
     }
+    // Issue #799: DeadCoercionElimination + narrow_evidence elision stats.
+    void bump_dead_coercion_elision_elided_casts(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dead_coercion_elision_elided_casts_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_dead_coercion_elision_evidence_hits(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dead_coercion_elision_evidence_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_dead_coercion_elision_narrowing_stable_paths(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dead_coercion_elision_narrowing_stable_paths_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_dead_coercion_elision_runtime_check_savings(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dead_coercion_elision_runtime_check_savings_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_dead_coercion_elision_elided_casts() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dead_coercion_elision_elided_casts_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_dead_coercion_elision_evidence_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dead_coercion_elision_evidence_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_dead_coercion_elision_narrowing_stable_paths() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dead_coercion_elision_narrowing_stable_paths_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_dead_coercion_elision_runtime_check_savings() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dead_coercion_elision_runtime_check_savings_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

@@ -1992,6 +1992,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_arena_closure_lifetime_bridge_sharedptr_pinned_total{0};
     std::atomic<std::uint64_t> compiler_arena_closure_lifetime_cross_violations_prevented_total{0};
     std::atomic<std::uint64_t> compiler_arena_closure_lifetime_invalidate_ast_refresh_total{0};
+    // Issue #799: DeadCoercionElimination + narrow_evidence elision observability
+    // (P0 zero-overhead typed mutation; refines #796/#795/#794; non-duplicative
+    // with #687 query:dead-coercion-elim-stats and #629 coercion-zerooverhead).
+    //   - dead_coercion_elision_elided_casts_total: CastOps statically elided
+    //     by DeadCoercionEliminationPass (compile-time savings axis).
+    //   - dead_coercion_elision_evidence_hits_total: Rule 6 narrow_evidence
+    //     elisions + lowering/type-check evidence hits.
+    //   - dead_coercion_elision_narrowing_stable_paths_total: stable narrowed
+    //     paths (DCE Rule 6 + TypeSpec narrow_evidence_skipped).
+    //   - dead_coercion_elision_runtime_check_savings_total: avoided runtime
+    //     CastOp checks (compile elim + IR-interpreter fast-path).
+    std::atomic<std::uint64_t> dead_coercion_elision_elided_casts_total{0};
+    std::atomic<std::uint64_t> dead_coercion_elision_evidence_hits_total{0};
+    std::atomic<std::uint64_t> dead_coercion_elision_narrowing_stable_paths_total{0};
+    std::atomic<std::uint64_t> dead_coercion_elision_runtime_check_savings_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

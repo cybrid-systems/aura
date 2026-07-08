@@ -6913,6 +6913,10 @@ private:
         if (dce.eliminated_count() > 0) {
             metrics_.dead_coercion_eliminated_total.fetch_add(dce.eliminated_count(),
                                                               std::memory_order_relaxed);
+            metrics_.dead_coercion_elision_elided_casts_total.fetch_add(dce.eliminated_count(),
+                                                                        std::memory_order_relaxed);
+            metrics_.dead_coercion_elision_runtime_check_savings_total.fetch_add(
+                dce.eliminated_count(), std::memory_order_relaxed);
         }
         if (dce.elapsed_us() > 0) {
             metrics_.dead_coercion_elapsed_us_total.fetch_add(dce.elapsed_us(),
@@ -6935,6 +6939,14 @@ private:
         if (narrow_hits_run > 0) {
             metrics_.coercion_narrow_evidence_hits_total.fetch_add(narrow_hits_run,
                                                                    std::memory_order_relaxed);
+        }
+        if (dce.narrow_evidence_hits() > 0) {
+            metrics_.dead_coercion_elision_evidence_hits_total.fetch_add(dce.narrow_evidence_hits(),
+                                                                         std::memory_order_relaxed);
+        }
+        if (narrow_hits_run > 0) {
+            metrics_.dead_coercion_elision_narrowing_stable_paths_total.fetch_add(
+                narrow_hits_run, std::memory_order_relaxed);
         }
         const std::uint64_t zerooverhead_win_run =
             dce.type_prop_hits() + dce.narrow_evidence_hits() + ts.narrow_evidence_skipped();

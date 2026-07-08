@@ -4445,6 +4445,10 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                                 1, std::memory_order_relaxed);
                             m->coercion_cast_elim_from_narrow_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                            m->dead_coercion_elision_evidence_hits_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            m->dead_coercion_elision_narrowing_stable_paths_total.fetch_add(
+                                1, std::memory_order_relaxed);
                             if (last_predicate_cond_id_ != 0 && !flat.all_mutations().empty()) {
                                 m->coercion_narrow_blame_chain_hits_total.fetch_add(
                                     1, std::memory_order_relaxed);

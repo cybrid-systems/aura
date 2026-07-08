@@ -98,6 +98,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:longrunning-infra-stats)`        | 753    | quota/checkpoint/heal/SLO deployment infra (7 fields) |
 | `(query:orchestration-llm-bottleneck-stats)` | 754 | LLM-bottleneck adaptive steal + GC safepoint tuning (6 fields) |
 | `(query:concurrent-safety-full-cycle-stats)` | 755 | MutationBoundary + steal + AOT + GC full-cycle safety (6 fields) |
+| `(query:dead-coercion-elision-stats)`    | 799    | narrow_evidence CastOp elision + zero-overhead savings (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -133,6 +134,16 @@ Distinct from `(query:scheduler-stealbudget-adaptive-stats)` (#706): #754 is the
 - `schema` — 755 (drift sentinel)
 
 Distinct from `(query:self-evolution-chaos-stats)` (#674): #674 classifies chaos-harness outcomes; #755 tracks the integrated steal/AOT/GC/recovery full-cycle path.
+
+### `(query:dead-coercion-elision-stats)` fields (#799)
+
+- `elided-casts` — `dead_coercion_elision_elided_casts_total` (DeadCoercionEliminationPass static elisions)
+- `evidence-hit-rate` — derived percentage from evidence hits vs castop emissions
+- `narrowing-stable-paths` — `dead_coercion_elision_narrowing_stable_paths_total` (Rule 6 + TypeSpec narrow skips)
+- `runtime-check-savings` — `dead_coercion_elision_runtime_check_savings_total` (compile elim + IR fast-path)
+- `schema` — 799 (drift sentinel)
+
+Distinct from `(query:dead-coercion-elim-stats)` (#687): #799 is the narrow_evidence elision closed-loop dashboard for typed mutation; #687 is the general zero-overhead elimination summary.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
