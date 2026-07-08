@@ -3555,6 +3555,44 @@ add_dependencies(all_test_issue_targets test_issue_758)
 aura_add_issue_test(test_issue_759)
 aura_issue_test_link_llvm_jit(test_issue_759)
 add_dependencies(all_test_issue_targets test_issue_759)
+# Issue #760: query:pattern performance + hygiene fidelity
+# observability primitive — 4 atomics + 4 bump helpers +
+# (query:pattern-performance-stats, schema 760) primitive
+# (5-entry hash: 4 fields + schema sentinel). Pairs with the
+# existing #757 query:macro-hygiene-provenance-stats +
+# #758 query:edsl-reflection-stats + #759 query:code-as-data-
+# maturity-stats 4-field hashes; #760 covers the *query:pattern
+# performance + hygiene fidelity* specifically — linear scans
+# vs index hits (perf cliff detection on tag_arity_index_ fast-
+# path), wildcard cost (early exit / DFA benefit on ... rest-
+# param handling), hygiene filtered (deep hygiene predicate
+# :marker MacroIntroduced :from-macro sym activity) — as
+# separate per-decision-point counters the Agent consumes to
+# monitor query:pattern production-readiness on large macro-
+# heavy concurrent workspaces.
+# 5 ACs / 24 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758/#759.
+# Real query_matcher.cpp tag_arity_index_ populated on add_node
+# / structural mutate + specialized ... rest-param / wildcard
+# handling with early exit or DFA + QueryExpr / pattern parser
+# :marker MacroIntroduced :from-macro sym extension + matcher
+# auto-apply hygiene filter or provenance stamp when matching
+# under macro context + wire to clone_macro_body name_map +
+# mandate children_safe_view / StableNodeRef pinning in all
+# pattern iterator paths + integrate with MutationBoundaryGuard
+# reader snapshot + (query:pattern-explain node pattern)
+# primitive + tests/test_query_pattern_indexing_hygiene_
+# concurrent.cpp harness (large macro-expanded AST + concurrent
+# fibers + pattern mutate under Guard → assert index used,
+# hygiene respected, no drift, perf win, TSan clean) + SEVA
+# pattern-heavy verification self-edit + CI perf gate + docs
+# are all follow-up (each is a dedicated session in
+# query_matcher.cpp + evaluator_primitives_query.cpp + new
+# test + SEVA demo + docs).
+aura_add_issue_test(test_issue_760)
+aura_issue_test_link_llvm_jit(test_issue_760)
+add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
