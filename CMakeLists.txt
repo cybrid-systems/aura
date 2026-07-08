@@ -3629,6 +3629,49 @@ add_dependencies(all_test_issue_targets test_issue_760)
 aura_add_issue_test(test_issue_761)
 aura_issue_test_link_llvm_jit(test_issue_761)
 add_dependencies(all_test_issue_targets test_issue_761)
+# Issue #762: Workspace '锁定-导航-修改-执行' closed-loop
+# orchestration observability primitive — 4 atomics + 4 bump
+# helpers + (query:workspace-closedloop-orchestration-stats,
+# schema 762) primitive (5-entry hash: 4 fields + schema
+# sentinel). Pairs with the existing #757 query:macro-hygiene-
+# provenance-stats + #758 query:edsl-reflection-stats +
+# #759 query:code-as-data-maturity-stats +
+# #760 query:pattern-performance-stats +
+# #761 query:mutate-batch-stats 4-field hashes; #762 covers
+# the *Workspace closed-loop orchestration* specifically —
+# concurrent query/mutate success under fiber steal, cross-COW
+# StableRef validity (auto-propagation win rate), yield point
+# hit count (exhaustive yield coverage), shared_mutex contention
+# events (orchestration bottleneck detection) — as separate
+# per-decision-point counters the Agent consumes to monitor
+# Workspace closed-loop production-readiness in orchestrated
+# multi-Agent deployments.
+# 5 ACs / 28 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758/#759/#760/#761.
+# Real evaluator_primitives_query.cpp + mutate.cpp + workspace
+# paths instrumentation with explicit fiber yield points or
+# safepoint checks in pattern matcher + children_safe iteration
+# + mark_dirty_upward + auto-propagate active StableRef pins or
+# dirty bits via epoch or weak registry on workspace COW/clone
+# in primitives + extend make_ref / get_safe in query/mutate to
+# auto-refresh on workspace boundary cross + wire mark_dirty_
+# upward to notify pinned refs or sub-workspace listeners +
+# integration with mutation-impact + stable-ref-stats + force
+# StableRef validation + dirty re-propagation for active
+# Workspace edits in restore_post_yield + steal paths +
+# tests/test_workspace_closedloop_fiber_multiagent_
+# orchestration.cpp harness (10+ fibers/agents with parallel
+# query/mutate on shared+COW workspaces + steal/yield → assert
+# auto refresh, dirty consistent, no contention deadlock,
+# metrics accurate, TSan clean) + SEVA multi-Agent demo +
+# Prometheus / SLO (closedloop_fidelity >99.5%) + CI gate + docs
+# are all follow-up (each is a dedicated session in
+# evaluator_primitives_query.cpp + mutate.cpp + ast.ixx + new
+# test + SEVA demo + docs).
+aura_add_issue_test(test_issue_762)
+aura_issue_test_link_llvm_jit(test_issue_762)
+add_dependencies(all_test_issue_targets test_issue_762)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

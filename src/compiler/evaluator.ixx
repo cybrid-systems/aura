@@ -4482,6 +4482,50 @@ public:
             m->mutate_hygiene_violations_in_batch_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #762: Workspace '锁定-导航-修改-执行' closed-loop
+    // reliability observability under concurrent fiber orchestration
+    // + multi-Agent parallel edits. These are public so future
+    // evaluator_primitives_query.cpp + mutate.cpp + workspace paths
+    // + restore_post_yield + steal paths + tests/test_workspace_
+    // closedloop_fiber_multiagent_orchestration.cpp harness can
+    // call them at each decision point. Pairs with the existing
+    // #757 (macro-hygiene-provenance 2 new atomics) + #758
+    // (edsl-reflection 4 atomics) + #759 (code-as-data-maturity
+    // 4 atomics) + #760 (pattern-performance 4 atomics) + #761
+    // (mutate-batch 4 atomics) but tracks the *Workspace closed-
+    // loop orchestration* specifically — concurrent query/mutate
+    // success under fiber steal, cross-COW StableRef validity
+    // (auto-propagation win rate), yield point hit count
+    // (exhaustive yield coverage), shared_mutex contention events
+    // (orchestration bottleneck detection) — not the per-
+    // component surfaces.
+    void bump_workspace_closedloop_concurrent_query_mutate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_concurrent_query_mutate_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_workspace_closedloop_cross_cow_ref_valid() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_cross_cow_ref_valid_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+    }
+    void bump_workspace_closedloop_yield_point_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_yield_points_hit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_workspace_closedloop_shared_mutex_contention() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_shared_mutex_contention_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
