@@ -2174,6 +2174,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_quote_lambda_bridge_epoch_bump_total{0};
     std::atomic<std::uint64_t> incremental_quote_lambda_env_version_refresh_total{0};
     std::atomic<std::uint64_t> incremental_quote_lambda_linear_state_refreshed_total{0};
+    // Issue #800: linear ownership post-mutate fidelity observability
+    // (P0 typed mutation; refines #793/#792/#784/#791; non-duplicative
+    // with #763 linear-ownership-gc-compiler-stats and #638 safety-stats).
+    //   - linear_postmutate_post_rollback_revalidate_total: OwnershipEnv
+    //     re-validation after Guard rollback / steal resume.
+    //   - linear_postmutate_escape_violations_prevented_total: escape
+    //     analysis / runtime checks that caught use-after-move etc.
+    //   - linear_postmutate_guard_boundary_linear_safe_total: linear
+    //     invariant held at MutationBoundary exit / steal probe pass.
+    //   - linear_postmutate_env_version_sync_total: EnvFrame version_
+    //     sync validated under steal / materialize paths.
+    std::atomic<std::uint64_t> linear_postmutate_post_rollback_revalidate_total{0};
+    std::atomic<std::uint64_t> linear_postmutate_escape_violations_prevented_total{0};
+    std::atomic<std::uint64_t> linear_postmutate_guard_boundary_linear_safe_total{0};
+    std::atomic<std::uint64_t> linear_postmutate_env_version_sync_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

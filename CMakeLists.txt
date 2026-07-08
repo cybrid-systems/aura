@@ -3818,6 +3818,14 @@ add_dependencies(all_test_issue_targets test_dead_coercion_elision_narrow_eviden
 aura_add_issue_test(test_issue_765)
 aura_issue_test_link_llvm_jit(test_issue_765)
 add_dependencies(all_test_issue_targets test_issue_765)
+# Issue #800: linear ownership post-mutate fidelity (Guard/steal/EnvFrame).
+# 4 CompilerMetrics atomics (linear_postmutate_*_total) +
+# (query:linear-postmutate-fidelity-stats, schema 800) + bump wiring in
+# record_linear_gc_probe / restore_panic_checkpoint / resume_fiber_migration /
+# materialize_call_env. 8 ACs. Non-duplicative with #793/#792/#784/#763.
+aura_add_issue_test(test_linear_ownership_postmutate_guard_steal_envframe)
+aura_issue_test_link_llvm_jit(test_linear_ownership_postmutate_guard_steal_envframe)
+add_dependencies(all_test_issue_targets test_linear_ownership_postmutate_guard_steal_envframe)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

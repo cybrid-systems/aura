@@ -199,6 +199,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:linear-ownership-mutation-stats",
     // Issue #638 — Linear + GuardShape runtime safety post-mutate
     "query:linear-ownership-safety-stats",
+    // Issue #800 — linear post-mutate fidelity stats
+    "query:linear-postmutate-fidelity-stats",
     // Issue #598 — Runtime linear enforcement + invalidate hook
     "query:linear-ownership-runtime-stats",
     // Issue #575 — Task2 PerDefUse incremental linear ownership
