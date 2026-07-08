@@ -3258,6 +3258,28 @@ add_dependencies(all_test_issue_targets test_issue_722)
 aura_add_issue_test(test_issue_723)
 aura_issue_test_link_llvm_jit(test_issue_723)
 add_dependencies(all_test_issue_targets test_issue_723)
+# Issue #726: closed-loop self-evolution reliability observability
+# primitive — 3 atomics + 3 bump helpers + (query:closed-loop-
+# reliability-stats, schema 726) primitive (4-entry hash: 3 fields
+# + schema sentinel). Pairs with #748 SV verification structure
+# stats (structural mutate + emit + dirty re-emit); #726 covers
+# the closed-loop reliability side (ref drift prevented +
+# rollback success + feedback mutate rounds) as separate counters
+# the Agent can consume to monitor SEVA self-evolution stability.
+# 5 ACs / 28 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#723.
+# Real verify:parse-coverage-feedback / parse-assert-failure /
+# parse-formal-cex / mutate:from-verification-feedback primitives
+# + closed-loop controller (seva:run-closed-loop) + enhanced
+# MutationBoundaryGuard subtree StableNodeRef validation + backend
+# re-emit tie-in (#725) + multi-round closed-loop stress test +
+# SEVA demo extension + docs are all follow-up (each is a dedicated
+# session in evaluator_primitives_verify*.cpp or new verify_
+# primitives module + MutationBoundaryGuard + ast dirty + new
+# test harness + SEVA demo + docs).
+aura_add_issue_test(test_issue_726)
+aura_issue_test_link_llvm_jit(test_issue_726)
+add_dependencies(all_test_issue_targets test_issue_726)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

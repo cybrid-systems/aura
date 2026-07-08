@@ -5612,6 +5612,134 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #726: (query:closed-loop-reliability-stats) —
+    // verification feedback-driven closed-loop self-evolution
+    // reliability counters (non-duplicative with the existing
+    // #748 SV verification structure stats primitive which
+    // covers structural mutate + emit + dirty re-emit; #726
+    // covers the closed-loop reliability side: ref drift
+    // prevention + rollback success + feedback mutate rounds).
+    //
+    // Fields (3 + sentinel):
+    //   - ref-drift-prevented        closed_loop_ref_drift_prevented_total
+    //                                (# of times a StableNodeRef
+    //                                 drift across verification
+    //                                 feedback mutate was
+    //                                 prevented by the runtime
+    //                                 guard — proxy for "how
+    //                                 many silent ref
+    //                                 invalidations the guard
+    //                                 caught")
+    //   - rollback-success           closed_loop_rollback_success_total
+    //                                (# of successful rollbacks
+    //                                 on verification feedback
+    //                                 mutate — MutationBoundary
+    //                                 Guard dtor + panic
+    //                                 restore + epoch bump
+    //                                 fired cleanly)
+    //   - feedback-mutate-rounds     closed_loop_feedback_mutate_rounds_total
+    //                                (# of feedback parse ->
+    //                                 mutate -> re-verify
+    //                                 rounds completed in the
+    //                                 closed loop — proxy for
+    //                                 "how many autonomous
+    //                                 SEVA iterations the
+    //                                 agent ran successfully")
+    //   - schema == 726
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual verify:parse-coverage-feedback / parse-assert-
+    // failure / parse-formal-cex / mutate:from-verification-
+    // feedback primitives + closed-loop controller (seva:run-
+    // closed-loop) + enhanced subtree StableNodeRef validation
+    // in MutationBoundaryGuard + backend re-emit tie-in (#725)
+    // are follow-up work (each is a dedicated session in
+    // evaluator_primitives_verify*.cpp or new verify_primitives
+    // module + MutationBoundaryGuard + ast dirty + new test
+    // harness + SEVA demo extension + docs).
+    //
+    // Issue #726: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=726 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#723).
+    ev.primitives_.add(
+        "query:closed-loop-reliability-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t ref_drift_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->closed_loop_ref_drift_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t rollback_success =
+                m ? static_cast<std::int64_t>(
+                        m->closed_loop_rollback_success_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t feedback_mutate_rounds =
+                m ? static_cast<std::int64_t>(
+                        m->closed_loop_feedback_mutate_rounds_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ref-drift-prevented", make_int(ref_drift_prevented)},
+                {"rollback-success", make_int(rollback_success)},
+                {"feedback-mutate-rounds", make_int(feedback_mutate_rounds)},
+                {"schema", make_int(726)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Verification feedback-driven closed-loop self-evolution "
+                        "reliability counters: ref drift prevented by the runtime "
+                        "guard, successful rollbacks on verification feedback mutate, "
+                        "and feedback parse -> mutate -> re-verify rounds completed. "
+                        "Pairs with the existing #748 SV verification structure "
+                        "stats (structural mutate + emit + dirty re-emit); #726 covers "
+                        "the closed-loop reliability side as separate counters the "
+                        "Agent can consume to monitor SEVA self-evolution stability.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,

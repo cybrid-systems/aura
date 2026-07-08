@@ -4042,6 +4042,33 @@ public:
             m->shape_history_shift_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #726: closed-loop self-evolution reliability counters
+    // backing the (query:closed-loop-reliability-stats) primitive.
+    // These are public so future verify:parse-coverage-feedback /
+    // parse-assert-failure / parse-formal-cex / mutate:from-
+    // verification-feedback primitives + closed-loop controller
+    // (seva:run-closed-loop) + enhanced subtree StableNodeRef
+    // validation in MutationBoundaryGuard can call them at each
+    // decision point (ref drift prevented / rollback success /
+    // feedback mutate round completed).
+    void bump_closed_loop_ref_drift_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->closed_loop_ref_drift_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_closed_loop_rollback_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->closed_loop_rollback_success_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_closed_loop_feedback_mutate_round() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->closed_loop_feedback_mutate_rounds_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
