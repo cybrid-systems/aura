@@ -113,11 +113,9 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
     const auto hits = hash_int_field(cs, "(query:unified-error-stats)", "structured-hits");
-    CHECK(hits == 0,
-          std::format("structured-hits = {} (expected 0 on fresh service)", hits));
+    CHECK(hits == 0, std::format("structured-hits = {} (expected 0 on fresh service)", hits));
     const auto prov = hash_int_field(cs, "(query:unified-error-stats)", "provenance-captured");
-    CHECK(prov == 0,
-          std::format("provenance-captured = {} (expected 0 on fresh service)", prov));
+    CHECK(prov == 0, std::format("provenance-captured = {} (expected 0 on fresh service)", prov));
     const auto rec = hash_int_field(cs, "(query:unified-error-stats)", "recovery-success");
     CHECK(rec == 0, std::format("recovery-success = {} (expected 0 on fresh service)", rec));
 }
@@ -249,9 +247,9 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(arena_schema == 722,
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
     const auto value_dispatch_schema = hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
-    CHECK(value_dispatch_schema == 723,
-          std::format("value-dispatch schema = {} (expected 723, no drift)",
-                      value_dispatch_schema));
+    CHECK(
+        value_dispatch_schema == 723,
+        std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
         hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
     CHECK(closed_loop_schema == 726,
