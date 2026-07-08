@@ -3331,6 +3331,33 @@ add_dependencies(all_test_issue_targets test_issue_728)
 aura_add_issue_test(test_issue_731)
 aura_issue_test_link_llvm_jit(test_issue_731)
 add_dependencies(all_test_issue_targets test_issue_731)
+# Issue #732: AOT hot-reload safe-swap at MutationBoundary
+# observability primitive — 1 atomic + 1 bump helper +
+# (query:aot-safe-swap-boundary-stats, schema 732) primitive
+# (6-entry hash: 5 fields + schema sentinel). Pairs with the
+# existing #708 query:aot-reload-stats 5-7 field high-level
+# summary + #644 query:aot-reload-func-table-stats enforcement
+# primitive + #590 query:aot-hotupdate-stats 3 atomics; #732
+# covers the *safe-swap at MutationBoundary* specifically —
+# reloads that fired at outermost safe-swap point (NOT mid-
+# mutation) — as the per-decision-point signal the Agent
+# consumes to monitor safe-swap adoption rate + zero-downtime
+# orchestration quality.
+# 5 ACs / 44 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#731.
+# Real atomic func_table refcount swap protocol in
+# aura_jit_bridge.cpp aura_reload_aot_module + per-region
+# isolation enforcement + aura_aot_request_safe_reload() API +
+# MutationBoundaryGuard outermost exit hook + GraceEpoch defer-old-
+# decrement + tests/test_aot_hot_swap_refcount_region_guard_safe.cpp
+# harness (multi-agent different regions + AOT emit + mutate +
+# concurrent apply + reload at boundary) + #674 chaos stress
+# integration + docs are all follow-up (each is a dedicated
+# session in aura_jit_bridge.cpp + MutationBoundaryGuard + fiber.cpp
+# + new test + chaos stress + docs).
+aura_add_issue_test(test_issue_732)
+aura_issue_test_link_llvm_jit(test_issue_732)
+add_dependencies(all_test_issue_targets test_issue_732)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
