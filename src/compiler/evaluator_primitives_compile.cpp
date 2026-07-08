@@ -2451,6 +2451,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             i = (j < text.size()) ? j + 1 : j;
         }
+        if (marked > 0)
+            ev.bump_sv_self_evo_feedback_parse();
         return make_int(static_cast<std::int64_t>(marked));
     });
 
@@ -2497,7 +2499,92 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             i = (j < text.size()) ? j + 1 : j;
         }
+        if (marked > 0)
+            ev.bump_sv_self_evo_feedback_parse();
         return make_int(static_cast<std::int64_t>(marked));
+    });
+
+    // Issue #802: (verify:parse-formal-cex text-string)
+    // — parse formal counterexample report and mark nodes dirty with
+    // kFormalCounterexampleDirty (same line format as coverage/assert parsers).
+    add("verify:parse-formal-cex", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_int(0);
+        auto text_idx = as_string_idx(a[0]);
+        if (text_idx >= ev.string_heap_.size())
+            return make_int(0);
+        const std::string& text = ev.string_heap_[text_idx];
+        std::uint64_t marked = 0;
+        std::size_t i = 0;
+        while (i < text.size()) {
+            std::size_t j = i;
+            while (j < text.size() && text[j] != '\n')
+                ++j;
+            const std::string_view line(text.data() + i, j - i);
+            std::size_t k = 0;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                ++k;
+            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                std::size_t val = 0;
+                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                    val = val * 10 + (line[k] - '0');
+                    ++k;
+                }
+                const auto nid = static_cast<aura::ast::NodeId>(val);
+                if (nid < ws->size()) {
+                    ws->apply_verification_dirty_bits(
+                        nid, aura::ast::FlatAST::kFormalCounterexampleDirty);
+                    ++marked;
+                }
+            } else {
+                ev.bump_verify_tool_parse_error();
+            }
+            i = (j < text.size()) ? j + 1 : j;
+        }
+        if (marked > 0)
+            ev.bump_sv_self_evo_feedback_parse();
+        return make_int(static_cast<std::int64_t>(marked));
+    });
+
+    // Issue #802: (mutate:from-verification-feedback strategy node-id payload)
+    // — strategy-driven structured SV mutate under Guard with StableNodeRef
+    // capture. Delegates to existing eda:weaken-property / eda:add-coverpoint-bin /
+    // eda:update-constraint primitives.
+    add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))
+            return make_bool(false);
+        auto strategy_idx = as_string_idx(a[0]);
+        if (strategy_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& strategy = ev.string_heap_[strategy_idx];
+        const auto node_id = static_cast<std::int64_t>(as_int(a[1]));
+        auto payload_idx = as_string_idx(a[2]);
+        if (payload_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        auto delegate = [&](const char* name) -> bool {
+            auto fn = ev.primitives_.lookup(name);
+            if (!fn)
+                return false;
+            auto r = (*fn)({make_int(node_id), make_string(payload_idx)});
+            return is_bool(r) && as_bool(r);
+        };
+        bool ok = false;
+        if (strategy == "weaken-property" || strategy == "assert-fail")
+            ok = delegate("eda:weaken-property");
+        else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
+            ok = delegate("eda:add-coverpoint-bin");
+        else if (strategy == "relax-constraint" || strategy == "structural-fix")
+            ok = delegate("eda:update-constraint");
+        if (!ok)
+            return make_bool(false);
+        ev.bump_sv_self_evo_structured_mutate();
+        ev.bump_sv_self_evo_closed_loop_rounds();
+        ev.bump_sv_self_evo_convergence_hits();
+        ev.bump_closed_loop_feedback_mutate_round();
+        return make_bool(true);
     });
 
     // Issue #693: (eda:run-verification-feedback report-kind report-text)
@@ -2600,6 +2687,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         }
         ev.bump_verify_tool_feedback_mutate_success();
+        ev.bump_sv_self_evo_structured_mutate();
+        ev.bump_sv_self_evo_closed_loop_rounds();
+        ev.bump_sv_self_evo_convergence_hits();
+        ev.bump_closed_loop_feedback_mutate_round();
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });

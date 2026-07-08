@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**806** registrations scanned from `src/**/*.cpp`.
+**809** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 126 primitives (16%)
-- **core**: 212 primitives (26%)
-- **internal-observable**: 321 primitives (40%)
+- **mutation-safety**: 127 primitives (16%)
+- **core**: 213 primitives (26%)
+- **internal-observable**: 322 primitives (40%)
 - **convenience**: 147 primitives (18%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (321)
+## Query: (322)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -317,6 +317,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:sv-sva-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-verification-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:sv-verification-closedloop-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:sv-verification-self-evolution-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:sv-verification-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:tag-arity-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task2-refinement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -345,9 +346,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:workspace-snapshot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:yield-checkpoint-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 
-## Mutate: (3)
+## Mutate: (4)
 
 - `mutate:extract-function` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
 
@@ -927,12 +929,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Verify: (6)
+## Verify: (7)
 
 - `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:coverage-holes` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-assert-failure` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-coverage-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-formal-cex` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:report-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:suggest-constraint-refine` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
@@ -942,7 +945,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (126)
+### Mutation safety (must remain primitive) (127)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1039,6 +1042,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1071,7 +1075,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (212)
+### Core builtins (must remain primitive) (213)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1278,6 +1282,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `verify:coverage-holes` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-formal-cex` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:suggest-constraint-refine` — `src/compiler/evaluator_primitives_compile.cpp`
 - `void` — `src/compiler/evaluator_primitives_core.cpp`
@@ -1286,7 +1291,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (321)
+### Internal observable (stats/counters) (322)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1582,6 +1587,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:sv-sva-structure-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-verification-closedloop-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:sv-verification-closedloop-stats-hash` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:sv-verification-self-evolution-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:sv-verification-structure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:tag-arity-count` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task2-refinement-stats` — `src/compiler/evaluator_primitives_query.cpp`
