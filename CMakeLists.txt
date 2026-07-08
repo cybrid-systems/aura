@@ -3766,6 +3766,15 @@ add_dependencies(all_test_issue_targets test_issue_763)
 aura_add_issue_test(test_issue_764)
 aura_issue_test_link_llvm_jit(test_issue_764)
 add_dependencies(all_test_issue_targets test_issue_764)
+# Issue #799: DeadCoercionElimination + narrow_evidence CastOp elision.
+# 4 CompilerMetrics atomics (dead_coercion_elision_*_total) +
+# (query:dead-coercion-elision-stats, schema 799) + bump wiring in
+# accumulate_coercion_pass_metrics / ir_executor / type_checker.
+# 8 ACs: schema, 4 bump paths, DCE Rule 6 exercise, regression #687/#629.
+# Non-duplicative with #796/#795/#794/#687.
+aura_add_issue_test(test_dead_coercion_elision_narrow_evidence)
+aura_issue_test_link_llvm_jit(test_dead_coercion_elision_narrow_evidence)
+add_dependencies(all_test_issue_targets test_dead_coercion_elision_narrow_evidence)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

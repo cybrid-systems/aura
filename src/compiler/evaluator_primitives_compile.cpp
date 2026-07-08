@@ -182,6 +182,71 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
+    // Issue #799: (query:dead-coercion-elision-stats) — narrow_evidence-
+    // driven DeadCoercionElimination elision dashboard (refines #796/#795/
+    // #794; non-duplicative with #687 query:dead-coercion-elim-stats which
+    // focuses on the general zero-overhead elimination surface).
+    //
+    // Fields (4 + sentinel):
+    //   - elided-casts            dead_coercion_elision_elided_casts_total
+    //   - evidence-hit-rate       derived (evidence_hits * 100 /
+    //                             (evidence_hits + castop_emitted + 1))
+    //   - narrowing-stable-paths  dead_coercion_elision_narrowing_stable_paths_total
+    //   - runtime-check-savings   dead_coercion_elision_runtime_check_savings_total
+    //   - schema == 799
+    add("query:dead-coercion-elision-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t elided = 0, evidence_hits = 0, stable_paths = 0, savings = 0,
+                      castop_emitted = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            elided = m->dead_coercion_elision_elided_casts_total.load(std::memory_order_relaxed);
+            evidence_hits =
+                m->dead_coercion_elision_evidence_hits_total.load(std::memory_order_relaxed);
+            stable_paths = m->dead_coercion_elision_narrowing_stable_paths_total.load(
+                std::memory_order_relaxed);
+            savings = m->dead_coercion_elision_runtime_check_savings_total.load(
+                std::memory_order_relaxed);
+            castop_emitted = m->coercion_castop_emitted_total.load(std::memory_order_relaxed);
+        }
+        const std::int64_t evidence_hit_rate = static_cast<std::int64_t>(
+            (evidence_hits * 100ULL) / (evidence_hits + castop_emitted + 1ULL));
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("elided-casts", static_cast<std::int64_t>(elided));
+        insert_kv("evidence-hit-rate", evidence_hit_rate);
+        insert_kv("narrowing-stable-paths", static_cast<std::int64_t>(stable_paths));
+        insert_kv("runtime-check-savings", static_cast<std::int64_t>(savings));
+        insert_kv("schema", 799);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // (compile:ir-soa-stats) — Issue #254: observability for
     // the IR SoA dual-emit path. Hash with the 2 counters
     // (instructions-emitted, functions-emitted). Returns a

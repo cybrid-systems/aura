@@ -626,6 +626,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (metrics_) {
                             metrics_->dead_coercion_post_mutate_elim_hits_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                            metrics_->dead_coercion_elision_runtime_check_savings_total.fetch_add(
+                                1, std::memory_order_relaxed);
                         }
                         break;
                     }
