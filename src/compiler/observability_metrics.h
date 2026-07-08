@@ -1524,6 +1524,138 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutate_suppressed_bumps_total{0};
     std::atomic<std::uint64_t> mutate_cross_fiber_steals_during_batch_total{0};
     std::atomic<std::uint64_t> mutate_hygiene_violations_in_batch_total{0};
+    // Issue #762: Workspace '锁定-导航-修改-执行' closed-loop
+    // reliability observability under concurrent fiber orchestration
+    // + multi-Agent parallel edits (non-duplicative with #749
+    // StableRef COW/pinning, #755 Guard concurrent stress, #754
+    // LLM-bottleneck adaptive scheduling). These are public so
+    // future evaluator_primitives_query.cpp + mutate.cpp + workspace
+    // paths + restore_post_yield + steal paths + tests/test_
+    // workspace_closedloop_fiber_multiagent_orchestration.cpp
+    // harness (10+ fibers/agents with parallel query/mutate on
+    // shared+COW workspaces + steal/yield → assert auto refresh,
+    // dirty consistent, no contention deadlock, metrics accurate,
+    // TSan clean) + SEVA multi-Agent demo + CI gate can call them
+    // at each decision point (concurrent query/mutate success,
+    // cross-COW StableRef validity, yield point hit, shared_mutex
+    // contention event, multi-Agent edit fidelity).
+    //
+    // Non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats), #758 (query:edsl-reflection-stats), #759 (query:
+    // code-as-data-maturity-stats), #760 (query:pattern-perfor-
+    // mance-stats), #761 (query:mutate-batch-stats) which cover
+    // macro body hygiene + EDSL struct + macro hygiene invariant
+    // correlation + code-as-data closed-loop maturity + query:
+    // pattern performance + end-to-end atomic batch mutate
+    // surfaces. #762 is the FIRST observability surface that
+    // tracks the *Workspace closed-loop orchestration* — concurrent
+    // query/mutate success under fiber steal, cross-COW StableRef
+    // validity (auto-propagation win rate), yield point hit count
+    // (exhaustive yield coverage), shared_mutex contention events
+    // (orchestration bottleneck detection) — as separate per-
+    // decision-point counters the Agent consumes to monitor
+    // Workspace closed-loop production-readiness in orchestrated
+    // multi-Agent deployments.
+    //
+    //   - workspace_closedloop_concurrent_query_mutate_total: #
+    //                                                      of
+    //                                                      concurrent
+    //                                                      query+mutate
+    //                                                      success
+    //                                                      events
+    //                                                      on
+    //                                                      shared
+    //                                                      / COW
+    //                                                      workspaces
+    //                                                      under
+    //                                                      fiber
+    //                                                      steal
+    //                                                      (proxy
+    //                                                      for
+    //                                                      concurrent
+    //                                                      orchestration
+    //                                                      health).
+    //   - workspace_closedloop_cross_cow_ref_valid_total: # of
+    //                                                   cross-COW
+    //                                                   StableRef
+    //                                                   accesses
+    //                                                   that
+    //                                                   remained
+    //                                                   valid
+    //                                                   after
+    //                                                   auto-
+    //                                                   propagation
+    //                                                   (denominator
+    //                                                   for cross_cow_ref_validity_pct
+    //                                                   derivation
+    //                                                   — valid /
+    //                                                   total =
+    //                                                   cross-cow
+    //                                                   ref
+    //                                                   validity
+    //                                                   rate).
+    //   - workspace_closedloop_yield_points_hit_total: # of
+    //                                                explicit
+    //                                                yield point
+    //                                                hits in
+    //                                                matcher /
+    //                                                children
+    //                                                iteration /
+    //                                                mark_dirty
+    //                                                paths (proxy
+    //                                                for "how
+    //                                                often does
+    //                                                the Workspace
+    //                                                loop yield
+    //                                                to allow
+    //                                                other fibers
+    //                                                / agents
+    //                                                to run" —
+    //                                                low value =
+    //                                                starvation
+    //                                                risk).
+    //   - workspace_closedloop_shared_mutex_contention_total: # of
+    //                                                      shared_
+    //                                                      mutex
+    //                                                      contention
+    //                                                      events
+    //                                                      on
+    //                                                      workspace
+    //                                                      primitives
+    //                                                      under
+    //                                                      heavy
+    //                                                      AI load
+    //                                                      (proxy
+    //                                                      for
+    //                                                      orchestration
+    //                                                      bottleneck
+    //                                                      — high
+    //                                                      value =
+    //                                                      contention
+    //                                                      signal).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual evaluator_primitives_query.cpp + mutate.cpp +
+    // workspace paths instrumentation with explicit fiber yield
+    // points or safepoint checks in pattern matcher + children_
+    // safe iteration + mark_dirty_upward + auto-propagate active
+    // StableRef pins or dirty bits via epoch or weak registry on
+    // workspace COW/clone in primitives + extend make_ref / get_
+    // safe in query/mutate to auto-refresh on workspace boundary
+    // cross + wire mark_dirty_upward to notify pinned refs or
+    // sub-workspace listeners + integration with mutation-impact
+    // + stable-ref-stats + force StableRef validation + dirty
+    // re-propagation for active Workspace edits in restore_post_
+    // yield + steal paths + tests/test_workspace_closedloop_fiber_
+    // multiagent_orchestration.cpp harness + SEVA multi-Agent
+    // demo + Prometheus / SLO (closedloop_fidelity >99.5%) + CI
+    // gate + docs are all follow-up work (each is a dedicated
+    // session in evaluator_primitives_query.cpp + mutate.cpp +
+    // ast.ixx + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> workspace_closedloop_concurrent_query_mutate_total{0};
+    std::atomic<std::uint64_t> workspace_closedloop_cross_cow_ref_valid_total{0};
+    std::atomic<std::uint64_t> workspace_closedloop_yield_points_hit_total{0};
+    std::atomic<std::uint64_t> workspace_closedloop_shared_mutex_contention_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

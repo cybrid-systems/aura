@@ -559,6 +559,14 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // hygiene violations caught within batch boundary as
     // per-decision-point counters.
     "query:mutate-batch-stats",
+    // Issue #762 — Workspace '锁定-导航-修改-执行' closed-loop
+    // orchestration observability under concurrent fiber +
+    // multi-Agent parallel edits (concurrent query/mutate,
+    // cross-COW StableRef validity, yield points, shared_mutex
+    // contention); non-duplicative with #749 StableRef COW, #755
+    // Guard concurrent stress, #754 LLM-bottleneck adaptive
+    // scheduling.
+    "query:workspace-closedloop-orchestration-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -11200,6 +11208,172 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "counters. #761 exposes the atomic compound EDSL edit health "
                         "the Agent consumes to decide whether to batch, suppress "
                         "bumps, or trigger cross-fiber re-stamp under Guard commit.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #762: (query:workspace-closedloop-orchestration-stats)
+    // — Workspace '锁定-导航-修改-执行' closed-loop orchestration
+    // observability under concurrent fiber + multi-Agent parallel
+    // edits (non-duplicative with #757 / #758 / #759 / #760 / #761
+    // coarse observability surfaces which cover macro body hygiene
+    // + EDSL struct + macro hygiene invariant correlation + code-
+    // as-data closed-loop maturity + query:pattern performance +
+    // end-to-end atomic batch mutate). #762 covers the *Workspace
+    // closed-loop orchestration* specifically — concurrent query/
+    // mutate success under fiber steal, cross-COW StableRef validity
+    // (auto-propagation win rate), yield point hit count (exhaustive
+    // yield coverage), shared_mutex contention events (orchestration
+    // bottleneck detection) — as separate per-decision-point
+    // counters the Agent consumes to monitor Workspace closed-loop
+    // production-readiness in orchestrated multi-Agent deployments.
+    //
+    // Fields (4 + sentinel):
+    //   - concurrent-query-mutate
+    //                                workspace_closedloop_concurrent_query_mutate_total
+    //                                (# of concurrent query+mutate
+    //                                 success events on shared /
+    //                                 COW workspaces under fiber
+    //                                 steal — proxy for concurrent
+    //                                 orchestration health)
+    //   - cross-cow-ref-valid
+    //                                workspace_closedloop_cross_cow_ref_valid_total
+    //                                (# of cross-COW StableRef
+    //                                 accesses that remained valid
+    //                                 after auto-propagation —
+    //                                 valid / total = cross_cow_
+    //                                 ref_validity_pct derivation)
+    //   - yield-points-hit
+    //                                workspace_closedloop_yield_points_hit_total
+    //                                (# of explicit yield point
+    //                                 hits in matcher / children
+    //                                 iteration / mark_dirty paths
+    //                                 — low value = starvation
+    //                                 risk)
+    //   - shared-mutex-contention
+    //                                workspace_closedloop_shared_mutex_contention_total
+    //                                (# of shared_mutex contention
+    //                                 events on workspace primitives
+    //                                 under heavy AI load — high
+    //                                 value = bottleneck signal)
+    //   - schema == 762
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual evaluator_primitives_query.cpp + mutate.cpp +
+    // workspace paths instrumentation with explicit fiber yield
+    // points or safepoint checks + auto-propagate active StableRef
+    // pins or dirty bits via epoch or weak registry on workspace
+    // COW/clone in primitives + extend make_ref / get_safe in
+    // query/mutate to auto-refresh on workspace boundary cross +
+    // wire mark_dirty_upward to notify pinned refs or sub-workspace
+    // listeners + integration with mutation-impact + stable-ref-
+    // stats + force StableRef validation + dirty re-propagation
+    // for active Workspace edits in restore_post_yield + steal
+    // paths + tests/test_workspace_closedloop_fiber_multiagent_
+    // orchestration.cpp harness (10+ fibers/agents with parallel
+    // query/mutate on shared+COW workspaces + steal/yield → assert
+    // auto refresh, dirty consistent, no contention deadlock,
+    // metrics accurate, TSan clean) + SEVA multi-Agent demo +
+    // Prometheus / SLO (closedloop_fidelity >99.5%) + CI gate +
+    // docs are all follow-up work.
+    //
+    // Issue #762: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=762 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#761).
+    ev.primitives_.add(
+        "query:workspace-closedloop-orchestration-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t concurrent_query_mutate =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_concurrent_query_mutate_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cross_cow_ref_valid =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_cross_cow_ref_valid_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t yield_points_hit =
+                m ? static_cast<std::int64_t>(m->workspace_closedloop_yield_points_hit_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t shared_mutex_contention =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_shared_mutex_contention_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"concurrent-query-mutate", make_int(concurrent_query_mutate)},
+                {"cross-cow-ref-valid", make_int(cross_cow_ref_valid)},
+                {"yield-points-hit", make_int(yield_points_hit)},
+                {"shared-mutex-contention", make_int(shared_mutex_contention)},
+                {"schema", make_int(762)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Workspace '锁定-导航-修改-执行' closed-loop orchestration "
+                        "observability under concurrent fiber + multi-Agent parallel "
+                        "edits: concurrent-query-mutate (# of concurrent query+mutate "
+                        "success events on shared / COW workspaces under fiber steal — "
+                        "proxy for concurrent orchestration health), cross-cow-ref-valid "
+                        "(# of cross-COW StableRef accesses that remained valid after "
+                        "auto-propagation — valid / total = cross_cow_ref_validity_pct "
+                        "derivation), yield-points-hit (# of explicit yield point hits "
+                        "in matcher / children iteration / mark_dirty paths — low value "
+                        "= starvation risk), shared-mutex-contention (# of shared_mutex "
+                        "contention events on workspace primitives under heavy AI load — "
+                        "high value = bottleneck signal). Pairs with the existing #757 "
+                        "+ #758 + #759 + #760 + #761 4-field observability hashes but "
+                        "tracks the *Workspace closed-loop orchestration* specifically "
+                        "as separate per-decision-point counters. #762 exposes the "
+                        "Workspace closed-loop production health the Agent consumes to "
+                        "decide whether to spawn more agents, add yield points, or "
+                        "trigger multi-Agent SLO breach under Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
