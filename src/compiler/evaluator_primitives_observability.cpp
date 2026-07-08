@@ -567,6 +567,15 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Guard concurrent stress, #754 LLM-bottleneck adaptive
     // scheduling.
     "query:workspace-closedloop-orchestration-stats",
+    // Issue #763 — Runtime linear_ownership_state enforcement +
+    // GC root registration for IRClosure/EnvFrame in invalidate_
+    // function and live-closure paths (linear ownership + GC +
+    // compiler maturation observability; non-duplicative with
+    // the existing query:linear-ownership-gc-stats GC layer and
+    // #747/#741/#756/#749 — #763 is the FIRST observability
+    // surface that tracks the compiler IRClosure + EnvFrame +
+    // invalidate runtime linear enforcement composite).
+    "query:linear-ownership-gc-compiler-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -11374,6 +11383,182 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "Workspace closed-loop production health the Agent consumes to "
                         "decide whether to spawn more agents, add yield points, or "
                         "trigger multi-Agent SLO breach under Guard commit.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #763: (query:linear-ownership-gc-compiler-stats) —
+    // runtime linear_ownership_state enforcement + GC root
+    // registration observability for IRClosure/EnvFrame in
+    // invalidate_function and live-closure paths (non-duplicative
+    // with #757 / #758 / #759 / #760 / #761 / #762 coarse
+    // observability surfaces and the existing
+    // (query:linear-ownership-gc-stats) which covers the GC layer
+    // observability — but #763 covers the *compiler IRClosure +
+    // EnvFrame + invalidate runtime linear enforcement composite*
+    // specifically: IRClosure/EnvFrame root registrations, stale
+    // GC root hits on invalidate, runtime linear violations
+    // caught, Env version re-syncs on invalidate — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // linear ownership + GC + compiler maturation production-
+    // readiness under AI multi-round mutate + incremental
+    // invalidate.
+    //
+    // Fields (4 + sentinel):
+    //   - root-registrations
+    //                                linear_ownership_gc_root_registrations_total
+    //                                (# of compiler IRClosure /
+    //                                 EnvFrame root registrations
+    //                                 called from invalidate +
+    //                                 fiber mutation boundary —
+    //                                 proxy for invalidate +
+    //                                 boundary GC-safety
+    //                                 coverage)
+    //   - root-stale-hits
+    //                                linear_ownership_gc_root_stale_hits_total
+    //                                (# of stale GC root hits
+    //                                 during GC walk from
+    //                                 previously invalidated
+    //                                 functions — high value =
+    //                                 UAF risk signal)
+    //   - violations-prevented
+    //                                linear_ownership_gc_violations_prevented_total
+    //                                (# of runtime linear
+    //                                 violations caught by the
+    //                                 runtime check in Apply /
+    //                                 MakeClosure paths — high
+    //                                 value = safety net firings)
+    //   - env-version-resync
+    //                                linear_ownership_gc_env_version_resync_total
+    //                                (# of Env version re-syncs
+    //                                 on invalidate — proxy for
+    //                                 invalidate path correctly
+    //                                 bumping version_ on
+    //                                 bridged EnvFrames to keep
+    //                                 GC walk safe)
+    //   - schema == 763
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual service.ixx invalidate_function + LoweringState
+    // walk of live IRClosure (via closure_bridge_ or closures_
+    // map) for linear_ownership_state nodes + force re-emit or
+    // mark for runtime check + register affected EnvId/IRClosure
+    // as GC root with version_ stamp synced to mutation_epoch_ +
+    // evaluator_gc.cpp + gc_coordinator compiler IRClosure /
+    // EnvFrame root registration hook (called from invalidate +
+    // fiber mutation boundary) + on GC walk enforce linear state
+    // via runtime check (debug) or DropOp simulation for owned
+    // values in bridged closures + ir_executor.ixx + aura_jit.cpp
+    // Apply/MakeClosure paths and linear ops runtime assert/check
+    // for linear_ownership_state consistency with actual
+    // ownership + on invalidate impact trigger root re-
+    // registration + integration with EscapeAnalysisWrap +
+    // DirtyAware for targeted linear dirty + sync with bridge_
+    // epoch bump + tests/test_prompt6_linear_ownership_gc_root_
+    // invalidate_closure.cpp harness + SEVA linear-ownership demo
+    // + CI gate + docs are all follow-up work.
+    //
+    // Issue #763: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=763 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#762).
+    ev.primitives_.add(
+        "query:linear-ownership-gc-compiler-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t root_registrations =
+                m ? static_cast<std::int64_t>(m->linear_ownership_gc_root_registrations_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t root_stale_hits =
+                m ? static_cast<std::int64_t>(m->linear_ownership_gc_root_stale_hits_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t violations_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->linear_ownership_gc_violations_prevented_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t env_version_resync =
+                m ? static_cast<std::int64_t>(m->linear_ownership_gc_env_version_resync_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"root-registrations", make_int(root_registrations)},
+                {"root-stale-hits", make_int(root_stale_hits)},
+                {"violations-prevented", make_int(violations_prevented)},
+                {"env-version-resync", make_int(env_version_resync)},
+                {"schema", make_int(763)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Runtime linear_ownership_state enforcement + GC root "
+                        "registration observability for IRClosure/EnvFrame in "
+                        "invalidate_function and live-closure paths: "
+                        "root-registrations (# of compiler IRClosure / EnvFrame "
+                        "root registrations called from invalidate + fiber "
+                        "mutation boundary — proxy for invalidate + boundary "
+                        "GC-safety coverage), root-stale-hits (# of stale GC root "
+                        "hits during GC walk from previously invalidated functions "
+                        "— high value = UAF risk signal), violations-prevented "
+                        "(# of runtime linear violations caught by the runtime "
+                        "check in Apply / MakeClosure paths — high value = safety "
+                        "net firings), env-version-resync (# of Env version "
+                        "re-syncs on invalidate — proxy for invalidate path "
+                        "correctly bumping version_ on bridged EnvFrames to keep "
+                        "GC walk safe). Pairs with the existing #757 + #758 + #759 "
+                        "+ #760 + #761 + #762 4-field observability hashes and "
+                        "the existing query:linear-ownership-gc-stats GC layer "
+                        "observability, but tracks the *compiler IRClosure + "
+                        "EnvFrame + invalidate runtime linear enforcement "
+                        "composite* specifically as separate per-decision-point "
+                        "counters. #763 exposes the linear ownership + GC + "
+                        "compiler maturation production health the Agent consumes "
+                        "to decide whether to force re-emit, register GC roots, "
+                        "or trigger linear runtime check under invalidate path.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

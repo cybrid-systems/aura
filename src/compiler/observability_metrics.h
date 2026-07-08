@@ -1656,6 +1656,174 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_closedloop_cross_cow_ref_valid_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_yield_points_hit_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_shared_mutex_contention_total{0};
+    // Issue #763: runtime linear_ownership_state enforcement +
+    // GC root registration for IRClosure/EnvFrame in
+    // invalidate_function and live-closure paths (non-duplicative
+    // with #747 linear occurrence, #741 DepGraph/bridge, #756
+    // EnvFrame dual-path, #749 StableRef). These are public so
+    // future service.ixx invalidate_function + LoweringState
+    // walk of live IRClosure for linear_ownership_state nodes +
+    // register affected EnvId/IRClosure as GC root with version_
+    // stamp synced to mutation_epoch_ + evaluator_gc.cpp +
+    // gc_coordinator compiler IRClosure/EnvFrame root
+    // registration hook (called from invalidate + fiber mutation
+    // boundary) + ir_executor.ixx + aura_jit.cpp Apply/
+    // MakeClosure runtime assert/check for linear_ownership_state
+    // consistency + invalidate impact root re-registration +
+    // tests/test_prompt6_linear_ownership_gc_root_invalidate_
+    // closure.cpp harness (linear define with move/borrow +
+    // quote/lambda capture + mutate:rebind on body → invalidate +
+    // live closure apply under GC pressure → assert no violation/
+    // UAF, roots registered, metrics, TSan/ASan clean) + SEVA
+    // linear-ownership demo + CI gate can call them at each
+    // decision point (root registration / stale root hit /
+    // linear violation prevented / Env version resync on
+    // invalidate).
+    //
+    // Non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats), #758 (query:edsl-reflection-stats), #759 (query:
+    // code-as-data-maturity-stats), #760 (query:pattern-perfor-
+    // mance-stats), #761 (query:mutate-batch-stats), #762 (query:
+    // workspace-closedloop-orchestration-stats) which cover macro
+    // body hygiene + EDSL struct + macro hygiene invariant
+    // correlation + code-as-data closed-loop maturity + query:
+    // pattern performance + end-to-end atomic batch mutate +
+    // Workspace closed-loop orchestration surfaces. The existing
+    // (query:linear-ownership-gc-stats) covers the GC layer
+    // observability. #763 is the FIRST observability surface that
+    // tracks the *compiler IRClosure + EnvFrame + invalidate
+    // runtime linear enforcement composite* — IRClosure/EnvFrame
+    // root registrations (proxy for how often the invalidate +
+    // mutation boundary path correctly registers compiler-owned
+    // closures as GC roots), stale GC root hits on invalidate
+    // (proxy for "how often does the GC walk encounter a root
+    // from a previously invalidated function"), runtime linear
+    // violations caught (proxy for "how often does the runtime
+    // check prevent a use-after-move / linear violation in
+    // bridged closures"), Env version re-syncs on invalidate
+    // (proxy for "how often does the invalidate path correctly
+    // bump version_ on bridged EnvFrames to keep GC walk safe")
+    // — as separate per-decision-point counters the Agent
+    // consumes to monitor linear ownership + GC + compiler
+    // maturation production-readiness under AI multi-round
+    // mutate + incremental invalidate.
+    //
+    //   - linear_ownership_gc_root_registrations_total: # of
+    //                                                 compiler
+    //                                                 IRClosure /
+    //                                                 EnvFrame
+    //                                                 root
+    //                                                 registrations
+    //                                                 called
+    //                                                 from
+    //                                                 invalidate
+    //                                                 + fiber
+    //                                                 mutation
+    //                                                 boundary
+    //                                                 (proxy for
+    //                                                 invalidate
+    //                                                 + boundary
+    //                                                 GC-safety
+    //                                                 coverage).
+    //   - linear_ownership_gc_root_stale_hits_total: # of
+    //                                               stale GC
+    //                                               root hits
+    //                                               during GC
+    //                                               walk from
+    //                                               previously
+    //                                               invalidated
+    //                                               functions
+    //                                               (proxy for
+    //                                               "how often
+    //                                               does the
+    //                                               GC walk
+    //                                               encounter a
+    //                                               root whose
+    //                                               origin
+    //                                               function
+    //                                               has been
+    //                                               invalidated
+    //                                               without
+    //                                               proper
+    //                                               re-stamp"
+    //                                               — high
+    //                                               value =
+    //                                               UAF risk
+    //                                               signal).
+    //   - linear_ownership_gc_violations_prevented_total: # of
+    //                                                   runtime
+    //                                                   linear
+    //                                                   violations
+    //                                                   caught
+    //                                                   by the
+    //                                                   runtime
+    //                                                   check in
+    //                                                   Apply /
+    //                                                   MakeClosure
+    //                                                   paths
+    //                                                   (proxy for
+    //                                                   "how many
+    //                                                   use-after-
+    //                                                   move /
+    //                                                   linear
+    //                                                   violations
+    //                                                   did the
+    //                                                   runtime
+    //                                                   guard
+    //                                                   prevent in
+    //                                                   bridged
+    //                                                   closures"
+    //                                                   — high
+    //                                                   value =
+    //                                                   safety net
+    //                                                   firings).
+    //   - linear_ownership_gc_env_version_resync_total: # of
+    //                                                Env version
+    //                                                re-syncs
+    //                                                on
+    //                                                invalidate
+    //                                                (proxy for
+    //                                                "how often
+    //                                                does the
+    //                                                invalidate
+    //                                                path
+    //                                                correctly
+    //                                                bump
+    //                                                version_ on
+    //                                                bridged
+    //                                                EnvFrames
+    //                                                to keep GC
+    //                                                walk safe").
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual service.ixx invalidate_function + LoweringState
+    // walk of live IRClosure (via closure_bridge_ or closures_
+    // map) for linear_ownership_state nodes + force re-emit or
+    // mark for runtime check + register affected EnvId/IRClosure
+    // as GC root with version_ stamp synced to mutation_epoch_ +
+    // evaluator_gc.cpp + gc_coordinator compiler IRClosure /
+    // EnvFrame root registration hook (called from invalidate +
+    // fiber mutation boundary) + on GC walk enforce linear state
+    // via runtime check (debug) or DropOp simulation for owned
+    // values in bridged closures + ir_executor.ixx + aura_jit.cpp
+    // Apply/MakeClosure paths and linear ops runtime assert/check
+    // for linear_ownership_state consistency with actual
+    // ownership + on invalidate impact trigger root re-
+    // registration + integration with EscapeAnalysisWrap +
+    // DirtyAware for targeted linear dirty + sync with bridge_
+    // epoch bump + tests/test_prompt6_linear_ownership_gc_root_
+    // invalidate_closure.cpp harness (linear define with move/
+    // borrow + quote/lambda capture + mutate:rebind on body →
+    // invalidate + live closure apply under GC pressure → assert
+    // no violation/UAF, roots registered, metrics, TSan/ASan
+    // clean) + SEVA linear-ownership demo + CI gate + docs are
+    // all follow-up work (each is a dedicated session in
+    // service.ixx + evaluator_gc.cpp + ir_executor.ixx +
+    // aura_jit.cpp + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> linear_ownership_gc_root_registrations_total{0};
+    std::atomic<std::uint64_t> linear_ownership_gc_root_stale_hits_total{0};
+    std::atomic<std::uint64_t> linear_ownership_gc_violations_prevented_total{0};
+    std::atomic<std::uint64_t> linear_ownership_gc_env_version_resync_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +
