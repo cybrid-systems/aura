@@ -4203,6 +4203,49 @@ public:
             m->ir_hygiene_marker_propagation_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #735: MacroIntroduced provenance in StableNodeRef +
+    // targeted dirty/rollback for macro subtrees observability
+    // counters backing the (query:macro-provenance-stats) primitive.
+    // These are public so future ast.ixx StableNodeRef + make_ref +
+    // MutationBoundaryGuard + mark_dirty_upward + evaluator_primitives_
+    // mutate.cpp can call them at each decision point (StableNodeRef
+    // captured with macro_introduced_at_capture + original_macro_
+    // expansion_id populated / dirty propagation targeted to macro
+    // subtree / rollback success on macro subtree hygiene drift
+    // detected / is_macro_introduced hot-path consult). Pairs with
+    // #733 (query:ir-marker-hygiene-stats — IR-level marker
+    // propagation) + #750 (query:reflection-schema-stats — runtime
+    // reflection validate) but tracks the *MacroIntroduced
+    // provenance + targeted macro-subtree handling* specifically —
+    // capture-time provenance, hot-path consult, targeted dirty
+    // propagation, rollback success — not the IR-marker propagation
+    // or runtime reflection surface.
+    void bump_macro_provenance_captured() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_provenance_captured_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_provenance_is_macro_introduced() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_provenance_is_macro_introduced_total.fetch_add(1,
+                                                                   std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_provenance_dirty_impact() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_provenance_dirty_impact_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_provenance_rollback_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_provenance_rollback_success_total.fetch_add(1,
+                                                                 std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

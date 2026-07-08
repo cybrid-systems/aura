@@ -508,6 +508,13 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // #373 coarse macro stats; #733 tracks per-decision-point
     // marker propagation + IR/JIT enforcement signals).
     "query:ir-marker-hygiene-stats",
+    // Issue #735 — MacroIntroduced provenance in StableNodeRef +
+    // targeted dirty/rollback for macro subtrees observability
+    // (non-duplicative with #714 / #717 / #392 / #373 / #733 / #750
+    // coarse macro/Guard/IR/reflect stats; #735 tracks per-decision-
+    // point macro provenance + targeted macro-subtree handling
+    // signals).
+    "query:macro-provenance-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -9989,6 +9996,177 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "the Agent consumes to decide whether to add "
                         "propagate_marker_from_ast helpers, force Interpreter "
                         "fallback, or trigger re-lower-with-marker on mutate.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #735: (query:macro-provenance-stats) — MacroIntroduced
+    // provenance in StableNodeRef + targeted dirty/rollback for
+    // macro subtrees observability for precise handling of
+    // macro-generated code in self-evolution (non-duplicative with
+    // #714 (query:self-evolution-closedloop-stats — ref drift +
+    // rollback + feedback mutate rounds) + #717 (query:fiber-
+    // boundary-violation-stats — fiber/Guard boundary invariants)
+    // + #392 (subtree gen — internal subtree mechanism) + #373
+    // (mutate hygiene guard — flat.is_macro_introduced internal
+    // check) + #733 (query:ir-marker-hygiene-stats — IR-level
+    // marker propagation) + #750 (query:reflection-schema-stats
+    // — runtime reflection validate). #735 covers the
+    // *MacroIntroduced provenance + targeted macro-subtree
+    // handling* specifically — capture-time provenance in
+    // StableNodeRef, hot-path consult, targeted dirty propagation
+    // for macro-subtree, rollback success — as separate
+    // per-decision-point counters.
+    //
+    // Fields (4 + sentinel):
+    //   - is-macro-introduced-consults  macro_provenance_is_macro_introduced_total
+    //                                    (# of times the is_macro_
+    //                                     introduced hot-path
+    //                                     consult fired on a
+    //                                     StableRef — proxy for
+    //                                     "how often the macro
+    //                                     check actually fires
+    //                                     at hot path")
+    //   - provenance-captured          macro_provenance_captured_total
+    //                                    (# of times StableNodeRef
+    //                                     capture populated
+    //                                     macro_introduced_at_
+    //                                     capture + original_
+    //                                     macro_expansion_id
+    //                                     fields — proxy for "how
+    //                                     often provenance is
+    //                                     tracked on capture")
+    //   - dirty-impact-on-macro-subtree
+    //                                  macro_provenance_dirty_impact_total
+    //                                    (# of dirty propagations
+    //                                     targeted to macro subtree
+    //                                     (via original_macro_
+    //                                     expansion_id) instead of
+    //                                     whole subtree — proxy
+    //                                     for "how often we avoid
+    //                                     over-invalidation via
+    //                                     provenance-aware dirty")
+    //   - rollback-success             macro_provenance_rollback_success_total
+    //                                    (# of successful rollback
+    //                                     that preserved macro
+    //                                     marker during restore_
+    //                                     children — proxy for
+    //                                     "how often targeted
+    //                                     macro-subtree rollback
+    //                                     fired cleanly")
+    //   - schema == 735
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual ast.ixx StableNodeRef + macro_introduced_at_capture
+    // + original_macro_expansion_id fields + is_valid_subtree
+    // macro_provenance_check + MutationBoundaryGuard +
+    // rollback_macro_subtree_provenance + mark_dirty_upward
+    // targeted macro-subtree + dirty/epoch interaction
+    // strengthening (verify/macro dirty cascade respect
+    // MacroIntroduced provenance for incremental re-lower) +
+    // StableRef / hygiene stats correlation enhancement +
+    // tests/test_macro_provenance_stable_ref_rollback_self_evo.cpp
+    // harness (nested macro expand + multi-round mutate:rebind
+    // inside macro body under fiber steal / panic / Guard fail) +
+    // SEVA macro cases + #674 chaos stress integration + docs
+    // are all follow-up work (each is a dedicated session in
+    // ast.ixx + mutate.cpp + evaluator_primitives_mutate.cpp +
+    // new test + SEVA demo + chaos stress + docs).
+    //
+    // Issue #735: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=735 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#733).
+    ev.primitives_.add(
+        "query:macro-provenance-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t is_macro_introduced_consults =
+                m ? static_cast<std::int64_t>(
+                        m->macro_provenance_is_macro_introduced_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t provenance_captured =
+                m ? static_cast<std::int64_t>(
+                        m->macro_provenance_captured_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dirty_impact_on_macro_subtree =
+                m ? static_cast<std::int64_t>(
+                        m->macro_provenance_dirty_impact_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t rollback_success =
+                m ? static_cast<std::int64_t>(
+                        m->macro_provenance_rollback_success_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"is-macro-introduced-consults", make_int(is_macro_introduced_consults)},
+                {"provenance-captured", make_int(provenance_captured)},
+                {"dirty-impact-on-macro-subtree", make_int(dirty_impact_on_macro_subtree)},
+                {"rollback-success", make_int(rollback_success)},
+                {"schema", make_int(735)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "MacroIntroduced provenance in StableNodeRef + targeted "
+                        "dirty/rollback for macro subtrees observability: "
+                        "is-macro-introduced-consults (hot-path consults on StableRef), "
+                        "provenance-captured (StableNodeRef with macro_introduced_at_"
+                        "capture + original_macro_expansion_id populated), "
+                        "dirty-impact-on-macro-subtree (targeted dirty propagation "
+                        "via original_macro_expansion_id), rollback-success (macro "
+                        "marker preserved during restore_children). Pairs with the "
+                        "existing #733 query:ir-marker-hygiene-stats IR-level "
+                        "marker propagation + #750 query:reflection-schema-stats "
+                        "runtime reflection validate but tracks the *MacroIntroduced "
+                        "provenance + targeted macro-subtree handling* specifically "
+                        "as separate per-decision-point counters. #735 exposes the "
+                        "macro-provenance + targeted-rollback adoption rate the "
+                        "Agent consumes to decide whether to enable provenance-aware "
+                        "rollback or trigger full-subtree rollback instead.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
