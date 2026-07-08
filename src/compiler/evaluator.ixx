@@ -4672,6 +4672,56 @@ public:
         }
         return 0;
     }
+    // Issue #765: Full DepEntry quote/lambda tracking + impact_
+    // scope propagation to bridge_epoch bump, EnvFrame version
+    // re-stamp and linear state refresh in LoweringState/
+    // invalidate. These are public so future ir_cache_pure.ixx
+    // compute_dependencies + compute_impact_scope + service dep_
+    // graph_ DepEntry quote/lambda flag + impact_scope priority +
+    // service.ixx invalidate_function + LoweringState bridge_epoch
+    // bump + EnvFrame version_ re-stamp + linear_ownership_state
+    // re-emit + lowering_impl.cpp Variable + set_closure_bridge_
+    // ptr + emit paths linear_state propagation + tests/test_
+    // prompt2_6_dep_quote_lambda_impact_linear_bridge_env.cpp
+    // harness can call them at each decision point. Pairs with the
+    // existing #757 (macro-hygiene-provenance 2 new atomics) +
+    // #758 (edsl-reflection 4 atomics) + #759 (code-as-data-
+    // maturity 4 atomics) + #760 (pattern-performance 4 atomics) +
+    // #761 (mutate-batch 4 atomics) + #762 (workspace-closedloop
+    // 4 atomics) + #763 (linear-ownership-gc-compiler 4 atomics)
+    // + #764 (compiler-arena-closure-lifetime 4 atomics) but
+    // tracks the *incremental compilation safety for quote/
+    // lambda/closure-heavy defines composite* — DepEntry quote/
+    // lambda hit, bridge_epoch bump on impact, EnvFrame version
+    // refresh, linear state refreshed — not the per-component
+    // surfaces.
+    void bump_incremental_quote_lambda_dep_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_quote_lambda_dep_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_quote_lambda_bridge_epoch_bump() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_quote_lambda_bridge_epoch_bump_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_quote_lambda_env_version_refresh() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_quote_lambda_env_version_refresh_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_incremental_quote_lambda_linear_state_refreshed() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->incremental_quote_lambda_linear_state_refreshed_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
