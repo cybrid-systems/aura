@@ -1791,6 +1791,73 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> closed_loop_rollback_success_total{0};
     std::atomic<std::uint64_t> closed_loop_feedback_mutate_rounds_total{0};
 
+    // Issue #728: unified structured error + provenance + recovery
+    // observability counters backing the (query:unified-error-stats)
+    // primitive. These are public so future evaluator_primitives_*.cpp
+    // refactors + new (primitive:error kind msg [context]) /
+    // (with-error value handler) / (primitive:try body on-error)
+    // primitives + Guard auto-capture can call them at each decision
+    // point (structured error constructed / provenance captured /
+    // recovery succeeded).
+    //
+    // Non-duplicative with the existing #478 (query:primitive-error-stats
+    // pair) + #585 (query:primitives-error-stats hash with error_rate /
+    // recovery_success / panic-recovery / rollback / contract-violations /
+    // recommendation). #728 is the FIRST observability surface that
+    // tracks the *unified model* specifically: structured ErrorValue
+    // (kind + provenance + context + recovery-hint) hits as separate
+    // counters, complementing #585's coarse error_rate + recovery
+    // success counters without overlap.
+    //
+    //   - unified_error_structured_hits_total: # of times a primitive
+    //                                          emitted a structured
+    //                                          ErrorValue (kind +
+    //                                          msg + provenance +
+    //                                          context + recovery hint)
+    //                                          vs. the legacy
+    //                                          make_primitive_error
+    //                                          string-only path.
+    //                                          Proxy for "how much
+    //                                          of stdlib has migrated
+    //                                          to the unified model".
+    //   - unified_error_provenance_captured_total: # of structured
+    //                                              errors that
+    //                                              successfully
+    //                                              captured a
+    //                                              StableNodeRef
+    //                                              provenance (via
+    //                                              Guard.capture()
+    //                                              or direct capture
+    //                                              in the error path).
+    //                                              Proxy for "how
+    //                                              many errors are
+    //                                              introspectable for
+    //                                              AI Agent recovery".
+    //   - unified_error_recovery_success_total: # of successful
+    //                                           recovery attempts
+    //                                           (rollback + retry
+    //                                           primitive path fired
+    //                                           cleanly). Complements
+    //                                           #585's coarse recovery
+    //                                           counter with structured
+    //                                           error provenance.
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual unified ErrorValue / EvalValue tagged-error extension
+    // + refactor of evaluator_primitives_list.cpp / math.cpp / regex
+    // / verify error sites to make_structured_primitive_error(guard,
+    // kind, msg, context) + (primitive:error) / (with-error) /
+    // (primitive:try) new primitives + Guard.capture auto-provenance
+    // + CI lint for legacy make_primitive_error usage + new
+    // tests/test_unified_primitive_error_model.cpp harness + SEVA
+    // error-resilient closed-loop + primitives_style.md mandate are
+    // all follow-up (each is a dedicated session in evaluator.ixx +
+    // primitives_detail.h + evaluator_primitives_*.cpp + Guard +
+    // diagnostic + ast.ixx StableNodeRef + new test + SEVA + docs).
+    std::atomic<std::uint64_t> unified_error_structured_hits_total{0};
+    std::atomic<std::uint64_t> unified_error_provenance_captured_total{0};
+    std::atomic<std::uint64_t> unified_error_recovery_success_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

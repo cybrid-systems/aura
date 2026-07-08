@@ -3280,6 +3280,31 @@ add_dependencies(all_test_issue_targets test_issue_723)
 aura_add_issue_test(test_issue_726)
 aura_issue_test_link_llvm_jit(test_issue_726)
 add_dependencies(all_test_issue_targets test_issue_726)
+# Issue #728: unified structured error + provenance + recovery
+# observability primitive — 3 atomics + 3 bump helpers +
+# (query:unified-error-stats, schema 728) primitive (4-entry hash:
+# 3 fields + schema sentinel). Pairs with the existing #478
+# primitive-error-stats pair and #585 primitives-error-stats hash;
+# #728 covers the *unified model* specifically — structured
+# ErrorValue hits + provenance StableNodeRef capture + recovery
+# success — as separate counters the Agent consumes to monitor
+# migration to the unified error model.
+# 5 ACs / 36 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712..#726.
+# Real unified ErrorValue / EvalValue tagged-error extension +
+# refactor of evaluator_primitives_list.cpp / math.cpp / regex /
+# verify error sites to make_structured_primitive_error(guard,
+# kind, msg, context) + new (primitive:error) / (with-error) /
+# (primitive:try) primitives + Guard.capture auto-provenance +
+# CI lint for legacy make_primitive_error usage +
+# tests/test_unified_primitive_error_model harness + SEVA
+# error-resilient closed-loop + primitives_style.md mandate are
+# all follow-up (each is a dedicated session in evaluator.ixx +
+# primitives_detail.h + evaluator_primitives_*.cpp + Guard +
+# diagnostic + ast.ixx StableNodeRef + new test + SEVA + docs).
+aura_add_issue_test(test_issue_728)
+aura_issue_test_link_llvm_jit(test_issue_728)
+add_dependencies(all_test_issue_targets test_issue_728)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

@@ -490,6 +490,10 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:macro-reflect-validation-stats",
     // Issue #713 — JIT/AOT/Interpreter macro-hygiene violation counters
     "query:macro-jit-hygiene-stats",
+    // Issue #728 — Unified structured error + provenance + recovery
+    // observability (non-duplicative with #478 / #585 coarse error
+    // stats; #728 tracks per-decision-point unified-model signals).
+    "query:unified-error-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -9374,6 +9378,137 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         // in sync.
         return make_int(static_cast<std::int64_t>(kObservabilityStatsPrimitives.size()));
     });
+
+    // Issue #728: (query:unified-error-stats) — unified structured
+    // error + provenance + recovery observability for AI Agent
+    // closed-loop stdlib reliability (non-duplicative with #478
+    // (query:primitive-error-stats pair) and #585 (query:primitives-
+    // error-stats hash with error_rate / recovery_success / panic-
+    // recovery / rollback / contract-violations / recommendation).
+    // #728 covers the *unified model* specifically: structured
+    // ErrorValue (kind + provenance StableNodeRef + context + recovery
+    // hint) hits as separate counters. #585 is coarse error-rate +
+    // recovery; #728 is the per-decision-point unified-model signal.
+    //
+    // Fields (3 + sentinel):
+    //   - structured-hits       unified_error_structured_hits_total
+    //                           (# of times a primitive emitted a
+    //                            structured ErrorValue vs. legacy
+    //                            make_primitive_error string-only
+    //                            path — proxy for "how much of
+    //                            stdlib has migrated to the unified
+    //                            model")
+    //   - provenance-captured   unified_error_provenance_captured_total
+    //                           (# of structured errors that captured
+    //                            a StableNodeRef provenance — proxy
+    //                            for "how many errors are introspectable
+    //                            for AI Agent recovery")
+    //   - recovery-success      unified_error_recovery_success_total
+    //                           (# of successful rollback + retry
+    //                            primitive path firings — complements
+    //                            #585's coarse recovery counter with
+    //                            structured-error provenance)
+    //   - schema == 728
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual unified ErrorValue / EvalValue tagged-error extension
+    // + refactor of evaluator_primitives_list.cpp / math.cpp / regex
+    // / verify error sites to make_structured_primitive_error(guard,
+    // kind, msg, context) + new (primitive:error) / (with-error) /
+    // (primitive:try) primitives + Guard.capture auto-provenance +
+    // CI lint for legacy make_primitive_error usage + new
+    // tests/test_unified_primitive_error_model.cpp harness + SEVA
+    // error-resilient closed-loop + primitives_style.md mandate are
+    // all follow-up work (each is a dedicated session in
+    // evaluator.ixx + primitives_detail.h + evaluator_primitives_*.cpp
+    // + Guard + diagnostic + ast.ixx StableNodeRef + new test + SEVA
+    // + docs).
+    //
+    // Issue #728: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=728 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#723 / #726).
+    ev.primitives_.add(
+        "query:unified-error-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 4-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t structured_hits =
+                m ? static_cast<std::int64_t>(
+                        m->unified_error_structured_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t provenance_captured =
+                m ? static_cast<std::int64_t>(
+                        m->unified_error_provenance_captured_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t recovery_success =
+                m ? static_cast<std::int64_t>(
+                        m->unified_error_recovery_success_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"structured-hits", make_int(structured_hits)},
+                {"provenance-captured", make_int(provenance_captured)},
+                {"recovery-success", make_int(recovery_success)},
+                {"schema", make_int(728)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Unified structured error + provenance + recovery observability: "
+                        "structured-hits (per-error-site migration to ErrorValue model), "
+                        "provenance-captured (StableNodeRef in error path), "
+                        "recovery-success (rollback + retry firings). Pairs with the "
+                        "existing #585 query:primitives-error-stats coarse hash "
+                        "(error-rate + recovery + panic + rollback) but tracks the "
+                        "*unified* model specifically as separate per-decision-point "
+                        "counters. #728 exposes the unified-model adoption rate "
+                        "the Agent consumes to decide whether to migrate legacy "
+                        "make_primitive_error call sites or trigger more recovery "
+                        "primitives.",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
