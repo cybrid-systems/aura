@@ -3672,6 +3672,53 @@ add_dependencies(all_test_issue_targets test_issue_761)
 aura_add_issue_test(test_issue_762)
 aura_issue_test_link_llvm_jit(test_issue_762)
 add_dependencies(all_test_issue_targets test_issue_762)
+# Issue #763: runtime linear_ownership_state enforcement + GC
+# root registration observability primitive — 4 atomics + 4
+# bump helpers + (query:linear-ownership-gc-compiler-stats,
+# schema 763) primitive (5-entry hash: 4 fields + schema
+# sentinel). Pairs with the existing #757 query:macro-hygiene-
+# provenance-stats + #758 query:edsl-reflection-stats +
+# #759 query:code-as-data-maturity-stats +
+# #760 query:pattern-performance-stats +
+# #761 query:mutate-batch-stats +
+# #762 query:workspace-closedloop-orchestration-stats 4-field
+# hashes AND the existing query:linear-ownership-gc-stats GC
+# layer observability; #763 covers the *compiler IRClosure +
+# EnvFrame + invalidate runtime linear enforcement composite*
+# specifically — IRClosure/EnvFrame root registrations, stale
+# GC root hits on invalidate, runtime linear violations caught,
+# Env version re-syncs on invalidate — as separate per-
+# decision-point counters the Agent consumes to monitor linear
+# ownership + GC + compiler maturation production-readiness.
+# 5 ACs / 30 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758/#759/#760/#761/#762.
+# Real service.ixx invalidate_function + LoweringState walk of
+# live IRClosure (via closure_bridge_ or closures_ map) for
+# linear_ownership_state nodes + force re-emit or mark for
+# runtime check + register affected EnvId/IRClosure as GC root
+# with version_ stamp synced to mutation_epoch_ + evaluator_gc
+# .cpp + gc_coordinator compiler IRClosure/EnvFrame root
+# registration hook (called from invalidate + fiber mutation
+# boundary) + on GC walk enforce linear state via runtime
+# check (debug) or DropOp simulation for owned values in
+# bridged closures + ir_executor.ixx + aura_jit.cpp Apply/
+# MakeClosure paths and linear ops runtime assert/check for
+# linear_ownership_state consistency + on invalidate impact
+# trigger root re-registration + integration with
+# EscapeAnalysisWrap + DirtyAware for targeted linear dirty +
+# sync with bridge_epoch bump + tests/test_prompt6_linear_
+# ownership_gc_root_invalidate_closure.cpp harness (linear
+# define with move/borrow + quote/lambda capture + mutate:rebind
+# on body → invalidate + live closure apply under GC pressure
+# → assert no violation/UAF, roots registered, metrics,
+# TSan/ASan clean) + SEVA linear-ownership demo + CI gate +
+# docs are all follow-up (each is a dedicated session in
+# service.ixx + evaluator_gc.cpp + ir_executor.ixx + aura_jit
+# .cpp + new test + SEVA demo + docs).
+aura_add_issue_test(test_issue_763)
+aura_issue_test_link_llvm_jit(test_issue_763)
+add_dependencies(all_test_issue_targets test_issue_763)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
