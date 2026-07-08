@@ -4525,6 +4525,121 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #715: (query:stable-ref-layer-stats) — cross-layer
+    // StableNodeRef validation counters for WorkspaceTree multi-layer
+    // setups (non-duplicative with #191/#255/#368 stable_ref_invalidations_
+    // which counts single-layer is_valid() failures only, and with
+    // #191/#655/#736 StableNodeRef COW counters which track COW
+    // remap mechanics rather than cross-layer validity signals).
+    //
+    // Fields (3 + sentinel):
+    //   - cross-layer-validations    stable_ref_cross_layer_validations_total
+    //                                (# of is_valid_in_layer calls that
+    //                                 passed: gen + workspace_id +
+    //                                 cow_epoch all aligned, OR ref was
+    //                                 explicitly pin_for_cow'd across
+    //                                 the boundary)
+    //   - cross-layer-mismatches     stable_ref_cross_layer_mismatch_total
+    //                                (# of is_valid_in_layer calls that
+    //                                 returned false: gen drift, workspace_id
+    //                                 mismatch, OR cow_epoch advanced past
+    //                                 capture without pin_for_cow)
+    //   - cow-boundary-pins          stable_ref_cow_boundary_pins_total
+    //                                (# of StableNodeRefs that intentionally
+    //                                 crossed a COW boundary via pin_for_cow() —
+    //                                 "how many refs are intentionally surviving
+    //                                 lazy clones" — the Agent uses this to
+    //                                 decide whether a checkpoint can be safely
+    //                                 merged back to the parent layer)
+    //   - schema == 715
+    //
+    // Phase 1 ships the primitive + counters + the is_valid_in_layer
+    // helper on StableNodeRef. The MutationBoundaryGuard auto-remap
+    // and workspace-merge hooks that produce these counters are
+    // follow-up (each is a dedicated session in evaluator_workspace_
+    // tree.cpp / guard_wiring.cpp). The helper itself is allocation-
+    // free + pure read so existing single-layer callers can drop in
+    // is_valid_in_layer(ast, ref.workspace_id_) without overhead.
+    //
+    // Issue #715: routes through ev.primitives_.add (3-arg form) so
+    // we can attach PrimMeta with schema=715 + category=general +
+    // arity=0 + pure=true (same pattern as #712/#713/#714).
+    ev.primitives_.add(
+        "query:stable-ref-layer-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t cross_layer_validations =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_cross_layer_validations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cross_layer_mismatches =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_cross_layer_mismatch_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cow_boundary_pins =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_cow_boundary_pins_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"cross-layer-validations", make_int(cross_layer_validations)},
+                {"cross-layer-mismatches", make_int(cross_layer_mismatches)},
+                {"cow-boundary-pins", make_int(cow_boundary_pins)},
+                {"schema", make_int(715)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Cross-layer StableNodeRef validation counters for WorkspaceTree "
+                        "multi-layer setups. Bumped at each is_valid_in_layer decision "
+                        "point (pass / fail / COW-boundary pin). Pairs with the "
+                        "is_valid_in_layer() helper on StableNodeRef for hot-path "
+                        "cross-workspace validity checks.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,

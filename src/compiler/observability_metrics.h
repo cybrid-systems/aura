@@ -1318,6 +1318,42 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> self_evo_strategy_recommend_aggressive_total{0};
     std::atomic<std::uint64_t> self_evo_strategy_recommend_balanced_total{0};
 
+    // Issue #715: StableNodeRef cross-layer validation counters
+    // for WorkspaceTree multi-layer setups. The
+    // (query:stable-ref-layer-stats) primitive exposes:
+    //   - cross_layer_validations    # of times is_valid_in_layer
+    //                                passed (gen + workspace_id +
+    //                                cow_epoch all aligned)
+    //   - cross_layer_mismatches     # of times is_valid_in_layer
+    //                                returned false (gen drift,
+    //                                workspace_id mismatch, or
+    //                                cow_epoch boundary crossed
+    //                                without pin_for_cow)
+    //   - cow_boundary_pins          # of StableNodeRefs that
+    //                                crossed a COW boundary via
+    //                                pin_for_cow() — proxy for
+    //                                "how many refs are intentionally
+    //                                surviving lazy clones"
+    //
+    // Phase 1 ships the counters + bump helpers + the
+    // is_valid_in_layer helper on StableNodeRef. The
+    // MutationBoundaryGuard auto-remap / workspace-merge
+    // path wiring that produces these counters is follow-up
+    // work (each hook is a dedicated session). The helper
+    // itself is allocation-free and pure read, so existing
+    // single-layer callers that drop in
+    // is_valid_in_layer(ast, ref.workspace_id_) get the
+    // extra workspace_id + cow_epoch checks for free.
+    //
+    // Non-duplicative with the existing stable_ref_invalidations_
+    // counter (issue #191/#255/#368) which counts
+    // is_valid() failures only; #715 is the FIRST observability
+    // surface that splits out cross-layer + COW-boundary
+    // signals.
+    std::atomic<std::uint64_t> stable_ref_cross_layer_validations_total{0};
+    std::atomic<std::uint64_t> stable_ref_cross_layer_mismatch_total{0};
+    std::atomic<std::uint64_t> stable_ref_cow_boundary_pins_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

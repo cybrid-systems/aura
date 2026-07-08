@@ -65,6 +65,50 @@ bool FlatAST::StableNodeRef::is_valid_in(const FlatAST& ast) const noexcept {
     return ast.is_valid(*this);
 }
 
+// Issue #715: cross-layer StableNodeRef validity check. A ref
+// captured in workspace layer A is only valid in workspace
+// layer B if BOTH:
+//   - is_valid_in(ast) passes (gen + wrap_epoch match), AND
+//   - ref.workspace_id_ == target_workspace_id (the ref was
+//     actually captured in the target layer), AND
+//   - ref.cow_epoch_at_capture == ast.workspace_cow_epoch()
+//     (the target layer hasn't done a COW clone since the
+//     ref was captured; if it has, the ref points to the
+//     stale pre-COW parent copy unless pin_for_cow() was
+//     called, in which case the ref is intended to survive
+//     the boundary).
+//
+// Pure read — does NOT update last_validated_generation (use
+// validate_with_provenance for that). Does NOT bump counters
+// (callers in hot paths can call bump_stable_ref_cross_layer
+// _validation / _mismatch via Evaluator if they want
+// observability; the helper itself stays allocation-free
+// for use in tight loops).
+//
+// The default target_workspace_id is 0 (root) so callers
+// migrating from is_valid_in() can drop in this helper
+// without changing call sites. The cross-layer check
+// becomes meaningful when a WorkspaceTree merges or
+// resolves refs across layers — see
+// query:stable-ref-layer-stats for the per-workspace
+// observability surface (Issue #715).
+bool FlatAST::StableNodeRef::is_valid_in_layer(const FlatAST& ast,
+                                               std::uint32_t target_workspace_id) const noexcept {
+    if (!is_valid_in(ast))
+        return false;
+    if (workspace_id != target_workspace_id)
+        return false;
+    // COW boundary check: if the target layer's cow_epoch
+    // has advanced past the ref's capture epoch, the ref
+    // points to a stale parent copy UNLESS it was
+    // explicitly pinned via pin_for_cow(). Pinned refs
+    // intentionally survive COW so the agent's checkpoint
+    // state remains usable across lazy clones.
+    if (!boundary_pinned && cow_epoch_at_capture != ast.workspace_cow_epoch())
+        return false;
+    return true;
+}
+
 // Issue #303: validate with provenance update. Refreshes
 // last_validated_generation to the current FlatAST
 // generation_ and returns the validation result. The

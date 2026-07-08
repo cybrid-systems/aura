@@ -3101,6 +3101,22 @@ add_dependencies(all_test_issue_targets test_issue_713)
 aura_add_issue_test(test_issue_714)
 aura_issue_test_link_llvm_jit(test_issue_714)
 add_dependencies(all_test_issue_targets test_issue_714)
+# Issue #715: cross-workspace StableNodeRef validation + provenance —
+# is_valid_in_layer pure helper + 3 atomics + 3 bump helpers +
+# (query:stable-ref-layer-stats, schema 715) primitive (4-entry hash:
+# 3 fields + schema sentinel). Pairs with #191/#255/#368/#655/#736
+# (#715 is the FIRST observability surface that splits out
+# cross-layer + COW-boundary signals for the Agent).
+# 6 ACs / 22 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, is_valid_in_layer helper
+# behavior (NULL-id / workspace_id mismatch / non-existent node /
+# pin_for_cow), regression of #712 + #713 + #714. Real
+# MutationBoundaryGuard + workspace-merge auto-remap + lib/std/ AI
+# multi-layer orchestration are all follow-up (each is a dedicated
+# session in evaluator_workspace_tree.cpp).
+aura_add_issue_test(test_issue_715)
+aura_issue_test_link_llvm_jit(test_issue_715)
+add_dependencies(all_test_issue_targets test_issue_715)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
