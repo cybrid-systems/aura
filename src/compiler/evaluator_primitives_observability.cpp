@@ -549,6 +549,16 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // concurrent AI pattern-mutate loops; non-duplicative with
     // #757 / #758 / #759 coarse observability).
     "query:pattern-performance-stats",
+    // Issue #761 — End-to-end atomic batch mutate + suppressed
+    // generation bump + cross-fiber safety observability for
+    // reliable multi-step AI iterative edits; non-duplicative
+    // with #755 concurrent Guard, #749 StableRef COW, #737
+    // atomic batch proposal — but #761 is the FIRST observability
+    // surface that tracks the batch lifecycle + suppressed bump
+    // count + cross-fiber steals during suppressed batch +
+    // hygiene violations caught within batch boundary as
+    // per-decision-point counters.
+    "query:mutate-batch-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -11030,6 +11040,166 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "perf cliff + hygiene predicate activity the Agent consumes "
                         "to decide whether to rebuild the index, tune the matcher, "
                         "or trigger deep hygiene filter under Guard commit.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #761: (query:mutate-batch-stats) — end-to-end atomic
+    // batch mutate + suppressed generation bump + cross-fiber
+    // safety observability composite for reliable multi-step AI
+    // iterative edits (non-duplicative with #757 / #758 / #759 /
+    // #760 coarse observability surfaces which cover macro body
+    // hygiene + EDSL struct + macro hygiene invariant correlation
+    // + code-as-data closed-loop maturity + query:pattern
+    // performance). #761 covers the *end-to-end atomic batch
+    // mutate + suppressed generation bump + cross-fiber safety
+    // composite* — batch lifecycle (started / committed / rolled-
+    // back), suppressed bump count (churn saved), cross-fiber
+    // steals during suppressed batch (re-stamp events), hygiene
+    // violations caught within batch boundary — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // atomic compound EDSL edit production-readiness.
+    //
+    // Fields (4 + sentinel):
+    //   - batches-started
+    //                                mutate_batches_started_total
+    //                                (# of (mutate:batch [body])
+    //                                 or begin/commit batch
+    //                                 lifecycles entered — proxy
+    //                                 for atomic compound AI edit
+    //                                 volume)
+    //   - suppressed-bumps
+    //                                mutate_suppressed_bumps_total
+    //                                (# of generation bumps
+    //                                 suppressed by the batch
+    //                                 guard — the whole point of
+    //                                 suppressed bumps; high value
+    //                                 = churn saved)
+    //   - cross-fiber-steals-during-batch
+    //                                mutate_cross_fiber_steals_during_batch_total
+    //                                (# of fiber steals occurring
+    //                                 while a batch is active —
+    //                                 triggers version re-stamp
+    //                                 + StableRef refresh)
+    //   - hygiene-violations-in-batch
+    //                                mutate_hygiene_violations_in_batch_total
+    //                                (# of hygiene guard violations
+    //                                 caught within a batch
+    //                                 boundary — batch rollback
+    //                                 prevented partial apply)
+    //   - schema == 761
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual (mutate:batch [body]) or begin/commit primitives
+    // in evaluator_primitives_mutate.cpp + per-boundary atomic_
+    // batch_bumps_saved_ via active_mutation_stack or depth +
+    // cross-fiber steal during suppressed batch re-stamp +
+    // checkpoint_yield_boundary integration + unified mark_dirty_
+    // upward for all touched + defuse_version_ bump once + feed
+    // mutation-impact-snapshot with batch_impact flag + tests/
+    // test_mutate_batch_atomic_cross_fiber_safety.cpp harness
+    // (multi-fiber AI edit script with compound rebind+replace
+    // under batch + steal/panic → assert single bump, all-or-
+    // nothing, hygiene preserved, metrics accurate, TSan clean) +
+    // SEVA compound edit demo + metrics correlation link to
+    // existing hygiene-stats + stable-ref invalidations +
+    // defuse_version_ + CI gate + docs are all follow-up work.
+    //
+    // Issue #761: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=761 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#760).
+    ev.primitives_.add(
+        "query:mutate-batch-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t batches_started =
+                m ? static_cast<std::int64_t>(
+                        m->mutate_batches_started_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t suppressed_bumps =
+                m ? static_cast<std::int64_t>(
+                        m->mutate_suppressed_bumps_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cross_fiber_steals_during_batch =
+                m ? static_cast<std::int64_t>(m->mutate_cross_fiber_steals_during_batch_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_violations_in_batch =
+                m ? static_cast<std::int64_t>(
+                        m->mutate_hygiene_violations_in_batch_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"batches-started", make_int(batches_started)},
+                {"suppressed-bumps", make_int(suppressed_bumps)},
+                {"cross-fiber-steals-during-batch", make_int(cross_fiber_steals_during_batch)},
+                {"hygiene-violations-in-batch", make_int(hygiene_violations_in_batch)},
+                {"schema", make_int(761)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "End-to-end atomic batch mutate + suppressed generation bump + "
+                        "cross-fiber safety observability composite for reliable "
+                        "multi-step AI iterative edits: batches-started (# of "
+                        "(mutate:batch [body]) or begin/commit batch lifecycles "
+                        "entered — proxy for atomic compound AI edit volume), "
+                        "suppressed-bumps (# of generation bumps suppressed by the "
+                        "batch guard — the whole point of suppressed bumps; high "
+                        "value = churn saved), cross-fiber-steals-during-batch (# of "
+                        "fiber steals occurring while a batch is active — triggers "
+                        "version re-stamp + StableRef refresh), hygiene-violations-"
+                        "in-batch (# of hygiene guard violations caught within a "
+                        "batch boundary — batch rollback prevented partial apply). "
+                        "Pairs with the existing #757 + #758 + #759 + #760 4-field "
+                        "observability hashes but tracks the *end-to-end atomic batch "
+                        "mutate + suppressed generation bump + cross-fiber safety "
+                        "composite* specifically as separate per-decision-point "
+                        "counters. #761 exposes the atomic compound EDSL edit health "
+                        "the Agent consumes to decide whether to batch, suppress "
+                        "bumps, or trigger cross-fiber re-stamp under Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

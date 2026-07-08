@@ -1417,6 +1417,113 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pattern_match_index_hits_total{0};
     std::atomic<std::uint64_t> pattern_match_wildcard_total{0};
     std::atomic<std::uint64_t> pattern_match_hygiene_filtered_total{0};
+    // Issue #761: end-to-end atomic batch mutate primitives +
+    // suppressed generation bump observability + cross-fiber
+    // safety metrics for reliable multi-step AI iterative edits
+    // (non-duplicative with #755 concurrent Guard, #749 StableRef
+    // COW, #737 atomic batch proposal). These are public so
+    // future evaluator_primitives_mutate.cpp + ast.ixx +
+    // (mutate:batch [body]) or begin/commit primitives +
+    // per-boundary atomic_batch_bumps_saved_ + cross-fiber steal
+    // during suppressed batch re-stamp + tests/test_mutate_batch_
+    // atomic_cross_fiber_safety.cpp harness (multi-fiber AI edit
+    // script with compound rebind+replace under batch + steal/
+    // panic → assert single bump, all-or-nothing, hygiene
+    // preserved, metrics accurate, TSan clean) + SEVA compound
+    // edit demo + CI gate can call them at each decision point
+    // (batch begin / suppressed bump / cross-fiber steal during
+    // batch / hygiene violation caught in batch / dirty cascade
+    // suppressed / mutation-impact-snapshot batch_impact flag).
+    //
+    // Non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats), #758 (query:edsl-reflection-stats), #759 (query:
+    // code-as-data-maturity-stats), #760 (query:pattern-perfor-
+    // mance-stats) which cover macro body hygiene + EDSL struct
+    // + macro hygiene invariant correlation + code-as-data
+    // closed-loop maturity + query:pattern performance surfaces.
+    // #761 is the FIRST observability surface that tracks the
+    // *end-to-end atomic batch mutate + suppressed generation
+    // bump + cross-fiber safety composite* — batch lifecycle
+    // (started / committed / rolled-back), suppressed bump count
+    // (churn saved), cross-fiber steals during suppressed batch
+    // (re-stamp events), hygiene violations caught within batch
+    // boundary — as separate per-decision-point counters the
+    // Agent consumes to monitor atomic compound EDSL edit
+    // production-readiness.
+    //
+    //   - mutate_batches_started_total: # of (mutate:batch [body])
+    //                                    or begin/commit primitive
+    //                                    batch lifecycles entered
+    //                                    (proxy for "how many
+    //                                    atomic compound AI edits
+    //                                    did the Agent kick off").
+    //   - mutate_suppressed_bumps_total: # of generation bumps
+    //                                    suppressed by the batch
+    //                                    guard (proxy for "how
+    //                                    much generation churn
+    //                                    was saved by batching
+    //                                    multi-step edits into a
+    //                                    single transaction" — the
+    //                                    whole point of suppressed
+    //                                    bumps).
+    //   - mutate_cross_fiber_steals_during_batch_total: # of
+    //                                                   fiber
+    //                                                   steals
+    //                                                   occurring
+    //                                                   while a
+    //                                                   batch is
+    //                                                   active
+    //                                                   (proxy for
+    //                                                   "how often
+    //                                                   is the
+    //                                                   suppressed
+    //                                                   batch
+    //                                                   boundary
+    //                                                   crossed by
+    //                                                   fiber
+    //                                                   yield/
+    //                                                   restore"
+    //                                                   — triggers
+    //                                                   version
+    //                                                   re-stamp).
+    //   - mutate_hygiene_violations_in_batch_total: # of hygiene
+    //                                              guard
+    //                                              violations
+    //                                              caught within
+    //                                              a batch
+    //                                              boundary
+    //                                              (proxy for
+    //                                              "how many
+    //                                              compound
+    //                                              edits
+    //                                              contained a
+    //                                              hygiene
+    //                                              issue that
+    //                                              the batch
+    //                                              rollback
+    //                                              caught").
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual (mutate:batch [body]) or begin/commit primitives
+    // in evaluator_primitives_mutate.cpp + per-boundary atomic_
+    // batch_bumps_saved_ via active_mutation_stack or depth +
+    // cross-fiber steal during suppressed batch re-stamp +
+    // checkpoint_yield_boundary integration + unified mark_dirty_
+    // upward for all touched + defuse_version_ bump once + feed
+    // mutation-impact-snapshot with batch_impact flag + tests/
+    // test_mutate_batch_atomic_cross_fiber_safety.cpp harness
+    // (multi-fiber AI edit script with compound rebind+replace
+    // under batch + steal/panic → assert single bump, all-or-
+    // nothing, hygiene preserved, metrics accurate, TSan clean) +
+    // SEVA compound edit demo + metrics correlation link to
+    // existing hygiene-stats + stable-ref invalidations +
+    // defuse_version_ + CI gate + docs are all follow-up work
+    // (each is a dedicated session in evaluator_primitives_
+    // mutate.cpp + ast.ixx + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> mutate_batches_started_total{0};
+    std::atomic<std::uint64_t> mutate_suppressed_bumps_total{0};
+    std::atomic<std::uint64_t> mutate_cross_fiber_steals_during_batch_total{0};
+    std::atomic<std::uint64_t> mutate_hygiene_violations_in_batch_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

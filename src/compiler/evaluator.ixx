@@ -4441,6 +4441,47 @@ public:
             m->pattern_match_hygiene_filtered_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #761: end-to-end atomic batch mutate primitives +
+    // suppressed generation bump observability + cross-fiber
+    // safety metrics for reliable multi-step AI iterative edits.
+    // These are public so future evaluator_primitives_mutate.cpp
+    // + ast.ixx + (mutate:batch [body]) or begin/commit primitives
+    // + per-boundary atomic_batch_bumps_saved_ + cross-fiber
+    // steal during suppressed batch re-stamp + tests/test_mutate_
+    // batch_atomic_cross_fiber_safety.cpp harness can call them
+    // at each decision point. Pairs with the existing #757
+    // (macro-hygiene-provenance 2 new atomics) + #758 (edsl-
+    // reflection 4 atomics) + #759 (code-as-data-maturity 4
+    // atomics) + #760 (pattern-performance 4 atomics) but tracks
+    // the *end-to-end atomic batch mutate + suppressed generation
+    // bump + cross-fiber safety composite* — batch lifecycle,
+    // suppressed bump count (churn saved), cross-fiber steals
+    // during suppressed batch, hygiene violations caught within
+    // batch boundary — not the per-component surfaces.
+    void bump_mutate_batch_started() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batches_started_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_suppressed_bump() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_suppressed_bumps_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_cross_fiber_steal_during_batch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_cross_fiber_steals_during_batch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_hygiene_violation_in_batch() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_hygiene_violations_in_batch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

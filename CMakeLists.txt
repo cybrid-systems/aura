@@ -3593,6 +3593,43 @@ add_dependencies(all_test_issue_targets test_issue_759)
 aura_add_issue_test(test_issue_760)
 aura_issue_test_link_llvm_jit(test_issue_760)
 add_dependencies(all_test_issue_targets test_issue_760)
+# Issue #761: end-to-end atomic batch mutate + suppressed
+# generation bump + cross-fiber safety observability primitive
+# — 4 atomics + 4 bump helpers + (query:mutate-batch-stats,
+# schema 761) primitive (5-entry hash: 4 fields + schema
+# sentinel). Pairs with the existing #757 query:macro-hygiene-
+# provenance-stats + #758 query:edsl-reflection-stats +
+# #759 query:code-as-data-maturity-stats + #760 query:pattern-
+# performance-stats 4-field hashes; #761 covers the *end-to-end
+# atomic batch mutate + suppressed generation bump + cross-fiber
+# safety composite* specifically — batch lifecycle (started /
+# committed / rolled-back), suppressed bump count (churn saved),
+# cross-fiber steals during suppressed batch (re-stamp events),
+# hygiene violations caught within batch boundary — as separate
+# per-decision-point counters the Agent consumes to monitor
+# atomic compound EDSL edit production-readiness.
+# 5 ACs / 26 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #735/#756/#757/#758/#759/#760.
+# Real (mutate:batch [body]) or begin/commit primitives in
+# evaluator_primitives_mutate.cpp + per-boundary atomic_batch_
+# bumps_saved_ via active_mutation_stack or depth + cross-fiber
+# steal during suppressed batch re-stamp + checkpoint_yield_
+# boundary integration + unified mark_dirty_upward for all
+# touched + defuse_version_ bump once + feed mutation-impact-
+# snapshot with batch_impact flag + tests/test_mutate_batch_
+# atomic_cross_fiber_safety.cpp harness (multi-fiber AI edit
+# script with compound rebind+replace under batch + steal/panic
+# → assert single bump, all-or-nothing, hygiene preserved,
+# metrics accurate, TSan clean) + SEVA compound edit demo +
+# metrics correlation link to existing hygiene-stats + stable-ref
+# invalidations + defuse_version_ + CI gate + docs are all
+# follow-up (each is a dedicated session in evaluator_primitives_
+# mutate.cpp + ast.ixx + new test + SEVA demo + docs).
+aura_add_issue_test(test_issue_761)
+aura_issue_test_link_llvm_jit(test_issue_761)
+add_dependencies(all_test_issue_targets test_issue_761)
+add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
