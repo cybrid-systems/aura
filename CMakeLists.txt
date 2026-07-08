@@ -3168,6 +3168,26 @@ add_dependencies(all_test_issue_targets test_issue_717)
 aura_add_issue_test(test_issue_718)
 aura_issue_test_link_llvm_jit(test_issue_718)
 add_dependencies(all_test_issue_targets test_issue_718)
+# Issue #719: Prompt 6 closure/EnvFrame epoch + linear ownership +
+# GC root sync runtime safety counters — 4 atomics + 4 bump helpers
+# + (query:closure-env-epoch-safety-stats, schema 719) primitive
+# (5-entry hash: 4 fields + schema sentinel). Pairs with #672
+# linear_stats (compile-time) and #681 epoch enforcement (IR-level
+# metadata); #719 tracks runtime outcomes in apply_closure + JIT +
+# GC as separate signals.
+# 5 ACs / 25 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility, regression of #712 + #713
+# + #714 + #715 + #716 + #717 + #718. Real apply_closure epoch
+# check + IRClosure/closure_bridge_ invalidate management +
+# linear_ownership_state runtime guard in GuardShape/JIT +
+# ScopedCompilerRoot GC hook + multi-round mutate:rebind +
+# closure apply + fiber steal/GC/panic test are all follow-up
+# (each is a dedicated session in evaluator_eval_flat.cpp +
+# service.ixx + evaluator_gc.cpp + ir_executor_impl.cpp +
+# aura_jit*.cpp).
+aura_add_issue_test(test_issue_719)
+aura_issue_test_link_llvm_jit(test_issue_719)
+add_dependencies(all_test_issue_targets test_issue_719)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,

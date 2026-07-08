@@ -4985,6 +4985,139 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #719: (query:closure-env-epoch-safety-stats) —
+    // Prompt 6 closure/EnvFrame epoch + linear ownership + GC
+    // root sync runtime safety counters (non-duplicative with
+    // #672 linear_stats which tracks compile-time linear type
+    // errors, and #681 epoch enforcement which is IR-level
+    // metadata; #719 is the FIRST observability surface that
+    // tracks runtime closure/EnvFrame/linear/GC safety outcomes
+    // in apply_closure and JIT hot paths as separate signals).
+    //
+    // Fields (4 + sentinel):
+    //   - epoch-mismatches-caught     closure_epoch_mismatch_total
+    //                                 (# of times apply_closure
+    //                                  detected a stale bridge_epoch
+    //                                  before dispatching to map /
+    //                                  bridge path)
+    //   - linear-violations-post-mutate
+    //                                 linear_violation_post_mutate_total
+    //                                 (# of times GuardShape /
+    //                                  Linear* op handler /
+    //                                  JIT PrimCall/Capture
+    //                                  detected a linear
+    //                                  ownership_state != 0
+    //                                  with epoch/version
+    //                                  mismatch post-mutate)
+    //   - gc-root-syncs               gc_root_sync_total
+    //                                 (# of ScopedCompilerRoot
+    //                                  register/unregister
+    //                                  syncs triggered from
+    //                                  invalidate_function /
+    //                                  MutationBoundaryGuard dtor)
+    //   - dangling-prevented          dangling_prevented_total
+    //                                 (# of times a UAF /
+    //                                  dangling situation was
+    //                                  prevented by the runtime
+    //                                  guard — proxy for "how many
+    //                                  silent corruptions the guard
+    //                                  caught")
+    //   - schema == 719
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual epoch/version check in apply_closure hot path,
+    // IRClosure/closure_bridge_ management on invalidate,
+    // linear_ownership_state runtime guard in GuardShape/Linear
+    // op handlers / JIT, and ScopedCompilerRoot GC hook are
+    // follow-up work (each is a dedicated session in
+    // evaluator_eval_flat.cpp + service.ixx + evaluator_gc.cpp +
+    // ir_executor_impl.cpp + aura_jit*.cpp).
+    //
+    // Issue #719: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=719 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#718).
+    ev.primitives_.add(
+        "query:closure-env-epoch-safety-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t epoch_mismatches =
+                m ? static_cast<std::int64_t>(
+                        m->closure_epoch_mismatch_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t linear_violations =
+                m ? static_cast<std::int64_t>(
+                        m->linear_violation_post_mutate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t gc_root_syncs =
+                m ? static_cast<std::int64_t>(m->gc_root_sync_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dangling_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->dangling_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"epoch-mismatches-caught", make_int(epoch_mismatches)},
+                {"linear-violations-post-mutate", make_int(linear_violations)},
+                {"gc-root-syncs", make_int(gc_root_syncs)},
+                {"dangling-prevented", make_int(dangling_prevented)},
+                {"schema", make_int(719)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Prompt 6 closure/EnvFrame epoch + linear ownership + GC root "
+                        "sync runtime safety counters: epoch mismatches caught in "
+                        "apply_closure, linear ownership violations post-mutate, "
+                        "GC root syncs on invalidate, and dangling situations prevented. "
+                        "Pairs with the existing #672 linear_stats (compile-time) and "
+                        "#681 epoch enforcement (IR-level metadata); #719 tracks the "
+                        "runtime outcomes as separate signals.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,
