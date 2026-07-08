@@ -543,6 +543,12 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // rollback hygiene safety, reflection schema coverage on
     // macro/EDSL subtrees, concurrent fiber stress success).
     "query:code-as-data-maturity-stats",
+    // Issue #760 — query:pattern performance + hygiene fidelity
+    // observability (linear scans vs index hits, wildcard cost,
+    // deep hygiene predicate activity for large macro-heavy
+    // concurrent AI pattern-mutate loops; non-duplicative with
+    // #757 / #758 / #759 coarse observability).
+    "query:pattern-performance-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -10853,6 +10859,177 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "+ EDSL self-evo loop production health the Agent consumes "
                         "to decide whether to trigger self-heal, alert on SLO "
                         "breach, or roll out additional task6 themes.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #760: (query:pattern-performance-stats) — query:pattern
+    // performance + hygiene fidelity observability for large
+    // macro-heavy concurrent AI pattern-mutate loops
+    // (non-duplicative with #757 (query:macro-hygiene-provenance-
+    // stats — 4 fields: provenance-captured / inliner-policy-
+    // violations / provenance-violations / hygiene-dirty-impact)
+    // + #758 (query:edsl-reflection-stats — 4 fields: validated-
+    // edsl / hygiene-invariants-held / schema-fail-by-type /
+    // macro-correlated-violations) + #759 (query:code-as-data-
+    // maturity-stats — 4 fields: fidelity-samples / fidelity-drift
+    // / guard-rollback-hygiene-safe / reflect-schema-macro-edsl)
+    // which cover macro body hygiene + EDSL struct + macro hygiene
+    // invariant correlation + code-as-data closed-loop maturity
+    // composite). #760 covers the *query:pattern performance +
+    // hygiene fidelity* specifically — linear scans vs index hits
+    // (perf cliff detection on tag_arity_index_ fast-path),
+    // wildcard cost (early exit / DFA benefit on ... rest-param
+    // handling), hygiene filtered (deep hygiene predicate
+    // :marker MacroIntroduced :from-macro sym activity) — as
+    // separate per-decision-point counters the Agent consumes to
+    // monitor query:pattern production-readiness on large
+    // macro-heavy concurrent workspaces.
+    //
+    // Fields (4 + sentinel):
+    //   - linear-scans
+    //                                pattern_match_linear_scans_total
+    //                                (# of linear O(N) pattern
+    //                                 scans — when fast-path
+    //                                 index misses / not built /
+    //                                 too few nodes to be worth
+    //                                 indexing — high value =
+    //                                 perf cliff)
+    //   - index-hits
+    //                                pattern_match_index_hits_total
+    //                                (# of tag_arity_index_
+    //                                 fast-path O(1) candidate
+    //                                 set retrievals via (tag,
+    //                                 child_count, marker) hash —
+    //                                 high value = perf win)
+    //   - wildcard-cost
+    //                                pattern_match_wildcard_total
+    //                                (# of ... wildcard match
+    //                                 firings — early-exit / DFA
+    //                                 cost on rest-param handling)
+    //   - hygiene-filtered
+    //                                pattern_match_hygiene_filtered_total
+    //                                (# of macro nodes filtered /
+    //                                 skipped by deep hygiene
+    //                                 predicate — :marker
+    //                                 MacroIntroduced :from-macro
+    //                                 sym in QueryExpr)
+    //   - schema == 760
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual query_matcher.cpp tag_arity_index_ populated
+    // on add_node / structural mutate + specialized ... rest-
+    // param / wildcard handling with early exit or DFA + QueryExpr
+    // / pattern parser :marker MacroIntroduced :from-macro sym
+    // extension + matcher auto-apply hygiene filter or provenance
+    // stamp when matching under macro context + wire to
+    // clone_macro_body name_map + mandate children_safe_view /
+    // StableNodeRef pinning in all pattern iterator paths +
+    // integrate with MutationBoundaryGuard reader snapshot +
+    // (query:pattern-explain node pattern) primitive for debug +
+    // tests/test_query_pattern_indexing_hygiene_concurrent.cpp
+    // harness (large macro-expanded AST + concurrent fibers +
+    // pattern mutate under Guard → assert index used, hygiene
+    // respected, no drift, perf win, TSan clean) + SEVA pattern-
+    // heavy verification self-edit + CI perf gate + docs are
+    // all follow-up work (each is a dedicated session in
+    // query_matcher.cpp + evaluator_primitives_query.cpp + new
+    // test + SEVA demo + docs).
+    //
+    // Issue #760: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=760 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#759).
+    ev.primitives_.add(
+        "query:pattern-performance-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t linear_scans =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_match_linear_scans_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t index_hits =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_match_index_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t wildcard_cost =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_match_wildcard_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_filtered =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_match_hygiene_filtered_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"linear-scans", make_int(linear_scans)},
+                {"index-hits", make_int(index_hits)},
+                {"wildcard-cost", make_int(wildcard_cost)},
+                {"hygiene-filtered", make_int(hygiene_filtered)},
+                {"schema", make_int(760)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "query:pattern performance + hygiene fidelity observability "
+                        "for large macro-heavy concurrent AI pattern-mutate loops: "
+                        "linear-scans (linear O(N) pattern scans — high value = perf "
+                        "cliff on tag_arity_index_ fast-path miss), index-hits "
+                        "(tag_arity_index_ fast-path O(1) candidate set retrievals via "
+                        "(tag, child_count, marker) hash — high value = perf win), "
+                        "wildcard-cost (... wildcard match firings — early-exit / "
+                        "DFA cost on rest-param handling), hygiene-filtered (macro "
+                        "nodes filtered / skipped by deep hygiene predicate — :marker "
+                        "MacroIntroduced :from-macro sym in QueryExpr). Pairs with "
+                        "the existing #757 query:macro-hygiene-provenance-stats + "
+                        "#758 query:edsl-reflection-stats + #759 query:code-as-data-"
+                        "maturity-stats 4-field hashes but tracks the *query:pattern "
+                        "performance + hygiene fidelity* specifically as separate "
+                        "per-decision-point counters. #760 exposes the pattern-match "
+                        "perf cliff + hygiene predicate activity the Agent consumes "
+                        "to decide whether to rebuild the index, tune the matcher, "
+                        "or trigger deep hygiene filter under Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

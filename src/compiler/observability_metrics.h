@@ -1320,6 +1320,103 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> code_as_data_fidelity_drift_total{0};
     std::atomic<std::uint64_t> code_as_data_rollback_hygiene_safe_total{0};
     std::atomic<std::uint64_t> code_as_data_reflect_schema_macro_edsl_total{0};
+    // Issue #760: query:pattern performance + hygiene fidelity
+    // observability counters backing the
+    // (query:pattern-performance-stats) primitive. These are
+    // public so future query_matcher.cpp + evaluator_primitives_
+    // query.cpp tag_arity_index_ hot-path + ... wildcard trie/
+    // DFA + deep hygiene predicate (marker MacroIntroduced :
+    // provenance macroX) + children_safe_view / StableNodeRef
+    // pinning + MutationBoundaryGuard reader snapshot +
+    // tests/test_query_pattern_indexing_hygiene_concurrent.cpp
+    // harness (large macro-expanded AST + concurrent fibers +
+    // pattern mutate under Guard → assert index used, hygiene
+    // respected, no drift, perf win, TSan clean) +
+    // (query:pattern-explain node pattern) primitive can call
+    // them at each decision point (linear scan / index hit /
+    // wildcard match / hygiene filter / auto-rebuild on
+    // structural mutate).
+    //
+    // Non-duplicative with the existing #757 (query:macro-hygiene-
+    // provenance-stats — 4 fields: provenance-captured / inliner-
+    // policy-violations / provenance-violations / hygiene-dirty-
+    // impact) which covers macro body hygiene observability, #758
+    // (query:edsl-reflection-stats — 4 fields: validated-edsl /
+    // hygiene-invariants-held / schema-fail-by-type / macro-
+    // correlated-violations) which covers EDSL struct + macro
+    // hygiene invariant correlation, #759 (query:code-as-data-
+    // maturity-stats — 4 fields: fidelity-samples / fidelity-drift
+    // / guard-rollback-hygiene-safe / reflect-schema-macro-edsl)
+    // which covers code-as-data closed-loop maturity composite.
+    // #760 is the FIRST observability surface that tracks the
+    // *query:pattern performance + hygiene fidelity* specifically
+    // — linear scans vs index hits (perf cliff detection),
+    // wildcard cost (early exit / DFA benefit), hygiene filtered
+    // (deep hygiene predicate activity), avg AST size sampled —
+    // as separate per-decision-point counters the Agent consumes
+    // to monitor query:pattern production-readiness on large
+    // macro-heavy concurrent workspaces.
+    //
+    //   - pattern_match_linear_scans_total: linear O(N) pattern
+    //                                       scans (when fast-path
+    //                                       index misses / not
+    //                                       built / too few nodes
+    //                                       to be worth indexing)
+    //                                       — proxy for "how
+    //                                       often does pattern
+    //                                       match fall back to
+    //                                       linear walk" (high
+    //                                       value = perf cliff).
+    //   - pattern_match_index_hits_total: tag_arity_index_ fast-
+    //                                     path hits (O(1)
+    //                                     candidate set
+    //                                     retrieval via (tag,
+    //                                     child_count, marker)
+    //                                     hash) — proxy for
+    //                                     "how often does the
+    //                                     index save a full
+    //                                     scan" (high value =
+    //                                     perf win).
+    //   - pattern_match_wildcard_total: ... wildcard match
+    //                                   firings (early-exit /
+    //                                   DFA cost on rest-param
+    //                                   handling) — proxy for
+    //                                   "how often does the
+    //                                   wildcard path fire".
+    //   - pattern_match_hygiene_filtered_total: macro nodes
+    //                                          filtered /
+    //                                          skipped by deep
+    //                                          hygiene predicate
+    //                                          (marker
+    //                                          MacroIntroduced
+    //                                          :from-macro sym
+    //                                          in QueryExpr) —
+    //                                          proxy for "how
+    //                                          often does the
+    //                                          hygiene predicate
+    //                                          prevent an
+    //                                          over-match".
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual query_matcher.cpp tag_arity_index_ populated
+    // on add_node / structural mutate + specialized ... rest-
+    // param / wildcard handling with early exit or DFA + QueryExpr
+    // / pattern parser :marker MacroIntroduced :from-macro sym
+    // extension + matcher auto-apply hygiene filter or provenance
+    // stamp when matching under macro context + wire to
+    // clone_macro_body name_map + mandate children_safe_view /
+    // StableNodeRef pinning in all pattern iterator paths +
+    // integrate with MutationBoundaryGuard reader snapshot +
+    // (query:pattern-explain node pattern) primitive for debug +
+    // tests/test_query_pattern_indexing_hygiene_concurrent.cpp
+    // harness + SEVA pattern-heavy verification self-edit + CI
+    // perf gate + docs are all follow-up work (each is a
+    // dedicated session in query_matcher.cpp + evaluator_primitives_
+    // query.cpp + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> pattern_match_linear_scans_total{0};
+    std::atomic<std::uint64_t> pattern_match_index_hits_total{0};
+    std::atomic<std::uint64_t> pattern_match_wildcard_total{0};
+    std::atomic<std::uint64_t> pattern_match_hygiene_filtered_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

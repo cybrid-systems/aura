@@ -4394,6 +4394,53 @@ public:
             m->code_as_data_reflect_schema_macro_edsl_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #760: query:pattern performance + hygiene fidelity
+    // observability counters backing the
+    // (query:pattern-performance-stats) primitive. These are
+    // public so future query_matcher.cpp + evaluator_primitives_
+    // query.cpp tag_arity_index_ hot-path + ... wildcard trie/
+    // DFA + deep hygiene predicate (marker MacroIntroduced :
+    // provenance macroX) + children_safe_view / StableNodeRef
+    // pinning + MutationBoundaryGuard reader snapshot +
+    // tests/test_query_pattern_indexing_hygiene_concurrent.cpp
+    // harness + (query:pattern-explain node pattern) primitive
+    // can call them at each decision point. Pairs with the
+    // existing #757 (macro-hygiene-provenance 2 new atomics:
+    // provenance-captured + inliner-policy-violations) + #758
+    // (edsl-reflection 4 atomics: validated-edsl + hygiene-
+    // invariants-held + schema-fail-by-type + macro-correlated-
+    // violations) + #759 (code-as-data-maturity 4 atomics:
+    // fidelity-samples + fidelity-drift + rollback-hygiene-safe
+    // + reflect-schema-macro-edsl) but tracks the *query:pattern
+    // performance + hygiene fidelity* specifically — linear scans
+    // vs index hits (perf cliff detection), wildcard cost (early
+    // exit / DFA benefit), hygiene filtered (deep hygiene predicate
+    // activity), avg AST size sampled — not the per-component
+    // surfaces.
+    void bump_pattern_match_linear_scan() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_match_linear_scans_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_match_index_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_match_index_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_match_wildcard() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_match_wildcard_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_match_hygiene_filtered() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_match_hygiene_filtered_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
