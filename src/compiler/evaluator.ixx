@@ -3947,6 +3947,35 @@ public:
             m->jit_fallback_to_interpreter_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #721: IRFunctionSoA column migration + dirty cascade
+    // counters backing the (query:ir-soa-completeness-stats)
+    // primitive. These are public so future ir_soa.ixx + lowering_
+    // impl.cpp + evaluator + aura_jit.cpp + ShapeProfiler hot-path
+    // wiring can call them at each decision point (SoA view hit /
+    // dirty cascade to shape / PCV byte savings).
+    //
+    // The byte-savings bump helper takes a byte count so the
+    // caller can record the actual PCV-saved delta without
+    // tracking it locally. The bump_ir_soa_pcv_wiring_savings
+    // helper uses fetch_add with the caller-supplied value.
+    void bump_ir_soa_column_migration_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_column_migration_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_soa_dirty_cascade_to_shape() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_dirty_cascade_to_shape_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_soa_pcv_wiring_savings_bytes(std::uint64_t bytes) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_pcv_wiring_savings_bytes_total.fetch_add(bytes, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

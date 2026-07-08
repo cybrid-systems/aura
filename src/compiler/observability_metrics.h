@@ -1580,6 +1580,49 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_deopt_on_mutate_total{0};
     std::atomic<std::uint64_t> jit_fallback_to_interpreter_total{0};
 
+    // Issue #721: IRFunctionSoA column migration + dirty cascade
+    // counters for (query:ir-soa-completeness-stats). Exposes
+    // the SoA hot-path signals that complement the existing
+    // IRFunctionSoA scaffold (10 columns + mark_block_dirty
+    // cascade) without overlapping #658 broad 5-gaps, #719 JIT
+    // metadata, #718 incremental block dirty:
+    //   - ir_soa_column_migration_hits_total  # of times a hot
+    //                                          emit/view path took
+    //                                          the SoA iterator
+    //                                          branch (vs AoS
+    //                                          fallback)
+    //   - ir_soa_dirty_cascade_to_shape_total # of times the
+    //                                          mark_block_dirty
+    //                                          cascade propagated
+    //                                          to ShapeProfiler::
+    //                                          invalidate or
+    //                                          bumped dirty_shape
+    //                                          hint
+    //   - ir_soa_pcv_wiring_savings_bytes_total
+    //                                        cumulative bytes
+    //                                          saved by PCV-style
+    //                                          (PersistentChildVector
+    //                                          / gap_buffer) wiring
+    //                                          on operand / shape /
+    //                                          metadata columns
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual PCV-style column extension + add_instruction
+    // atomic growth + IRInstructionView dirty bit query + port
+    // of hot emit/view paths to SoA iterators + ShapeProfiler
+    // invalidate hook are follow-up work (each is a dedicated
+    // session in ir_soa.ixx + ir_soa_helpers + lowering_impl.cpp
+    // + evaluator + aura_jit.cpp + ShapeProfiler + Arena).
+    //
+    // Non-duplicative with #658 5-gaps (broad), #719 JIT metadata
+    // (JIT-side), #718 incremental block dirty (block-level);
+    // #721 is the FIRST observability surface that tracks SoA
+    // column migration progress + dirty cascade shape/arena
+    // propagation as separate signals.
+    std::atomic<std::uint64_t> ir_soa_column_migration_hits_total{0};
+    std::atomic<std::uint64_t> ir_soa_dirty_cascade_to_shape_total{0};
+    std::atomic<std::uint64_t> ir_soa_pcv_wiring_savings_bytes_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,

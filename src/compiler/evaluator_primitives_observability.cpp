@@ -5247,6 +5247,121 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #721: (query:ir-soa-completeness-stats) — IRFunctionSoA
+    // column migration + dirty cascade counters (non-duplicative
+    // with #658 5-gaps broad, #719 JIT metadata, #718 incremental
+    // block dirty; #721 is the FIRST observability surface that
+    // tracks SoA column migration progress + dirty cascade
+    // shape/arena propagation as separate signals).
+    //
+    // Fields (3 + sentinel):
+    //   - column-migration-hits    ir_soa_column_migration_hits_total
+    //                              (# of times a hot emit/view
+    //                               path took the SoA iterator
+    //                               branch — vs AoS fallback)
+    //   - dirty-cascade-to-shape   ir_soa_dirty_cascade_to_shape_total
+    //                              (# of times the mark_block_
+    //                               dirty cascade propagated to
+    //                               ShapeProfiler::invalidate or
+    //                               bumped dirty_shape hint)
+    //   - pcv-wiring-savings-bytes ir_soa_pcv_wiring_savings_bytes_total
+    //                              (cumulative bytes saved by
+    //                               PCV-style PersistentChildVector
+    //                               / gap_buffer wiring on operand /
+    //                               shape / metadata columns)
+    //   - schema == 721
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual PCV-style column extension + add_instruction
+    // atomic growth + IRInstructionView dirty bit query + port of
+    // hot emit/view paths to SoA iterators + ShapeProfiler
+    // invalidate hook + Arena defrag hint are follow-up work
+    // (each is a dedicated session in ir_soa.ixx + ir_soa_helpers +
+    // lowering_impl.cpp + evaluator + aura_jit.cpp + ShapeProfiler
+    // + Arena).
+    //
+    // Issue #721: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=721 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#720).
+    ev.primitives_.add(
+        "query:ir-soa-completeness-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t column_migration_hits =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_column_migration_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dirty_cascade_to_shape =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_dirty_cascade_to_shape_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t pcv_wiring_savings_bytes =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_pcv_wiring_savings_bytes_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"column-migration-hits", make_int(column_migration_hits)},
+                {"dirty-cascade-to-shape", make_int(dirty_cascade_to_shape)},
+                {"pcv-wiring-savings-bytes", make_int(pcv_wiring_savings_bytes)},
+                {"schema", make_int(721)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "IRFunctionSoA column migration + dirty cascade counters: "
+                        "SoA view hits, dirty cascades to ShapeProfiler, and "
+                        "cumulative bytes saved by PCV-style PersistentChildVector / "
+                        "gap_buffer wiring on operand / shape / metadata columns. "
+                        "Pairs with the existing IRFunctionSoA scaffold (10 columns + "
+                        "mark_block_dirty cascade); #721 tracks the SoA column "
+                        "migration progress + dirty cascade shape/arena propagation "
+                        "as separate signals.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,

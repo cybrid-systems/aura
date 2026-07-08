@@ -3206,6 +3206,25 @@ add_dependencies(all_test_issue_targets test_issue_719)
 aura_add_issue_test(test_issue_720)
 aura_issue_test_link_llvm_jit(test_issue_720)
 add_dependencies(all_test_issue_targets test_issue_720)
+# Issue #721: IRFunctionSoA column migration + dirty cascade
+# observability primitive — 3 atomics + 3 bump helpers +
+# (query:ir-soa-completeness-stats, schema 721) primitive (4-entry
+# hash: 3 fields + schema sentinel). Pairs with the existing
+# IRFunctionSoA scaffold (10 columns + mark_block_dirty cascade);
+# #721 tracks SoA column migration progress + dirty cascade shape
+# propagation + PCV byte savings as separate signals.
+# 5 ACs / 28 CHECKs: hash shape, fresh-service zero state, schema
+# sentinel, bump-helper accessibility (incl. bulk byte-savings bump
+# with N>0 byte count), regression of #712..#720. Real PCV-style
+# column extension + add_instruction atomic growth + IRInstructionView
+# dirty bit query + port of hot emit/view paths to SoA iterators +
+# ShapeProfiler invalidate hook + Arena defrag hint + large define
+# mutate:rebind test are all follow-up (each is a dedicated session
+# in ir_soa.ixx + lowering_impl.cpp + evaluator + aura_jit.cpp +
+# ShapeProfiler + Arena).
+aura_add_issue_test(test_issue_721)
+aura_issue_test_link_llvm_jit(test_issue_721)
+add_dependencies(all_test_issue_targets test_issue_721)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
