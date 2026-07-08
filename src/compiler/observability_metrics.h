@@ -1432,6 +1432,53 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_boundary_yield_resumes_total{0};
     std::atomic<std::uint64_t> mutation_boundary_recovery_failures_total{0};
 
+    // Issue #718: fine-grained per-block re-lower observability
+    // counters for (query:incremental-relower-stats). These
+    // complement the existing #196 per-block dirty tracking +
+    // #426/#460 pure helpers (compute_impact_scope, summarize_
+    // block_dirty, estimate_relower_blocks) by exposing the
+    // decision / outcome signals:
+    //   - incremental_impact_blocks_hit_total  # of times
+    //                                        compute_impact_scope
+    //                                        returned >=1 affected
+    //                                        block for a mutate:rebind
+    //                                        / set-body request
+    //   - incremental_partial_relower_total   # of times
+    //                                        should_partial_relower
+    //                                        returned true (1..7 dirty
+    //                                        blocks) and the pipeline
+    //                                        took the partial path
+    //   - incremental_full_fallback_total     # of times the pipeline
+    //                                        took the FULL re-lower
+    //                                        path (8+ dirty blocks,
+    //                                        or no impact_scope data)
+    //   - incremental_time_saved_us_total     cumulative time saved
+    //                                        in microseconds by
+    //                                        choosing partial over
+    //                                        full re-lower (estimated
+    //                                        from block count delta;
+    //                                        pipeline wiring computes
+    //                                        the actual savings)
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual compute_impact_scope call + block_dirty_ bit
+    // setting inside service.ixx::invalidate_function + the
+    // partial re-lower decision in lowering_impl.cpp +
+    // lower_to_ir_with_cache + the pass_manager short-circuit
+    // are follow-up work (each is a dedicated session in
+    // service.ixx + lowering_impl.cpp + pass_manager.ixx).
+    //
+    // Non-duplicative with #196 (per-block dirty tracking in
+    // IRCacheEntry.block_dirty_per_func_) + #426/#460
+    // (pure helpers) + #687 (DeadCoercionEliminationPass +
+    // IR-interpreter identity fast-path); #718 is the FIRST
+    // observability surface that exposes the partial-vs-full
+    // re-lower decision outcomes as separate signals.
+    std::atomic<std::uint64_t> incremental_impact_blocks_hit_total{0};
+    std::atomic<std::uint64_t> incremental_partial_relower_total{0};
+    std::atomic<std::uint64_t> incremental_full_fallback_total{0};
+    std::atomic<std::uint64_t> incremental_time_saved_us_total{0};
+
     // Issue #655: EDSL core stability — StableNodeRef COW + tag_arity
     // delta + nested atomic rollback + children safe view + precise
     // mutate invalidation (non-duplicative with #527 stable-ref-cow,
