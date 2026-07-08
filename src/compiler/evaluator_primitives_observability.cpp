@@ -515,6 +515,12 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // point macro provenance + targeted macro-subtree handling
     // signals).
     "query:macro-provenance-stats",
+    // Issue #756 — EnvFrame dual-path consistency enforcement +
+    // desync panic policy + GCEnvWalkFn stale handling observability
+    // (non-duplicative with #647 / #418 coarse dual-path stats;
+    // #756 tracks per-decision-point desync-panic + GCEnvWalkFn
+    // stale under concurrent steal/mutate signals).
+    "query:envframe-dualpath-policy-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -10165,6 +10171,155 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "macro-provenance + targeted-rollback adoption rate the "
                         "Agent consumes to decide whether to enable provenance-aware "
                         "rollback or trigger full-subtree rollback instead.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #756: (query:envframe-dualpath-policy-stats) —
+    // EnvFrame dual-path consistency enforcement + desync panic
+    // policy + GCEnvWalkFn stale handling under concurrent
+    // mutation/steal observability for production SoA EnvFrame
+    // reliability (non-duplicative with #647 (query:envframe-
+    // dualpath-stale-stats-hash — 3 fields: cross-fiber-stale /
+    // version-mismatch / dualpath-repair + schema=647) + #418
+    // (query:envframe-dualpath-stale-stats legacy int) +
+    // existing envframe_desync_detected_ + envframe_gc_walk_
+    // safe_skips_ internal atomics). #756 covers the *desync
+    // panic policy + GCEnvWalkFn stale handling* specifically —
+    // strict-panic vs log-and-sync mode firings + GC walk
+    // detected stale under concurrency — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // SoA EnvFrame dual-path production safety under concurrency.
+    //
+    // Fields (4 + sentinel):
+    //   - desync-panic-count         envframe_desync_panic_count_total
+    //                                 (# of times the strict-panic
+    //                                  policy fired on EnvFrame
+    //                                  dual-path desync — proxy for
+    //                                  "how often the strict-panic
+    //                                  policy fired in production")
+    //   - gc-stale-desync-hits       envframe_gc_stale_desync_hits_total
+    //                                 (# of times GCEnvWalkFn stale
+    //                                  check detected a dual-path
+    //                                  desync (version_ stale +
+    //                                  length/order mismatch) under
+    //                                  concurrent steal/mutate —
+    //                                  proxy for "how often GC walk
+    //                                  detected stale EnvFrame
+    //                                  under concurrency")
+    //   - dualpath-repair            envframe_dualpath_repair_total
+    //                                 (# of dual-path repairs fired
+    //                                  — read from existing #647
+    //                                  atomic; cross-reference)
+    //   - version-mismatch           envframe_version_mismatch_post_steal_total
+    //                                 (# of version_ mismatches
+    //                                  detected post-steal — read
+    //                                  from existing #647 atomic;
+    //                                  cross-reference)
+    //   - schema == 756
+    //
+    // Phase 1 ships the primitive + counters + bump helpers.
+    // The actual mandatory ensure_envframe_dual_path_consistency
+    // call in walk_env_frames / GCEnvWalkFn / materialize_call_env
+    // / post-rollback paths + strict-panic vs log-and-sync policy
+    // flag + GCEnvWalkFn stale + concurrent steal/resume
+    // re-ensure + tests/test_envframe_dualpath_consistency_
+    // concurrent_steal_gc.cpp harness (heavy mutate + steal + GC
+    // under dual-path load → assert no desync or caught cleanly +
+    // metrics + TSan clean) + #674 + #731 chaos stress
+    // integration + docs are all follow-up work (each is a
+    // dedicated session in evaluator.ixx + evaluator_env.cpp +
+    // gc_coordinator + new test + chaos stress + docs).
+    //
+    // Issue #756: routes through ev.primitives_.add (3-arg form)
+    // so we can attach PrimMeta with schema=756 + category=general
+    // + arity=0 + pure=true (same pattern as #712-#735).
+    ev.primitives_.add(
+        "query:envframe-dualpath-policy-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // 8 slots should be enough for the 5-key hashes we build.
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t desync_panic_count =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_desync_panic_count_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t gc_stale_desync_hits =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_gc_stale_desync_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dualpath_repair =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_dualpath_repair_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t version_mismatch =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_version_mismatch_post_steal_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"desync-panic-count", make_int(desync_panic_count)},
+                {"gc-stale-desync-hits", make_int(gc_stale_desync_hits)},
+                {"dualpath-repair", make_int(dualpath_repair)},
+                {"version-mismatch", make_int(version_mismatch)},
+                {"schema", make_int(756)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "EnvFrame dual-path consistency enforcement + desync panic "
+                        "policy + GCEnvWalkFn stale handling observability: "
+                        "desync-panic-count (strict-panic firings), "
+                        "gc-stale-desync-hits (GCEnvWalkFn detected stale under "
+                        "concurrent steal/mutate), dualpath-repair + "
+                        "version-mismatch (cross-reference from #647 atomics). "
+                        "Pairs with the existing #647 query:envframe-dualpath-"
+                        "stale-stats-hash 3-field hash but tracks the *desync "
+                        "panic policy + GCEnvWalkFn stale handling* specifically "
+                        "as separate per-decision-point counters. #756 exposes "
+                        "the strict-panic vs log-and-sync mode adoption rate the "
+                        "Agent consumes to decide whether to enable strict-panic "
+                        "policy or trigger re-ensure on concurrent steal.",
                  .category = "general",
                  .schema = "() -> hash"});
 }

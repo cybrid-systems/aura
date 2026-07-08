@@ -4244,6 +4244,35 @@ public:
             m->macro_provenance_rollback_success_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #756: EnvFrame dual-path consistency enforcement +
+    // desync panic policy + GCEnvWalkFn stale handling under
+    // concurrent mutation/steal counters backing the
+    // (query:envframe-dualpath-policy-stats) primitive. These
+    // are public so future evaluator.ixx + evaluator_env.cpp +
+    // gc_coordinator can call them at each decision point
+    // (mandatory ensure_envframe_dual_path_consistency call in
+    // walk_env_frames / GCEnvWalkFn / materialize_call_env /
+    // post-rollback paths / desync panic / desync log-and-sync /
+    // GCEnvWalkFn stale handling / concurrent steal/resume
+    // re-ensure). Pairs with the existing #647 (query:envframe-
+    // dualpath-stale-stats-hash — 3 fields: cross-fiber-stale /
+    // version-mismatch / dualpath-repair) but tracks the *desync
+    // panic policy + GCEnvWalkFn stale handling* specifically —
+    // strict-panic vs log-and-sync mode + GC walk detected stale
+    // under concurrency — not the coarse cross-fiber-stale +
+    // version-mismatch + dualpath-repair surface.
+    void bump_envframe_desync_panic() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->envframe_desync_panic_count_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_envframe_gc_stale_desync_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->envframe_gc_stale_desync_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

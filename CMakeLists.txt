@@ -3422,6 +3422,37 @@ add_dependencies(all_test_issue_targets test_issue_733)
 aura_add_issue_test(test_issue_735)
 aura_issue_test_link_llvm_jit(test_issue_735)
 add_dependencies(all_test_issue_targets test_issue_735)
+# Issue #756: EnvFrame dual-path consistency enforcement +
+# desync panic policy + GCEnvWalkFn stale handling under
+# concurrent mutation/steal observability primitive — 2
+# atomics + 2 bump helpers + (query:envframe-dualpath-
+# policy-stats, schema 756) primitive (5-entry hash: 4
+# fields + schema sentinel). Pairs with the existing
+# #647 query:envframe-dualpath-stale-stats-hash 3-field
+# hash + #418 query:envframe-dualpath-stale-stats legacy
+# int + existing envframe_desync_detected_ +
+# envframe_gc_walk_safe_skips_ internal atomics; #756
+# covers the *desync panic policy + GCEnvWalkFn stale
+# handling* specifically — strict-panic vs log-and-sync
+# mode firings + GC walk detected stale under concurrency
+# — as separate per-decision-point counters the Agent
+# consumes to monitor SoA EnvFrame dual-path production
+# safety under concurrency.
+# 5 ACs / 50 CHECKs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #712..#735. Real mandatory ensure_envframe_dual_path_
+# consistency call in walk_env_frames / GCEnvWalkFn /
+# materialize_call_env / post-rollback paths + strict-panic
+# vs log-and-sync policy flag + GCEnvWalkFn stale + concurrent
+# steal/resume re-ensure + tests/test_envframe_dualpath_
+# consistency_concurrent_steal_gc.cpp harness (heavy mutate +
+# steal + GC under dual-path load) + #674 + #731 chaos stress
+# integration + docs are all follow-up (each is a dedicated
+# session in evaluator.ixx + evaluator_env.cpp + gc_coordinator
+# + new test + chaos stress + docs).
+aura_add_issue_test(test_issue_756)
+aura_issue_test_link_llvm_jit(test_issue_756)
+add_dependencies(all_test_issue_targets test_issue_756)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
 # + 9d632679 + c00a9c1a + fef8898d. 7 ACs: 2-define direct call → 6,
