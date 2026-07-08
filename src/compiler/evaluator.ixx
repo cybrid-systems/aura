@@ -4350,6 +4350,50 @@ public:
             m->edsl_macro_correlated_violations_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #759: unified 'code-as-data' closed-loop maturity
+    // metrics backing the (query:code-as-data-maturity-stats)
+    // primitive. These are public so future
+    // tests/test_task6_code_as_data_closedloop_harness.cpp +
+    // SEVA demo + SLO deployment + clone_macro_body marker
+    // propagation sampling wire-up + MutationBoundaryGuard
+    // rollback hygiene-safe observation wire-up +
+    // runtime_validate_edsl_struct macro/EDSL schema coverage
+    // wire-up + Prometheus text/OTLP exporter can call them at
+    // each decision point. Pairs with the existing #757
+    // (macro-hygiene-provenance 2 new atomics: provenance-
+    // captured + inliner-policy-violations) + #758 (edsl-
+    // reflection 4 atomics: validated-edsl + hygiene-invariants-
+    // held + schema-fail-by-type + macro-correlated-violations)
+    // but tracks the *code-as-data closed-loop maturity
+    // composite* — marker propagation fidelity (drift / samples),
+    // Guard rollback hygiene safety (safe / attempts), reflection
+    // schema coverage on macro/EDSL subtrees (covered / total),
+    // concurrent fiber stress success — not the per-component
+    // surfaces.
+    void bump_code_as_data_fidelity_sample() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->code_as_data_fidelity_samples_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_code_as_data_fidelity_drift() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->code_as_data_fidelity_drift_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_code_as_data_rollback_hygiene_safe() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->code_as_data_rollback_hygiene_safe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_code_as_data_reflect_schema_macro_edsl() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->code_as_data_reflect_schema_macro_edsl_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
