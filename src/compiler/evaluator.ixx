@@ -3794,6 +3794,33 @@ public:
             m->stable_ref_cow_boundary_pins_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #716: pattern matcher observability counters backing
+    // the (query:pattern-stats) primitive. These are public so
+    // future query_matcher.cpp + evaluator_primitives_query.cpp
+    // hot-path wiring can call them at each decision point
+    // (matcher invocation / is_macro_introduced skip / fast-path
+    // promotion). The primitive currently exposes them as raw
+    // counters so the Agent can compute its own derived
+    // statistics (filter ratio = filtered / calls; fast-path
+    // promotion rate = fast-path / calls).
+    void bump_pattern_matcher_call() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_matcher_calls_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_macro_intro_filtered(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_macro_intro_filtered_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_fast_path_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_fast_path_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_dirty_impact() noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

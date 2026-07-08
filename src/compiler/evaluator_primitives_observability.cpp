@@ -4640,6 +4640,116 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
+    // Issue #716: (query:pattern-stats) — pattern matcher
+    // observability counters (non-duplicative with #547 / #490 /
+    // #621 / #654 tag_arity_index_* which track the index itself;
+    // #716 tracks the matcher call path + hygiene filter +
+    // fast-path promotion as separate signals).
+    //
+    // Fields (3 + sentinel):
+    //   - matcher-calls              pattern_matcher_calls_total
+    //                                (# of query:pattern /
+    //                                 query:where / query:filter
+    //                                 invocations — lifetime)
+    //   - macro-intro-filtered       pattern_macro_intro_filtered_total
+    //                                (# of AST nodes skipped by
+    //                                 is_macro_introduced() during
+    //                                 pattern matching — proxy for
+    //                                 "how much user-focused noise
+    //                                 the matcher avoided")
+    //   - fast-path-hits             pattern_fast_path_hits_total
+    //                                (# of simple tag+arity queries
+    //                                 served from cache without full
+    //                                 pattern traversal)
+    //   - schema == 716
+    //
+    // Phase 1 ships the primitive + counters + bump helpers. The
+    // actual is_macro_introduced() skip wiring in query_matcher.cpp
+    // hot path + the cache promotion + configurable hygiene
+    // filter mode (user-focused vs macro-aware) are follow-up
+    // (each is a dedicated session in evaluator_primitives_query.cpp
+    // + query_matcher.cpp).
+    //
+    // Issue #716: routes through ev.primitives_.add (3-arg form) so
+    // we can attach PrimMeta with schema=716 + category=general +
+    // arity=0 + pure=true (same pattern as #712/#713/#714/#715).
+    ev.primitives_.add(
+        "query:pattern-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t matcher_calls =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_matcher_calls_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t macro_intro_filtered =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_macro_intro_filtered_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t fast_path_hits =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_fast_path_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"matcher-calls", make_int(matcher_calls)},
+                {"macro-intro-filtered", make_int(macro_intro_filtered)},
+                {"fast-path-hits", make_int(fast_path_hits)},
+                {"schema", make_int(716)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "Pattern matcher observability counters: matcher calls, "
+                        "macro-introduced hygiene filter skips, and fast-path "
+                        "promotions. Pairs with the existing query:pattern-index-"
+                        "stats (#547/#490/#621/#654) which track the tag_arity_index "
+                        "itself — #716 tracks the matcher call path as a separate "
+                        "signal.",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
     // Issue #655: query:edsl-core-stability-stats — 5 EDSL core gaps for
     // Workspace/Query/Mutate + StableNodeRef/COW/atomic under AI multi-round
     // editing (non-duplicative with #527 stable-ref-cow, #552 edsl-stability,
