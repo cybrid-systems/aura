@@ -112,31 +112,28 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "panic-rollback-compact-hits", "races-prevented",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:arena-concurrent-compact-stats) '{}')", k));
+        auto f = cs.eval(std::format("(hash-ref (query:arena-concurrent-compact-stats) '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto conc = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                     "concurrent-compacts");
-    CHECK(conc == 0,
-          std::format("concurrent-compacts = {} (expected 0 on fresh service)", conc));
-    const auto reval = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                      "envframe-revalidations");
+    const auto conc =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "concurrent-compacts");
+    CHECK(conc == 0, std::format("concurrent-compacts = {} (expected 0 on fresh service)", conc));
+    const auto reval =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "envframe-revalidations");
     CHECK(reval == 0,
           std::format("envframe-revalidations = {} (expected 0 on fresh service)", reval));
-    const auto panic_rollback = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                               "panic-rollback-compact-hits");
+    const auto panic_rollback =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "panic-rollback-compact-hits");
     CHECK(panic_rollback == 0,
           std::format("panic-rollback-compact-hits = {} (expected 0 on fresh service)",
                       panic_rollback));
-    const auto races = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                      "races-prevented");
-    CHECK(races == 0,
-          std::format("races-prevented = {} (expected 0 on fresh service)", races));
+    const auto races =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "races-prevented");
+    CHECK(races == 0, std::format("races-prevented = {} (expected 0 on fresh service)", races));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
@@ -170,14 +167,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_arena_race_prevented();
     ev.bump_arena_race_prevented();
     ev.bump_arena_race_prevented();
-    const auto conc = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                     "concurrent-compacts");
-    const auto reval = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                      "envframe-revalidations");
-    const auto panic_rollback = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                               "panic-rollback-compact-hits");
-    const auto races = hash_int_field(cs, "(query:arena-concurrent-compact-stats)",
-                                      "races-prevented");
+    const auto conc =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "concurrent-compacts");
+    const auto reval =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "envframe-revalidations");
+    const auto panic_rollback =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "panic-rollback-compact-hits");
+    const auto races =
+        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "races-prevented");
     CHECK(conc == 3,
           std::format("after 3 concurrent-compact bumps: concurrent-compacts = {} (expected 3)",
                       conc));
@@ -186,17 +183,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
                       "(expected 6)",
                       reval));
     CHECK(panic_rollback == 2,
-          std::format(
-              "after 2 panic-rollback-compact-hit bumps: panic-rollback-compact-hits = {} "
-              "(expected 2)",
-              panic_rollback));
+          std::format("after 2 panic-rollback-compact-hit bumps: panic-rollback-compact-hits = {} "
+                      "(expected 2)",
+                      panic_rollback));
     CHECK(races == 4,
           std::format("after 4 race-prevented bumps: races-prevented = {} (expected 4)", races));
 }
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
-    std::println(
-        "\n--- AC5: regression — #712..#728 sibling primitives unaffected ---");
+    std::println("\n--- AC5: regression — #712..#728 sibling primitives unaffected ---");
     auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
     auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
     auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
@@ -244,8 +239,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
     const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
-    CHECK(jit_schema == 713,
-          std::format("jit schema = {} (expected 713, no drift)", jit_schema));
+    CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
         hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
     CHECK(self_evo_schema == 714,
@@ -260,9 +254,9 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
         hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
-    CHECK(fiber_boundary_schema == 717,
-          std::format("fiber-boundary schema = {} (expected 717, no drift)",
-                      fiber_boundary_schema));
+    CHECK(
+        fiber_boundary_schema == 717,
+        std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
         hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
     CHECK(incremental_schema == 718,
@@ -270,34 +264,30 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                       incremental_schema));
     const auto closure_env_schema =
         hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "schema");
-    CHECK(closure_env_schema == 719,
-          std::format("closure-env-epoch schema = {} (expected 719, no drift)",
-                      closure_env_schema));
+    CHECK(
+        closure_env_schema == 719,
+        std::format("closure-env-epoch schema = {} (expected 719, no drift)", closure_env_schema));
     const auto jit_parity_schema =
         hash_int_field(cs, "(query:jit-interpreter-parity-stats)", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema = hash_int_field(cs, "(query:arena-integration-stats)", "schema");
     CHECK(arena_schema == 722,
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
-    const auto value_dispatch_schema =
-        hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
-    CHECK(value_dispatch_schema == 723,
-          std::format("value-dispatch schema = {} (expected 723, no drift)",
-                      value_dispatch_schema));
+    const auto value_dispatch_schema = hash_int_field(cs, "(query:value-dispatch-stats)", "schema");
+    CHECK(
+        value_dispatch_schema == 723,
+        std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
         hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
-    const auto unified_error_schema =
-        hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto unified_error_schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
     CHECK(unified_error_schema == 728,
-          std::format("unified-error schema = {} (expected 728, no drift)",
-                      unified_error_schema));
+          std::format("unified-error schema = {} (expected 728, no drift)", unified_error_schema));
 }
 
 } // namespace aura_issue_731_detail
