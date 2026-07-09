@@ -4219,6 +4219,54 @@ public:
             m->workspace_closedloop_missed_yield_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #792: compiler invalidate_function +
+    // mutation_epoch_ synchronization observability
+    // bump helpers (Refine #783/#755/#784/#787
+    // non-duplicative). Called from the planned
+    // Phase 2+ wire-up sites:
+    // - bump_compiler_invalidate_deferred() in
+    //   service.ixx invalidate_function when
+    //   active MutationBoundaryGuard depth > 0
+    //   (defer epoch bump / re-lower to post-yield
+    //   boundary)
+    // - bump_compiler_version_refresh_hit() in
+    //   evaluator_fiber_mutation.cpp +
+    //   apply_closure / materialize_call_env on
+    //   steal resume / restore_post_yield_or_
+    //   rollback (force bridge_epoch / EnvFrame
+    //   version_ re-stamp)
+    // - bump_compiler_guardshape_deopt_on_steal() in
+    //   aura_jit_bridge.cpp + JIT hot-swap when
+    //   bridge_epoch mismatch detected (trigger
+    //   GuardShape deopt)
+    // - bump_compiler_live_closure_stale_prevented()
+    //   in apply_closure dual-path + bridge_epoch
+    //   check (closure_bridge_ refresh prevents
+    //   stale IRClosure reference)
+    void bump_compiler_invalidate_deferred(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_invalidate_deferred_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_version_refresh_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_version_refresh_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_guardshape_deopt_on_steal(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_guardshape_deopt_on_steal_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_compiler_live_closure_stale_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->compiler_live_closure_stale_prevented_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx

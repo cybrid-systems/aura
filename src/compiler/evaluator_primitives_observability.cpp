@@ -923,6 +923,20 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // yield instrumentation + auto-propagation
     // active).
     "query:workspace-closedloop-fiber-multi-agent-yield-stats",
+
+    // Issue #792: compiler invalidate_function +
+    // mutation_epoch_ synchronization with outermost
+    // MutationBoundaryGuard depth + live IRClosure /
+    // EnvFrame / GuardShape version refresh under
+    // concurrent fiber steal (Non-duplicative
+    // refinement of #783/#755/#784/#787). 4 NEW
+    // CompilerMetrics atomics + 4 NEW bump helpers
+    // on Evaluator + 1 NEW primitive that exposes
+    // the new fields + 2 hardcoded "not yet" flags
+    // for Phase 2+ deferred work (safe invalidate at
+    // outermost boundary + steal-resume version
+    // refresh).
+    "query:compiler-invalidate-guard-steal-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -15545,6 +15559,174 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #792: query:compiler-invalidate-guard-
+    // steal-stats — P0 compiler-runtime integration
+    // synchronization between incremental
+    // invalidate_function / mutation_epoch_ and
+    // EDSL/fiber MutationBoundaryGuard + steal
+    // safety for live closures/Envs/GuardShape in
+    // AI multi-round self-mod closed-loops
+    // (Non-duplicative refinement of #783/#755/
+    // #784/#787).
+    //
+    // 4 NEW CompilerMetrics atomics + 4 NEW bump
+    // helpers on Evaluator + 1 NEW primitive
+    // (hybrid enforcement-side pattern, mirror
+    // #789/#790/#791). The body explicitly cites
+    // 4 directly-bumpable signals the production
+    // compiler-runtime sync needs to expose.
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - deferred-invalidates-total
+    //       compiler_invalidate_deferred_total
+    //       (# of invalidate_function calls
+    //       deferred when active MutationBoundary
+    //       Guard depth > 0 — defer to post-yield
+    //       boundary; bumped from
+    //       Evaluator::bump_compiler_invalidate_
+    //       deferred() at the planned Phase 2+
+    //       service.ixx invalidate_function
+    //       wire-up per body "Add param or query
+    //       for current fiber's mutation_stack_
+    //       depth ... If depth > 0 or inside Guard,
+    //       defer epoch bump / re-lower to post-
+    //       yield boundary or queue; expose
+    //       safe_invalidate_at_outermost_boundary()")
+    //   - version-refresh-hits-total
+    //       compiler_version_refresh_hits_total
+    //       (# of bridge_epoch / EnvFrame version_
+    //       re-stamp hits on steal resume /
+    //       restore_post_yield_or_rollback;
+    //       bumped from
+    //       Evaluator::bump_compiler_version_
+    //       refresh_hit() at the planned Phase 2+
+    //       evaluator_fiber_mutation.cpp +
+    //       apply_closure / materialize_call_env
+    //       wire-up per body "On steal resume /
+    //       restore_post_yield_or_rollback (if
+    //       affected by recent invalidate), force
+    //       bridge_epoch / EnvFrame version_
+    //       re-stamp + closure_bridge_ refresh for
+    //       live IRClosure; integrate with
+    //       GuardShape expected_shape re-validation")
+    //   - guardshape-deopt-on-steal-total
+    //       compiler_guardshape_deopt_on_steal_
+    //       total (# of GuardShape deopts triggered
+    //       on steal when bridge_epoch mismatch
+    //       detected; bumped from
+    //       Evaluator::bump_compiler_guardshape_
+    //       deopt_on_steal() at the planned Phase
+    //       2+ aura_jit_bridge.cpp + JIT hot-swap
+    //       paths wire-up per body "During
+    //       refcount swap / hot-reload, if any
+    //       fiber in MutationBoundary or apply_
+    //       closure active, defer or use grace +
+    //       force GuardShape deopt + linear_state
+    //       re-check on affected funcs; wire to
+    //       mutation_epoch_")
+    //   - live-closure-stale-prevented-total
+    //       compiler_live_closure_stale_prevented_
+    //       total (# of live IRClosure stale
+    //       references prevented via closure_
+    //       bridge_ refresh; bumped from
+    //       Evaluator::bump_compiler_live_closure_
+    //       stale_prevented() at the planned Phase
+    //       2+ apply_closure dual-path + bridge_
+    //       epoch check wire-up)
+    //   - safe-invalidate-at-outermost-boundary-active
+    //       hardcoded 0 (Phase 2+ to actually
+    //       expose safe_invalidate_at_outermost_
+    //       boundary() helper per body "expose
+    //       safe_invalidate_at_outermost_boundary()")
+    //   - steal-resume-version-refresh-active
+    //       hardcoded 0 (Phase 2+ to wire force
+    //       bridge_epoch / EnvFrame version_ re-
+    //       stamp + closure_bridge_ refresh on
+    //       steal resume)
+    //   - recommendation
+    //       derived 0/1/2/3 from the 2 deferred
+    //       flags + activity signal
+    //   - schema == 792
+    add("query:compiler-invalidate-guard-steal-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t deferred_invalidates =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_invalidate_deferred_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t version_refresh_hits =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_version_refresh_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t guardshape_deopt =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_guardshape_deopt_on_steal_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t live_closure_stale_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->compiler_live_closure_stale_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        // 2 hardcoded "not yet" flags for Phase 2+
+        // deferred work.
+        const std::int64_t safe_invalidate_at_outermost_boundary_active = 0;
+        const std::int64_t steal_resume_version_refresh_active = 0;
+        // Recommendation: derived from the 2 deferred
+        // flags + activity signal. Phase 1 only (both
+        // deferred flags == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (safe_invalidate_at_outermost_boundary_active == 1 &&
+            steal_resume_version_refresh_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (safe_invalidate_at_outermost_boundary_active == 1 ||
+                 steal_resume_version_refresh_active == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (deferred_invalidates > 0 || version_refresh_hits > 0 || guardshape_deopt > 0 ||
+                 live_closure_stale_prevented > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+        else
+            recommendation = 3; // early-stage (no compiler-runtime sync activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("deferred-invalidates-total", deferred_invalidates);
+        insert_kv("version-refresh-hits-total", version_refresh_hits);
+        insert_kv("guardshape-deopt-on-steal-total", guardshape_deopt);
+        insert_kv("live-closure-stale-prevented-total", live_closure_stale_prevented);
+        insert_kv("safe-invalidate-at-outermost-boundary-active",
+                  safe_invalidate_at_outermost_boundary_active);
+        insert_kv("steal-resume-version-refresh-active", steal_resume_version_refresh_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 792);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

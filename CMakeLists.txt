@@ -4355,6 +4355,21 @@ add_dependencies(all_test_issue_targets test_issue_790)
 aura_add_issue_test(test_issue_791)
 aura_issue_test_link_llvm_jit(test_issue_791)
 add_dependencies(all_test_issue_targets test_issue_791)
+# Issue #792: P0 compiler invalidate_function +
+# mutation_epoch_ synchronization with outermost
+# MutationBoundaryGuard depth + live IRClosure /
+# EnvFrame / GuardShape version refresh under
+# concurrent fiber steal (Non-duplicative
+# refinement of #783/#755/#784/#787). 4 NEW
+# CompilerMetrics atomics + 4 NEW bump helpers +
+# 1 NEW (query:compiler-invalidate-guard-steal-
+# stats, schema 792) primitive. 5 ACs: hash shape,
+# fresh-zero, schema sentinel, production-path
+# bump helpers callable + activity reflects in
+# primitive, sibling #783/#791 regression.
+aura_add_issue_test(test_issue_792)
+aura_issue_test_link_llvm_jit(test_issue_792)
+add_dependencies(all_test_issue_targets test_issue_792)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

@@ -2266,6 +2266,40 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_closedloop_autoprop_refs_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_autoprop_dirty_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_missed_yield_total{0};
+    // Issue #792: compiler invalidate_function +
+    // mutation_epoch_ synchronization with outermost
+    // MutationBoundaryGuard depth + live IRClosure /
+    // EnvFrame / GuardShape version refresh under
+    // concurrent fiber steal (Non-duplicative
+    // refinement of #783/#755/#784/#787). 4 NEW
+    // atomics for the
+    // (query:compiler-invalidate-guard-steal-stats,
+    // schema 792) primitive:
+    //   - compiler_invalidate_deferred_total: # of
+    //     invalidate_function calls deferred when
+    //     active MutationBoundaryGuard depth > 0
+    //     (Phase 2+ to wire from service.ixx
+    //     invalidate_function when depth > 0)
+    //   - compiler_version_refresh_hits_total: # of
+    //     bridge_epoch / EnvFrame version_ re-stamp
+    //     hits on steal resume / restore_post_yield_
+    //     or_rollback (Phase 2+ to wire from
+    //     evaluator_fiber_mutation.cpp +
+    //     apply_closure / materialize_call_env)
+    //   - compiler_guardshape_deopt_on_steal_total: #
+    //     of GuardShape deopts triggered on steal
+    //     when bridge_epoch mismatch detected
+    //     (Phase 2+ to wire from aura_jit_bridge.cpp
+    //     + JIT hot-swap paths)
+    //   - compiler_live_closure_stale_prevented_total:
+    //     # of live IRClosure stale references
+    //     prevented via closure_bridge_ refresh
+    //     (Phase 2+ to wire from apply_closure
+    //     dual-path + bridge_epoch check)
+    std::atomic<std::uint64_t> compiler_invalidate_deferred_total{0};
+    std::atomic<std::uint64_t> compiler_version_refresh_hits_total{0};
+    std::atomic<std::uint64_t> compiler_guardshape_deopt_on_steal_total{0};
+    std::atomic<std::uint64_t> compiler_live_closure_stale_prevented_total{0};
     // Issue #763: runtime linear_ownership_state enforcement +
     // GC root registration for IRClosure/EnvFrame in
     // invalidate_function and live-closure paths (non-duplicative
