@@ -1,0 +1,132 @@
+; ── binary-trees (Aura, array-backed) — Computer Language Benchmarks Game ──
+;
+; Port of https://benchmarksgame-team.pages.debian.net/benchmarksgame/
+;         description/binarytrees.html
+;
+; Array-backed variant: each tree is ONE vector allocation (3 slots per node:
+; [3k]=item, [3k+1]=leftIdx, [3k+2]=rightIdx, -1 = null child). This is the
+; same idea as the per-tree arena/pool allocation the C++ reference uses
+; (one pool per tree, freed after the check) — compressed into a single
+; contiguous array.
+;
+; Usage:
+;   B=10 ./build-gcc16/aura < tests/bench/binarytrees_array.aura
+;       B = max depth (default 10, the official correctness size)
+;
+; Output: tab-separated, byte-identical to the reference for the sizes that
+; complete, e.g. N=8 →
+;   stretch tree of depth 9	 check: -1
+;   512	 trees of depth 4	 check: -512
+;   128	 trees of depth 6	 check: -128
+;   32	 trees of depth 8	 check: -32
+;   long lived tree of depth 8	 check: -1
+;
+; Why no gc-temp reclaim here:
+;   gc-temp would reset ev.vector_heap_ and reclaim each iteration's tree —
+;   but it ALSO erases (a) the long-lived tree held across the loop, and
+;   (b) the named-let loop/inner closures created after any gc-freeze point,
+;   which segfaults the run. So we let vectors accumulate and rely on the
+;   array representation's ~1-allocation-per-tree budget to reach deeper N
+;   than the cons variant before Aura's lack of running GC forces an OOM.
+;
+; Measured ceiling: completes through N=8 (~3s). N≥9: prints the stretch-tree
+; line then SIGSEGV (139) once ev.vector_heap_ exhausts memory. N=10 (the
+; default) hits this — so the array variant and the cons variant both reach
+; the same wall at N=10, the array one just gets one depth further first.
+; The cons-cell companion (binarytrees_cons.aura) is the faithful per-node
+; malloc/free variant but OOMs earlier (N≈8) because it allocates 2^(d+1)-1
+; cells per tree instead of one vector.
+;
+; Naming note: the checksum function is `tree-check`, not `check` — `check`
+; shadows a built-in primitive and mis-resolves to a constant under
+; recursion. See binarytrees_cons.aura for the same note.
+
+(begin
+  (define (pow2 k)
+    (let loop ((k k) (acc 1))
+      (if (<= k 0) acc (loop (- k 1) (* acc 2)))))
+
+  ; nodes in a perfect tree of depth d: 2^(d+1) − 1
+  (define (node-count d) (- (pow2 (+ d 1)) 1))
+
+  ; build(item, depth) → vector of size 3*node-count, sequential fill.
+  ; Node 0 is the root; children take the next free indices (pre-order).
+  (define (build item depth)
+    (let* ((n (node-count depth))
+           (v (make-vector (* n 3) 0)))
+      (define cnt (make-vector 1 1))                ; next free node index
+      (define (alloc!)
+        (let ((k (vector-ref cnt 0)))
+          (vector-set! cnt 0 (+ k 1))
+          k))
+      (define (fill k item depth)
+        (vector-set! v (* k 3) item)
+        (if (<= depth 0)
+          (begin
+            (vector-set! v (+ (* k 3) 1) -1)
+            (vector-set! v (+ (* k 3) 2) -1))
+          (let ((lk (alloc!)) (rk (alloc!)))
+            (vector-set! v (+ (* k 3) 1) lk)
+            (vector-set! v (+ (* k 3) 2) rk)
+            (fill lk (- (* 2 item) 1) (- depth 1))
+            (fill rk (* 2 item)     (- depth 1)))))
+      (fill 0 item depth)
+      v))
+
+  (define (vitem  v k) (vector-ref v (* k 3)))
+  (define (vleft  v k) (vector-ref v (+ (* k 3) 1)))
+  (define (vright v k) (vector-ref v (+ (* k 3) 2)))
+
+  ; itemCheck: leaf → item; interior → item + check(left) − check(right)
+  (define (tree-check v k)
+    (if (= (vleft v k) -1)
+      (vitem v k)
+      (+ (vitem v k)
+         (tree-check v (vleft v k))
+         (- (tree-check v (vright v k))))))
+
+  ; ── Config ──
+  (define min-depth 4)
+  (define (get-n)
+    (let ((s (getenv "B")))
+      (if (string? s) (string->number s) 10)))
+  (define n (get-n))
+  (define max-depth (if (< n (+ min-depth 2)) (+ min-depth 2) n))
+  (define stretch-depth (+ max-depth 1))
+
+  ; ── Stretch tree ──
+  (display "stretch tree of depth ")
+  (display stretch-depth)
+  (display "\t check: ")
+  (display (tree-check (build 0 stretch-depth) 0))
+  (newline)
+
+  ; ── Long-lived tree stays alive across the loop ──
+  (define long-lived (build 0 max-depth))
+
+  ; ── Main loop: depth = min, min+2, …, max ──
+  (let loop ((depth min-depth))
+    (if (> depth max-depth)
+      #t
+      (let ((iterations (pow2 (- (+ max-depth min-depth) depth))))
+        (let inner ((i 1) (chk 0))
+          (if (> i iterations)
+            (begin
+              (display (* iterations 2))
+              (display "\t trees of depth ")
+              (display depth)
+              (display "\t check: ")
+              (display chk)
+              (newline))
+            (inner (+ i 1)
+              (+ chk
+                 (tree-check (build i depth) 0)
+                 (tree-check (build (- i) depth) 0)))))
+        (loop (+ depth 2)))))
+
+  ; ── Long-lived tree survived the loop ──
+  (display "long lived tree of depth ")
+  (display max-depth)
+  (display "\t check: ")
+  (display (tree-check long-lived 0))
+  (newline))
