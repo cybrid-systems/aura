@@ -4282,6 +4282,22 @@ add_dependencies(all_test_issue_targets test_issue_785)
 aura_add_issue_test(test_issue_786)
 aura_issue_test_link_llvm_jit(test_issue_786)
 add_dependencies(all_test_issue_targets test_issue_786)
+# Issue #787: P0 end-to-end hygiene + schema +
+# linear ownership fidelity under fiber steal + AOT
+# hot-reload + Guard rollback chaos in macro/EDSL
+# self-mod loops (Consolidate #757/#758/#750/#755/
+# #783/#785 non-duplicative). 0 NEW atomics + 0 NEW
+# bump helpers + 1 NEW (query:task6-concurrent-
+# fidelity, schema 787) primitive — consolidation
+# composite (mirror #786) that uses live primitive
+# lookup to aggregate 6 expected sub-primitives +
+# derives composite fidelity status. 5 ACs: hash
+# shape, fresh-zero state, schema sentinel,
+# production-path coverage correctness, sibling
+# #786/#785 regression.
+aura_add_issue_test(test_issue_787)
+aura_issue_test_link_llvm_jit(test_issue_787)
+add_dependencies(all_test_issue_targets test_issue_787)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
