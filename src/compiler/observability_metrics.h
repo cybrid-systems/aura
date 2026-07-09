@@ -2348,6 +2348,40 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_linear_violation_prevented_total{0};
     std::atomic<std::uint64_t> jit_env_version_sync_hits_total{0};
     std::atomic<std::uint64_t> jit_guardshape_stale_reject_total{0};
+    // Issue #794: full compiler + EDSL closed-loop
+    // fidelity observability (Non-duplicative to
+    // #786/#787/#755/#792/#793). 4 NEW atomics
+    // for the
+    // (query:full-closedloop-compiler-edsl-fidelity-
+    // stats, schema 794) primitive:
+    //   - cross_layer_guardshape_deopt_hits_total:
+    //     # of times the full closed-loop harness
+    //     detected GuardShape expected vs runtime
+    //     shape mismatch (Phase 2+ to wire from
+    //     tests/test_full_compiler_edsl_closedloop_
+    //     fidelity.cpp + integrated fidelity
+    //     assertion path per body "Wire new
+    //     composite ... pulling from ... new
+    //     counters (guardshape_deopt_hits, ...)")
+    //   - cross_layer_linear_enforce_success_total:
+    //     # of times linear_ownership_state was
+    //     respected across compiler + EDSL
+    //     boundary (Phase 2+ to wire from the
+    //     harness's linear integrity assertion
+    //     path)
+    //   - cross_layer_epoch_sync_total: # of
+    //     times EnvFrame version_ + bridge_epoch
+    //     were synchronized across layers
+    //     (Phase 2+ to wire from the harness's
+    //     epoch consistency assertion path)
+    //   - cross_layer_drift_detections_total: # of
+    //     times the harness detected any
+    //     cross-layer drift (the negative signal —
+    //     high value = drift detected, SLO breach)
+    std::atomic<std::uint64_t> cross_layer_guardshape_deopt_hits_total{0};
+    std::atomic<std::uint64_t> cross_layer_linear_enforce_success_total{0};
+    std::atomic<std::uint64_t> cross_layer_epoch_sync_total{0};
+    std::atomic<std::uint64_t> cross_layer_drift_detections_total{0};
     // Issue #763: runtime linear_ownership_state enforcement +
     // GC root registration for IRClosure/EnvFrame in
     // invalidate_function and live-closure paths (non-duplicative

@@ -4383,6 +4383,20 @@ add_dependencies(all_test_issue_targets test_issue_792)
 aura_add_issue_test(test_issue_793)
 aura_issue_test_link_llvm_jit(test_issue_793)
 add_dependencies(all_test_issue_targets test_issue_793)
+# Issue #794: P0 unified end-to-end closed-loop
+# fidelity harness (full compiler pipeline + EDSL
+# mutate + fiber steal + AOT hot-reload + StableRef/
+# EnvFrame pinning). Non-duplicative to #786/#787/
+# #755/#792/#793. 4 NEW CompilerMetrics atomics +
+# 4 NEW bump helpers + 1 NEW (query:full-
+# closedloop-compiler-edsl-fidelity-stats, schema
+# 794) primitive. 5 ACs: hash shape, fresh-zero,
+# schema sentinel, production-path bump helpers
+# callable + activity reflects in primitive,
+# sibling #793/#787 regression.
+aura_add_issue_test(test_issue_794)
+aura_issue_test_link_llvm_jit(test_issue_794)
+add_dependencies(all_test_issue_targets test_issue_794)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

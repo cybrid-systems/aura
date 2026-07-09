@@ -4314,6 +4314,48 @@ public:
             m->jit_guardshape_stale_reject_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #794: full closed-loop compiler + EDSL
+    // fidelity observability bump helpers (Non-
+    // duplicative to #786/#787/#755/#792/#793).
+    // Called from the planned Phase 2+
+    // tests/test_full_compiler_edsl_closedloop_
+    // fidelity.cpp harness wire-up:
+    // - bump_cross_layer_guardshape_deopt_hit() when
+    //   the harness detects GuardShape expected vs
+    //   runtime shape mismatch
+    // - bump_cross_layer_linear_enforce_success()
+    //   when linear_ownership_state is respected
+    //   across compiler + EDSL boundary
+    // - bump_cross_layer_epoch_sync() when
+    //   EnvFrame version_ + bridge_epoch are
+    //   synchronized across layers
+    // - bump_cross_layer_drift_detection() when the
+    //   harness detects any cross-layer drift
+    //   (negative signal — high value = SLO breach)
+    void bump_cross_layer_guardshape_deopt_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->cross_layer_guardshape_deopt_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_cross_layer_linear_enforce_success(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->cross_layer_linear_enforce_success_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_cross_layer_epoch_sync(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->cross_layer_epoch_sync_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_cross_layer_drift_detection(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->cross_layer_drift_detections_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx

@@ -949,6 +949,17 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // version-hooks-active + jit-emit-runtime-
     // version-checks-active).
     "query:jit-aot-hotswap-fidelity-stats",
+
+    // Issue #794: full closed-loop compiler + EDSL
+    // fidelity observability (Non-duplicative
+    // consolidation/refinement of #786/#787/
+    // #755/#792/#793). 4 NEW CompilerMetrics
+    // atomics + 4 NEW bump helpers on Evaluator +
+    // 1 NEW primitive that exposes the new fields
+    // + 2 hardcoded "not yet" flags for Phase 2+
+    // deferred work (full closed-loop harness
+    // active + SLO gate active).
+    "query:full-closedloop-compiler-edsl-fidelity-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -15893,6 +15904,178 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("jit-emit-runtime-version-checks-active", jit_emit_runtime_version_checks_active);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 793);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #794: query:full-closedloop-compiler-edsl-
+    // fidelity-stats — P0 unified end-to-end
+    // closed-loop fidelity measurement for the
+    // integrated compiler (IR/lower/JIT) + EDSL
+    // (Guard/mutate/fiber/StableRef/AOT)
+    // self-evolution capability (Non-duplicative
+    // to #786/#787/#755/#792/#793).
+    //
+    // The existing primitives surface component
+    // fidelity signals individually (#786 code-as-
+    // data production health + #787 end-to-end
+    // fidelity under chaos + #755 concurrent
+    // safety + #792 compiler invalidate sync +
+    // #793 JIT/AOT hot-swap fidelity). #794 covers
+    // the *cross-layer closed-loop harness*
+    // fidelity signals specifically — was the
+    // GuardShape deopt caught across the full
+    // pipeline? was linear enforcement successful
+    // across layers? was the epoch synced? was any
+    // cross-layer drift detected? — as separate
+    // per-decision-point signals the Agent consumes
+    // to decide whether to trigger full-cycle
+    // re-validation under production self-mod load.
+    //
+    // 4 NEW CompilerMetrics atomics + 4 NEW bump
+    // helpers on Evaluator + 1 NEW primitive
+    // (hybrid enforcement-side pattern, mirror
+    // #792/#793).
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - cross-layer-guardshape-deopt-hits-total
+    //       cross_layer_guardshape_deopt_hits_total
+    //       (# of times the full closed-loop harness
+    //       detected GuardShape expected vs runtime
+    //       shape mismatch across the full pipeline;
+    //       bumped from
+    //       Evaluator::bump_cross_layer_guardshape_
+    //       deopt_hit() at the planned Phase 2+
+    //       tests/test_full_compiler_edsl_closedloop_
+    //       fidelity.cpp wire-up)
+    //   - cross-layer-linear-enforce-success-total
+    //       cross_layer_linear_enforce_success_total
+    //       (# of times linear_ownership_state was
+    //       respected across compiler + EDSL
+    //       boundary; bumped from
+    //       Evaluator::bump_cross_layer_linear_
+    //       enforce_success() at the planned Phase
+    //       2+ harness wire-up)
+    //   - cross-layer-epoch-sync-total
+    //       cross_layer_epoch_sync_total (# of
+    //       times EnvFrame version_ + bridge_epoch
+    //       were synchronized across layers; bumped
+    //       from
+    //       Evaluator::bump_cross_layer_epoch_sync()
+    //       at the planned Phase 2+ harness
+    //       wire-up)
+    //   - cross-layer-drift-detections-total
+    //       cross_layer_drift_detections_total
+    //       (the negative signal — # of times the
+    //       harness detected any cross-layer drift;
+    //       high value = SLO breach; bumped from
+    //       Evaluator::bump_cross_layer_drift_
+    //       detection() at the planned Phase 2+
+    //       harness wire-up)
+    //   - full-closedloop-harness-active
+    //       hardcoded 0 (Phase 2+ to actually
+    //       implement tests/test_full_compiler_
+    //       edsl_closedloop_fidelity.cpp per body
+    //       "New harness tests/test_full_compiler_
+    //       edsl_closedloop_fidelity.cpp:
+    //       Implement multi-round SEVA-style loop
+    //       with heavy macro/EDSL mutate under Guard
+    //       + concurrent fibers + steal injection +
+    //       AOT reload points; trigger compiler
+    //       invalidate via mutate; assert after
+    //       each cycle: GuardShape expected matches
+    //       runtime shape, linear_ownership_state
+    //       respected ... EnvFrame version_
+    //       consistent, bridge_epoch fresh, StableRef
+    //       valid, no hygiene drift, Interpreter vs
+    //       JIT result identical, metrics match
+    //       SLO")
+    //   - slo-gate-active
+    //       hardcoded 0 (Phase 2+ to wire CI gate +
+    //       trend dashboard + self-heal hooks per
+    //       body "Define quantitative gates
+    //       (fidelity >99.5% over 10k cycles under
+    //       8+ fibers + steal/AOT load; zero
+    //       undetected drift; TSan/ASan clean); add
+    //       CI step that runs harness and fails PR
+    //       on breach; publish trend dashboard")
+    //   - recommendation
+    //       derived 0/1/2/3 from the 2 deferred
+    //       flags + activity signal
+    //   - schema == 794
+    add("query:full-closedloop-compiler-edsl-fidelity-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t guardshape_deopt =
+            m ? static_cast<std::int64_t>(
+                    m->cross_layer_guardshape_deopt_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t linear_success =
+            m ? static_cast<std::int64_t>(
+                    m->cross_layer_linear_enforce_success_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t epoch_sync =
+            m ? static_cast<std::int64_t>(
+                    m->cross_layer_epoch_sync_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t drift_detections =
+            m ? static_cast<std::int64_t>(
+                    m->cross_layer_drift_detections_total.load(std::memory_order_relaxed))
+              : 0;
+        // 2 hardcoded "not yet" flags for Phase 2+
+        // deferred work.
+        const std::int64_t full_closedloop_harness_active = 0;
+        const std::int64_t slo_gate_active = 0;
+        // Recommendation: derived from the 2 deferred
+        // flags + activity signal. Phase 1 only (both
+        // deferred flags == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (full_closedloop_harness_active == 1 && slo_gate_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (full_closedloop_harness_active == 1 || slo_gate_active == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (guardshape_deopt > 0 || linear_success > 0 || epoch_sync > 0 ||
+                 drift_detections > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, harness deferred)
+        else
+            recommendation = 3; // early-stage (no closed-loop fidelity activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("cross-layer-guardshape-deopt-hits-total", guardshape_deopt);
+        insert_kv("cross-layer-linear-enforce-success-total", linear_success);
+        insert_kv("cross-layer-epoch-sync-total", epoch_sync);
+        insert_kv("cross-layer-drift-detections-total", drift_detections);
+        insert_kv("full-closedloop-harness-active", full_closedloop_harness_active);
+        insert_kv("slo-gate-active", slo_gate_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 794);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
