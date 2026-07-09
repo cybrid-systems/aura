@@ -111,6 +111,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
 | `(query:closed-loop-convergence-stats)` | 774 | Verification feedback-driven self-evolution convergence rate (4 fields) |
 | `(query:extension-kit-stats)` | 775 | Formal Primitives Extension Kit AI-Agent SLO (4 fields) |
+| `(query:primitives-hotpath-slo-stats)` | 776 | Integrated Primitives Hot-Path SLO + Regression Gate (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -284,6 +285,16 @@ Distinct from `(query:closed-loop-reliability-stats)` (#726) and `(query:sv-veri
 - `schema` — 775 (drift sentinel)
 
 Distinct from `(query:primitives-extension-stats)` (#697), `(query:primitives-contract-stats)` (#751), and `(query:primitives-meta-stats)` (#669): `#697` ships 8 registry-level counters (eda-meta-backfilled + category-sva + category-verification + category-eda + documented-with-schema + extension-kit-version + registry-slots + skeleton-generations); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version); `#669` ships 4 meta-axis counters (meta-hits + documented-count + schema-documented + total-registered). `#775` is the FIRST observability surface that aggregates the **Agent-facing extension kit SLO composite** — extensions_registered + contract_violations_caught + meta_completeness_pct + test_skeletons_generated — as a single deployment-grade dashboard the Agent reads to decide whether the stdlib extension kit is production-ready.
+
+### `(query:primitives-hotpath-slo-stats)` fields (#776)
+
+- `current-vs-baseline-pct` — derived from `#614` `stability_score` (0–10000 fixed-point percent × 100; 10000 = 100.00% baseline when stability_score == 100, the no-load production baseline; values < 5000 indicate SLO breach per body SLO "no regression >5%" plus stability_score < 50 = the `#614` "regression" threshold)
+- `contract-violations` — reused `#751` atomic `primitive_capture_violations_total` (capture contract enforcement violations under load; body SLO target is 0)
+- `fastpath-hit-rate-pct` — derived (0–10000 fixed-point percent × 100; 10000 = 100.00% baseline when `call_total == 0` = no measurement yet, the vacuous-true default mirror `#774` convergence_rate)
+- `regression-flag` — derived (1 if `current-vs-baseline-pct < 5000` indicating a >50% stability-score drop = SLO breach, else 0)
+- `schema` — 776 (drift sentinel)
+
+Distinct from `(query:primitives-hotpath-stats)` (#614/#584) and `(query:primitives-contract-stats)` (#751): `#614` ships 11 hot-path counters (primitive-call-total + pair-alloc-total + linear-traverse-total + cdr-depth-max + call-rate + alloc-per-call + regex-time-us + stability-score + hotpath-schema + primitives-hotpath-total + primitives-hotpath-recommendation); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version). `#776` is the FIRST observability surface that aggregates the **primitives hot-path SLO composite** — current-vs-baseline-pct (stability_score as fixed-point pct) + contract-violations + fastpath-hit-rate-pct + regression-flag — as a single deployment-grade SLO dashboard the Agent reads to decide whether the stdlib hot-path is production-ready under AI Agent mutation + fiber load.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

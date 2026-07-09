@@ -4046,6 +4046,30 @@ add_dependencies(all_test_issue_targets test_issue_774)
 aura_add_issue_test(test_issue_775)
 aura_issue_test_link_llvm_jit(test_issue_775)
 add_dependencies(all_test_issue_targets test_issue_775)
+# Issue #776: Integrated Primitives Hot-Path Benchmark Suite
+# + Mutation/Fiber-Load Regression Gate with Quantitative SLOs
+# observability. 0 NEW CompilerMetrics atomics (all 4 body-
+# specified fields are derived from existing #614 + #751
+# atomics; reuse the #614 stability_score formula) + 0 NEW
+# bump helpers (AC4 uses existing bump_primitive_call_count +
+# bump_pair_alloc_count from #441/#491 surface) +
+# (query:primitives-hotpath-slo-stats, schema 776) primitive
+# returning 4 body-specified fields + schema sentinel
+# (5-entry hash: current-vs-baseline-pct + contract-
+# violations + fastpath-hit-rate-pct + regression-flag +
+# schema). 5 ACs: hash shape, fresh-service 100.00% baseline
+# (no load → no regression), schema sentinel, derived
+# SLO composite correctness (bump pair_alloc to trigger
+# regression-flag; bump call_count to verify fastpath
+# derivation), sibling observability regression of #614/
+# #584 + #751 + #774 + #775. Non-duplicative with #614
+# (primitives-hotpath-stats, 11 raw hot-path counters) and
+# #751 (primitives-contract-stats, 4 contract counters) —
+# parallel companion primitive that aggregates the
+# primitives hot-path SLO composite the body asks for.
+aura_add_issue_test(test_issue_776)
+aura_issue_test_link_llvm_jit(test_issue_776)
+add_dependencies(all_test_issue_targets test_issue_776)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
