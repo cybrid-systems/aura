@@ -4022,6 +4022,30 @@ add_dependencies(all_test_issue_targets test_issue_773)
 aura_add_issue_test(test_issue_774)
 aura_issue_test_link_llvm_jit(test_issue_774)
 add_dependencies(all_test_issue_targets test_issue_774)
+# Issue #775: Formal Primitives Extension Kit for AI Agent safe
+# generation, registration, contract enforcement + auto-meta +
+# test template observability. 0 NEW CompilerMetrics atomics
+# (all 4 body-specified fields are derived from existing #633
+# + #751 + #697 + #669 atomics) + 0 NEW bump helpers (AC4
+# uses production-path (primitive:generate-skeleton) to bump
+# the test_skeletons_generated counter) + (query:extension-
+# kit-stats, schema 775) primitive returning 4 body-specified
+# fields + schema sentinel (5-entry hash: extensions_registered
+# + contract_violations_caught + meta_completeness_pct +
+# test_skeletons_generated + schema). 5 ACs: hash shape,
+# fresh-service zero state (meta_completeness_pct = 10000
+# baseline when slot_count == 0), schema sentinel, production-
+# path bump accessibility (call primitive:generate-skeleton
+# → test_skeletons_generated grows), sibling observability
+# regression of #697/#751/#669/#774. Non-duplicative with
+# #697 (primitives-extension-stats, 8 registry-level counters)
+# + #751 (primitives-contract-stats, 4 contract counters) +
+# #669 (primitives-meta-stats, 4 meta-axis counters) —
+# parallel companion primitive that aggregates the Agent-
+# facing extension kit SLO composite the body asks for.
+aura_add_issue_test(test_issue_775)
+aura_issue_test_link_llvm_jit(test_issue_775)
+add_dependencies(all_test_issue_targets test_issue_775)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

@@ -694,6 +694,26 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // adds the deployment-grade convergence_rate pct the
     // body asks for as a parallel companion surface.
     "query:closed-loop-convergence-stats",
+    // Issue #775 — Formal Primitives Extension Kit for AI
+    // Agent safe generation, registration, contract
+    // enforcement + auto-meta + test template observability
+    // (P0 stdlib AI-native surface). Non-duplicative with
+    // #697 (primitives-extension-stats, runtime counters
+    // with 8 fields including eda-meta-backfilled +
+    // category-sva + category-verification + category-eda
+    // + documented-with-schema + extension-kit-version +
+    // registry-slots + skeleton-generations), #751
+    // (primitives-contract-stats, capture-violations +
+    // prim-error-hits + style-compliance-pct + capture-
+    // contract-version), #669 (primitives-meta-stats,
+    // meta-hits + documented-count + schema-documented +
+    // total-registered). #775 is the FIRST observability
+    // surface that aggregates the Agent-facing extension
+    // kit SLO composite (extensions_registered + contract_
+    // violations_caught + meta_completeness_pct + test_
+    // skeletons_generated) as a single deployment-grade
+    // dashboard.
+    "query:extension-kit-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -7369,6 +7389,130 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("convergence-hits", convergence_hits);
         insert_kv("feedback-mutate-rounds", feedback_mutate_rounds);
         insert_kv("schema", 774);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #775: query:extension-kit-stats — Formal Primitives
+    // Extension Kit for AI Agent safe generation, registration,
+    // contract enforcement + auto-meta + test template observability
+    // dashboard (P0 stdlib AI-native surface; refines/consolidates
+    // #751/#711/#697/#480; non-duplicative with #697
+    // query:primitives-extension-stats, #751
+    // query:primitives-contract-stats, and #669
+    // query:primitives-meta-stats). #775 is the FIRST observability
+    // surface that aggregates the *Agent-facing extension kit SLO* —
+    // extensions_registered (per-extension counter), contract_
+    // violations_caught (capture contract enforcement), meta_
+    // completeness_pct (SLO target >95%), and test_skeletons_
+    // generated (AI-facing skeleton emitter) — as a single
+    // deployment-grade dashboard the Agent reads to decide whether
+    // the stdlib extension kit is production-ready.
+    //
+    // Fields (4 + sentinel):
+    //   - extensions_registered     stdlib_extension_count_total
+    //                              (foundation atomic for AC3
+    //                               DEFINE_PRIMITIVE macro work —
+    //                               bumped per new extension
+    //                               registered; 0 until AC3 wire-up)
+    //   - contract_violations_caught primitive_capture_violations_total
+    //                              (# of primitives that failed
+    //                               the capture contract probe —
+    //                               bumped by prim_record_capture_
+    //                               violation when no error_counter
+    //                               on a mutate path)
+    //   - meta_completeness_pct    derived (schema_documented_meta
+    //                              _count / slot_count) * 10000
+    //                              (0-10000 fixed-point percent
+    //                               × 100; 10000 = 100.00% baseline
+    //                               when slot_count == 0; SLO target
+    //                               >95% = 9500 for extensions)
+    //   - test_skeletons_generated  primitive_skeleton_generations_total
+    //                              (# of (primitive:generate-skeleton)
+    //                               invocations — production-path
+    //                               bump; AC4 test calls the
+    //                               primitive to verify)
+    //   - schema == 775
+    //
+    // Phase 1 ships the primitive + derived pct field. The actual
+    // (primitive:extend-kit name doc schema [category] [safety] body-expr)
+    // generative primitive + capture contract probe + auto-meta
+    // backfill + test skeleton generator integration + DEFINE_
+    // PRIMITIVE macro work + Agent ergonomics (query:pattern for
+    // extension primitives + primitive:describe-extension) + tests/
+    // test_primitives_extension_kit_ai_gen.cpp harness + CI step
+    // runs kit on sample extensions + primitives_style.md +
+    // extension_kit.md docs are all follow-up work (each is a
+    // dedicated session in primitives_detail.h + new
+    // evaluator_primitives_ext.cpp + registry/Primitives integration
+    // + new test harness + CI gate + docs).
+    add("query:extension-kit-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = ev.compiler_metrics()
+                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                            : nullptr;
+        // Reused #633 atomic — bumped per new extension registered
+        // (foundation for AC3 DEFINE_PRIMITIVE macro wire-up).
+        const std::int64_t extensions_registered =
+            m ? static_cast<std::int64_t>(
+                    m->stdlib_extension_count_total.load(std::memory_order_relaxed))
+              : 0;
+        // Reused #751 atomic — bumped by prim_record_capture_violation
+        // when a primitive fails the capture contract probe.
+        const std::int64_t contract_violations_caught =
+            m ? static_cast<std::int64_t>(
+                    m->primitive_capture_violations_total.load(std::memory_order_relaxed))
+              : 0;
+        // Reused #697 atomic — bumped by (primitive:generate-skeleton
+        // description-string) at the production-path call site.
+        const std::int64_t test_skeletons_generated =
+            m ? static_cast<std::int64_t>(
+                    m->primitive_skeleton_generations_total.load(std::memory_order_relaxed))
+              : 0;
+        // Derived meta_completeness_pct — same integer-division
+        // pattern as #669 + #774: (schema_documented_meta_count /
+        // slot_count) * 10000, 10000 baseline when slot_count == 0.
+        // The SLO target is >95% (= 9500) for Agent-generated
+        // extensions; production baseline (all primitives fully
+        // meta-documented) is 10000.
+        const std::uint64_t schema_documented = ev.primitives_.schema_documented_meta_count();
+        const std::uint64_t total = ev.primitives_.slot_count();
+        std::int64_t meta_completeness_pct = 10000; // 100.00% baseline
+        if (total > 0) {
+            meta_completeness_pct = static_cast<std::int64_t>((schema_documented * 10000) / total);
+        }
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("extensions_registered", extensions_registered);
+        insert_kv("contract_violations_caught", contract_violations_caught);
+        insert_kv("meta_completeness_pct", meta_completeness_pct);
+        insert_kv("test_skeletons_generated", test_skeletons_generated);
+        insert_kv("schema", 775);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
