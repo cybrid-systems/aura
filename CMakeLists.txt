@@ -3898,6 +3898,23 @@ add_dependencies(all_test_issue_targets test_issue_767)
 aura_add_issue_test(test_issue_768)
 aura_issue_test_link_llvm_jit(test_issue_768)
 add_dependencies(all_test_issue_targets test_issue_768)
+# Issue #769: DeadCoercionEliminationPass + evidence-based CastOp
+# elision for zero-overhead narrowed paths — already-shipped
+# verification (scope-limited close). The 3 body items ship on
+# latest main via prior commits:
+# 1. DCE Pass class + Rule 6 narrow_evidence path → #280/#538/#629
+#    (pass_manager.ixx:1184-1473).
+# 2. JIT hot path narrow_evidence CastOp shortcut → #538/#746
+#    (aura_jit.cpp:1463).
+# 3. Metrics primitive + schema sentinel → #629 (4 atomics) + #799
+#    ((query:dead-coercion-elision-stats, schema 799)).
+# 5 ACs: DCE Pass instantiable + JITFriendly concept + metrics
+# primitive reachable + zerooverhead primitive regression +
+# sibling observability (#766/#767/#768) regression. No new
+# production code (all items ship) — verification test only.
+aura_add_issue_test(test_issue_769)
+aura_issue_test_link_llvm_jit(test_issue_769)
+add_dependencies(all_test_issue_targets test_issue_769)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
