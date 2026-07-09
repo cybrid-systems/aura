@@ -2269,6 +2269,22 @@ private:
     // sum of (saved per batch) across all successful batches.
     // Exposed via observability snapshot.
     std::atomic<std::uint64_t> atomic_batch_bumps_saved_total_{0};
+    // Issue #790: mutate:atomic-batch + pinned snapshot
+    // observability (Refine/Consolidate #737/#761
+    // non-duplicative). 2 NEW atomics for the
+    // (query:mutate-batch-atomic-stats, schema 790)
+    // primitive:
+    // - atomic_batch_cross_fiber_steals_total: # of
+    //   fiber steals that fired while inside a
+    //   suppressed atomic batch (Phase 2+ to wire from
+    //   restore_post_yield_or_rollback + MutationBoundary
+    //   Guard when inside suppressed batch).
+    // - atomic_batch_hygiene_violations_total: # of
+    //   hygiene violations detected during an atomic
+    //   batch body (Phase 2+ to wire from
+    //   hygiene_protected_error path inside batch).
+    std::atomic<std::uint64_t> atomic_batch_cross_fiber_steals_total_{0};
+    std::atomic<std::uint64_t> atomic_batch_hygiene_violations_total_{0};
     // Issue #396 Phase 3: how many atomic-batch commits
     // happened while the bridge fiber setter was active
     // (i.e. we were in serve mode and a fiber context
@@ -6748,6 +6764,38 @@ public:
     }
     void bump_atomic_batch_steal_violation() noexcept {
         atomic_batch_steal_violation_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #790: atomic batch cross-fiber steal +
+    // hygiene violation observability bump helpers
+    // (Refine/Consolidate #737/#761 non-duplicative).
+    // Called from the planned Phase 2+ wire-up sites:
+    // - bump_atomic_batch_cross_fiber_steal() in
+    //   restore_post_yield_or_rollback + Mutation
+    //   BoundaryGuard when inside suppressed batch
+    //   (counts steals that fired while batch was
+    //   active, NOT violations — separate from the
+    //   existing atomic_batch_steal_violation_)
+    // - bump_atomic_batch_hygiene_violation() in
+    //   hygiene_protected_error path inside batch
+    //   body (counts hygiene violations caught
+    //   during the batch, separate from the
+    //   #757 macro-hygiene-provenance-stats
+    //   violations counter which is general)
+    void bump_atomic_batch_cross_fiber_steal() noexcept {
+        atomic_batch_cross_fiber_steals_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_atomic_batch_hygiene_violation() noexcept {
+        atomic_batch_hygiene_violations_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #790: public accessors for the 2 NEW
+    // atomic_batch_* fields (mirror the existing
+    // atomic_batch_count() / atomic_batch_rollbacks_
+    // / atomic_batch_bumps_saved_total() pattern).
+    [[nodiscard]] std::uint64_t atomic_batch_cross_fiber_steals_total() const noexcept {
+        return atomic_batch_cross_fiber_steals_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_hygiene_violations_total() const noexcept {
+        return atomic_batch_hygiene_violations_total_.load(std::memory_order_relaxed);
     }
     void bump_suppressed_bump_lost_on_gc() noexcept {
         suppressed_bump_lost_on_gc_.fetch_add(1, std::memory_order_relaxed);
