@@ -47,4 +47,10 @@ __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}
 __attribute__((weak)) void aura_evaluator_bump_mutation_steal_attempt() {}
 __attribute__((weak)) void aura_evaluator_resume_fiber_migration() {}
 
+// Issue #812: steal + arena/GC safepoint coordination (worker.cpp).
+// Strong defs live in evaluator_fiber_mutation.cpp; weak no-ops keep
+// test_concurrent / other non-evaluator link units happy.
+__attribute__((weak)) void aura_evaluator_bump_steal_arena_yield() {}
+__attribute__((weak)) void aura_evaluator_bump_steal_outermost_enforced() {}
+
 } // extern "C"
