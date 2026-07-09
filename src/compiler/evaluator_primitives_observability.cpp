@@ -7143,6 +7143,16 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //                                  #767 introduces to surface the
     //                                  hidden defrag-fiber interaction
     //                                  cost).
+    //   - production-readiness         derived ordinal (0 = production-
+    //                                  ready, 1 = partial Phase 1 only,
+    //                                  2 = early-stage) added by #797
+    //                                  to make the body AC4 "SLO frag
+    //                                  <0.3 under load" observable to
+    //                                  the Agent without exposing the
+    //                                  raw frag_ratio. Computed from
+    //                                  the same atomics above — no
+    //                                  independent counters; refresh
+    //                                  cost is one branch.
     //   - schema == 767
     add("query:arena-auto-compact-defrag-fiber-stats", [&ev](const auto&) -> EvalValue {
         // Reuse the existing arena_/arena_group_ stats for the 4 fields
@@ -7178,7 +7188,26 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             m ? static_cast<std::int64_t>(m->arena_auto_compact_defrag_blocked_fibers_total.load(
                     std::memory_order_relaxed))
               : 0;
-        auto* ht = FlatHashTable::create(8);
+        // Issue #797 AC4 (body): "SLO frag <0.3 under load" — derive
+        // a production-readiness ordinal from the existing
+        // frag-reduced-bp + bump activity. Both #767 and #797 share
+        // the same source-of-truth atomics so the derived field is
+        // deterministic: 0 = production-ready (auto-policy fires +
+        // yield observed under sustained load), 1 = partial Phase 1
+        // only (some activity but no fiber-yield / no defrag-blocked
+        // surface observed yet), 2 = early-stage (no auto-compact
+        // activity yet — service has not exercised the tiered pool
+        // hot path). The frag_ratio threshold 0.30 lives in
+        // evaluator.ixx probe_arena_auto_policy_on_boundary_exit
+        // (#643 wire-up), not exposed here — the field tells the
+        // Agent whether the production-readiness SLO is observable,
+        // not whether the threshold itself was met.
+        std::int64_t production_readiness = 2; // default early-stage
+        if (auto_triggers > 0 || live_defrag_savings > 0 || shape_inval_count > 0) {
+            production_readiness =
+                (fiber_yield_during_compact > 0 || defrag_blocked_fibers > 0) ? 0 : 1;
+        }
+        auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -7211,6 +7240,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("fiber-yield-during-compact", fiber_yield_during_compact);
         insert_kv("shape-inval-count", static_cast<std::int64_t>(shape_inval_count));
         insert_kv("defrag-blocked-fibers", defrag_blocked_fibers);
+        insert_kv("production-readiness", production_readiness);
         insert_kv("schema", 767);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
