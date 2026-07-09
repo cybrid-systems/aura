@@ -170,6 +170,19 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 }
             }
             stolen->bump_steal_success();
+            // Issue #783: refined split. Successful
+            // steal at a MutationBoundary point with
+            // depth==0 == "outermost safe steal" —
+            // record separately for the
+            // (query:orchestration-steal-outermost-
+            // stats) primitive + bump the cross-fiber
+            // safe steal counter (always bumped on
+            // successful cross-fiber steal at a
+            // mutation boundary).
+            if (stolen->last_yield_reason() == YieldReason::MutationBoundary) {
+                stolen->bump_steal_outermost_mutation_boundary();
+                stolen->bump_cross_fiber_mutation_safe_steal();
+            }
             aura_evaluator_probe_linear_on_steal();
             local_queue_.push(stolen);
             return true;
@@ -178,6 +191,16 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         if (stolen->is_stealable() &&
             stolen->last_yield_reason() == YieldReason::MutationBoundary) {
             stolen->bump_steal_deferred_mutation_boundary();
+            // Issue #783: refine the deferral into
+            // "inner" (depth>0 — actual safety hazard,
+            // would risk deadlock / hygiene drift).
+            // Outermost (depth==0) defers are
+            // separately tracked via #754's bias
+            // feature (still deferred). For now, all
+            // non-safe MutationBoundary defers are
+            // depth>0 inner defers (since the safe
+            // path is taken above when depth==0).
+            stolen->bump_steal_inner_mutation_boundary_deferred();
             aura_evaluator_bump_steal_deferred_violation();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
                 1, std::memory_order_relaxed);

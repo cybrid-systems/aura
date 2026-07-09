@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**823** registrations scanned from `src/**/*.cpp`.
+**824** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 127 primitives (15%)
 - **core**: 213 primitives (26%)
-- **internal-observable**: 336 primitives (41%)
+- **internal-observable**: 337 primitives (41%)
 - **convenience**: 147 primitives (18%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (336)
+## Query: (337)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -216,6 +216,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:occurrence-typing-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:orchestration-llm-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:orchestration-metrics` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:orchestration-steal-outermost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:panic-checkpoint-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:panic-checkpoint-lifecycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:parent` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1305,7 +1306,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (336)
+### Internal observable (stats/counters) (337)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1500,6 +1501,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:occurrence-typing-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:orchestration-llm-bottleneck-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:orchestration-metrics` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:orchestration-steal-outermost-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:panic-checkpoint-fiber-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:panic-checkpoint-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
