@@ -2243,6 +2243,29 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_closedloop_cross_cow_ref_valid_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_yield_points_hit_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_shared_mutex_contention_total{0};
+    // Issue #791: exhaustive fiber yield-point instrumentation
+    // + automatic StableRef/dirty cross-boundary propagation
+    // observability (Refine/Consolidate #773/#762 non-duplicative).
+    // 3 NEW atomics for the
+    // (query:workspace-closedloop-fiber-multi-agent-yield-stats,
+    // schema 791) primitive:
+    //   - workspace_closedloop_autoprop_refs_total: # of
+    //     StableRefs auto-propagated/snapshotted across
+    //     workspace COW/clone/split boundaries (Phase 2+ to
+    //     wire from workspace tree + is_valid_in / WeakRef
+    //     registry paths).
+    //   - workspace_closedloop_autoprop_dirty_total: # of
+    //     dirty bits auto-propagated on workspace COW/clone/split
+    //     boundaries (Phase 2+ to wire from mark_dirty_upward
+    //     cross-boundary notification path).
+    //   - workspace_closedloop_missed_yield_total: # of times
+    //     a long walk (pattern matcher / children_safe iteration
+    //     / mark_dirty_upward on verification subtrees) missed
+    //     a yield point (the negative signal — high value =
+    //     yield starvation under concurrent fiber load).
+    std::atomic<std::uint64_t> workspace_closedloop_autoprop_refs_total{0};
+    std::atomic<std::uint64_t> workspace_closedloop_autoprop_dirty_total{0};
+    std::atomic<std::uint64_t> workspace_closedloop_missed_yield_total{0};
     // Issue #763: runtime linear_ownership_state enforcement +
     // GC root registration for IRClosure/EnvFrame in
     // invalidate_function and live-closure paths (non-duplicative
