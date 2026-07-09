@@ -108,6 +108,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
 | `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
 | `(query:registry-extension-stats)`        | 806    | Registry-Extension AI-Agent primitives + auto-validation + SLO (7 fields) |
+| `(query:primitive-error-unified-stats)`   | 804    | Stdlib-Registry unified primitive error semantics + recovery SLO (8 fields) |
 | `(query:seva-longrunning-concurrent-slo)`  | 803    | SEVA Long-Running Concurrent Verification Evolution SLO (8 fields) |
 | `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
 | `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
@@ -318,6 +319,20 @@ Distinct from `(query:extension-kit-stats)` (#775): `#806` is the **registry-int
 - `schema` — 776 (drift sentinel)
 
 Distinct from `(query:primitives-hotpath-stats)` (#614/#584) and `(query:primitives-contract-stats)` (#751): `#614` ships 11 hot-path counters (primitive-call-total + pair-alloc-total + linear-traverse-total + cdr-depth-max + call-rate + alloc-per-call + regex-time-us + stability-score + hotpath-schema + primitives-hotpath-total + primitives-hotpath-recommendation); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version). `#776` is the FIRST observability surface that aggregates the **primitives hot-path SLO composite** — current-vs-baseline-pct (stability_score as fixed-point pct) + contract-violations + fastpath-hit-rate-pct + regression-flag — as a single deployment-grade SLO dashboard the Agent reads to decide whether the stdlib hot-path is production-ready under AI Agent mutation + fiber load.
+
+### `(query:primitive-error-unified-stats)` fields (#804)
+
+- `error-count-total` — reused `#478` atomic `primitive_error_count_` (# of PRIM_ERROR / make_primitive_error invocations; bumped by `bump_primitive_error_count()`)
+- `with-provenance` — `primitive_error_with_provenance_total` (NEW atomic #804 — # of errors that filled in `(kind, msg, provenance)` schema; the *good* path the body asks for at 100% coverage; bumped by `bump_primitive_error_with_provenance()`)
+- `silent-fallback` — `primitive_error_silent_fallback_total` (NEW atomic #804 — # of ad-hoc returns / catch-alls the body warns against; bumped by the Phase 2+ audit grep-step)
+- `error-values-size` — reused `#478` accessor `get_primitive_error_values_size()` (persistent error object arena size)
+- `capture-violations` — reused `#751` atomic `primitive_capture_violations_total` (# of primitives that failed the capture contract probe)
+- `unified-path-pct` — derived (`with-provenance / error-count-total × 10000`; 10000 = 100.00% baseline when error_count_total == 0 = vacuous-true default; SLO target 100% = 10000 per body "100% primitives use unified path")
+- `recovery-hook-invocations` — `primitive_error_recovery_hook_invocations_total` (NEW atomic #804; bumped by `bump_primitive_error_recovery_hook()` at the planned Phase 2+ Guard + retry path recovery-hook firings)
+- `unified-error-path-active` — hardcoded 0 (Phase 2+ — the actual PRIM_ERROR audit + make_primitive_error provenance enforcement + registry enforce-unified-path + `(error:structured-make ...)` + recovery hooks in Guard + `tests/test_primitive_error_unified_audit.cpp` harness)
+- `schema` — 804 (drift sentinel)
+
+Distinct from `(query:primitive-error-stats)` (#478 pair primitive), `(query:primitives-error-stats)` (#585 coarse hash), and `(query:primitives-contract-stats)` (#751 contract enforcement): those primitives surface per-component error signals individually. `#804` is the FIRST observability surface that aggregates the **unified-error-path SLO composite** — `error-count-total` (reused total) + `with-provenance` (NEW positive path) + `silent-fallback` (NEW negative path the body warns against) + `recovery-hook-invocations` (NEW recovery signal) + `unified-path-pct` (derived 100% target) + `unified-error-path-active` (Phase 2+ flag) — as a single deployment-grade SLO composite the Agent reads to decide whether the stdlib error semantics are production-ready for commercial AI Agent use. The body explicitly cites the gap: "no first-class recovery or structured error objects with schema for AI Agent to inspect/handle uniformly" and "Registry orchestration in evaluator_primitives_registry.cpp does not enforce uniform error contract or meta for errors".
 
 ### `(query:seva-longrunning-concurrent-slo)` fields (#803)
 

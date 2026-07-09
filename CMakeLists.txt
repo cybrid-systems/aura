@@ -4516,6 +4516,18 @@ add_dependencies(all_test_issue_targets test_issue_803)
 aura_add_issue_test(test_stable_ref_cross_cow_provenance_enforcement)
 aura_issue_test_link_llvm_jit(test_stable_ref_cross_cow_provenance_enforcement)
 add_dependencies(all_test_issue_targets test_stable_ref_cross_cow_provenance_enforcement)
+# Issue #804: P0 stdlib-Registry unified primitive
+# error semantics + provenance tracking + recovery
+# hooks (refine/consolidate #585 + #751 + #775 + #478).
+# 5 ACs: hash shape (create(16) with 8 fields +
+# schema), fresh-zero split-rule, schema sentinel
+# == 804, 3 NEW bump helpers callable + unified-path-
+# pct + recommendation transition, sibling #478 +
+# #585 + #751 regression.
+aura_add_issue_test(test_issue_804)
+aura_issue_test_link_llvm_jit(test_issue_804)
+add_dependencies(all_test_issue_targets test_issue_804)
+
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
