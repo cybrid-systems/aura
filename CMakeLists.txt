@@ -407,10 +407,10 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 #     targets in CMake's FILE_SET model; module dep chain is
 #     compiled per-binary. This is a known limitation; see
 #     https://gitlab.kitware.com/cmake/cmake/-/issues/25845)
-#   - aura_jit.cpp / aura_jit_runtime.cpp (need per-binary
-#     -fno-rtti compile flag; kept as per-test deltas)
+#   - aura_jit.cpp / aura_jit_runtime.cpp / aura_jit_bridge.cpp
+#     (need -fno-rtti + LLVM; shared via aura_jit_test_objects below)
 #   - Per-test observability headers (h-only; not compiled)
-#   - LLVM link / AURA_HAVE_LLVM defines (per-binary)
+#   - LLVM link / AURA_HAVE_LLVM defines (via aura_jit_test_objects)
 # Fix #2: shared BMI cache. aura_test_objects emits each .ixx once
 # into ${CMAKE_BINARY_DIR}/module_cache/<name>.gcm. Test targets
 # (and `aura`) consume the prebuilt BMIs via the symlinks the
@@ -472,6 +472,42 @@ aura_test_compile_options(aura_test_objects)
 target_compile_options(aura_test_objects PRIVATE -fcontracts)
 target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect)
 
+# Shared LLVM JIT objects for issue tests (and similar binaries).
+# Previously every aura_issue_test_link_llvm_jit() consumer recompiled
+# aura_jit{,_runtime,_bridge}.cpp under its own CMakeFiles/<target>.dir/
+# tree. With 100+ issue tests that means 100+ concurrent GCC module
+# dyndep scans of the same TUs — CI has hit:
+#   fatal error: when writing output to ...aura_jit_bridge.cpp.o.ddi.i:
+#   Invalid argument
+# Compiling once into aura_jit_test_objects eliminates that storm
+# (same pattern as aura_test_objects for non-JIT sources).
+# -fno-rtti is required by LLVM headers; applied once on this target.
+if(LLVM_FOUND)
+    add_library(aura_jit_test_objects STATIC
+        src/compiler/aura_jit.cpp
+        src/compiler/aura_jit_runtime.cpp
+        src/compiler/aura_jit_bridge.cpp
+    )
+    set_property(TARGET aura_jit_test_objects PROPERTY CXX_MODULE_STD ON)
+    target_include_directories(aura_jit_test_objects PUBLIC
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/compiler
+        ${LLVM_INCLUDE_DIRS}
+    )
+    target_compile_definitions(aura_jit_test_objects PUBLIC AURA_HAVE_LLVM=1)
+    target_compile_features(aura_jit_test_objects PUBLIC cxx_std_26)
+    aura_test_compile_options(aura_jit_test_objects)
+    # -fno-rtti only on LLVM-facing TUs. Do NOT put it on the whole
+    # target: aura_jit_bridge.cpp does `import std`, and GCC 16 module
+    # BMIs encode the dialect (C++26/contracts vs C++26/no-rtti/contracts).
+    # A target-wide -fno-rtti makes bridge fail to load std.gcm.
+    set_source_files_properties(
+        src/compiler/aura_jit.cpp
+        src/compiler/aura_jit_runtime.cpp
+        PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    target_link_libraries(aura_jit_test_objects PUBLIC ${llvm_libs} ${CMAKE_DL_LIBS})
+endif()
+
 # Phase 2 dedup helper (definition placed early so it precedes all
 # test_issue_* and pilot calls in this file). See also the pilots section
 # comment for history.
@@ -481,7 +517,7 @@ target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect)
 # caused each target to compile those sources independently. Now they
 # come from the aura_test_objects static lib (see above), so the helper
 # only wires modules + the per-test sources a few callers still need
-# (aura_jit.cpp, observability headers, LLVM, etc.).
+# (observability headers; JIT is aura_jit_test_objects).
 function(aura_add_issue_test NAME)
     add_executable(${NAME} tests/${NAME}.cpp)
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
@@ -4471,6 +4507,15 @@ add_dependencies(all_test_issue_targets test_issue_806)
 aura_add_issue_test(test_issue_803)
 aura_issue_test_link_llvm_jit(test_issue_803)
 add_dependencies(all_test_issue_targets test_issue_803)
+# Issue #818: StableNodeRef full provenance + cross-COW/sub-workspace
+# auto-resolve enforcement observability (Task1-review follow-up).
+# 4 CompilerMetrics atomics (stable_ref_*_total) +
+# (query:stable-ref-cross-cow-provenance-stats, schema 818) + bumps in
+# mutate StableRef resolve, workspace:resolve-stable-ref, fiber resume.
+# 8 ACs. Non-duplicative with #641/#715/#738/#749/#791.
+aura_add_issue_test(test_stable_ref_cross_cow_provenance_enforcement)
+aura_issue_test_link_llvm_jit(test_stable_ref_cross_cow_provenance_enforcement)
+add_dependencies(all_test_issue_targets test_stable_ref_cross_cow_provenance_enforcement)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

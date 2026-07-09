@@ -5593,6 +5593,61 @@ public:
             m->ir_soa_jit_codegen_time_ns_total.fetch_add(ns, std::memory_order_relaxed);
         }
     }
+    // Issue #818: StableNodeRef full provenance + cross-COW enforcement.
+    void bump_stable_ref_provenance_enforced(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_provenance_enforced_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_stable_ref_cross_cow_refresh(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_cross_cow_refresh_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_stable_ref_fiber_workspace_mismatch_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_fiber_workspace_mismatch_prevented_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_stable_ref_steal_auto_refresh(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stable_ref_steal_auto_refresh_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_provenance_enforced() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->stable_ref_provenance_enforced_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_cross_cow_refresh() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->stable_ref_cross_cow_refresh_hits_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_fiber_workspace_mismatch_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->stable_ref_fiber_workspace_mismatch_prevented_total.load(
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_steal_auto_refresh() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->stable_ref_steal_auto_refresh_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_sv_self_evo_feedback_parse() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

@@ -265,11 +265,15 @@ bool test_v2_bitmask_via_aura_primitives() {
     irs.push_back(fn);
     cs.store_define_v2("p", "(define (p x) (* x 2))", std::move(irs),
                        std::vector<aura::ir::ClosureBridgeData>{}, std::vector<std::string>{});
-    // (compile:func-block-dirty-count "p" 0) → 0 (clean)
-    int64_t clean_count = run_int(cs, "(compile:func-block-dirty-count \"p\" 0)");
-    CHECK(clean_count == 0, "(compile:func-block-dirty-count \"p\" 0) = 0 when clean");
-    // Mark dirty.
+    // Clean-state check uses the C++ API: eval of
+    // (compile:func-block-dirty-count …) can allocate into the
+    // arena and fire the on_compact hook, which mark_all_blocks_dirty()
+    // on every ir_cache_v2_ entry — racing the "still clean" assertion.
+    CHECK(cs.func_dirty_block_count_v2("p", 0) == 0,
+          "store_define_v2 leaves func 0 clean (C++ API)");
+    // Mark dirty, then exercise the Aura primitives.
     cs.mark_block_dirty_v2("p", 0, 0);
+    CHECK(cs.func_dirty_block_count_v2("p", 0) == 1, "mark_block_dirty_v2 sets 1 dirty block");
     int64_t dirty_count = run_int(cs, "(compile:func-block-dirty-count \"p\" 0)");
     CHECK(dirty_count == 1, "(compile:func-block-dirty-count \"p\" 0) = 1 after mark");
     // (compile:block-dirty? "p" 0 0) → #t

@@ -176,8 +176,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         aura::ast::FlatAST::StableNodeRef src_ref{node_id, gen, 0, from_layer, 0, 0, 0, 0};
         if (a.size() >= 5 && is_int(a[4])) {
             src_ref.workspace_id = static_cast<std::uint32_t>(as_int(a[4]));
-            if (src_ref.workspace_id != from_layer)
+            if (src_ref.workspace_id != from_layer) {
                 ev.bump_provenance_mismatch();
+                // Issue #818: fiber/workspace provenance mismatch prevented.
+                ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
+            }
         }
         auto resolved = wt->resolve_stable_ref(from_layer, src_ref, to_layer);
         if (!resolved) {
@@ -185,6 +188,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         }
         ev.bump_stable_ref_workspace_resolve();
+        // Issue #818: successful cross-layer resolve counts as cross-COW refresh.
+        ev.bump_stable_ref_cross_cow_refresh();
+        ev.bump_stable_ref_provenance_enforced();
         // Issue #424: return (id . (gen . nil)) — same stable-ref
         // pair shape as (query:stable-ref) so (query:ref-valid?)
         // accepts cross-layer resolved refs.

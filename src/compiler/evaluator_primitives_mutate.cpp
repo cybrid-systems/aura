@@ -315,8 +315,31 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                           aura::ast::NodeId& out_node) -> EvalValue {
         if (auto packed = unpack_stable_ref_arg(arg)) {
             ev.bump_stable_ref_validated_in_primitives_count();
+            // Issue #818: full provenance enforcement on mutate hot paths.
+            // Stamp validate_with_provenance when valid; attempt auto-
+            // refresh on cross-boundary stale refs; record fiber/workspace
+            // mismatches when capture fields disagree with active layer.
             StableNodeRef ref = *packed;
-            if (!ref.is_valid_in(flat) || !flat.get_safe(ref)) {
+            const std::uint32_t active_ws =
+                ev.workspace_tree_ ? static_cast<WorkspaceTree*>(ev.workspace_tree_)->active_idx()
+                                   : 0;
+            if (ref.workspace_id != 0 && ref.workspace_id != active_ws) {
+                ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
+            }
+            if (ref.is_valid_in(flat) && flat.get_safe(ref)) {
+                (void)ref.validate_with_provenance(flat);
+                ev.bump_stable_ref_provenance_enforced();
+                out_node = ref.id;
+                return make_void();
+            }
+            // Cross-COW / generation drift: try auto-refresh before fail.
+            if (ref.validate_or_refresh(flat)) {
+                ev.bump_stable_ref_cross_cow_refresh();
+                ev.bump_stable_ref_provenance_enforced();
+                out_node = ref.id;
+                return make_void();
+            }
+            {
                 *ok = false;
                 const auto policy = ev.get_stale_ref_policy();
                 if (policy == Evaluator::StaleRefPolicy::Strict) {
@@ -330,8 +353,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev.bump_stale_ref_warned_count();
                 return mev("stale-ref", std::string(op) + ": stable-ref is stale");
             }
-            out_node = ref.id;
-            return make_void();
         }
         if (is_int(arg)) {
             ev.bump_raw_nodeid_usage_in_primitives_count();

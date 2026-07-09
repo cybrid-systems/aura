@@ -73,38 +73,33 @@ function(aura_issue_test_observability TARGET)
     target_sources(${TARGET} PRIVATE src/compiler/observability_metrics.h)
 endfunction()
 
-# LLVM JIT sources shared by orchestration / mutation issue tests.
+# LLVM JIT via shared aura_jit_test_objects (see CMakeLists.txt).
+# Compiling aura_jit*.cpp once avoids 100+ concurrent GCC module
+# dyndep scans that flaked CI with:
+#   when writing output to ...aura_jit_bridge.cpp.o.ddi.i: Invalid argument
 function(aura_issue_test_link_llvm_jit TARGET)
+    if(NOT TARGET aura_jit_test_objects)
+        message(FATAL_ERROR
+            "aura_issue_test_link_llvm_jit(${TARGET}): aura_jit_test_objects missing "
+            "(LLVM not found or library not defined yet)")
+    endif()
     target_include_directories(${TARGET} PRIVATE src/compiler)
     target_sources(${TARGET} PRIVATE
-        src/compiler/aura_jit.cpp
-        src/compiler/aura_jit_runtime.cpp
-        src/compiler/aura_jit_bridge.cpp
         src/compiler/observability_metrics.h
         src/compiler/observability_snapshot.h
     )
-    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-    target_include_directories(${TARGET} PRIVATE ${LLVM_INCLUDE_DIRS})
-    target_compile_definitions(${TARGET} PRIVATE AURA_HAVE_LLVM=1)
-    target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
-    # #287: aura_reload_aot_module uses dlopen/dlsym/dlclose.
-    target_link_libraries(${TARGET} PRIVATE ${CMAKE_DL_LIBS})
+    # AURA_HAVE_LLVM + LLVM includes + llvm_libs come PUBLIC from the lib.
+    target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
 endfunction()
 
 # LLVM JIT without observability headers (light JIT API tests).
 function(aura_issue_test_link_llvm_jit_minimal TARGET)
+    if(NOT TARGET aura_jit_test_objects)
+        message(FATAL_ERROR
+            "aura_issue_test_link_llvm_jit_minimal(${TARGET}): aura_jit_test_objects missing")
+    endif()
     target_include_directories(${TARGET} PRIVATE src/compiler)
-    target_sources(${TARGET} PRIVATE
-        src/compiler/aura_jit.cpp
-        src/compiler/aura_jit_runtime.cpp
-        src/compiler/aura_jit_bridge.cpp
-    )
-    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-    target_include_directories(${TARGET} PRIVATE ${LLVM_INCLUDE_DIRS})
-    target_compile_definitions(${TARGET} PRIVATE AURA_HAVE_LLVM=1)
-    target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
+    target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
 endfunction()
 
 # LLVM JIT + observability + contract stub.
@@ -142,17 +137,14 @@ endfunction()
 
 # Fiber + JIT stub sources (GC / env_frames issue tests).
 function(aura_issue_test_link_llvm_fiber_stubs TARGET)
+    if(NOT TARGET aura_jit_test_objects)
+        message(FATAL_ERROR
+            "aura_issue_test_link_llvm_fiber_stubs(${TARGET}): aura_jit_test_objects missing")
+    endif()
     target_include_directories(${TARGET} PRIVATE src/serve src/compiler)
     target_sources(${TARGET} PRIVATE
-        src/compiler/aura_jit_runtime.cpp
-        src/compiler/aura_jit_bridge.cpp
-        src/compiler/aura_jit.cpp
         src/core/contract_stub.cpp
         src/compiler/aura_jit_prim_dispatch_stub.cpp
     )
-    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-    target_compile_definitions(${TARGET} PRIVATE AURA_HAVE_LLVM=1)
-    target_include_directories(${TARGET} PRIVATE ${LLVM_INCLUDE_DIRS})
-    target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
+    target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
 endfunction()

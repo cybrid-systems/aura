@@ -150,6 +150,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // whether the long-running concurrent SEVA production
     // harness is ready for commercial multi-agent deployment.
     "query:seva-longrunning-concurrent-slo",
+    // Issue #818 — StableNodeRef full provenance + cross-COW enforcement
+    "query:stable-ref-cross-cow-provenance-stats",
     // Issue #750 — Runtime reflection schema validation for macro/EDSL mutate
     "query:reflection-schema-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
@@ -7560,6 +7562,75 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("deopt-targeted-skips", deopt_targeted_skips);
         insert_kv("concept-violations-caught", concept_violations_caught);
         insert_kv("schema", 768);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #818: query:stable-ref-cross-cow-provenance-stats — full
+    // StableNodeRef provenance enforcement + cross-COW/sub-workspace
+    // auto-resolve dashboard (Task1-review follow-up; non-duplicative
+    // with #641 provenance-sv-stats, #715 layer-stats, #738 boundary-
+    // stats, #749 COW pinning).
+    //
+    // Fields (4 + sentinel):
+    //   - provenance-enforced-hits          stable_ref_provenance_enforced_total
+    //   - cross-cow-refresh-hits            stable_ref_cross_cow_refresh_hits_total
+    //   - fiber-workspace-mismatch-prevented
+    //                                       stable_ref_fiber_workspace_mismatch_prevented_total
+    //   - steal-auto-refresh-hits           stable_ref_steal_auto_refresh_total
+    //   - schema == 818
+    add("query:stable-ref-cross-cow-provenance-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t provenance_enforced =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_provenance_enforced_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t cross_cow_refresh =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_cross_cow_refresh_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t fiber_ws_mismatch =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_fiber_workspace_mismatch_prevented_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        const std::int64_t steal_auto_refresh =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_steal_auto_refresh_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("provenance-enforced-hits", provenance_enforced);
+        insert_kv("cross-cow-refresh-hits", cross_cow_refresh);
+        insert_kv("fiber-workspace-mismatch-prevented", fiber_ws_mismatch);
+        insert_kv("steal-auto-refresh-hits", steal_auto_refresh);
+        insert_kv("schema", 818);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

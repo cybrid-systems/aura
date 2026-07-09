@@ -61,7 +61,8 @@ int main() {
         CHECK(reg_stat(cs, "eda-registered") >= 4, "eda-registered >= 4 SV/EDA primitives");
         CHECK(reg_stat(cs, "consistency-rate") >= 0, "consistency-rate present");
         CHECK(reg_stat(cs, "registry-slots") > 0, "registry-slots > 0");
-        CHECK(reg_stat(cs, "capture-contract-version") == 1, "capture-contract-version == 1");
+        // #751 bumped kPrimCaptureContractVersion to 2 (enforcement wiring).
+        CHECK(reg_stat(cs, "capture-contract-version") == 2, "capture-contract-version == 2");
         CHECK(reg_stat(cs, "extension-kit-version") == 3, "extension-kit-version == 3");
     }
 
@@ -104,13 +105,15 @@ int main() {
         CHECK(sk && aura::compiler::types::is_hash(*sk), "generate-skeleton still works post-#709");
     }
 
-    // AC5: stats:count
+    // AC5: stats:count — floor only; the registry grows as new
+    // query:/stats: primitives land (exact equality flakes CI).
     {
         std::println("\n--- AC5: stats:count ---");
         auto count = cs.eval("(stats:count)");
-        CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) >= 211,
-              "stats:count >= 211");
+        const auto n = (count && aura::compiler::types::is_int(*count))
+                           ? aura::compiler::types::as_int(*count)
+                           : static_cast<std::int64_t>(-1);
+        CHECK(n >= 211, std::format("stats:count >= 211 (got {})", n));
     }
 
     // AC6: fiber stress — map/filter + registry stats under concurrent eval

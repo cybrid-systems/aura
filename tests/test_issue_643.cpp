@@ -105,7 +105,10 @@ int main() {
         const auto schema = hash_int(cs, "(query:primitives-meta 'foo)", "schema");
         const auto arity = hash_int(cs, "(query:primitives-meta 'foo)", "arity");
         const auto has_fn = hash_int(cs, "(query:primitives-meta 'foo)", "has-fn");
-        CHECK(schema == 643, std::format("per-name schema == 643 (got {})", schema));
+        // Issue #669 enriched the per-name response (8 PrimMeta fields)
+        // and bumped its schema sentinel from 643 → 669. No-arg form
+        // still uses schema 643 (aggregate foundation counters).
+        CHECK(schema == 669, std::format("per-name schema == 669 (got {})", schema));
         CHECK(arity >= 0, std::format("per-name arity >= 0 (got {})", arity));
         CHECK(has_fn >= 0, std::format("per-name has-fn >= 0 (got {})", has_fn));
         // The name field is a string — verify it's the requested name.
@@ -159,7 +162,7 @@ int main() {
         const auto schema = hash_int(cs, "(query:primitives-meta)", "schema");
         CHECK(schema == 643, std::format("no-arg schema == 643 (got {})", schema));
         const auto name_schema = hash_int(cs, "(query:primitives-meta 'foo)", "schema");
-        CHECK(name_schema == 643, std::format("per-name schema == 643 (got {})", name_schema));
+        CHECK(name_schema == 669, std::format("per-name schema == 669 (got {})", name_schema));
     }
 
     // AC6: concurrent reads under 2 threads × 4 iters. Atomicity
