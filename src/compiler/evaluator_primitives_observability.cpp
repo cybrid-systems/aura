@@ -734,6 +734,21 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // production-ready under AI Agent mutation + fiber
     // load.
     "query:primitives-hotpath-slo-stats",
+    // Issue #777 — Consolidated EDA Infrastructure
+    // Primitives Production Readiness Roadmap +
+    // Milestone Tracker with Measurable Fidelity/SLO
+    // Gates observability. Non-duplicative with #726
+    // /#748/#772/#774/#749/#738/#725/#724 individual
+    // EDA primitives — #777 is the FIRST observability
+    // surface that aggregates the EDA production
+    // readiness composite (4 milestone completeness
+    // pcts derived from primitive lookup + fixed
+    // blocking-issues-count + recommendation) as a
+    // single deployment-grade production-readiness
+    // dashboard the Agent reads to decide whether the
+    // EDA stdlib is production-ready for commercial
+    // verification self-evolution.
+    "query:eda-production-readiness",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -7671,6 +7686,173 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("fastpath-hit-rate-pct", fastpath_hit_rate_pct);
         insert_kv("regression-flag", regression_flag);
         insert_kv("schema", 776);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #777: query:eda-production-readiness — Consolidated
+    // EDA Infrastructure Primitives Production Readiness Roadmap
+    // + Milestone Tracker with Measurable Fidelity/SLO Gates
+    // observability dashboard (P0 EDA stdlib production-readiness
+    // surface; refines/consolidates #726/#748/#772/#774/#749/#738
+    // /#725/#724; non-duplicative with any individual EDA primitive
+    // — #777 is the FIRST observability surface that aggregates the
+    // *milestone-completeness composite* across the 4 EDA
+    // production roadmap milestones as a single deployment-grade
+    // production-readiness dashboard the Agent reads to decide
+    // whether the EDA stdlib is production-ready for commercial
+    // verification self-evolution).
+    //
+    // Milestone definitions (from body):
+    //   M1: basic feedback primitives + emit
+    //   M2: full SV EDSL + dirty re-emit
+    //   M3: commercial fidelity + roundtrip + long-running harness
+    //   M4: multi-agent concurrent SLOs
+    //
+    // For each milestone, the primitive looks up the expected
+    // observability/runtime primitives via ev.primitives_.lookup
+    // and computes completeness = (found / total_expected) × 10000
+    // (0-10000 fixed-point percent × 100; 10000 = 100% = all
+    // expected primitives registered).
+    //
+    // Fields (6 + sentinel):
+    //   - m1-completeness-pct  M1: 5 expected primitives
+    //                          (primitive:generate-skeleton +
+    //                           verify:parse-coverage-feedback +
+    //                           verify:parse-assert-failure +
+    //                           verify:parse-formal-cex +
+    //                           mutate:from-verification-feedback)
+    //   - m2-completeness-pct  M2: 4 expected primitives
+    //                          (query:sv-verification-structure-
+    //                           stats + query:sv-commercial-emit-
+    //                           fidelity-stats + query:sv-
+    //                           verification-self-evolution-stats +
+    //                           query:sv-closedloop-slo)
+    //   - m3-completeness-pct  M3: 3 expected primitives
+    //                          (query:primitives-hotpath-slo-stats
+    //                           + compile:inline-pass-stats +
+    //                           compile:dead-coercion-stats)
+    //   - m4-completeness-pct  M4: 2 expected primitives
+    //                          (query:workspace-closedloop-
+    //                           orchestration-stats + query:
+    //                           workspace-closedloop-fiber-eda-
+    //                           stats)
+    //   - blocking-issues-count fixed count of related open
+    //                          EDA issues (#749, #738, #725, #724,
+    //                          #726, #748, #772, #774 per body —
+    //                          closed ones: #726, #748, #772, #774 =
+    //                          4 closed; remaining open: #749,
+    //                          #738, #725, #724 = 4 open)
+    //   - recommendation       0=production-ready (all milestones
+    //                          >= 9500), 1=near-ready (all >= 8000),
+    //                          2=in-progress (all >= 5000),
+    //                          3=early-stage (any < 5000)
+    //   - schema == 777
+    //
+    // Phase 1 ships the primitive + milestone aggregation.
+    // The actual milestone table maintenance + CI gate wiring +
+    // SEVA demo + contributing guide updates + per-issue link
+    // tracking + notification on milestone completion are all
+    // follow-up work (each is a dedicated session in the issue
+    // tracker + contributing.md + CI pipeline + SEVA demo +
+    // primitives_style.md).
+    add("query:eda-production-readiness", [&ev](const auto&) -> EvalValue {
+        // Helper: count how many expected primitives are registered.
+        // Returns found_count + computes completeness as
+        // (found * 10000) / total via integer division.
+        auto milestone_pct = [&](std::initializer_list<const char*> expected) -> std::int64_t {
+            std::size_t total = expected.size();
+            if (total == 0)
+                return 10000; // vacuously true (100.00% baseline)
+            std::size_t found = 0;
+            for (const char* name : expected) {
+                if (ev.primitives_.lookup(name).has_value())
+                    ++found;
+            }
+            return static_cast<std::int64_t>((found * 10000) / total);
+        };
+        // M1: basic feedback primitives + emit (5 expected)
+        const std::int64_t m1_pct = milestone_pct({
+            "primitive:generate-skeleton",
+            "verify:parse-coverage-feedback",
+            "verify:parse-assert-failure",
+            "verify:parse-formal-cex",
+            "mutate:from-verification-feedback",
+        });
+        // M2: full SV EDSL + dirty re-emit (4 expected)
+        const std::int64_t m2_pct = milestone_pct({
+            "query:sv-verification-structure-stats",
+            "query:sv-commercial-emit-fidelity-stats",
+            "query:sv-verification-self-evolution-stats",
+            "query:sv-closedloop-slo",
+        });
+        // M3: commercial fidelity + roundtrip + long-running
+        // harness (3 expected primitives; long-running harness is
+        // not a primitive but a test fixture, so we use 3 as a
+        // representative observability surface for this milestone).
+        const std::int64_t m3_pct = milestone_pct({
+            "query:primitives-hotpath-slo-stats",
+            "compile:inline-pass-stats",
+            "compile:dead-coercion-stats",
+        });
+        // M4: multi-agent concurrent SLOs (2 expected)
+        const std::int64_t m4_pct = milestone_pct({
+            "query:workspace-closedloop-orchestration-stats",
+            "query:workspace-closedloop-fiber-eda-stats",
+        });
+        // Blocking-issues-count: fixed value based on body list of
+        // related EDA issues. Closed: #726, #748, #772, #774 = 4.
+        // Open (per body list at issue creation): #749, #738,
+        // #725, #724 = 4. The number is hardcoded for now; future
+        // work could pull from GitHub API or issue tracker at
+        // primitive-call time.
+        const std::int64_t blocking_issues_count = 4;
+        // Recommendation: based on minimum milestone completeness.
+        const std::int64_t min_pct = std::min({m1_pct, m2_pct, m3_pct, m4_pct});
+        std::int64_t recommendation = 3;
+        if (min_pct >= 9500)
+            recommendation = 0; // production-ready
+        else if (min_pct >= 8000)
+            recommendation = 1; // near-ready
+        else if (min_pct >= 5000)
+            recommendation = 2; // in-progress
+        else
+            recommendation = 3; // early-stage
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("m1-completeness-pct", m1_pct);
+        insert_kv("m2-completeness-pct", m2_pct);
+        insert_kv("m3-completeness-pct", m3_pct);
+        insert_kv("m4-completeness-pct", m4_pct);
+        insert_kv("blocking-issues-count", blocking_issues_count);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 777);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

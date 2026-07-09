@@ -112,6 +112,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:closed-loop-convergence-stats)` | 774 | Verification feedback-driven self-evolution convergence rate (4 fields) |
 | `(query:extension-kit-stats)` | 775 | Formal Primitives Extension Kit AI-Agent SLO (4 fields) |
 | `(query:primitives-hotpath-slo-stats)` | 776 | Integrated Primitives Hot-Path SLO + Regression Gate (4 fields) |
+| `(query:eda-production-readiness)` | 777 | Consolidated EDA Stdlib Production Readiness Roadmap (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -295,6 +296,18 @@ Distinct from `(query:primitives-extension-stats)` (#697), `(query:primitives-co
 - `schema` — 776 (drift sentinel)
 
 Distinct from `(query:primitives-hotpath-stats)` (#614/#584) and `(query:primitives-contract-stats)` (#751): `#614` ships 11 hot-path counters (primitive-call-total + pair-alloc-total + linear-traverse-total + cdr-depth-max + call-rate + alloc-per-call + regex-time-us + stability-score + hotpath-schema + primitives-hotpath-total + primitives-hotpath-recommendation); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version). `#776` is the FIRST observability surface that aggregates the **primitives hot-path SLO composite** — current-vs-baseline-pct (stability_score as fixed-point pct) + contract-violations + fastpath-hit-rate-pct + regression-flag — as a single deployment-grade SLO dashboard the Agent reads to decide whether the stdlib hot-path is production-ready under AI Agent mutation + fiber load.
+
+### `(query:eda-production-readiness)` fields (#777)
+
+- `m1-completeness-pct` — M1 (basic feedback primitives + emit): (5 found in expected list) × 10000 / 5 (0–10000 fixed-point percent × 100; expected list: `primitive:generate-skeleton` + `verify:parse-coverage-feedback` + `verify:parse-assert-failure` + `verify:parse-formal-cex` + `mutate:from-verification-feedback`)
+- `m2-completeness-pct` — M2 (full SV EDSL + dirty re-emit): (4 found / 4) × 10000 (expected list: `query:sv-verification-structure-stats` + `query:sv-commercial-emit-fidelity-stats` + `query:sv-verification-self-evolution-stats` + `query:sv-closedloop-slo`)
+- `m3-completeness-pct` — M3 (commercial fidelity + roundtrip + long-running harness): (3 found / 3) × 10000 (expected list: `query:primitives-hotpath-slo-stats` + `compile:inline-pass-stats` + `compile:dead-coercion-stats`)
+- `m4-completeness-pct` — M4 (multi-agent concurrent SLOs): (2 found / 2) × 10000 (expected list: `query:workspace-closedloop-orchestration-stats` + `query:workspace-closedloop-fiber-eda-stats`)
+- `blocking-issues-count` — fixed count of related open EDA issues (4: `#749` + `#738` + `#725` + `#724` per body; the closed ones `#726` + `#748` + `#772` + `#774` are not counted)
+- `recommendation` — derived (0 = production-ready if all milestones ≥ 9500; 1 = near-ready if all ≥ 8000; 2 = in-progress if all ≥ 5000; 3 = early-stage if any < 5000)
+- `schema` — 777 (drift sentinel)
+
+Distinct from any individual EDA primitive (`#726`/`#748`/`#772`/`#774`/`#749`/`#738`/`#725`/`724`): each individual primitive covers one specific surface; `#777` is the FIRST observability surface that aggregates the **EDA production readiness composite** — 4 milestone completeness pcts + blocking-issues-count + recommendation — as a single deployment-grade production-readiness dashboard the Agent reads to decide whether the EDA stdlib is production-ready for commercial verification self-evolution.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
