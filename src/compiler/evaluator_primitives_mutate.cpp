@@ -2832,7 +2832,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // guard acquire.
                 ev.workspace_flat_->rollback_since(initial_log_size);
                 ev.workspace_flat_->rollback_atomic_batch();
-                ev.atomic_batch_rollbacks_++;
+                ev.atomic_batch_domain_.rollbacks++;
                 ev.bump_edsl_nested_atomic_rollback();
                 if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
                                               static_cast<std::size_t>(batch_snap_id)))
@@ -2861,7 +2861,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (!ok) {
             ev.workspace_flat_->rollback_since(initial_log_size);
             ev.workspace_flat_->rollback_atomic_batch();
-            ev.atomic_batch_rollbacks_++;
+            ev.atomic_batch_domain_.rollbacks++;
             ev.bump_edsl_nested_atomic_rollback();
             if (batch_snap_id >= 0 &&
                 ev.restore_workspace_snapshot_under_lock(static_cast<std::size_t>(batch_snap_id)))
@@ -2886,14 +2886,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // that were suppressed). Records the saved-bumps count.
         std::uint64_t saved = ev.workspace_flat_->atomic_batch_bumps_saved();
         ev.workspace_flat_->commit_atomic_batch();
-        ev.atomic_batch_count_++;
-        ev.atomic_batch_ops_total_ += op_count;
-        ev.atomic_batch_bumps_saved_total_ += saved;
+        ev.atomic_batch_domain_.count++;
+        ev.atomic_batch_domain_.ops_total += op_count;
+        ev.atomic_batch_domain_.bumps_saved_total += saved;
         ev.commit_atomic_batch_pinning();
         // Issue #396 Phase 3: track fiber-context commits for
         // the "executed-under-concurrent-fiber" heuristic.
         if (in_fiber) {
-            ev.atomic_batch_in_fiber_total_.fetch_add(1, std::memory_order_relaxed);
+            ev.atomic_batch_domain_.in_fiber_total.fetch_add(1, std::memory_order_relaxed);
         }
         return make_bool(true);
     });

@@ -33,6 +33,7 @@ std::string Evaluator::run_typecheck_no_lock() {
         return std::string("no workspace");
     if (!type_registry_) {
         type_registry_ = new aura::core::TypeRegistry();
+        owns_type_registry_ = true;
     }
     auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
     aura::compiler::TypeChecker tc(treg);
@@ -74,6 +75,7 @@ bool Evaluator::run_typecheck_no_lock_bool() {
         return true;
     if (!type_registry_) {
         type_registry_ = new aura::core::TypeRegistry();
+        owns_type_registry_ = true;
     }
     auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
     aura::compiler::TypeChecker tc(treg);
@@ -113,6 +115,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         return true;
     if (!type_registry_) {
         type_registry_ = new aura::core::TypeRegistry();
+        owns_type_registry_ = true;
     }
     auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
     aura::compiler::TypeChecker tc(treg);

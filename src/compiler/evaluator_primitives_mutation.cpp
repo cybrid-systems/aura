@@ -566,13 +566,13 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     // batch runtime state) and #529 (rollback stats).
     //
     // Fields (7):
-    //   - batch-commits              Evaluator atomic_batch_count_
-    //   - rollback-triggers        Evaluator atomic_batch_rollbacks_
+    //   - batch-commits              Evaluator atomic_batch_domain_.count
+    //   - rollback-triggers        Evaluator atomic_batch_domain_.rollbacks
     //   - pinned-refs-last-batch     current pinned ref set size
     //   - pinned-refs-total          lifetime pinned ref captures
     //   - snapshot-captures          batches that took :snapshot?
     //   - snapshot-rollbacks         ast:restore on batch failure
-    //   - suppressed-bumps-total     atomic_batch_bumps_saved_total_
+    //   - suppressed-bumps-total     atomic_batch_domain_.bumps_saved_total
     //   - schema == 737
     add("query:atomic-batch-snapshot-stats-hash", [&ev](const auto&) -> EvalValue {
         auto* ht = FlatHashTable::create(16);

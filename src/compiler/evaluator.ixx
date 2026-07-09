@@ -89,7 +89,8 @@ export struct PrimMeta {
 export class Primitives {
 public:
     Primitives();
-    std::optional<PrimFn> lookup(const std::string& n) const pre(!n.empty());
+    // Issue #914: string_view primary API (string& converts implicitly).
+    [[nodiscard]] std::optional<PrimFn> lookup(std::string_view n) const pre(!n.empty());
     void add(const std::string& name, PrimFn fn) { add(name, std::move(fn), PrimMeta{}); }
     void add(const std::string& name, PrimFn fn, PrimMeta meta) {
         const std::size_t slot = ordered_names_.size();
@@ -953,7 +954,8 @@ public:
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
-    void set_type_registry(void* reg) { type_registry_ = reg; }
+    void set_type_registry(void* reg); // Issue #911: defined in evaluator_ctor.cpp
+    // Issue #912: opaque handle remains void*; typed cast at call sites with core import.
     // Issue #252: closure dual-path observability. Pass a
     // CompilerMetrics* (or nullptr to disable). The Evaluator's
     // apply_closure increments the closure_* counters on the
@@ -1975,7 +1977,11 @@ private:
         tag_arity_index_synced_size_ = 0;
         tag_arity_index_synced_gen_ = 0;
     }
+    // Issue #912: typed pointer preferred; void* kept for set_type_registry
+    // ABI with CompilerService (core::TypeRegistry lives in another module).
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
+    // Issue #911: true when type_registry_ was allocated by this Evaluator.
+    bool owns_type_registry_ = false;
     std::unordered_map<ClosureId, Closure> closures_;
     // Issue #145 P0 follow-up: shared_mutex protects closures_
     // against concurrent access from fiber threads (e.g. a
@@ -2289,51 +2295,26 @@ private:
     // `total_mutations()`. Relaxed-ordering for stats; not
     // used for control flow.
     std::atomic<std::uint64_t> total_mutations_{0};
-    // Issue #192: atomic-batch observability counters. Bumped
-    // by the (mutate:atomic-batch) primitive. Relaxed-ordering
-    // (stats-only). Separate from total_mutations_ so dashboards
-    // can distinguish "N mutations applied" from "M atomic
-    // batches completed (covering K of those N)".
-    std::atomic<std::uint64_t> atomic_batch_count_{0};
-    std::atomic<std::uint64_t> atomic_batch_ops_total_{0};
-    std::atomic<std::uint64_t> atomic_batch_rollbacks_{0};
-    // Issue #250: how many per-op generation bumps were
-    // suppressed by atomic batches (lifetime total). The
-    // sum of (saved per batch) across all successful batches.
-    // Exposed via observability snapshot.
-    std::atomic<std::uint64_t> atomic_batch_bumps_saved_total_{0};
-    // Issue #790: mutate:atomic-batch + pinned snapshot
-    // observability (Refine/Consolidate #737/#761
-    // non-duplicative). 2 NEW atomics for the
-    // (query:mutate-batch-atomic-stats, schema 790)
-    // primitive:
-    // - atomic_batch_cross_fiber_steals_total: # of
-    //   fiber steals that fired while inside a
-    //   suppressed atomic batch (Phase 2+ to wire from
-    //   restore_post_yield_or_rollback + MutationBoundary
-    //   Guard when inside suppressed batch).
-    // - atomic_batch_hygiene_violations_total: # of
-    //   hygiene violations detected during an atomic
-    //   batch body (Phase 2+ to wire from
-    //   hygiene_protected_error path inside batch).
-    std::atomic<std::uint64_t> atomic_batch_cross_fiber_steals_total_{0};
-    std::atomic<std::uint64_t> atomic_batch_hygiene_violations_total_{0};
-    // Issue #396 Phase 3: how many atomic-batch commits
-    // happened while the bridge fiber setter was active
-    // (i.e. we were in serve mode and a fiber context
-    // existed at batch commit). Heuristic for "ran under
-    // concurrent fiber pressure" — the hook is null in
-    // test-binary paths (no serve) so the counter stays 0
-    // in those. Exposed via (atomic-batch:stats) hash key
-    // "executed-under-concurrent-fiber".
-    std::atomic<std::uint64_t> atomic_batch_in_fiber_total_{0};
-    // Issue #737: atomic-batch snapshot + StableNodeRef pinning
-    // for multi-round AI edit loops. Pinned refs stay valid
-    // across the suppressed-bump window; refreshed on commit.
+    // Issue #895: pack atomic-batch counters on one cache line to
+    // reduce false sharing vs adjacent panic/self-evolution domains.
+    struct alignas(64) AtomicBatchDomain {
+        std::atomic<std::uint64_t> count{0};
+        std::atomic<std::uint64_t> ops_total{0};
+        std::atomic<std::uint64_t> rollbacks{0};
+        std::atomic<std::uint64_t> bumps_saved_total{0};
+        std::atomic<std::uint64_t> cross_fiber_steals_total{0};
+        std::atomic<std::uint64_t> hygiene_violations_total{0};
+        std::atomic<std::uint64_t> in_fiber_total{0};
+        std::atomic<std::uint64_t> pinned_refs_total{0};
+        std::atomic<std::uint64_t> snapshot_rollbacks{0};
+        std::atomic<std::uint64_t> snapshot_captures{0};
+    };
+    AtomicBatchDomain atomic_batch_domain_{};
+    // Back-compat field names → domain members (reference aliases not
+    // allowed for atomics; use macros-free accessors via domain only).
+    // Call sites updated to atomic_batch_domain_.* (#895).
+    // Issue #737: pinned StableNodeRef list (non-atomic).
     std::vector<aura::ast::FlatAST::StableNodeRef> atomic_batch_pinned_refs_{};
-    std::atomic<std::uint64_t> atomic_batch_pinned_refs_total_{0};
-    std::atomic<std::uint64_t> atomic_batch_snapshot_rollbacks_{0};
-    std::atomic<std::uint64_t> atomic_batch_snapshot_captures_{0};
     std::int64_t last_atomic_batch_snapshot_id_ = -1;
     // Issue #453: panic checkpoint lifecycle metrics. Bumped by
     // the bridge hooks (g_transfer_panic_checkpoint, etc.) when
@@ -8441,23 +8422,23 @@ public:
 
     // ── Issue #250: atomic-batch accessors ───────────
     [[nodiscard]] std::uint64_t atomic_batch_count() const noexcept {
-        return atomic_batch_count_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.count.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_ops_total() const noexcept {
-        return atomic_batch_ops_total_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.ops_total.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_rollbacks() const noexcept {
-        return atomic_batch_rollbacks_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.rollbacks.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_bumps_saved_total() const noexcept {
-        return atomic_batch_bumps_saved_total_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.bumps_saved_total.load(std::memory_order_relaxed);
     }
     // Issue #396 Phase 3: lifetime total of atomic-batch
     // commits that ran while the bridge fiber setter was
     // active (i.e. in serve mode with a fiber context).
     // Heuristic for "ran under concurrent fiber pressure".
     [[nodiscard]] std::uint64_t atomic_batch_in_fiber_total() const noexcept {
-        return atomic_batch_in_fiber_total_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.in_fiber_total.load(std::memory_order_relaxed);
     }
     // Issue #737: atomic-batch snapshot + pinning accessors.
     void begin_atomic_batch_pinning() noexcept {
@@ -8485,8 +8466,8 @@ public:
     void commit_atomic_batch_pinning() noexcept {
         if (!workspace_flat_)
             return;
-        atomic_batch_pinned_refs_total_.fetch_add(atomic_batch_pinned_refs_.size(),
-                                                  std::memory_order_relaxed);
+        atomic_batch_domain_.pinned_refs_total.fetch_add(atomic_batch_pinned_refs_.size(),
+                                                         std::memory_order_relaxed);
         const auto gen = workspace_flat_->generation();
         for (auto& ref : atomic_batch_pinned_refs_) {
             if (ref.id < workspace_flat_->size())
@@ -8500,22 +8481,22 @@ public:
     void record_atomic_batch_snapshot_capture(std::int64_t snap_id) noexcept {
         last_atomic_batch_snapshot_id_ = snap_id;
         if (snap_id >= 0)
-            atomic_batch_snapshot_captures_.fetch_add(1, std::memory_order_relaxed);
+            atomic_batch_domain_.snapshot_captures.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_atomic_batch_snapshot_rollback() noexcept {
-        atomic_batch_snapshot_rollbacks_.fetch_add(1, std::memory_order_relaxed);
+        atomic_batch_domain_.snapshot_rollbacks.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::size_t atomic_batch_pinned_ref_count() const noexcept {
         return atomic_batch_pinned_refs_.size();
     }
     [[nodiscard]] std::uint64_t atomic_batch_pinned_refs_total() const noexcept {
-        return atomic_batch_pinned_refs_total_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.pinned_refs_total.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_snapshot_rollbacks() const noexcept {
-        return atomic_batch_snapshot_rollbacks_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.snapshot_rollbacks.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_snapshot_captures() const noexcept {
-        return atomic_batch_snapshot_captures_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.snapshot_captures.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::int64_t last_atomic_batch_snapshot_id() const noexcept {
         return last_atomic_batch_snapshot_id_;
@@ -8617,20 +8598,20 @@ public:
     //   #757 macro-hygiene-provenance-stats
     //   violations counter which is general)
     void bump_atomic_batch_cross_fiber_steal() noexcept {
-        atomic_batch_cross_fiber_steals_total_.fetch_add(1, std::memory_order_relaxed);
+        atomic_batch_domain_.cross_fiber_steals_total.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_atomic_batch_hygiene_violation() noexcept {
-        atomic_batch_hygiene_violations_total_.fetch_add(1, std::memory_order_relaxed);
+        atomic_batch_domain_.hygiene_violations_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #790: public accessors for the 2 NEW
     // atomic_batch_* fields (mirror the existing
-    // atomic_batch_count() / atomic_batch_rollbacks_
+    // atomic_batch_count() / atomic_batch_domain_.rollbacks
     // / atomic_batch_bumps_saved_total() pattern).
     [[nodiscard]] std::uint64_t atomic_batch_cross_fiber_steals_total() const noexcept {
-        return atomic_batch_cross_fiber_steals_total_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.cross_fiber_steals_total.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_hygiene_violations_total() const noexcept {
-        return atomic_batch_hygiene_violations_total_.load(std::memory_order_relaxed);
+        return atomic_batch_domain_.hygiene_violations_total.load(std::memory_order_relaxed);
     }
     void bump_suppressed_bump_lost_on_gc() noexcept {
         suppressed_bump_lost_on_gc_.fetch_add(1, std::memory_order_relaxed);
@@ -9077,10 +9058,28 @@ public:
     // pointer table that service.ixx sets on CompilerService init.
     // This keeps workspace_mtx_ private to Evaluator (no global mutex)
     // while still letting global C functions participate in locking.
+    // Issue #917: prefer WorkspaceSharedLock / WorkspaceUniqueLock RAII below.
+    // Raw hooks remain for JIT C ABI (aura_lock_workspace_*).
     void lock_workspace_shared() { workspace_mtx_.lock_shared(); }
     void unlock_workspace_shared() { workspace_mtx_.unlock_shared(); }
     void lock_workspace_unique() { workspace_mtx_.lock(); }
     void unlock_workspace_unique() { workspace_mtx_.unlock(); }
+
+    // Issue #917 Phase 1: RAII workspace locks for C++ call sites.
+    class WorkspaceSharedLock {
+        std::shared_lock<std::shared_mutex> lock_;
+
+    public:
+        explicit WorkspaceSharedLock(Evaluator& ev)
+            : lock_(ev.workspace_mtx_) {}
+    };
+    class WorkspaceUniqueLock {
+        std::unique_lock<std::shared_mutex> lock_;
+
+    public:
+        explicit WorkspaceUniqueLock(Evaluator& ev)
+            : lock_(ev.workspace_mtx_) {}
+    };
     // Non-blocking shared lock for read paths that may be
     // called from within the IR interpreter (e.g. snapshot()
     // bumping marker counts from inside a query primitive). If
