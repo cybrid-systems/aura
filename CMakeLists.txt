@@ -3935,6 +3935,38 @@ add_dependencies(all_test_issue_targets test_issue_769)
 aura_add_issue_test(test_issue_770)
 aura_issue_test_link_llvm_jit(test_issue_770)
 add_dependencies(all_test_issue_targets test_issue_770)
+# Issue #771: Strengthen OwnershipEnv + escape analysis integration
+# with typed mutation + fiber scheduler — already-shipped
+# verification (scope-limited close, mirror #770). The 4 body items
+# all ship on latest main via prior commits:
+# 1. OwnershipEnv mutation-aware flow tracking — #224/#283/#411/#487/#598
+# 2. EscapeAnalysisPass (pass_manager.ixx:1803) +
+#    EscapeAnalysisWrap (service.ixx:232, DirtyAwarePass static_assert at
+#    line 299) — closure captures post-mutate
+# 3. Ownership-specific tests — 8+ existing test binaries:
+#    test_hardware_resource_linear_ownership (29/29),
+#    test_linear_ownership_post_mutate_validation_runtime (16/16),
+#    test_linear_ownership_postmutate_guard_steal_envframe (16/16),
+#    test_linear_ownership_runtime_enforcement_post_mutate (14/14),
+#    test_linear_ownership_occurrence_predicate_mutate (16/16),
+#    test_linear_ownership_guardshape_post_mutate (15/15),
+#    test_linear_ownership_incremental_post_mutate_task2 (19/19),
+#    test_prompt6_linear_jit_l2_post_invalidate_arena_gc (14/14)
+# 4. Runtime linear metadata checks (body says "Optional") — #638
+#    (linear-ownership-safety-stats) + #800 (linear-postmutate-
+#    fidelity-stats) + #763 (linear-ownership-gc-compiler-stats)
+# Metrics surface for items 1-4 ships via 4 primitives (already in
+# kObservabilityStatsPrimitives):
+# - (query:linear-occurrence-mutate-stats, #747, schema 747)
+# - (query:linear-postmutate-fidelity-stats, #800, schema 800)
+# - (query:linear-ownership-runtime-stats, #598)
+# - (query:linear-ownership-gc-compiler-stats, #763, schema 763)
+# 5 ACs: EscapeAnalysis API + linear-occurrence/postmutate primitives +
+# linear-ownership-runtime/gc-compiler primitives + OwnershipEnv
+# regression + sibling observability (#770/#768/#767/#766).
+aura_add_issue_test(test_issue_771)
+aura_issue_test_link_llvm_jit(test_issue_771)
+add_dependencies(all_test_issue_targets test_issue_771)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
