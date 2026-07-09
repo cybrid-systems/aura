@@ -12,11 +12,40 @@ import std;
 
 namespace aura::serve {
 
-extern "C" void aura_evaluator_probe_linear_on_steal();
-extern "C" void aura_evaluator_bump_steal_deferred_violation();
-extern "C" void aura_evaluator_bump_mutation_steal_attempt();
-extern "C" void aura_evaluator_bump_steal_arena_yield();
-extern "C" void aura_evaluator_bump_steal_outermost_enforced();
+// Evaluator hooks are weak so non-evaluator link units (test_concurrent,
+// test_spec_jit) succeed without evaluator_fiber_mutation.cpp. Strong
+// defs live there; fiber_bridge.cpp provides weak no-ops when present.
+// With a weak *reference*, a missing definition resolves to nullptr
+// (ELF) rather than a hard link error — required for ASAN/UBSAN jobs
+// that may rebuild worker.cpp against a stale fiber_bridge.o.
+extern "C" {
+void aura_evaluator_probe_linear_on_steal() __attribute__((weak));
+void aura_evaluator_bump_steal_deferred_violation() __attribute__((weak));
+void aura_evaluator_bump_mutation_steal_attempt() __attribute__((weak));
+void aura_evaluator_bump_steal_arena_yield() __attribute__((weak));
+void aura_evaluator_bump_steal_outermost_enforced() __attribute__((weak));
+}
+
+static inline void call_steal_arena_yield() noexcept {
+    if (aura_evaluator_bump_steal_arena_yield)
+        aura_evaluator_bump_steal_arena_yield();
+}
+static inline void call_steal_outermost_enforced() noexcept {
+    if (aura_evaluator_bump_steal_outermost_enforced)
+        aura_evaluator_bump_steal_outermost_enforced();
+}
+static inline void call_probe_linear_on_steal() noexcept {
+    if (aura_evaluator_probe_linear_on_steal)
+        aura_evaluator_probe_linear_on_steal();
+}
+static inline void call_steal_deferred_violation() noexcept {
+    if (aura_evaluator_bump_steal_deferred_violation)
+        aura_evaluator_bump_steal_deferred_violation();
+}
+static inline void call_mutation_steal_attempt() noexcept {
+    if (aura_evaluator_bump_mutation_steal_attempt)
+        aura_evaluator_bump_mutation_steal_attempt();
+}
 
 // ── Constructor ───────────────────────────────────────
 
@@ -148,7 +177,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
     {
         const auto ph = gc_state_.phase.load(std::memory_order_acquire);
         if (ph != GCPhase::None) {
-            aura_evaluator_bump_steal_arena_yield();
+            call_steal_arena_yield();
             return false;
         }
     }
@@ -196,8 +225,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 stolen->bump_steal_outermost_mutation_boundary();
                 stolen->bump_cross_fiber_mutation_safe_steal();
             }
-            aura_evaluator_probe_linear_on_steal();
-            aura_evaluator_bump_steal_outermost_enforced();
+            call_probe_linear_on_steal();
+            call_steal_outermost_enforced();
             local_queue_.push(stolen);
             return true;
         }
@@ -215,7 +244,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // depth>0 inner defers (since the safe
             // path is taken above when depth==0).
             stolen->bump_steal_inner_mutation_boundary_deferred();
-            aura_evaluator_bump_steal_deferred_violation();
+            call_steal_deferred_violation();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
                 1, std::memory_order_relaxed);
             metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,
@@ -342,7 +371,7 @@ void WorkerThread::run() {
                     if (ring_victim_id != id_) {
                         metrics::adaptive_steal_stats().ring_steal_attempts.fetch_add(
                             1, std::memory_order_relaxed);
-                        aura_evaluator_bump_mutation_steal_attempt();
+                        call_mutation_steal_attempt();
                         if (my_metrics) {
                             my_metrics->steal_attempts.fetch_add(1, std::memory_order_relaxed);
                         }
@@ -366,7 +395,7 @@ void WorkerThread::run() {
                             if (victim_id == id_)
                                 continue;
                             auto* victim = scheduler_->worker(victim_id);
-                            aura_evaluator_bump_mutation_steal_attempt();
+                            call_mutation_steal_attempt();
                             if (my_metrics) {
                                 my_metrics->steal_attempts.fetch_add(1, std::memory_order_relaxed);
                             }
