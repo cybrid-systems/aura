@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <cassert> // Issue #354: assert for yield-during-boundary check
 #include <unistd.h>
+#include <atomic>
 
 import std;
 #if AURA_HAVE_EVENTFD
@@ -15,6 +16,14 @@ import std;
 #endif
 
 namespace aura::serve {
+
+// Issue #810: process-wide Fiber/Scheduler init path counters.
+// Exceptions still used for true resource failures (mmap/eventfd);
+// successful construction records AuraResult-style ok path.
+static std::atomic<std::uint64_t> g_fiber_init_aura_result_ok{0};
+static std::atomic<std::uint64_t> g_fiber_init_aura_result_err{0};
+static std::atomic<std::uint64_t> g_scheduler_init_aura_result_ok{0};
+static std::atomic<std::uint64_t> g_scheduler_init_aura_result_err{0};
 
 extern "C" void aura_evaluator_resume_fiber_migration();
 
@@ -153,8 +162,10 @@ Fiber::Fiber(Func func, size_t stack_size)
 
     void* base =
         ::mmap(nullptr, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (base == MAP_FAILED)
+    if (base == MAP_FAILED) {
+        g_fiber_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
         throw std::system_error(errno, std::generic_category(), "fiber mmap stack");
+    }
 
     // Guard page at the bottom (to catch stack underflow from overflow)
     ::mprotect(base, guard_size, PROT_NONE);
@@ -165,6 +176,7 @@ Fiber::Fiber(Func func, size_t stack_size)
     eventfd_ = ::eventfd(0, EFD_NONBLOCK);
     if (eventfd_ == -1) {
         ::munmap(base, alloc_size);
+        g_fiber_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
         throw std::system_error(errno, std::generic_category(), "fiber eventfd");
     }
 #else
@@ -179,6 +191,7 @@ Fiber::Fiber(Func func, size_t stack_size)
         ::munmap(base, alloc_size);
         if (eventfd_ >= 0)
             ::close(eventfd_);
+        g_fiber_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
         throw std::system_error(errno, std::generic_category(), "fiber getcontext");
     }
 
@@ -190,6 +203,30 @@ Fiber::Fiber(Func func, size_t stack_size)
     uint32_t id_high = static_cast<uint32_t>(id_ >> 32);
     uint32_t id_low = static_cast<uint32_t>(id_ & 0xFFFFFFFF);
     ::makecontext(&ctx_, reinterpret_cast<void (*)()>(&trampoline), 2, id_high, id_low);
+    g_fiber_init_aura_result_ok.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #810 C-linkage readers for observability queries.
+extern "C" std::uint64_t aura_fiber_init_aura_result_ok_total() {
+    return g_fiber_init_aura_result_ok.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_fiber_init_aura_result_err_total() {
+    return g_fiber_init_aura_result_err.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total() {
+    return g_scheduler_init_aura_result_ok.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total() {
+    return g_scheduler_init_aura_result_err.load(std::memory_order_relaxed);
+}
+extern "C" void aura_fiber_init_record_err() {
+    g_fiber_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" void aura_scheduler_init_record_ok() {
+    g_scheduler_init_aura_result_ok.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" void aura_scheduler_init_record_err() {
+    g_scheduler_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
 }
 
 // ── Destructor ───────────────────────────────────────

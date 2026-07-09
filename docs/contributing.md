@@ -527,7 +527,8 @@ ordinary failures. Prefer:
 - `EvalResult` (today) or `aura::core::AuraResult<T>` (migration)
 - `CompilerService::eval_as_aura_result` for new Agent control-loop code
 
-See [`docs/design/core/exception_policy.md`](design/core/exception_policy.md)
+See [`docs/design/error-handling-policy.md`](design/error-handling-policy.md)
+(authoritative) and [`docs/design/core/exception_policy.md`](design/core/exception_policy.md)
 for the full audit table and migration phases.
 
 ## 减法原则 (Subtraction Principle) — Issue #871

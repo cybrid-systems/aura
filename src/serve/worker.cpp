@@ -15,6 +15,8 @@ namespace aura::serve {
 extern "C" void aura_evaluator_probe_linear_on_steal();
 extern "C" void aura_evaluator_bump_steal_deferred_violation();
 extern "C" void aura_evaluator_bump_mutation_steal_attempt();
+extern "C" void aura_evaluator_bump_steal_arena_yield();
+extern "C" void aura_evaluator_bump_steal_outermost_enforced();
 
 // ── Constructor ───────────────────────────────────────
 
@@ -140,6 +142,17 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
     if (!victim || victim == this)
         return false;
 
+    // Issue #812: do not steal while this worker is in a GC safepoint
+    // phase (Requested/Sweeping). Coordinate with Arena compact / GC
+    // long ops so steal never races pointer fixup.
+    {
+        const auto ph = gc_state_.phase.load(std::memory_order_acquire);
+        if (ph != GCPhase::None) {
+            aura_evaluator_bump_steal_arena_yield();
+            return false;
+        }
+    }
+
     // Try to steal a fiber from the victim's deque.
     // The deque only contains fibers that yielded (Explicit/MutationBoundary),
     // but we also check is_stealable() as a safety measure against stale fibers
@@ -184,6 +197,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 stolen->bump_cross_fiber_mutation_safe_steal();
             }
             aura_evaluator_probe_linear_on_steal();
+            aura_evaluator_bump_steal_outermost_enforced();
             local_queue_.push(stolen);
             return true;
         }

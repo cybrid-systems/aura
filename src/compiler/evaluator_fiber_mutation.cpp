@@ -762,12 +762,28 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
 }
 
 // Issue #683: linear ownership enforcement on work-steal.
+
+// Issue #812: steal+arena+GC coordination hooks
+extern "C" void aura_evaluator_bump_steal_arena_yield() {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_steal_arena_yield_during_compact();
+}
+extern "C" void aura_evaluator_bump_steal_outermost_enforced() {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_steal_outermost_only_enforced();
+}
+
 extern "C" void aura_evaluator_probe_linear_on_steal() {
     auto* ev = Evaluator::yield_hook_evaluator();
     if (!ev)
         return;
     ev->probe_arena_auto_policy_on_fiber_transition();
     ev->probe_linear_ownership_on_fiber_steal();
+    ev->bump_steal_linear_probe_on_success();
     ev->bump_concurrent_safety_steal_boundary_success();
     if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
                                           ev->current_bridge_epoch())) {

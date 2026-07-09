@@ -149,3 +149,7 @@ Primitive 是 C++ `evaluator_primitives_*.cpp` 里注册到 `Primitives` 表的 
 ## 贡献运行时
 
 读 [contributing.md](contributing.md)（FlatAST 不变式、锁、defuse）。历史设计文档在 `git tag docs-archive-pre-2026-06`。
+
+## Error handling policy (Issues #807 / #809)
+
+Hot paths use `AuraResult` / `EvalResult`; exceptions only for OOM, init failures, and hard invariants. See [`design/error-handling-policy.md`](design/error-handling-policy.md).

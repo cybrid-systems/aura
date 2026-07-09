@@ -1591,7 +1591,14 @@ extern "C" _Unwind_Reason_Code aura_personality(int version, _Unwind_Action acti
 // For now, the full integration is deferred (the JIT's
 // OpRaise still uses the structured-EH switch-dispatch).
 // This is the SCAFFOLD for the future LLVM-native path.
+// Issue #811: guest-language exception bridge counter (Aura Raise).
+// Process-wide; query:jit-exception-bridge-stats also reads CompilerMetrics.
+static std::atomic<std::uint64_t> g_jit_guest_exception_bridge_total{0};
+extern "C" std::uint64_t aura_jit_guest_exception_bridge_total() {
+    return g_jit_guest_exception_bridge_total.load(std::memory_order_relaxed);
+}
 extern "C" void aura_throw_exception(uint64_t payload) {
+    g_jit_guest_exception_bridge_total.fetch_add(1, std::memory_order_relaxed);
     // The standard _Unwind_Exception header is 8 bytes
     // (exception_class) + a pointer-sized field for the
     // exception_cleanup + cache-aligned user data. Aura

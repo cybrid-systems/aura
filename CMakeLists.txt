@@ -4543,6 +4543,12 @@ add_dependencies(all_test_issue_targets test_primitives_hotpath_registry_slo)
 aura_add_issue_test(test_aura_result_error_policy)
 aura_issue_test_link_llvm_jit(test_aura_result_error_policy)
 add_dependencies(all_test_issue_targets test_aura_result_error_policy)
+# Issues #809–#817 Phase 1 batch: error policy, fiber/JIT init,
+# steal+arena+GC, Guard, production health, macro IR, edsl-struct,
+# dirty-epoch marker observability + light wiring.
+aura_add_issue_test(test_issues_809_817_batch)
+aura_issue_test_link_llvm_jit(test_issues_809_817_batch)
+add_dependencies(all_test_issue_targets test_issues_809_817_batch)
 # Issue #804: P0 stdlib-Registry unified primitive
 # error semantics + provenance tracking + recovery
 # hooks (refine/consolidate #585 + #751 + #775 + #478).

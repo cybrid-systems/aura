@@ -1,6 +1,11 @@
 // src/core/error.ixx — Issue #474: Aura unified error type
 // (Phase 0 foundation, scope-limited close).
 //
+// POLICY (Issues #807/#809): Hot paths use AuraResult / EvalResult;
+// exceptions only for OOM / init / hard invariants. Authoritative
+// doc: docs/design/error-handling-policy.md
+//       docs/design/core/exception_policy.md
+//
 // The Aura codebase mixes three error-handling patterns
 // (std::expected<Result, Diagnostic>, throw / catch /
 // std::logic_error, contract_assert) with no documented

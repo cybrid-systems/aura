@@ -15,6 +15,10 @@ import std;
 
 namespace aura::serve {
 
+extern "C" void aura_scheduler_init_record_ok();
+extern "C" void aura_scheduler_init_record_err();
+
+
 // ── Constructor ───────────────────────────────────────
 
 Scheduler::Scheduler(int num_workers) {
@@ -34,7 +38,8 @@ Scheduler::Scheduler(int num_workers) {
 #if AURA_HAVE_EPOLL
     epoll_fd_ = ::epoll_create1(0);
     if (epoll_fd_ == -1)
-        throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
+        aura_scheduler_init_record_err();
+    throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
 
     // Register stdin (fd 0) with edge-triggered mode so the IO
     // thread can wake when input arrives (REPL / serve-async mode).
@@ -77,6 +82,9 @@ Scheduler::Scheduler(int num_workers) {
 
     // Initialize GC collector
     gc_collector_ = std::make_unique<GCCollector>(this);
+
+    // Issue #810: successful init path (AuraResult-style ok counter).
+    aura_scheduler_init_record_ok();
 }
 
 // ── Destructor ───────────────────────────────────────
