@@ -4810,29 +4810,34 @@ aura_issue_test_link_llvm_jit(test_primitives_hotpath_registry_slo)
 # monadic and_then, classic eval regression.
 aura_add_issue_test(test_aura_result_error_policy)
 aura_issue_test_link_llvm_jit(test_aura_result_error_policy)
-# Issues #809–#817 Phase 1 batch: error policy, fiber/JIT init,
-# steal+arena+GC, Guard, production health, macro IR, edsl-struct,
-# dirty-epoch marker observability + light wiring.
+# Legacy Phase 1 batches — superseded by domain suites below.
+# EXCLUDE_FROM_ALL: on-demand only (`ninja test_issues_809_817_batch`).
 aura_add_issue_test(test_issues_809_817_batch)
 aura_issue_test_link_llvm_jit(test_issues_809_817_batch)
-add_dependencies(all_test_issue_targets test_issues_809_817_batch)
-# Issues #819–#829 Phase 1 batch: pattern hygiene provenance,
-# mutate atomic-batch e2e, JIT fiber-ex/L2/opcode, terminal render,
-# render FFI/hotpath, shape contracts, IR-SoA enforcement, arena live defrag.
+set_target_properties(test_issues_809_817_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 aura_add_issue_test(test_issues_819_829_batch)
 aura_issue_test_link_llvm_jit(test_issues_819_829_batch)
-add_dependencies(all_test_issue_targets test_issues_819_829_batch)
+set_target_properties(test_issues_819_829_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 # Remaining open issues Phase 1 batch (schemas 395,830-840,842-870,872,875-886).
 # Legacy alias — prefer test_obs_schema_matrix (domain suite).
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
 target_include_directories(test_open_issues_phase1_batch PRIVATE tests)
-# Domain suite: table-driven observability schemas (tests/suites/).
-# Extend obs_schema_cases.hpp instead of adding test_issue_N for stats ACs.
+# Domain suites (preferred): issue id = label, not a new binary.
+# Extend suites/ or these TUs instead of tests/test_issue_N.cpp.
 aura_add_issue_test(test_obs_schema_matrix)
 aura_issue_test_link_llvm_jit(test_obs_schema_matrix)
 target_include_directories(test_obs_schema_matrix PRIVATE tests)
 add_dependencies(all_test_issue_targets test_obs_schema_matrix)
+aura_add_issue_test(test_domain_fiber_orchestration)
+aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
+add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
+aura_add_issue_test(test_domain_hygiene_dirty)
+aura_issue_test_link_llvm_jit(test_domain_hygiene_dirty)
+add_dependencies(all_test_issue_targets test_domain_hygiene_dirty)
+aura_add_issue_test(test_domain_typed_mutate)
+aura_issue_test_link_llvm_jit(test_domain_typed_mutate)
+add_dependencies(all_test_issue_targets test_domain_typed_mutate)
 # Issue #804: P0 stdlib-Registry unified primitive
 # error semantics + provenance tracking + recovery
 # hooks (refine/consolidate #585 + #751 + #775 + #478).

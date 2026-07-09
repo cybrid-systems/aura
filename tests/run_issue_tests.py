@@ -57,6 +57,7 @@ def discover_test_issue_binaries() -> list[str]:
         if (
             name.startswith("test_issues_")
             or name.startswith("test_obs_")
+            or name.startswith("test_domain_")
             or name.startswith("test_aura_result_")
             or (name.startswith("test_issue_") and name not in bundled)
             or name.startswith("test_primitives_hotpath")
@@ -88,6 +89,7 @@ def discover_test_issue_targets() -> list[str]:
                 name.startswith("test_issues_")
                 or name.startswith("test_issue_")
                 or name.startswith("test_obs_")
+                or name.startswith("test_domain_")
                 or name.startswith("test_aura_result_")
                 or name.startswith("test_primitives_hotpath")
             )
