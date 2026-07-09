@@ -418,6 +418,15 @@ void WorkerThread::run() {
                 continue; // go back to Phase 1
             } else {
                 steal_budget_.record_failure();
+                // Issue #921: starvation backoff — exponential pause
+                // after consecutive failed steals so busy victims are
+                // not hammered under high contention. Caps at ~1ms.
+                // Reuses StealBudget::consecutive_failures (no extra state).
+                const int fails = steal_budget_.consecutive_failures;
+                if (fails >= 4) {
+                    const unsigned shift = static_cast<unsigned>(std::min(10, fails - 3));
+                    std::this_thread::sleep_for(std::chrono::microseconds(1u << shift));
+                }
             }
         }
 

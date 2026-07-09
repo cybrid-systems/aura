@@ -35,7 +35,36 @@ namespace aura::compiler {
 
 using namespace aura::ir;
 using namespace aura::diag;
-using namespace types;
+// Issue #918 Phase 1
+using types::as_bool;
+using types::as_cell_id;
+using types::as_closure_id;
+using types::as_float;
+using types::as_int;
+using types::as_pair_idx;
+using types::as_primitive_slot;
+using types::as_string_idx;
+using types::EvalValue;
+using types::is_bool;
+using types::is_cell;
+using types::is_closure;
+using types::is_error;
+using types::is_float;
+using types::is_int;
+using types::is_pair;
+using types::is_primitive;
+using types::is_string;
+using types::is_void;
+using types::make_bool;
+using types::make_cell;
+using types::make_closure;
+using types::make_error;
+using types::make_float;
+using types::make_int;
+using types::make_pair;
+using types::make_primitive;
+using types::make_string;
+using types::make_void;
 
 // Issue #638: bump linear ownership + GuardShape runtime safety
 // counters when an instruction carries linear_ownership_state.
@@ -404,8 +433,59 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
             }
 
+            // Issue #910 Phase 2: class-table outer dispatch for hot
+            // arithmetic/compare/logic (dense secondary switch, less
+            // branch pressure than one 54-way switch on every instr).
+            const auto oclass = opcode_class(instr.opcode);
+            if (oclass == IROpcodeClass::Arith) {
+                auto& a = locals[ops[1]];
+                auto& b = locals[ops[2]];
+                const bool fl = is_float(a) || is_float(b);
+                switch (instr.opcode) {
+                    case IROpcode::Add:
+                        locals[ops[0]] = fl ? make_float(coerce_f(a) + coerce_f(b))
+                                            : make_int(coerce_i(a) + coerce_i(b));
+                        break;
+                    case IROpcode::Sub:
+                        locals[ops[0]] = fl ? make_float(coerce_f(a) - coerce_f(b))
+                                            : make_int(coerce_i(a) - coerce_i(b));
+                        break;
+                    case IROpcode::Mul:
+                        locals[ops[0]] = fl ? make_float(coerce_f(a) * coerce_f(b))
+                                            : make_int(coerce_i(a) * coerce_i(b));
+                        break;
+                    case IROpcode::Div: {
+                        if (fl) {
+                            auto y = coerce_f(b);
+                            if (y == 0.0)
+                                return std::unexpected(
+                                    Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
+                                        .with_suggestion("use a non-zero denominator"));
+                            locals[ops[0]] = make_float(coerce_f(a) / y);
+                        } else {
+                            auto y = coerce_i(b);
+                            if (y == 0)
+                                return std::unexpected(
+                                    Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
+                                        .with_suggestion("use a non-zero denominator"));
+                            locals[ops[0]] = make_int(coerce_i(a) / y);
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                continue; // next instruction
+            }
+
             switch (instr.opcode) {
                 case IROpcode::Nop:
+                    break;
+                // Arith handled above via kIROpcodeClass table (#910).
+                case IROpcode::Add:
+                case IROpcode::Sub:
+                case IROpcode::Mul:
+                case IROpcode::Div:
                     break;
 
                 case IROpcode::ConstI64: {
@@ -460,53 +540,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         locals[ops[0]] = make_void();
                     break;
 
-                case IROpcode::Add: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b))
-                        locals[ops[0]] = make_float(coerce_f(a) + coerce_f(b));
-                    else
-                        locals[ops[0]] = make_int(coerce_i(a) + coerce_i(b));
-                    break;
-                }
-                case IROpcode::Sub: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b))
-                        locals[ops[0]] = make_float(coerce_f(a) - coerce_f(b));
-                    else
-                        locals[ops[0]] = make_int(coerce_i(a) - coerce_i(b));
-                    break;
-                }
-                case IROpcode::Mul: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b))
-                        locals[ops[0]] = make_float(coerce_f(a) * coerce_f(b));
-                    else
-                        locals[ops[0]] = make_int(coerce_i(a) * coerce_i(b));
-                    break;
-                }
-                case IROpcode::Div: {
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b)) {
-                        auto y = coerce_f(b);
-                        if (y == 0.0)
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
-                                    .with_suggestion("use a non-zero denominator"));
-                        locals[ops[0]] = make_float(coerce_f(a) / y);
-                    } else {
-                        auto y = coerce_i(b);
-                        if (y == 0)
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
-                                    .with_suggestion("use a non-zero denominator"));
-                        locals[ops[0]] = make_int(coerce_i(a) / y);
-                    }
-                    break;
-                }
+                    // Add/Sub/Mul/Div: handled by IROpcodeClass::Arith table path (#910).
 
                 case IROpcode::Eq: {
                     // Content-aware equality (not just raw pointer comparison)

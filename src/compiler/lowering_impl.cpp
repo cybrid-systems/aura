@@ -1467,6 +1467,9 @@ static std::uint32_t lower_flat_expr(
 // The set is then used by the inference loop in
 // lower_to_ir_impl to flag Define / Lambda bodies that
 // contain these nodes as Evolution.
+//
+// Issue #896 Phase 2: generation-stamped thread_local cache so
+// repeated lowerings of the same FlatAST skip the O(N) rescan.
 static void collect_mutation_calls(const FlatAST& flat,
                                    std::unordered_set<aura::ast::NodeId>& out) {
     for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
@@ -1488,6 +1491,25 @@ static void collect_mutation_calls(const FlatAST& flat,
         // lower_to_ir_impl's inference loop via the pool.
         out.insert(i);
     }
+}
+
+// Issue #896: cache Call-site set keyed by FlatAST address + generation.
+// Invalidated when FlatAST generation bumps (structural mutation).
+static const std::unordered_set<aura::ast::NodeId>& mutation_calls_cached(const FlatAST& flat) {
+    struct Cache {
+        const FlatAST* flat = nullptr;
+        std::uint16_t gen = 0;
+        std::unordered_set<aura::ast::NodeId> nodes;
+    };
+    static thread_local Cache cache;
+    const auto gen = flat.generation();
+    if (cache.flat == &flat && cache.gen == gen)
+        return cache.nodes;
+    cache.nodes.clear();
+    collect_mutation_calls(flat, cache.nodes);
+    cache.flat = &flat;
+    cache.gen = gen;
+    return cache.nodes;
 }
 
 // Issue #896: memoized subtree reachability — O(N) total instead of
@@ -1547,9 +1569,9 @@ static IRModule lower_to_ir_impl(
     // that calls another function marked Evolution) is
     // Phase 2b/3 (call graph + mutation impact analysis).
     {
-        // Issue #896: one collect + shared memo for all Define/Lambda probes.
-        std::unordered_set<aura::ast::NodeId> mutating_nodes;
-        collect_mutation_calls(flat, mutating_nodes);
+        // Issue #896: generation-cached Call set + shared memo for all
+        // Define/Lambda probes (O(N) total, reuses cache across re-lowers).
+        const auto& mutating_nodes = mutation_calls_cached(flat);
         std::vector<std::int8_t> mut_memo(flat.size(), static_cast<std::int8_t>(-1));
         for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
             if (i >= flat.size())

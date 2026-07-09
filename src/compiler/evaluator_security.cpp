@@ -14,7 +14,8 @@ import aura.core.ast;
 
 namespace aura::compiler {
 
-using namespace security;
+// Issue #918: explicit using-declarations (no using-namespace).
+using security::kCapWildcard;
 
 bool Evaluator::has_capability(std::string_view needed) const noexcept {
     if (!sandbox_mode_)

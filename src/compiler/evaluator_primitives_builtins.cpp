@@ -14,7 +14,42 @@ namespace aura::compiler {
 
 using aura::compiler::pure::is_truthy;
 using types::EvalValue;
-using namespace types;
+// Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
+using types::as_bool;
+using types::as_cell_id;
+using types::as_closure_id;
+using types::as_float;
+using types::as_hash_idx;
+using types::as_int;
+using types::as_pair_idx;
+using types::as_primitive_slot;
+using types::as_string_idx;
+using types::as_vector_idx;
+using types::EvalValue;
+using types::is_bool;
+using types::is_cell;
+using types::is_closure;
+using types::is_error;
+using types::is_float;
+using types::is_hash;
+using types::is_int;
+using types::is_pair;
+using types::is_primitive;
+using types::is_string;
+using types::is_vector;
+using types::is_void;
+using types::make_bool;
+using types::make_cell;
+using types::make_closure;
+using types::make_error;
+using types::make_float;
+using types::make_hash;
+using types::make_int;
+using types::make_pair;
+using types::make_primitive;
+using types::make_string;
+using types::make_vector;
+using types::make_void;
 
 namespace {
 
@@ -165,9 +200,9 @@ std::optional<PrimFn> Primitives::lookup(std::string_view n) const {
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
 // Implemented inline in class for lookup_cstr; slot_for_name O(1) via reverse index.
-std::size_t Primitives::slot_for_name(const std::string& name) const {
-    // Issue #899: O(1) via reverse index (populated in add()).
-    auto it = name_to_slot_.find(std::string_view(name));
+std::size_t Primitives::slot_for_name(std::string_view name) const {
+    // Issue #899/#914: O(1) via reverse index (populated in add()).
+    auto it = name_to_slot_.find(name);
     if (it != name_to_slot_.end())
         return it->second;
     return std::numeric_limits<std::size_t>::max();
