@@ -17,7 +17,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <cstring>
+// Note: do NOT #include <cstring> here. Consumers that also
+// `import std;` hit GCC 16 redefinition of string.h overloads
+// (memchr/strchr/…) when cstring is pulled in after the module.
 #include <string>
 #include <functional>
 #include <vector>

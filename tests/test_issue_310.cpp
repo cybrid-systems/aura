@@ -27,14 +27,13 @@
 
 
 #include "test_harness.hpp"
+#include "reflect/tag_dispatch.hh" // before import std (plain header)
 
 import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
 import aura.core.ast;
-
-#include "reflect/tag_dispatch.hh"
 
 namespace aura_issue_310_detail {
 #define CHECK_EQ_LOCAL(a, b, msg)                                                                  \
