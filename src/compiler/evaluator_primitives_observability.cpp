@@ -937,6 +937,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // outermost boundary + steal-resume version
     // refresh).
     "query:compiler-invalidate-guard-steal-stats",
+
+    // Issue #793: JIT/AOT hot-swap + GuardShape +
+    // linear + EnvFrame version_ consistency
+    // observability (Non-duplicative consolidation/
+    // refinement of #785/#787/#755). 4 NEW
+    // CompilerMetrics atomics + 4 NEW bump helpers
+    // on Evaluator + 1 NEW primitive that exposes
+    // the new fields + 2 hardcoded "not yet" flags
+    // for Phase 2+ deferred work (reload-deopt-
+    // version-hooks-active + jit-emit-runtime-
+    // version-checks-active).
+    "query:jit-aot-hotswap-fidelity-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -15723,6 +15735,164 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("steal-resume-version-refresh-active", steal_resume_version_refresh_active);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 792);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #793: query:jit-aot-hotswap-fidelity-stats
+    // — P0 JIT/AOT hot-swap + GuardShape + linear +
+    // EnvFrame version_ consistency observability
+    // (Non-duplicative consolidation/refinement of
+    // #785/#787/#755).
+    //
+    // 4 NEW CompilerMetrics atomics + 4 NEW bump
+    // helpers on Evaluator + 1 NEW primitive (hybrid
+    // enforcement-side pattern, mirror #792). The
+    // body explicitly cites 4 directly-bumpable
+    // fidelity signals the production JIT/AOT
+    // hot-swap needs to expose.
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - deopt-forced-on-reload-total
+    //       jit_deopt_forced_on_reload_total
+    //       (# of GuardShape deopts forced on AOT
+    //       reload / refcount swap; bumped from
+    //       Evaluator::bump_jit_deopt_forced_on_
+    //       reload() at the planned Phase 2+
+    //       aura_jit.cpp + aura_jit_bridge.cpp
+    //       hot-swap path wire-up per body "On
+    //       successful refcount swap or region
+    //       reload, if any active fiber holds
+    //       MutationBoundary or has live
+    //       GuardShape/Apply on affected func,
+    //       force deopt (set generic_block) or
+    //       bump shape_id / linear_state for
+    //       affected IR")
+    //   - linear-violation-prevented-total
+    //       jit_linear_violation_prevented_total
+    //       (# of linear ownership violations
+    //       prevented via JIT runtime version check
+    //       / MoveOp invalidation; bumped from
+    //       Evaluator::bump_jit_linear_violation_
+    //       prevented() at the planned Phase 2+
+    //       aura_jit.cpp JIT codegen for Linear*
+    //       wire-up per body "Emit additional
+    //       runtime checks (version_ probe or
+    //       bridge_epoch compare) before deopt
+    //       decision or MoveOp")
+    //   - env-version-sync-hits-total
+    //       jit_env_version_sync_hits_total
+    //       (# of EnvFrame::version_ sync hits
+    //       triggered on JIT-executed closure
+    //       steal resume / post-rollback; bumped
+    //       from
+    //       Evaluator::bump_jit_env_version_sync_
+    //       hit() at the planned Phase 2+
+    //       evaluator_fiber_mutation.cpp +
+    //       apply_closure wire-up per body "On
+    //       steal resume / post-rollback, for
+    //       JIT-executed closures, trigger
+    //       GuardShape re-evaluation or linear
+    //       re-wrap if version_ or epoch drifted")
+    //   - guardshape-stale-reject-total
+    //       jit_guardshape_stale_reject_total
+    //       (# of JIT GuardShape stale rejections
+    //       caught when expected_shape / shape_id
+    //       mismatch detected at apply_closure
+    //       time; bumped from
+    //       Evaluator::bump_jit_guardshape_stale_
+    //       reject() at the planned Phase 2+
+    //       ir_executor.ixx + evaluator.ixx
+    //       apply_closure bridge_epoch check
+    //       wire-up per body "IRInterpreter
+    //       handling of GuardShape/linear +
+    //       apply_closure (bridge_epoch check)")
+    //   - reload-deopt-version-hooks-active
+    //       hardcoded 0 (Phase 2+ to wire
+    //       reload-deopt version hooks in
+    //       aura_jit.cpp + aura_jit_bridge.cpp
+    //       hot-swap path)
+    //   - jit-emit-runtime-version-checks-active
+    //       hardcoded 0 (Phase 2+ to wire additional
+    //       runtime checks in JIT codegen for
+    //       GuardShape / Linear* ops)
+    //   - recommendation
+    //       derived 0/1/2/3 from the 2 deferred
+    //       flags + activity signal
+    //   - schema == 793
+    add("query:jit-aot-hotswap-fidelity-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t deopt_forced =
+            m ? static_cast<std::int64_t>(
+                    m->jit_deopt_forced_on_reload_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t linear_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->jit_linear_violation_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t env_sync =
+            m ? static_cast<std::int64_t>(
+                    m->jit_env_version_sync_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t guardshape_stale =
+            m ? static_cast<std::int64_t>(
+                    m->jit_guardshape_stale_reject_total.load(std::memory_order_relaxed))
+              : 0;
+        // 2 hardcoded "not yet" flags for Phase 2+
+        // deferred work.
+        const std::int64_t reload_deopt_version_hooks_active = 0;
+        const std::int64_t jit_emit_runtime_version_checks_active = 0;
+        // Recommendation: derived from the 2 deferred
+        // flags + activity signal. Phase 1 only (both
+        // deferred flags == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (reload_deopt_version_hooks_active == 1 && jit_emit_runtime_version_checks_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (reload_deopt_version_hooks_active == 1 ||
+                 jit_emit_runtime_version_checks_active == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (deopt_forced > 0 || linear_prevented > 0 || env_sync > 0 || guardshape_stale > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+        else
+            recommendation = 3; // early-stage (no JIT/AOT fidelity activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("deopt-forced-on-reload-total", deopt_forced);
+        insert_kv("linear-violation-prevented-total", linear_prevented);
+        insert_kv("env-version-sync-hits-total", env_sync);
+        insert_kv("guardshape-stale-reject-total", guardshape_stale);
+        insert_kv("reload-deopt-version-hooks-active", reload_deopt_version_hooks_active);
+        insert_kv("jit-emit-runtime-version-checks-active", jit_emit_runtime_version_checks_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 793);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

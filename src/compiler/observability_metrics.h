@@ -2300,6 +2300,54 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_version_refresh_hits_total{0};
     std::atomic<std::uint64_t> compiler_guardshape_deopt_on_steal_total{0};
     std::atomic<std::uint64_t> compiler_live_closure_stale_prevented_total{0};
+    // Issue #793: JIT/AOT hot-swap + GuardShape + linear +
+    // EnvFrame version_ consistency observability
+    // (Non-duplicative consolidation/refinement of
+    // #785/#787/#755). 4 NEW atomics for the
+    // (query:jit-aot-hotswap-fidelity-stats,
+    // schema 793) primitive:
+    //   - jit_deopt_forced_on_reload_total: # of
+    //     GuardShape deopts forced on AOT reload /
+    //     refcount swap (Phase 2+ to wire from
+    //     aura_jit.cpp + aura_jit_bridge.cpp
+    //     hot-swap path per body "On successful
+    //     refcount swap or region reload, if any
+    //     active fiber holds MutationBoundary or
+    //     has live GuardShape/Apply on affected
+    //     func, force deopt (set generic_block) or
+    //     bump shape_id / linear_state for affected
+    //     IR")
+    //   - jit_linear_violation_prevented_total: # of
+    //     linear ownership violations prevented via
+    //     JIT runtime version check / MoveOp
+    //     invalidation (Phase 2+ to wire from
+    //     aura_jit.cpp JIT codegen for Linear* per
+    //     body "Emit additional runtime checks
+    //     (version_ probe or bridge_epoch compare)
+    //     before deopt decision or MoveOp")
+    //   - jit_env_version_sync_hits_total: # of
+    //     EnvFrame::version_ sync hits triggered
+    //     on JIT-executed closure steal resume /
+    //     post-rollback (Phase 2+ to wire from
+    //     evaluator_fiber_mutation.cpp + apply_
+    //     closure per body "On steal resume /
+    //     post-rollback, for JIT-executed
+    //     closures, trigger GuardShape re-evaluation
+    //     or linear re-wrap if version_ or epoch
+    //     drifted")
+    //   - jit_guardshape_stale_reject_total: # of
+    //     JIT GuardShape stale rejections caught
+    //     when expected_shape / shape_id mismatch
+    //     detected at apply_closure time (Phase 2+
+    //     to wire from ir_executor.ixx +
+    //     evaluator.ixx apply_closure bridge_epoch
+    //     check per body "IRInterpreter handling
+    //     of GuardShape/linear + apply_closure
+    //     (bridge_epoch check)")
+    std::atomic<std::uint64_t> jit_deopt_forced_on_reload_total{0};
+    std::atomic<std::uint64_t> jit_linear_violation_prevented_total{0};
+    std::atomic<std::uint64_t> jit_env_version_sync_hits_total{0};
+    std::atomic<std::uint64_t> jit_guardshape_stale_reject_total{0};
     // Issue #763: runtime linear_ownership_state enforcement +
     // GC root registration for IRClosure/EnvFrame in
     // invalidate_function and live-closure paths (non-duplicative
