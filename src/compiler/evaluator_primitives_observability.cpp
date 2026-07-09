@@ -131,6 +131,8 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:sv-commercial-emit-fidelity-stats",
     // Issue #802 — SV verification self-evolution closed-loop stats
     "query:sv-verification-self-evolution-stats",
+    // Issue #805 — registry + list apply hot-path load SLO
+    "query:primitives-hotpath-registry-stats",
     // Issue #803 — SEVA Long-Running Concurrent Verification
     // Evolution SLO observability (P0 EDA-SV-verification-
     // production long-running concurrent multi-agent harness
@@ -8371,6 +8373,86 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     // current SLOs + how to add new prim benchmark + regression
     // policy are all follow-up work (each is a dedicated
     // session in tests/ + CI pipeline + docs).
+    // Issue #805: query:primitives-hotpath-registry-stats — registry +
+    // list apply hot-path under mutation/fiber load (non-duplicative
+    // with #776 hotpath-slo composite which is stability-score based;
+    // this surface is sample-based ns/apply + extension reg cost).
+    //
+    // Fields (5 + sentinel):
+    //   - fastpath-hit-rate-pct   derived fastpath_hits / call_total × 10000
+    //   - ns-per-apply            accum_ns / samples (0 if no samples)
+    //   - linear-cost             hotpath_registry_linear_cost_total
+    //   - extension-reg-ns        hotpath_registry_extension_reg_ns_total
+    //   - bench-runs              hotpath_registry_bench_runs_total
+    //   - schema == 805
+    add("query:primitives-hotpath-registry-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t call_total = 0;
+        std::uint64_t fastpath_hits = 0;
+        std::uint64_t samples = 0;
+        std::uint64_t ns_accum = 0;
+        std::uint64_t linear_cost = 0;
+        std::uint64_t ext_ns = 0;
+        std::uint64_t bench_runs = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            call_total = m->primitive_call_total.load(std::memory_order_relaxed);
+            fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
+            samples = m->hotpath_registry_apply_samples_total.load(std::memory_order_relaxed);
+            ns_accum = m->hotpath_registry_ns_accum_total.load(std::memory_order_relaxed);
+            linear_cost = m->hotpath_registry_linear_cost_total.load(std::memory_order_relaxed);
+            ext_ns = m->hotpath_registry_extension_reg_ns_total.load(std::memory_order_relaxed);
+            bench_runs = m->hotpath_registry_bench_runs_total.load(std::memory_order_relaxed);
+        }
+        // 0-10000 fixed-point percent. Align with #776: divide by
+        // (call_total + 1) so vacuous baseline is stable, then clamp
+        // at 10000 — fastpath_hits can exceed call_total when the two
+        // counters are bumped on partially overlapping paths.
+        std::int64_t fastpath_pct = 10000;
+        if (call_total > 0) {
+            fastpath_pct = static_cast<std::int64_t>((fastpath_hits * 10000ull) / (call_total + 1));
+            if (fastpath_pct > 10000)
+                fastpath_pct = 10000;
+        }
+        const std::int64_t ns_per_apply =
+            samples == 0 ? 0 : static_cast<std::int64_t>(ns_accum / samples);
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("fastpath-hit-rate-pct", fastpath_pct);
+        insert_kv("ns-per-apply", ns_per_apply);
+        insert_kv("linear-cost", static_cast<std::int64_t>(linear_cost));
+        insert_kv("extension-reg-ns", static_cast<std::int64_t>(ext_ns));
+        insert_kv("bench-runs", static_cast<std::int64_t>(bench_runs));
+        insert_kv("schema", 805);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     add("query:primitives-hotpath-slo-stats", [&ev](const auto&) -> EvalValue {
         std::uint64_t call_total = 0;
         std::uint64_t pair_total = 0;

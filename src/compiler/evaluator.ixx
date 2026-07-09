@@ -5619,6 +5619,30 @@ public:
             m->stable_ref_steal_auto_refresh_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #805: registry + list-apply hot-path load samples.
+    void bump_hotpath_registry_apply_sample(std::uint64_t ns,
+                                            std::uint64_t linear_cost = 0) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->hotpath_registry_apply_samples_total.fetch_add(1, std::memory_order_relaxed);
+            m->hotpath_registry_ns_accum_total.fetch_add(ns, std::memory_order_relaxed);
+            if (linear_cost)
+                m->hotpath_registry_linear_cost_total.fetch_add(linear_cost,
+                                                                std::memory_order_relaxed);
+        }
+    }
+    void bump_hotpath_registry_bench_run(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->hotpath_registry_bench_runs_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_hotpath_registry_extension_reg_ns(std::uint64_t ns) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->hotpath_registry_extension_reg_ns_total.fetch_add(ns, std::memory_order_relaxed);
+        }
+    }
     [[nodiscard]] std::uint64_t get_stable_ref_provenance_enforced() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
