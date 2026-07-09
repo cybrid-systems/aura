@@ -19,22 +19,27 @@
 ;   32	 trees of depth 6	 check: -32
 ;   long lived tree of depth 6	 check: -1
 ;
-; IMPORTANT — Aura GC limitation (recorded honestly):
-;   Aura has no mark-sweep GC running during evaluation. Cons cells live in
-;   ev.pairs_ which is never reclaimed mid-run (gc-temp deliberately skips
-;   it; gc-heap clears it but also erases the live long-lived tree and the
-;   string literals, segfaulting the loop). The reference's whole point is
-;   allocation/deallocation pressure, so this cons variant OOM-segfaults
-;   once ev.pairs_ passes ~tens of millions of cells.
+; IMPORTANT — root cause of the N≥8 failure (corrected diagnosis):
+;   NOT OOM. Peak RSS at the N=10 crash is only ~57 MB, and ev.pairs_ stays
+;   near 12k cells — the pair/vector heaps are fine. The real failure is that
+;   Aura's named-let loops have NO tail-call optimization: every `loop` /
+;   `inner` iteration is a real recursive C++ call into eval_flat whose frame
+;   never releases. With the default 8 MB thread stack, ~450 iterations deep
+;   the stack overflows; the SIGSEGV is swallowed and the process exits 0
+;   mid-loop with no further output.
 ;
-;   Measured ceiling: completes through N=7 (~0.8s, peak RSS modest).
-;   N≥8: prints the stretch-tree line, then SIGSEGV (139) in the depth-4
-;   loop (16k trees × 31 cells ≈ 500k cells/depth, on top of stretch +
-;   longlived); peak RSS at crash ≈ 56 GB. N=10 (the default) hits this.
+;   Workaround: raise the stack before running —
+;     ( ulimit -s unlimited; B=10 ./build-gcc16/aura < binarytrees_cons.aura )
+;   This completes N=10 with byte-identical output to the reference.
 ;
-;   For a deeper-running variant on this same runtime see the array-backed
-;   companion: tests/bench/binarytrees_array.aura (one allocation per tree,
-;   completes through N=8).
+;   A second, independent cap remains: the evaluator aborts named-let at
+;   "recursion depth exceeded (>2000)", so even with an unlimited stack
+;   N=12+ fails (stretch line printed, then the >2000 error). MAX_EVAL_DEPTH
+;   =50000 is NOT the binding constraint; the >2000 check is.
+;
+;   Without the ulimit workaround, the measured ceiling on the default stack
+;   is N=7 (cons) / N=8 (array). See the array-backed companion
+;   (binarytrees_array.aura) for the same diagnostic.
 ;
 ; Why the function is named `tree-check` (not `check`):
 ;   `check` shadows a built-in primitive; with a recursive body the shadow
