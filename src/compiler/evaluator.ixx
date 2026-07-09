@@ -5782,6 +5782,278 @@ public:
             m->dirty_epoch_hygiene_drift_prevented_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issues #819–#829 Phase 1 bumps
+    void bump_pattern_hygiene_provenance_predicate_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_hygiene_provenance_predicate_hits_total.fetch_add(n,
+                                                                         std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_hygiene_index_enforced_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_hygiene_index_enforced_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_hygiene_yield_enforced(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_hygiene_yield_enforced_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_hygiene_safe_span_enforced(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_hygiene_safe_span_enforced_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_batch_e2e_started(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batch_e2e_started_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_batch_e2e_suppressed_bumps(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batch_e2e_suppressed_bumps_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_batch_e2e_hygiene_in_batch(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batch_e2e_hygiene_in_batch_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_batch_e2e_cross_fiber_steals(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batch_e2e_cross_fiber_steals_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_batch_e2e_pinned_snapshot(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batch_e2e_pinned_snapshot_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_batch_e2e_panic_recoveries(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_batch_e2e_panic_recoveries_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_fiber_ex_stack_local(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_fiber_ex_stack_local_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_fiber_ex_cross_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_fiber_ex_cross_prevented_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_fiber_ex_deopt_interpreter(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_fiber_ex_deopt_interpreter_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_l2_spec_pair_fastpath(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->l2_spec_pair_fastpath_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_l2_spec_deopt_version(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->l2_spec_deopt_version_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_l2_spec_guardshape_narrow(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->l2_spec_guardshape_narrow_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_l2_spec_linear_probe(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->l2_spec_linear_probe_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_opcode_cov_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->opcode_cov_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_opcode_cov_unhandled_hot(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->opcode_cov_unhandled_hot_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_opcode_cov_per_fn_deopt(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->opcode_cov_per_fn_deopt_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_term_render_clear(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->term_render_clear_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_term_render_draw_batch(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->term_render_draw_batch_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_term_render_present(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->term_render_present_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_term_render_dirty_region(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->term_render_dirty_region_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_term_render_present_ns(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->term_render_present_ns_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_ffi_batch_call(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_ffi_batch_calls_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_ffi_zerocopy_view(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_ffi_zerocopy_views_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_ffi_crossing_ns(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_ffi_crossing_ns_accum_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_ffi_allocs_frame(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_ffi_allocs_frame_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_hp_dirty_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hp_dirty_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_hp_present_delta(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hp_present_delta_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_hp_jit_coverage(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hp_jit_coverage_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_hp_mutation_impact(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hp_mutation_impact_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_contract_hotpath_check(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_contract_hotpath_checks_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_consteval_dispatch_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_consteval_dispatch_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_stability_transition(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_stability_transitions_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_irsoa_enforce_dirty_skip(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->irsoa_enforce_dirty_skips_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_irsoa_enforce_impact_hybrid(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->irsoa_enforce_impact_hybrid_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_irsoa_enforce_pmr_util_pct(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->irsoa_enforce_pmr_util_pct.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_irsoa_enforce_relower_savings(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->irsoa_enforce_relower_savings_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_ldefrag_auto_trigger(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_ldefrag_auto_triggers_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_ldefrag_savings(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_ldefrag_savings_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_ldefrag_fiber_yield(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_ldefrag_fiber_yield_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_ldefrag_shape_inval(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_ldefrag_shape_inval_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_ldefrag_pointer_fixup(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_ldefrag_pointer_fixup_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     [[nodiscard]] std::uint64_t get_stable_ref_provenance_enforced() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

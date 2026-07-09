@@ -1307,6 +1307,63 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dirty_epoch_macro_introduced_hits_total{0};
     std::atomic<std::uint64_t> dirty_epoch_targeted_relower_total{0};
     std::atomic<std::uint64_t> dirty_epoch_hygiene_drift_prevented_total{0};
+    // ── Issues #819–#829 Phase 1 observability (non-dup surfaces) ──
+    // #819 pattern hygiene provenance + yield enforcement layer
+    std::atomic<std::uint64_t> pattern_hygiene_provenance_predicate_hits_total{0};
+    std::atomic<std::uint64_t> pattern_hygiene_index_enforced_hits_total{0};
+    std::atomic<std::uint64_t> pattern_hygiene_yield_enforced_total{0};
+    std::atomic<std::uint64_t> pattern_hygiene_safe_span_enforced_total{0};
+    // #820 mutate atomic-batch e2e observability (refine #790)
+    std::atomic<std::uint64_t> mutate_batch_e2e_started_total{0};
+    std::atomic<std::uint64_t> mutate_batch_e2e_suppressed_bumps_total{0};
+    std::atomic<std::uint64_t> mutate_batch_e2e_hygiene_in_batch_total{0};
+    std::atomic<std::uint64_t> mutate_batch_e2e_cross_fiber_steals_total{0};
+    std::atomic<std::uint64_t> mutate_batch_e2e_pinned_snapshot_total{0};
+    std::atomic<std::uint64_t> mutate_batch_e2e_panic_recoveries_total{0};
+    // #821 JIT fiber-local exception
+    std::atomic<std::uint64_t> jit_fiber_ex_stack_local_total{0};
+    std::atomic<std::uint64_t> jit_fiber_ex_cross_prevented_total{0};
+    std::atomic<std::uint64_t> jit_fiber_ex_deopt_interpreter_total{0};
+    // #822 L2 specialization maturity
+    std::atomic<std::uint64_t> l2_spec_pair_fastpath_total{0};
+    std::atomic<std::uint64_t> l2_spec_deopt_version_total{0};
+    std::atomic<std::uint64_t> l2_spec_guardshape_narrow_total{0};
+    std::atomic<std::uint64_t> l2_spec_linear_probe_total{0};
+    // #823 opcode coverage deopt controller
+    std::atomic<std::uint64_t> opcode_cov_hits_total{0};
+    std::atomic<std::uint64_t> opcode_cov_unhandled_hot_total{0};
+    std::atomic<std::uint64_t> opcode_cov_per_fn_deopt_total{0};
+    // #824 terminal render production primitives
+    std::atomic<std::uint64_t> term_render_clear_total{0};
+    std::atomic<std::uint64_t> term_render_draw_batch_total{0};
+    std::atomic<std::uint64_t> term_render_present_total{0};
+    std::atomic<std::uint64_t> term_render_dirty_region_total{0};
+    std::atomic<std::uint64_t> term_render_present_ns_total{0};
+    // #825 render FFI buffer
+    std::atomic<std::uint64_t> render_ffi_batch_calls_total{0};
+    std::atomic<std::uint64_t> render_ffi_zerocopy_views_total{0};
+    std::atomic<std::uint64_t> render_ffi_crossing_ns_accum_total{0};
+    std::atomic<std::uint64_t> render_ffi_allocs_frame_total{0};
+    // #826 render hotpath dirty/JIT
+    std::atomic<std::uint64_t> render_hp_dirty_hits_total{0};
+    std::atomic<std::uint64_t> render_hp_present_delta_total{0};
+    std::atomic<std::uint64_t> render_hp_jit_coverage_total{0};
+    std::atomic<std::uint64_t> render_hp_mutation_impact_total{0};
+    // #827 shape/value contracts consteval
+    std::atomic<std::uint64_t> sv_contract_hotpath_checks_total{0};
+    std::atomic<std::uint64_t> sv_consteval_dispatch_hits_total{0};
+    std::atomic<std::uint64_t> sv_stability_transitions_total{0};
+    // #828 IR-SoA full enforcement
+    std::atomic<std::uint64_t> irsoa_enforce_dirty_skips_total{0};
+    std::atomic<std::uint64_t> irsoa_enforce_impact_hybrid_total{0};
+    std::atomic<std::uint64_t> irsoa_enforce_pmr_util_pct{0};
+    std::atomic<std::uint64_t> irsoa_enforce_relower_savings_total{0};
+    // #829 arena live defrag
+    std::atomic<std::uint64_t> arena_ldefrag_auto_triggers_total{0};
+    std::atomic<std::uint64_t> arena_ldefrag_savings_total{0};
+    std::atomic<std::uint64_t> arena_ldefrag_fiber_yield_total{0};
+    std::atomic<std::uint64_t> arena_ldefrag_shape_inval_total{0};
+    std::atomic<std::uint64_t> arena_ldefrag_pointer_fixup_total{0};
     // Issue #620: StableNodeRef provenance query counter.
     // Bumped on every (query:stable-ref-provenance) call so the
     // Agent can see how often the provenance surface is being

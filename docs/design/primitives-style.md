@@ -132,6 +132,17 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:macro-introduced-provenance-stats)` | 815 | SyntaxMarker→IR provenance |
 | `(query:edsl-struct-meta-stats)` | 816 | edsl:define-struct validate meta |
 | `(query:dirty-epoch-marker-stats)` | 817 | MacroIntroduced dirty/epoch |
+| `(query:pattern-hygiene-provenance-stats)` | 819 | SafePCVSpan + index + hygiene provenance |
+| `(query:mutate-atomic-batch-e2e-stats)` | 820 | atomic-batch pinned snapshot e2e |
+| `(query:jit-fiber-exception-stats)` | 821 | fiber-local exception stack |
+| `(query:l2-specialization-deopt-stats)` | 822 | L2 pair/GuardShape deopt |
+| `(query:opcode-coverage-deopt-stats)` | 823 | opcode coverage + per-fn deopt |
+| `(query:terminal-render-production-stats)` | 824 | terminal clear/draw/present |
+| `(query:render-ffi-buffer-stats)` | 825 | batch FFI + zero-copy buffer |
+| `(query:render-hotpath-stats)` | 826 | dirty/delta + JIT render hotpath |
+| `(query:shape-value-hotpath-contracts-stats)` | 827 | consteval + contracts hotpath |
+| `(query:ir-soa-full-enforcement-stats)` | 828 | DirtyAware + DepGraph enforcement |
+| `(query:arena-live-defrag-stats)` | 829 | live defrag + fiber yield |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)

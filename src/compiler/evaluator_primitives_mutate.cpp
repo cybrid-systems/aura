@@ -2738,6 +2738,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "ops list must be a list (use (list) for empty)");
         if (!ev.workspace_flat_)
             return mev("no-workspace", "no FlatAST available");
+        // Issue #820: e2e atomic-batch observability (refine #790).
+        ev.bump_mutate_batch_e2e_started();
         ev.begin_atomic_batch_pinning();
         std::int64_t batch_snap_id = -1;
         if (want_snapshot) {
@@ -2748,6 +2750,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (is_int(snap_result)) {
                     batch_snap_id = as_int(snap_result);
                     ev.record_atomic_batch_snapshot_capture(batch_snap_id);
+                    ev.bump_mutate_batch_e2e_pinned_snapshot(); // Issue #820
                 }
             }
         }

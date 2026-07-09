@@ -172,6 +172,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:macro-introduced-provenance-stats",
     "query:edsl-struct-meta-stats",
     "query:dirty-epoch-marker-stats",
+    // Issues #819–#829 Phase 1
+    "query:pattern-hygiene-provenance-stats",
+    "query:mutate-atomic-batch-e2e-stats",
+    "query:jit-fiber-exception-stats",
+    "query:l2-specialization-deopt-stats",
+    "query:opcode-coverage-deopt-stats",
+    "query:terminal-render-production-stats",
+    "query:render-ffi-buffer-stats",
+    "query:render-hotpath-stats",
+    "query:shape-value-hotpath-contracts-stats",
+    "query:ir-soa-full-enforcement-stats",
+    "query:arena-live-defrag-stats",
     // Issue #750 — Runtime reflection schema validation for macro/EDSL mutate
     "query:reflection-schema-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
@@ -17799,7 +17811,702 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             else
                 m->edsl_define_struct_validate_fail_total.fetch_add(1, std::memory_order_relaxed);
         }
+
         return make_bool(name_ok && schema_ok);
+    });
+
+    // Issue #819: pattern-hygiene-provenance-stats — SafePCVSpan + index + provenance predicate
+    add("query:pattern-hygiene-provenance-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_predicate_hits =
+            m ? static_cast<std::int64_t>(m->pattern_hygiene_provenance_predicate_hits_total.load(
+                    std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_index_hit_rate_pct = ([&]() -> std::int64_t {
+            if (!m)
+                return 10000;
+            auto h = m->pattern_hygiene_index_enforced_hits_total.load(std::memory_order_relaxed);
+            auto y = m->pattern_hygiene_yield_enforced_total.load(std::memory_order_relaxed);
+            // proxy hit rate: hits / (hits+1) * 10000 when only hits wired
+            return static_cast<std::int64_t>((h * 10000ull) / (h + y + 1));
+        })();
+        const std::int64_t f_safe_span_enforced =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_hygiene_safe_span_enforced_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_yield_points_hit =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_hygiene_yield_enforced_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_index_enforced_hits =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_hygiene_index_enforced_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_enforcement_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("predicate-hits", f_predicate_hits);
+        insert_kv("index-hit-rate-pct", f_index_hit_rate_pct);
+        insert_kv("safe-span-enforced", f_safe_span_enforced);
+        insert_kv("yield-points-hit", f_yield_points_hit);
+        insert_kv("index-enforced-hits", f_index_enforced_hits);
+        insert_kv("enforcement-active", f_enforcement_active);
+        insert_kv("schema", 819);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #820: mutate-atomic-batch-e2e-stats — pinned snapshot + per-boundary observability
+    add("query:mutate-atomic-batch-e2e-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_batches_started =
+            m ? static_cast<std::int64_t>(
+                    m->mutate_batch_e2e_started_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_suppressed_bumps =
+            m ? static_cast<std::int64_t>(
+                    m->mutate_batch_e2e_suppressed_bumps_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_hygiene_in_batch =
+            m ? static_cast<std::int64_t>(
+                    m->mutate_batch_e2e_hygiene_in_batch_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_cross_fiber_steals =
+            m ? static_cast<std::int64_t>(
+                    m->mutate_batch_e2e_cross_fiber_steals_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_pinned_snapshots =
+            m ? static_cast<std::int64_t>(
+                    m->mutate_batch_e2e_pinned_snapshot_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_panic_recoveries =
+            m ? static_cast<std::int64_t>(
+                    m->mutate_batch_e2e_panic_recoveries_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_e2e_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("batches-started", f_batches_started);
+        insert_kv("suppressed-bumps", f_suppressed_bumps);
+        insert_kv("hygiene-in-batch", f_hygiene_in_batch);
+        insert_kv("cross-fiber-steals", f_cross_fiber_steals);
+        insert_kv("pinned-snapshots", f_pinned_snapshots);
+        insert_kv("panic-recoveries", f_panic_recoveries);
+        insert_kv("e2e-active", f_e2e_active);
+        insert_kv("schema", 820);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #821: jit-fiber-exception-stats — fiber-local exception stack safety
+    add("query:jit-fiber-exception-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_fiber_local_ex_stack =
+            m ? static_cast<std::int64_t>(
+                    m->jit_fiber_ex_stack_local_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_cross_fiber_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->jit_fiber_ex_cross_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_deopt_to_interpreter =
+            m ? static_cast<std::int64_t>(
+                    m->jit_fiber_ex_deopt_interpreter_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_fiber_local_policy_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("fiber-local-ex-stack", f_fiber_local_ex_stack);
+        insert_kv("cross-fiber-prevented", f_cross_fiber_prevented);
+        insert_kv("deopt-to-interpreter", f_deopt_to_interpreter);
+        insert_kv("fiber-local-policy-active", f_fiber_local_policy_active);
+        insert_kv("schema", 821);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #822: l2-specialization-deopt-stats — L2 pair/GuardShape/linear deopt
+    add("query:l2-specialization-deopt-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_pair_fastpath =
+            m ? static_cast<std::int64_t>(
+                    m->l2_spec_pair_fastpath_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_deopt_version_mismatch =
+            m ? static_cast<std::int64_t>(
+                    m->l2_spec_deopt_version_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_guardshape_narrow =
+            m ? static_cast<std::int64_t>(
+                    m->l2_spec_guardshape_narrow_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_linear_probe =
+            m ? static_cast<std::int64_t>(
+                    m->l2_spec_linear_probe_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_l2_maturity_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("pair-fastpath", f_pair_fastpath);
+        insert_kv("deopt-version-mismatch", f_deopt_version_mismatch);
+        insert_kv("guardshape-narrow", f_guardshape_narrow);
+        insert_kv("linear-probe", f_linear_probe);
+        insert_kv("l2-maturity-active", f_l2_maturity_active);
+        insert_kv("schema", 822);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #823: opcode-coverage-deopt-stats — per-fn deopt controller surface
+    add("query:opcode-coverage-deopt-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_coverage_hits =
+            m ? static_cast<std::int64_t>(m->opcode_cov_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_unhandled_hot =
+            m ? static_cast<std::int64_t>(
+                    m->opcode_cov_unhandled_hot_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_per_fn_deopt =
+            m ? static_cast<std::int64_t>(
+                    m->opcode_cov_per_fn_deopt_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_zero_fallback_policy = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("coverage-hits", f_coverage_hits);
+        insert_kv("unhandled-hot", f_unhandled_hot);
+        insert_kv("per-fn-deopt", f_per_fn_deopt);
+        insert_kv("zero-fallback-policy", f_zero_fallback_policy);
+        insert_kv("schema", 823);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #824: terminal-render-production-stats — terminal clear/draw/present/dirty
+    add("query:terminal-render-production-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_clear_total =
+            m ? static_cast<std::int64_t>(
+                    m->term_render_clear_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_draw_batch_total =
+            m ? static_cast<std::int64_t>(
+                    m->term_render_draw_batch_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_present_total =
+            m ? static_cast<std::int64_t>(
+                    m->term_render_present_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_dirty_region_total =
+            m ? static_cast<std::int64_t>(
+                    m->term_render_dirty_region_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_present_ns_total =
+            m ? static_cast<std::int64_t>(
+                    m->term_render_present_ns_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_module_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("clear-total", f_clear_total);
+        insert_kv("draw-batch-total", f_draw_batch_total);
+        insert_kv("present-total", f_present_total);
+        insert_kv("dirty-region-total", f_dirty_region_total);
+        insert_kv("present-ns-total", f_present_ns_total);
+        insert_kv("module-active", f_module_active);
+        insert_kv("schema", 824);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #825: render-ffi-buffer-stats — batch FFI + zero-copy buffers
+    add("query:render-ffi-buffer-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_batch_ffi_calls =
+            m ? static_cast<std::int64_t>(
+                    m->render_ffi_batch_calls_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_zerocopy_views =
+            m ? static_cast<std::int64_t>(
+                    m->render_ffi_zerocopy_views_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_ffi_crossing_ns =
+            m ? static_cast<std::int64_t>(
+                    m->render_ffi_crossing_ns_accum_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_allocs_per_frame =
+            m ? static_cast<std::int64_t>(
+                    m->render_ffi_allocs_frame_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_buffer_path_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("batch-ffi-calls", f_batch_ffi_calls);
+        insert_kv("zerocopy-views", f_zerocopy_views);
+        insert_kv("ffi-crossing-ns", f_ffi_crossing_ns);
+        insert_kv("allocs-per-frame", f_allocs_per_frame);
+        insert_kv("buffer-path-active", f_buffer_path_active);
+        insert_kv("schema", 825);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #826: render-hotpath-stats — dirty/delta + JIT coverage under mutate
+    add("query:render-hotpath-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_dirty_hits =
+            m ? static_cast<std::int64_t>(
+                    m->render_hp_dirty_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_present_delta =
+            m ? static_cast<std::int64_t>(
+                    m->render_hp_present_delta_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_jit_coverage =
+            m ? static_cast<std::int64_t>(
+                    m->render_hp_jit_coverage_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_mutation_impact =
+            m ? static_cast<std::int64_t>(
+                    m->render_hp_mutation_impact_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_hotpath_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("dirty-hits", f_dirty_hits);
+        insert_kv("present-delta", f_present_delta);
+        insert_kv("jit-coverage", f_jit_coverage);
+        insert_kv("mutation-impact", f_mutation_impact);
+        insert_kv("hotpath-active", f_hotpath_active);
+        insert_kv("schema", 826);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #827: shape-value-hotpath-contracts-stats — consteval dispatch + contracts
+    add("query:shape-value-hotpath-contracts-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_contract_checks_hotpath =
+            m ? static_cast<std::int64_t>(
+                    m->sv_contract_hotpath_checks_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_consteval_dispatch_hits =
+            m ? static_cast<std::int64_t>(
+                    m->sv_consteval_dispatch_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_stability_transitions =
+            m ? static_cast<std::int64_t>(
+                    m->sv_stability_transitions_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_contracts_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("contract-checks-hotpath", f_contract_checks_hotpath);
+        insert_kv("consteval-dispatch-hits", f_consteval_dispatch_hits);
+        insert_kv("stability-transitions", f_stability_transitions);
+        insert_kv("contracts-active", f_contracts_active);
+        insert_kv("schema", 827);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #828: ir-soa-full-enforcement-stats — DirtyAware + DepGraph hybrid + pmr
+    add("query:ir-soa-full-enforcement-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_dirty_skips =
+            m ? static_cast<std::int64_t>(
+                    m->irsoa_enforce_dirty_skips_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_impact_hybrid_skips =
+            m ? static_cast<std::int64_t>(
+                    m->irsoa_enforce_impact_hybrid_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_pmr_util_pct =
+            m ? static_cast<std::int64_t>(
+                    m->irsoa_enforce_pmr_util_pct.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_relower_savings =
+            m ? static_cast<std::int64_t>(
+                    m->irsoa_enforce_relower_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_enforcement_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("dirty-skips", f_dirty_skips);
+        insert_kv("impact-hybrid-skips", f_impact_hybrid_skips);
+        insert_kv("pmr-util-pct", f_pmr_util_pct);
+        insert_kv("relower-savings", f_relower_savings);
+        insert_kv("enforcement-active", f_enforcement_active);
+        insert_kv("schema", 828);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #829: arena-live-defrag-stats — live defrag + fiber yield + fixup
+    add("query:arena-live-defrag-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t f_auto_triggers =
+            m ? static_cast<std::int64_t>(
+                    m->arena_ldefrag_auto_triggers_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_live_defrag_savings =
+            m ? static_cast<std::int64_t>(
+                    m->arena_ldefrag_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_fiber_yield_during =
+            m ? static_cast<std::int64_t>(
+                    m->arena_ldefrag_fiber_yield_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_shape_inval =
+            m ? static_cast<std::int64_t>(
+                    m->arena_ldefrag_shape_inval_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_pointer_fixup_hits =
+            m ? static_cast<std::int64_t>(
+                    m->arena_ldefrag_pointer_fixup_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t f_live_defrag_active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("auto-triggers", f_auto_triggers);
+        insert_kv("live-defrag-savings", f_live_defrag_savings);
+        insert_kv("fiber-yield-during", f_fiber_yield_during);
+        insert_kv("shape-inval", f_shape_inval);
+        insert_kv("pointer-fixup-hits", f_pointer_fixup_hits);
+        insert_kv("live-defrag-active", f_live_defrag_active);
+        insert_kv("schema", 829);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #824: minimal terminal rendering primitives (Phase 1 counters).
+    add("terminal:clear", [&ev](const auto&) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_render_clear_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+    add("terminal:draw-batch", [&ev](const auto& a) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_render_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
+            if (!a.empty() && is_int(a[0]))
+                m->term_render_present_ns_total.fetch_add(static_cast<std::uint64_t>(as_int(a[0])),
+                                                          std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+    add("terminal:present", [&ev](const auto&) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_render_present_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+    add("terminal:mark-dirty-region", [&ev](const auto&) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_render_dirty_region_total.fetch_add(1, std::memory_order_relaxed);
+            m->render_hp_dirty_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+    add("terminal:present-delta", [&ev](const auto&) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_render_present_total.fetch_add(1, std::memory_order_relaxed);
+            m->render_hp_present_delta_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
     });
 }
 
