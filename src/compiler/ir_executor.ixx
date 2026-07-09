@@ -284,16 +284,19 @@ private:
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
 
     // Per-instance mutable cell heap (for letrec)
+    // Issue #892: dense vector indexed by sequential id (id 0 unused).
     std::uint64_t next_cell_id_ = 1;
-    std::unordered_map<std::uint64_t, EvalValue> cell_heap_;
+    std::vector<EvalValue> cell_heap_;
 
     // M4 Linear ownership runtime heap
+    // Issue #892: dense vector; live==false means erased/tombstone.
     struct LinearEntry {
         EvalValue value;
-        std::size_t ref_count;
+        std::size_t ref_count = 0;
+        bool live = false;
     };
     std::uint64_t next_linear_id_ = 1;
-    std::unordered_map<std::uint64_t, LinearEntry> linear_heap_;
+    std::vector<LinearEntry> linear_heap_;
 
     // Runtime string heap (for Int\xE2\x86\x92String coercion)
     std::vector<std::string> string_heap_;

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "compiler/aura_jit.h"
 #include "compiler/messaging_bridge.h"
 #include "compiler/runtime_shared.h"
@@ -491,9 +492,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Initialize TL arena
-    if (g_use_arena)
+    // Initialize TL arena (Issue #900: destroy at process exit)
+    if (g_use_arena) {
         tl_arena_init(&g_tl_arena);
+        std::atexit([] { tl_arena_destroy(&g_tl_arena); });
+    }
 
     // Check for --worker-threads flag before the mode argument
     auto parse_worker_threads = [&]() {

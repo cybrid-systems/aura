@@ -981,18 +981,29 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
                 case IROpcode::PrimCall: {
                     // ops[0]=prim_id, ops[1]=arg_base, ops[2]=arg_count, ops[3]=result_slot
+                    // Issue #891: no std::string temp; stack args for small arity;
+                    // lookup_cstr avoids unordered_map key construction.
                     auto prim_id = static_cast<PrimId>(ops[0]);
                     auto arg_base = ops[1];
                     auto arg_count = ops[2];
                     auto result_slot = ops[3];
-                    std::vector<EvalValue> pargs;
-                    for (std::uint32_t pi = 0; pi < arg_count; ++pi)
-                        pargs.push_back(locals[arg_base + pi]);
+                    EvalValue stack_args[16];
+                    std::vector<EvalValue> heap_args;
+                    std::span<const EvalValue> pargs;
+                    if (arg_count <= 16) {
+                        for (std::uint32_t pi = 0; pi < arg_count; ++pi)
+                            stack_args[pi] = locals[arg_base + pi];
+                        pargs = std::span<const EvalValue>(stack_args, arg_count);
+                    } else {
+                        heap_args.reserve(arg_count);
+                        for (std::uint32_t pi = 0; pi < arg_count; ++pi)
+                            heap_args.push_back(locals[arg_base + pi]);
+                        pargs = heap_args;
+                    }
                     EvalResult presult = make_int(0);
-                    // Map PrimId to registered primitive name via kPrimNames
                     auto idx = static_cast<std::size_t>(prim_id);
                     if (idx < std::size(kPrimNames)) {
-                        auto pfn = context_.primitives.lookup(std::string(kPrimNames[idx]));
+                        auto pfn = context_.primitives.lookup_cstr(kPrimNames[idx]);
                         if (pfn)
                             presult = (*pfn)(pargs);
                     }
@@ -1209,6 +1220,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
                 case IROpcode::NewCell: {
                     auto cell_id = next_cell_id_++;
+                    if (cell_heap_.size() <= cell_id)
+                        cell_heap_.resize(cell_id + 1, make_void());
                     cell_heap_[cell_id] = make_void();
                     locals[ops[0]] = make_cell(cell_id);
                     break;
@@ -1218,6 +1231,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& cell_id_val = locals[ops[0]];
                     if (is_cell(cell_id_val)) {
                         auto cell_id = as_cell_id(cell_id_val);
+                        if (cell_heap_.size() <= cell_id)
+                            cell_heap_.resize(cell_id + 1, make_void());
                         cell_heap_[cell_id] = locals[ops[1]];
                     }
                     break;
@@ -1227,8 +1242,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& cell_id_val = locals[ops[1]];
                     if (is_cell(cell_id_val)) {
                         auto cell_id = as_cell_id(cell_id_val);
-                        auto it = cell_heap_.find(cell_id);
-                        locals[ops[0]] = (it != cell_heap_.end()) ? it->second : make_void();
+                        locals[ops[0]] =
+                            (cell_id < cell_heap_.size()) ? cell_heap_[cell_id] : make_void();
                     } else {
                         locals[ops[0]] = make_void();
                     }
@@ -1254,11 +1269,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Primitive: {
-                    // Load a primitive value by slot index from the Primitives table
+                    // Load a primitive value by slot index (#891: O(1) slot check, no name string)
                     auto prim_slot = ops[1];
-                    auto prim_name = context_.primitives.name_for_slot(prim_slot);
-                    auto pfn = context_.primitives.lookup(prim_name);
-                    if (pfn) {
+                    if (context_.primitives.slot_lookup_fast(prim_slot)) {
                         locals[ops[0]] = types::make_primitive(prim_slot);
                     } else {
                         locals[ops[0]] = types::make_void();
@@ -1271,7 +1284,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Wrap value in a linear container with refcount=1
                     auto inner = locals[ops[1]];
                     auto lin_id = next_linear_id_++;
-                    linear_heap_[lin_id] = {inner, 1};
+                    if (linear_heap_.size() <= lin_id)
+                        linear_heap_.resize(lin_id + 1);
+                    linear_heap_[lin_id] = LinearEntry{inner, 1, true};
                     locals[ops[0]] = types::make_linear(lin_id);
                     break;
                 }
@@ -1293,17 +1308,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
-                        auto it = linear_heap_.find(lin_id);
-                        if (it != linear_heap_.end()) {
-                            if (it->second.ref_count <= 0) {
+                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
+                            auto& entry = linear_heap_[lin_id];
+                            if (entry.ref_count <= 0) {
                                 std::println(std::cerr, "error: double move — value already moved");
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, true);
-                                locals[ops[0]] = it->second.value;
+                                locals[ops[0]] = entry.value;
                             } else {
-                                auto result = it->second.value;
-                                if (--it->second.ref_count == 0)
-                                    linear_heap_.erase(it);
+                                auto result = entry.value;
+                                if (--entry.ref_count == 0)
+                                    entry.live = false;
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, false);
                                 locals[ops[0]] = result;
@@ -1330,18 +1345,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
-                        auto it = linear_heap_.find(lin_id);
-                        if (it != linear_heap_.end()) {
-                            if (it->second.ref_count <= 0) {
+                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
+                            auto& entry = linear_heap_[lin_id];
+                            if (entry.ref_count <= 0) {
                                 std::println(std::cerr, "error: double move — value already moved");
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, true);
-                                locals[ops[0]] = it->second.value;
+                                locals[ops[0]] = entry.value;
                             } else {
-                                it->second.ref_count++;
+                                entry.ref_count++;
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, false);
-                                locals[ops[0]] = it->second.value;
+                                locals[ops[0]] = entry.value;
                             }
                         } else {
                             std::println(std::cerr,
@@ -1360,9 +1375,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
-                        auto it = linear_heap_.find(lin_id);
-                        if (it != linear_heap_.end()) {
-                            if (it->second.ref_count <= 0) {
+                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
+                            auto& entry = linear_heap_[lin_id];
+                            if (entry.ref_count <= 0) {
                                 std::println(std::cerr, "error: mut-borrow of moved value");
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, true);
@@ -1370,7 +1385,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, false);
                             }
-                            locals[ops[0]] = it->second.value;
+                            locals[ops[0]] = entry.value;
                         } else {
                             std::println(std::cerr, "error: mut-borrow of consumed value");
                             if (instr.linear_ownership_state != 0)
@@ -1390,14 +1405,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[0]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
-                        auto it = linear_heap_.find(lin_id);
-                        if (it != linear_heap_.end()) {
-                            if (it->second.ref_count <= 0) {
+                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
+                            auto& entry = linear_heap_[lin_id];
+                            if (entry.ref_count <= 0) {
                                 std::println(std::cerr,
                                              "error: double drop — value already dropped");
                             } else {
-                                if (--it->second.ref_count == 0)
-                                    linear_heap_.erase(it);
+                                if (--entry.ref_count == 0)
+                                    entry.live = false;
                             }
                         } else {
                             std::println(std::cerr, "error: double drop — value not in heap");
@@ -1410,12 +1425,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
-                        auto it = linear_heap_.find(lin_id);
-                        if (it != linear_heap_.end()) {
+                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
+                            auto& entry = linear_heap_[lin_id];
                             if (ops[2] == 1)
-                                it->second.ref_count++;
-                            else if (it->second.ref_count > 0)
-                                it->second.ref_count--;
+                                entry.ref_count++;
+                            else if (entry.ref_count > 0)
+                                entry.ref_count--;
                         }
                     }
                     locals[ops[0]] = val;
@@ -1595,8 +1610,8 @@ std::string IRInterpreter::type_of_closure(std::uint64_t closure_id) const {
 std::vector<CellSnapshot> IRInterpreter::list_cells() const {
     std::vector<CellSnapshot> result;
     result.reserve(cell_heap_.size());
-    for (auto& [id, val] : cell_heap_) {
-        result.push_back(CellSnapshot{.id = id, .value = val});
+    for (std::uint64_t id = 1; id < cell_heap_.size(); ++id) {
+        result.push_back(CellSnapshot{.id = id, .value = cell_heap_[id]});
     }
     return result;
 }

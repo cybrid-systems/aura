@@ -92,16 +92,27 @@ public:
     std::optional<PrimFn> lookup(const std::string& n) const pre(!n.empty());
     void add(const std::string& name, PrimFn fn) { add(name, std::move(fn), PrimMeta{}); }
     void add(const std::string& name, PrimFn fn, PrimMeta meta) {
+        const std::size_t slot = ordered_names_.size();
         ordered_names_.push_back(name);
         meta_.push_back(std::move(meta));
         fn_slots_.push_back(fn);
         table_[name] = std::move(fn);
+        // Issue #899: O(1) reverse index for slot_for_name.
+        name_to_slot_[ordered_names_.back()] = slot;
     }
     // Issue #709: O(1) slot dispatch — dense table parallel to ordered_names_.
     [[nodiscard]] std::optional<PrimFn> slot_lookup_fast(std::size_t slot) const {
         if (slot >= fn_slots_.size())
             return std::nullopt;
         return fn_slots_[slot];
+    }
+    // Issue #891: lookup by string_view without temporary std::string
+    // (transparent hash on table_).
+    [[nodiscard]] std::optional<PrimFn> lookup_cstr(std::string_view name) const {
+        if (name.empty())
+            return std::nullopt;
+        auto it = table_.find(name);
+        return it != table_.end() ? std::optional(it->second) : std::nullopt;
     }
     void set_string_heap(std::pmr::vector<std::string>* h) { string_heap_ = h; }
     std::span<const std::string> string_heap() const { return *string_heap_; }
@@ -141,7 +152,23 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, PrimFn> table_;
+    // Transparent hash so lookup_cstr / slot_for_name avoid temporary std::string (#891).
+    struct StringHash {
+        using is_transparent = void;
+        std::size_t operator()(std::string_view s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+        std::size_t operator()(const std::string& s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    struct StringEq {
+        using is_transparent = void;
+        bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
+    };
+    std::unordered_map<std::string, PrimFn, StringHash, StringEq> table_;
+    // Issue #899: reverse index name → slot for O(1) slot_for_name.
+    std::unordered_map<std::string, std::size_t, StringHash, StringEq> name_to_slot_;
     // Issue #145 Phase 2.4: pmr-backed to match Evaluator's
     // string_heap_ arena allocation. Vector metadata lives in
     // the same monotonic arena as the underlying EvalValue /
@@ -225,7 +252,11 @@ public:
     // bind_symid is a Cycle 2 item (requires pool_ to
     // become non-const, which is a bigger refactor that
     // touches many call sites).
-    void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n, std::move(v)); }
+    void bind(const std::string& n, types::EvalValue v) {
+        bindings_.emplace_back(n, std::move(v));
+        // Issue #894: O(1) local name index (shadows parent on rebind).
+        binding_index_[bindings_.back().first] = bindings_.size() - 1;
+    }
     // Issue #145: SymId fast path. The apply_closure loop hits
     // this once per parameter per call — replacing the old
     // string-compare lookup with integer-compare. Implemented
@@ -341,6 +372,8 @@ private:
     // or passed cells to lookup_cell helpers. This + EnvFrame
     // change eliminates one class of pointer-to-reallocatable-heap.
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
+    // Issue #894: name → last local index for O(1) Env::lookup locals.
+    std::unordered_map<std::string, std::size_t> binding_index_;
     // Issue #145: parallel SymId-keyed store. Both arrays
     // share the same length and order. lookup_by_symid reads
     // bindings_symid_ (integer compare). bind_symid writes to

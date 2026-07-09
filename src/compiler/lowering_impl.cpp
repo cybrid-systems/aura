@@ -327,7 +327,7 @@ static std::uint32_t lower_flat_expr(
                 // ── (list ...) → nested cons chain ────────────────────
                 // Expand (list a b c) to (cons a (cons b (cons c ()))).
                 // This avoids evaluator primitive dispatch and works in AOT.
-                if (std::string(callee_name) == "list") {
+                if (callee_name == "list") {
                     auto result_slot = state.alloc_local();
                     auto arg_count = v.children.size() - 1;
                     if (arg_count == 0) {
@@ -351,7 +351,7 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // ── (with-arena (size) body ...) ──────────────────────
-                if (std::string(callee_name) == "with-arena") {
+                if (callee_name == "with-arena") {
                     auto result_slot = state.alloc_local();
                     std::uint32_t arena_size = 65536; // default 64KB
                     std::uint32_t body_start = 1;
@@ -388,7 +388,7 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // ── (performance-region body ...) → set region flag ──────
-                if (std::string(callee_name) == "performance-region") {
+                if (callee_name == "performance-region") {
                     state.region = aura::ir::Region::Performance;
                     auto result_slot = state.alloc_local();
                     if (v.children.size() <= 1) {
@@ -405,7 +405,7 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // ── (evolution-region body ...) → set region flag ────────
-                if (std::string(callee_name) == "evolution-region") {
+                if (callee_name == "evolution-region") {
                     state.region = aura::ir::Region::Evolution;
                     auto result_slot = state.alloc_local();
                     if (v.children.size() <= 1) {
@@ -421,16 +421,24 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
-                static const std::unordered_map<std::string, IROpcode> prim_map = {
+                // Issue #893: fixed table + string_view compare (no std::string temp /
+                // unordered_map).
+                static constexpr std::pair<std::string_view, IROpcode> kPrimOps[] = {
                     {"+", IROpcode::Add},         {"-", IROpcode::Sub},   {"*", IROpcode::Mul},
                     {"/", IROpcode::Div},         {"=", IROpcode::Eq},    {"<", IROpcode::Lt},
                     {">", IROpcode::Gt},          {"<=", IROpcode::Le},   {">=", IROpcode::Ge},
                     {"eq?", IROpcode::Eq},        {"eqv?", IROpcode::Eq}, {"equal?", IROpcode::Eq},
                     {"cons", IROpcode::MakePair}, {"car", IROpcode::Car}, {"cdr", IROpcode::Cdr},
                 };
-                auto it = prim_map.find(std::string(callee_name));
-                if (it != prim_map.end()) {
-                    auto op = it->second;
+                const IROpcode* found_op = nullptr;
+                for (const auto& e : kPrimOps) {
+                    if (e.first == callee_name) {
+                        found_op = &e.second;
+                        break;
+                    }
+                }
+                if (found_op) {
+                    auto op = *found_op;
                     auto result_slot = state.alloc_local();
                     auto arg_count = v.children.size() - 1;
                     if (arg_count == 0) {
@@ -442,7 +450,7 @@ static std::uint32_t lower_flat_expr(
                             lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
                         if (arg_count == 1) {
                             // Unary minus: emit Sub(0, arg)
-                            if (std::string(callee_name) == "-") {
+                            if (callee_name == "-") {
                                 auto zero = state.alloc_local();
                                 state.emit(IROpcode::ConstI64, zero, 0, 0);
                                 state.emit(op, result_slot, zero, prev);
@@ -505,7 +513,7 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // Handle try/catch special form
-                if (std::string(callee_name) == "try") {
+                if (callee_name == "try") {
                     // (try body (catch (var) handler))
                     if (v.children.size() < 2) {
                         auto slot = state.alloc_local();
@@ -582,7 +590,7 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
-                if (std::string(callee_name) == "require" || std::string(callee_name) == "import") {
+                if (callee_name == "require" || callee_name == "import") {
                     // import/require are handled by pre_exec_requires.
                     // The import call in the AST is still present; skip
                     // it here to avoid going through PrimCall dispatch.
@@ -684,7 +692,7 @@ static std::uint32_t lower_flat_expr(
                 // ── Expand cond to nested if/Branch IR ─────────────────
                 // (cond (p1 b1) (p2 b2) ... (else bn))
                 // → if p1: b1; elif p2: b2; ... else: bn
-                if (std::string(callee_name) == "cond" && v.children.size() >= 2) {
+                if (callee_name == "cond" && v.children.size() >= 2) {
                     auto result_slot = state.alloc_local();
                     auto done_blk = decltype(state.alloc_block()){};
                     auto num_clauses = v.children.size() - 1;
@@ -751,7 +759,7 @@ static std::uint32_t lower_flat_expr(
                 // or:  short-circuit via Branch + Local + Jump pattern
                 //
                 // not: inlined as IROpcode::Not (expanded to LLVM ICmp + Xor)
-                if (std::string(callee_name) == "not" && v.children.size() == 2) {
+                if (callee_name == "not" && v.children.size() == 2) {
                     auto arg_slot =
                         lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
                     auto result_slot = state.alloc_local();
@@ -759,7 +767,7 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
-                if (std::string(callee_name) == "and" && v.children.size() >= 2) {
+                if (callee_name == "and" && v.children.size() >= 2) {
                     // Expand (and e1 e2 ... en) to:
                     //   block0:
                     //     val = lower(e1)
@@ -810,7 +818,7 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
-                if (std::string(callee_name) == "or" && v.children.size() >= 2) {
+                if (callee_name == "or" && v.children.size() >= 2) {
                     // Expand (or e1 e2 ... en) to:
                     //   block0:
                     //     val = lower(e1)
