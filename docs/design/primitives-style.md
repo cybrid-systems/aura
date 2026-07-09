@@ -109,6 +109,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
 | `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
 | `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
+| `(query:closed-loop-convergence-stats)` | 774 | Verification feedback-driven self-evolution convergence rate (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -262,6 +263,16 @@ Distinct from `(query:sv-verification-structure-stats)` (#748), `(query:sv-comme
 - `schema` — 773 (drift sentinel)
 
 Distinct from `(query:workspace-closedloop-orchestration-stats)` (#762): `#762` ships 4 raw counters (concurrent-query-mutate / cross-cow-ref-valid / yield-points-hit / shared-mutex-contention). `#773` extends with **pct-derived fields** (computed at primitive-call time) + **ns-based contention** (time metric vs count) + **multi-Agent fidelity** (NEW dimension) + **stale-ref prevention** (NEW dimension) — the EDA verification-loop production surface.
+
+### `(query:closed-loop-convergence-stats)` fields (#774)
+
+- `convergence-rate` — derived at primitive-call time from `#802` atomics (0–10000 fixed-point percent × 100; `convergence-hits / closed-loop-rounds × 10000`; 10000 = 100.00% baseline when rounds == 0; integer division to avoid float drift under parallel updates)
+- `closed-loop-rounds` — reused `#802` atomic `sv_self_evo_closed_loop_rounds_total` (total feedback parse → mutate → re-verify rounds)
+- `convergence-hits` — reused `#802` atomic `sv_self_evo_convergence_hits_total` (successful convergence rounds)
+- `feedback-mutate-rounds` — reused `#726` atomic `closed_loop_feedback_mutate_rounds_total` (#726 per-round counter)
+- `schema` — 774 (drift sentinel)
+
+Distinct from `(query:closed-loop-reliability-stats)` (#726) and `(query:sv-verification-self-evolution-stats)` (#802): `#726` ships 3 raw counters (ref-drift-prevented / rollback-success / feedback-mutate-rounds) for closed-loop *reliability*; `#802` ships 4 raw counters (feedback-parse-hits / structured-mutate-hits / closed-loop-rounds / convergence-hits) for the self-evolution *volume*. `#774` is the FIRST observability surface that exposes the **convergence_rate** pct the body asks for — a derived metric computed at primitive-call time that an Agent / SEVA controller can read to decide whether the closed-loop is converging in production multi-round SEVA scenarios.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

@@ -4001,6 +4001,27 @@ add_dependencies(all_test_issue_targets test_issue_772)
 aura_add_issue_test(test_issue_773)
 aura_issue_test_link_llvm_jit(test_issue_773)
 add_dependencies(all_test_issue_targets test_issue_773)
+# Issue #774: Verification feedback-driven closed-loop
+# self-evolution convergence rate observability. 0 NEW
+# CompilerMetrics atomics (convergence_rate is derived at
+# primitive-call time from existing #802 atomics) + 0 NEW
+# bump helpers + (query:closed-loop-convergence-stats,
+# schema 774) primitive returning 4 body-specified fields
+# + schema sentinel (5-entry hash: convergence-rate +
+# closed-loop-rounds + convergence-hits + feedback-mutate-
+# rounds + schema). Reuses 3 atomics from #802 (closed-
+# loop-rounds + convergence-hits) and 1 atomic from #726
+# (feedback-mutate-rounds). 5 ACs: hash shape, fresh-
+# service baseline 100.00%, schema sentinel, convergence
+# rate derivation correctness, sibling observability
+# regression of #726/#802/#772/#773. Non-duplicative with
+# #726 (closed-loop-reliability-stats) and #802 (sv-
+# verification-self-evolution-stats) — parallel companion
+# primitive that adds the deployment-grade convergence_rate
+# pct the body asks for.
+aura_add_issue_test(test_issue_774)
+aura_issue_test_link_llvm_jit(test_issue_774)
+add_dependencies(all_test_issue_targets test_issue_774)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
