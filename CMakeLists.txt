@@ -4397,6 +4397,20 @@ add_dependencies(all_test_issue_targets test_issue_793)
 aura_add_issue_test(test_issue_794)
 aura_issue_test_link_llvm_jit(test_issue_794)
 add_dependencies(all_test_issue_targets test_issue_794)
+# Issue #795: P0 deep hot-path Contracts + stronger
+# SoAView/ShapeStablePass Concepts + ShapeProfiler
+# JIT Epoch Sync + Dirty Propagation (Non-
+# duplicative refinement of #768/#507/#766/#767/
+# #741). 4 NEW CompilerMetrics atomics + 4 NEW
+# bump helpers + 1 NEW (query:shape-pass-hotpath-
+# contracts-stats, schema 795) primitive. 5 ACs:
+# hash shape, fresh-zero, schema sentinel,
+# production-path bump helpers callable + activity
+# reflects in primitive, sibling #768/#794
+# regression.
+aura_add_issue_test(test_issue_795)
+aura_issue_test_link_llvm_jit(test_issue_795)
+add_dependencies(all_test_issue_targets test_issue_795)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

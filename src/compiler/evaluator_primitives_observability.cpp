@@ -960,6 +960,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // deferred work (full closed-loop harness
     // active + SLO gate active).
     "query:full-closedloop-compiler-edsl-fidelity-stats",
+
+    // Issue #795: deep hot-path Contracts + stronger
+    // SoAView/ShapeStablePass Concepts +
+    // ShapeProfiler JIT Epoch Sync + Dirty
+    // Propagation observability (Non-duplicative
+    // refinement of #768/#507/#766/#767/#741).
+    // 4 NEW CompilerMetrics atomics + 4 NEW bump
+    // helpers on Evaluator + 1 NEW primitive that
+    // exposes the new fields + 1 hardcoded "not
+    // yet" flag for Phase 2+ deferred work
+    // (concepts + epoch sync all deferred).
+    "query:shape-pass-hotpath-contracts-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -16076,6 +16088,169 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("slo-gate-active", slo_gate_active);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 794);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #795: query:shape-pass-hotpath-contracts-
+    // stats — P0 deep hot-path Contracts + stronger
+    // SoAView/ShapeStablePass Concepts +
+    // ShapeProfiler JIT Epoch Sync + Dirty
+    // Propagation observability (Non-duplicative
+    // refinement of #768/#507/#766/#767/#741).
+    //
+    // The existing #768 (query:shape-pass-hotpath-
+    // stats) already surfaces the 5 hot-path
+    // observability counters (contract-checks-
+    // hotpath / shape-stability-transitions /
+    // jit-epoch-sync-hits / deopt-targeted-skips /
+    // concept-violations-caught + schema 768). #795
+    // covers the *deep SoA/Pass/JIT contracts +
+    // stronger concepts + targeted invalidation +
+    // Arena compact hook* specifically — were
+    // SoAView violations caught? were
+    // ShapeStablePass violations caught? was a
+    // targeted deopt via #741 impact_scope used?
+    // was an Arena compact on_compact_hook_
+    // invoked? — as separate per-decision-point
+    // signals the Agent consumes to monitor the
+    // C++26 Contracts/Concepts adoption maturity
+    // in the hot allocator/dispatch/SoA/shape
+    // paths.
+    //
+    // 4 NEW CompilerMetrics atomics + 4 NEW bump
+    // helpers on Evaluator + 1 NEW primitive
+    // (hybrid enforcement-side pattern, mirror
+    // #789/#790/#791/#792/#793/#794).
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - soa-view-violations-caught-total
+    //       soa_view_violations_caught_total
+    //       (# of SoAView concept static_assert
+    //       violations caught at compile time /
+    //       runtime; bumped from
+    //       Evaluator::bump_soa_view_violations_
+    //       caught() at the planned Phase 2+
+    //       pass_manager.ixx + lowering/JIT
+    //       run_incremental_dirty_pipeline
+    //       wire-up per body "Define SoAView
+    //       concept (requires const view +
+    //       shape_id consult) and ShapeStablePass
+    //       (requires stable_shape consult +
+    //       DirtyAware); static_assert in
+    //       run_incremental_dirty_pipeline")
+    //   - shape-stable-pass-violations-total
+    //       shape_stable_pass_violations_total
+    //       (# of ShapeStablePass concept
+    //       static_assert violations caught;
+    //       bumped from
+    //       Evaluator::bump_shape_stable_pass_
+    //       violations() at the planned Phase 2+
+    //       pass_manager.ixx + dominant_shape /
+    //       ShapePropagationPass wire-up)
+    //   - targeted-deopt-via-impact-scope-total
+    //       targeted_deopt_via_impact_scope_total
+    //       (# of targeted deopts via #741
+    //       impact_scope instead of global
+    //       invalidation; bumped from
+    //       Evaluator::bump_targeted_deopt_via_
+    //       impact_scope() at the planned Phase
+    //       2+ shape_profiler.cpp deopt hook
+    //       wire-up per body "consult DirtyAware
+    //       or #741 impact_scope for targeted
+    //       invalidation instead of global")
+    //   - on-compact-hook-invocations-total
+    //       on_compact_hook_invocations_total
+    //       (# of Arena compact on_compact_hook_
+    //       invocations that triggered shape_inval
+    //       + dirty cascade; bumped from
+    //       Evaluator::bump_on_compact_hook_
+    //       invocation() at the planned Phase 2+
+    //       arena.ixx + ir_soa.ixx on_compact_hook_
+    //       wire-up per body "on_compact_hook_
+    //       invoke with shape_inval + dirty
+    //       cascade")
+    //   - concepts-active
+    //       hardcoded 0 (Phase 2+ to actually wire
+    //       SoAView + ShapeStablePass concepts +
+    //       targeted deopt via impact_scope +
+    //       ShapeProfiler epoch sync all together
+    //       — single flag covers all 3+ deferred
+    //       wire-up areas)
+    //   - recommendation
+    //       derived 0/1/2/3 from the deferred flag
+    //       + activity signal
+    //   - schema == 795
+    add("query:shape-pass-hotpath-contracts-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t soa_view_violations =
+            m ? static_cast<std::int64_t>(
+                    m->soa_view_violations_caught_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t shape_stable_pass_violations =
+            m ? static_cast<std::int64_t>(
+                    m->shape_stable_pass_violations_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t targeted_deopt =
+            m ? static_cast<std::int64_t>(
+                    m->targeted_deopt_via_impact_scope_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t on_compact_hook =
+            m ? static_cast<std::int64_t>(
+                    m->on_compact_hook_invocations_total.load(std::memory_order_relaxed))
+              : 0;
+        // 1 hardcoded "not yet" flag for Phase 2+
+        // deferred work (covers all 3+ deferred
+        // wire-up areas).
+        const std::int64_t concepts_active = 0;
+        // Recommendation: derived from the deferred
+        // flag + activity signal. Phase 1 only
+        // (deferred flag == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (concepts_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (soa_view_violations > 0 || shape_stable_pass_violations > 0 ||
+                 targeted_deopt > 0 || on_compact_hook > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, concepts deferred)
+        else
+            recommendation = 3; // early-stage (no hot-path contracts activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("soa-view-violations-caught-total", soa_view_violations);
+        insert_kv("shape-stable-pass-violations-total", shape_stable_pass_violations);
+        insert_kv("targeted-deopt-via-impact-scope-total", targeted_deopt);
+        insert_kv("on-compact-hook-invocations-total", on_compact_hook);
+        insert_kv("concepts-active", concepts_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 795);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

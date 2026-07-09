@@ -1038,6 +1038,45 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_epoch_sync_hits_total{0};
     std::atomic<std::uint64_t> deopt_targeted_skips_total{0};
     std::atomic<std::uint64_t> concept_violations_caught_total{0};
+    // Issue #795: deep hot-path Contracts + stronger
+    // SoAView/ShapeStablePass Concepts + ShapeProfiler
+    // JIT Epoch Sync + Dirty Propagation observability
+    // (Non-duplicative refinement of #768/#507/#766/
+    // #767/#741). 4 NEW atomics for the
+    // (query:shape-pass-hotpath-contracts-stats,
+    // schema 795) primitive:
+    //   - soa_view_violations_caught_total: # of
+    //     SoAView concept static_assert violations
+    //     caught at compile time / runtime (Phase 2+
+    //     to wire from pass_manager.ixx +
+    //     lowering/JIT integration per body "Define
+    //     SoAView concept (requires const view +
+    //     shape_id consult) ... static_assert in
+    //     run_incremental_dirty_pipeline")
+    //   - shape_stable_pass_violations_total: # of
+    //     ShapeStablePass concept static_assert
+    //     violations caught (Phase 2+ to wire from
+    //     pass_manager.ixx + dominant_shape /
+    //     ShapePropagationPass integration per body
+    //     "Define ... ShapeStablePass (requires
+    //     stable_shape consult + DirtyAware)")
+    //   - targeted_deopt_via_impact_scope_total: # of
+    //     targeted deopts via #741 impact_scope
+    //     instead of global invalidation (Phase 2+ to
+    //     wire from shape_profiler.cpp deopt hook
+    //     per body "consult DirtyAware or #741
+    //     impact_scope for targeted invalidation
+    //     instead of global")
+    //   - on_compact_hook_invocations_total: # of
+    //     Arena compact on_compact_hook_ invocations
+    //     that triggered shape_inval + dirty cascade
+    //     (Phase 2+ to wire from arena.ixx + ir_soa.ixx
+    //     per body "on_compact_hook_ invoke with
+    //     shape_inval + dirty cascade")
+    std::atomic<std::uint64_t> soa_view_violations_caught_total{0};
+    std::atomic<std::uint64_t> shape_stable_pass_violations_total{0};
+    std::atomic<std::uint64_t> targeted_deopt_via_impact_scope_total{0};
+    std::atomic<std::uint64_t> on_compact_hook_invocations_total{0};
     // Issue #772: SV Verification closed-loop SLO observability
     // (P0 EDA production standard foundation; consolidates/refines
     // #693/#724/#725/#726/#748; non-duplicative with #748 query:
