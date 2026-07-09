@@ -5,8 +5,29 @@
       "src/compiler/aot_mangle.h",
       "src/compiler/observability_metrics.h",
       "src/compiler/observability_snapshot.h",
-      "src/compiler/type_concepts_impl.cpp"
-    ]
+      "src/compiler/type_concepts_impl.cpp",
+      "src/compiler/aura_jit_runtime.cpp",
+      "src/compiler/aura_jit_bridge_stub.cpp"
+    ],
+    "source_flags": {
+      "src/compiler/aura_jit_runtime.cpp": "-fno-rtti"
+    },
+    "comment": "runtime heaps + AOT fiber stubs without full LLVM JIT link."
+  },
+  "light_late": {
+    "includes": ["tests", "src/compiler"],
+    "sources": [
+      "src/compiler/aura_jit_runtime.cpp",
+      "src/compiler/aura_jit_bridge_stub.cpp",
+      "tests/test_issue_178_reflect.cpp"
+    ],
+    "source_flags": {
+      "src/compiler/aura_jit_runtime.cpp": "-fno-rtti"
+    },
+    "per_source_compile_options": {
+      "tests/test_issue_178_reflect.cpp": "-freflection"
+    },
+    "comment": "178 multi-TU (main + reflect); runtime heaps + AOT stubs like light."
   },
   "jit": {
     "includes": ["tests"]
