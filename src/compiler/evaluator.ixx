@@ -4130,6 +4130,44 @@ public:
             m->sv_slo_breach_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #773: Workspace closed-loop fiber/multi-agent EDA
+    // verification orchestration observability counters backing
+    // the (query:workspace-closedloop-fiber-eda-stats) primitive.
+    // These are public so future ast.ixx pin_for_cow() +
+    // Workspace COW/clone/split + EDSL primitives yield
+    // instrumentation + fiber/Guard steal/resume auto-refresh
+    // can call them at each decision point (shared_mutex contention
+    // time / multi-Agent edit fidelity / stale ref prevention).
+    //
+    // shared_mutex_contention_ns_total takes a nanosecond delta so
+    // the caller can record the actual elapsed time without
+    // tracking it locally. multi_agent_edit_fidelity_pct uses
+    // 0-10000 fixed-point percent (× 100) — 9900 = 99.00%. The
+    // stale_ref_prevented_eda_loops_total bump increments when a
+    // cross-COW StableRef access is caught stale and refreshed.
+    void bump_workspace_closedloop_shared_mutex_contention_ns(std::uint64_t ns) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_shared_mutex_contention_ns_total.fetch_add(
+                ns, std::memory_order_relaxed);
+        }
+    }
+    void
+    set_workspace_closedloop_multi_agent_edit_fidelity_pct(std::uint64_t pct_x100) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_multi_agent_edit_fidelity_pct.store(pct_x100,
+                                                                        std::memory_order_relaxed);
+        }
+    }
+    void
+    bump_workspace_closedloop_stale_ref_prevented_eda_loops(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_stale_ref_prevented_eda_loops_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx
