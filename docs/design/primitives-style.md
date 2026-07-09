@@ -117,6 +117,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:dirty-region-rendering-stats)` | 779 | Dirty region / delta rendering readiness (4 fields) |
 | `(query:jit-rendering-coverage-stats)` | 780 | JIT / hot-update rendering coverage + readiness (4 fields) |
 | `(query:zero-copy-framebuffer-stats)` | 781 | Zero-copy byte buffer + framebuffer readiness (4 fields) |
+| `(query:terminal-rendering-module-stats)` | 782 | Terminal rendering module + profiling integration readiness (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -354,6 +355,17 @@ Distinct from `(query:jit-stats)` (#427), `(query:jit-consistency-stats)`, `(que
 - `schema` — 781 (drift sentinel)
 
 Distinct from the existing memory primitives in `evaluator_primitives_memory.cpp` and vector primitives in `evaluator_primitives_vector.cpp`: those primitives provide direct cell access but offer no zero-copy view, ANSI sequence batching, or rendering memory profiling. `#781` is the FIRST observability surface that tracks the **pair allocation pressure** the body identifies as wasted on per-frame buffer construction + exposes the production-readiness signals for the deferred zero-copy byte-buffer + ANSI helper + memory profiling work. The actual `ns/op` measurement is in `tests/test_issue_781.cpp` as a benchmark.
+
+### `(query:terminal-rendering-module-stats)` fields (#782)
+
+- `core-primitive-count` — live count of expected terminal rendering core primitives registered (4 expected per body: `clear`, `draw-batch`, `present`, `dirty-tracking`; 0 on fresh service because no `evaluator_primitives_terminal.cpp` exists yet — computed via live primitive lookup, mirror `#777` pattern)
+- `terminal-module-available` — hardcoded 0 (the `evaluator_primitives_terminal.cpp` module is Phase 2+ deferred per body "no `evaluator_primitives_terminal.cpp` or equivalent module for high-performance terminal/character graphics rendering")
+- `shape-profiler-integration-available` — hardcoded 0 (the `shape_profiler.cpp` integration for rendering paths is Phase 2+ deferred per body "Integrate with existing observability and `shape_profiler.cpp`")
+- `example-renderer-available` — hardcoded 0 (the minimal high-perf terminal renderer example is Phase 2+ deferred per body "Provide example implementation of a minimal high-perf terminal renderer")
+- `recommendation` — derived 0/1/2/3 (0 = production-ready if module + profiler + example all = 1 AND `core-primitive-count == 4`; 1 = partial if any module flag = 1 or `core-primitive-count > 0`; 2 = missing-module if all = 0 but `core-primitive-count > 0`; 3 = early-stage if all = 0 AND `core-primitive-count == 0`)
+- `schema` — 782 (drift sentinel)
+
+Distinct from the existing vector + memory + I/O primitives in `evaluator_primitives_vector.cpp` / `_memory.cpp` / `_io.cpp`: those primitives provide general cell access but offer no dedicated terminal rendering module with `clear` / `draw-batch` / `present` / `dirty-tracking` primitives, no `shape_profiler.cpp` integration for rendering paths, and no example high-perf terminal renderer. `#782` is the FIRST observability surface that exposes the **terminal rendering module readiness composite** — `core-primitive-count` (live lookup) + 3 module flags + recommendation — as a single deployment-grade infrastructure-readiness dashboard the Agent reads to decide whether the terminal rendering module is production-ready for the planned cyber cat prototype.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
