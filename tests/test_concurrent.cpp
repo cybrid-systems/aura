@@ -55,6 +55,19 @@ bool wait_for_atomic(const std::atomic<T>& counter, T expected,
     return counter.load() >= expected;
 }
 
+
+// Busy-work that stays defined under UBSan / -ftrapv.
+// `volatile int sum; sum += j` overflows once the triangular number
+// exceeds INT_MAX (around j == 65536). CI runs with
+// UBSAN_OPTIONS=halt_on_error=1, so those loops abort the suite.
+// Unsigned wrap is defined behavior and still burns CPU cycles.
+static void busy_work(int iterations) {
+    volatile unsigned sum = 0;
+    for (int j = 0; j < iterations; ++j)
+        sum += static_cast<unsigned>(j);
+    (void)sum;
+}
+
 // ── Test 1: Fiber basic lifecycle ─────────────────────
 // Create a fiber, run it, verify it completes
 
@@ -122,10 +135,7 @@ bool test_multi_fiber_parallel() {
     for (int i = 0; i < NUM_FIBERS; ++i) {
         sched.spawn([&completed, i]() {
             // Simulate work: busy loop
-            volatile int sum = 0;
-            for (int j = 0; j < 1000000; ++j) {
-                sum += j;
-            }
+            busy_work(1000000);
             completed.fetch_add(1);
         });
     }
@@ -315,10 +325,7 @@ bool test_work_stealing() {
     for (int i = 0; i < NUM_FIBERS; ++i) {
         sched.spawn([&completed, i]() {
             // Small work to ensure steal opportunity
-            volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j) {
-                sum += j;
-            }
+            busy_work(100000);
             completed.fetch_add(1);
         });
     }
@@ -404,9 +411,7 @@ bool test_load_aware_distribution() {
     // than pure round-robin
     for (int i = 0; i < 40; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 200000; ++j)
-                sum += j;
+            busy_work(200000);
             completed.fetch_add(1);
         });
     }
@@ -559,9 +564,7 @@ bool test_stress_1k_fibers() {
 
     for (int i = 0; i < N; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j)
-                sum += j;
+            busy_work(10000);
             completed.fetch_add(1);
         });
     }
@@ -638,9 +641,7 @@ bool test_mixed_cpu_io() {
     for (int i = 0; i < 20; ++i) {
         sched.spawn([&io_done]() {
             for (int k = 0; k < 5; ++k) {
-                volatile int sum = 0;
-                for (int j = 0; j < 5000; ++j)
-                    sum += j;
+                busy_work(5000);
                 aura::serve::Fiber::yield();
             }
             io_done.fetch_add(1);
@@ -707,9 +708,7 @@ bool test_auto_worker_count() {
 
     for (int i = 0; i < 20; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j)
-                sum += j;
+            busy_work(100000);
             completed.fetch_add(1);
         });
     }
@@ -834,9 +833,7 @@ bool test_metrics_disabled() {
     std::atomic<int> completed{0};
     for (int i = 0; i < 10; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j)
-                sum += j;
+            busy_work(100000);
             completed.fetch_add(1);
         });
     }
@@ -867,9 +864,7 @@ bool test_metrics_post_run() {
             completed.fetch_add(1);
             aura::serve::Fiber::yield();
             // Some more work
-            volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j)
-                sum += j;
+            busy_work(10000);
         });
     }
 
@@ -945,9 +940,7 @@ bool test_single_worker() {
 
     for (int i = 0; i < 20; ++i) {
         sched.spawn([&completed, i]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 50000; ++j)
-                sum += j;
+            busy_work(50000);
             completed.fetch_add(1);
         });
     }
@@ -1272,9 +1265,7 @@ bool test_round_robin_fallback() {
     // evenly distributed
     for (int i = 0; i < 8; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j)
-                sum += j;
+            busy_work(100000);
             completed.fetch_add(1);
         });
     }
@@ -1332,9 +1323,7 @@ bool test_exec_when_all() {
     std::vector<std::function<void()>> fns;
     for (int i = 0; i < N; ++i) {
         fns.push_back([&counter]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 50000; ++j)
-                sum += j;
+            busy_work(50000);
             counter.fetch_add(1, std::memory_order_release);
         });
     }
@@ -1554,9 +1543,7 @@ bool test_exec_multi_when_all() {
         std::vector<std::function<void()>> fns;
         for (int i = 0; i < 5; ++i)
             fns.push_back([&total]() {
-                volatile int sum = 0;
-                for (int j = 0; j < 20000; ++j)
-                    sum += j;
+                busy_work(20000);
                 total.fetch_add(1);
             });
         return aura::exec::when_all(fs, std::move(fns));
@@ -1859,9 +1846,7 @@ bool test_metrics_after_workload() {
 
     for (int i = 0; i < N; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j)
-                sum += j;
+            busy_work(10000);
             completed.fetch_add(1);
         });
     }
@@ -1899,9 +1884,7 @@ bool test_metrics_reset() {
 
     // Run a small workload
     sched.spawn([&done]() {
-        volatile int sum = 0;
-        for (int j = 0; j < 50000; ++j)
-            sum += j;
+        busy_work(50000);
         done.store(1);
     });
 
@@ -1981,9 +1964,7 @@ bool test_metrics_mixed_workload() {
     // CPU-bound fibers
     for (int i = 0; i < 10; ++i)
         sched.spawn([&cpu_done]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j)
-                sum += j;
+            busy_work(100000);
             cpu_done.fetch_add(1);
         });
 
@@ -1991,9 +1972,7 @@ bool test_metrics_mixed_workload() {
     for (int i = 0; i < 10; ++i)
         sched.spawn([&io_done]() {
             for (int k = 0; k < 3; ++k) {
-                volatile int sum = 0;
-                for (int j = 0; j < 5000; ++j)
-                    sum += j;
+                busy_work(5000);
                 aura::serve::Fiber::yield();
             }
             io_done.fetch_add(1);
@@ -2114,9 +2093,7 @@ bool test_metrics_consistency() {
 
     for (int i = 0; i < N; ++i) {
         sched.spawn([&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j)
-                sum += j;
+            busy_work(10000);
             completed.fetch_add(1);
             aura::serve::Fiber::yield();
         });
@@ -2256,9 +2233,7 @@ bool test_incr_clear_dirty_preserves_cache() {
     std::atomic<int> done{0};
 
     sched.spawn([&done]() {
-        volatile int sum = 0;
-        for (int j = 0; j < 10000; ++j)
-            sum += j;
+        busy_work(10000);
         done.store(1);
     });
 
@@ -2288,9 +2263,7 @@ bool test_incr_repeated_spawn() {
         std::atomic<int> done{0};
 
         sched.spawn([&done]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 5000; ++j)
-                sum += j;
+            busy_work(5000);
             done.store(1);
         });
 
@@ -2533,9 +2506,7 @@ bool test_fiber_affinity() {
         [&completed, &worker_seen]() {
             // Record which worker we're running on
             worker_seen.store(1); // fiber always runs on worker 0
-            volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j)
-                sum += j;
+            busy_work(10000);
             completed.store(1);
         },
         0);
@@ -2565,9 +2536,7 @@ bool test_steal_skips_pinned() {
     // Fiber pinned to worker 0 — should always stay on worker 0
     sched.spawn_with_affinity(
         [&completed_a]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 500000; ++j)
-                sum += j;
+            busy_work(500000);
             completed_a.store(1);
         },
         0);
@@ -2575,9 +2544,7 @@ bool test_steal_skips_pinned() {
     // Fiber pinned to worker 1 — should always stay on worker 1
     sched.spawn_with_affinity(
         [&completed_b]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 500000; ++j)
-                sum += j;
+            busy_work(500000);
             completed_b.store(1);
         },
         1);
@@ -2637,9 +2604,7 @@ bool test_scheduler_pin_primitive() {
     // Pin a fiber to worker 2 using the C++ API
     auto* fb = sched.spawn_with_affinity(
         [&completed]() {
-            volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j)
-                sum += j;
+            busy_work(100000);
             completed.store(1);
         },
         2);

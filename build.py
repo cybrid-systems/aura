@@ -330,6 +330,12 @@ def cmd_build():
         info(f"issue tests: tier=fast ({len(targets)} targets{extra})")
     r = run(issue_cmd, cwd=ROOT)
     if r != 0:
+        # One retry: GCC 16 module dyndep scans under high -j can flake with
+        # "when writing output to …*.o.ddi.i: Invalid argument" (shared JIT
+        # lib reduces this; retry covers residual races).
+        warn("issue-test build failed — retrying once (module dyndep flake workaround)")
+        r = run(issue_cmd, cwd=ROOT)
+    if r != 0:
         # Don't fail cmd_build on partial-build errors —
         # the runner will skip the unbuilt binaries.
         print(f"{Y}  some test_issue_* targets failed to build (pre-existing); runner will skip them{N}")

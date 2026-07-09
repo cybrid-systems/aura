@@ -1238,6 +1238,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_closedloop_shared_mutex_contention_ns_total{0};
     std::atomic<std::uint64_t> workspace_closedloop_multi_agent_edit_fidelity_pct{0};
     std::atomic<std::uint64_t> workspace_closedloop_stale_ref_prevented_eda_loops_total{0};
+    // Issue #818: StableNodeRef full provenance + cross-COW/sub-workspace
+    // auto-resolve enforcement (Task1-review follow-up; non-duplicative with
+    // #641 provenance-sv-stats, #715 layer-stats, #738 boundary-stats, #749 COW).
+    //   - stable_ref_provenance_enforced_total: full provenance validate on
+    //     mutate:*/query:* StableRef unpack paths (Guard-scope stamp check).
+    //   - stable_ref_cross_cow_refresh_hits_total: cross-COW / WorkspaceTree
+    //     resolve_stable_ref or validate_or_refresh success.
+    //   - stable_ref_fiber_workspace_mismatch_prevented_total: fiber_id /
+    //     workspace_id inconsistency caught before use.
+    //   - stable_ref_steal_auto_refresh_total: fiber steal/resume auto-refresh
+    //     of Workspace-active StableRefs.
+    std::atomic<std::uint64_t> stable_ref_provenance_enforced_total{0};
+    std::atomic<std::uint64_t> stable_ref_cross_cow_refresh_hits_total{0};
+    std::atomic<std::uint64_t> stable_ref_fiber_workspace_mismatch_prevented_total{0};
+    std::atomic<std::uint64_t> stable_ref_steal_auto_refresh_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

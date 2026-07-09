@@ -323,8 +323,14 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    - name: Build aura
-      run: python3 build.py build
+    # Only aura + test_issue_677. Full issue-test matrix is build-test's job;
+    # building all_test_issue_targets here was redundant and flaked GCC
+    # module dyndep scans (…aura_jit_bridge.cpp.o.ddi.i: Invalid argument).
+    - name: Build aura + health test
+      run: |
+        set -euo pipefail
+        python3 -c 'import build, subprocess, sys; build.BUILD.mkdir(parents=True, exist_ok=True); sys.exit(subprocess.run(build._cmake_configure_args(), cwd=build.ROOT).returncode)'
+        ninja -C build -j"$(nproc)" aura test_issue_677
 
     - name: Health endpoint smoke
       run: |

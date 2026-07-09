@@ -418,7 +418,12 @@ void WorkerThread::run() {
         }
     }
 
-    g_worker_ctx = nullptr;
+    // Detach GC state. Do not assign g_worker_ctx = nullptr here: under
+    // UBSan + ucontext fibers that store has been observed as
+    // "store to null pointer of type 'struct WorkerContext *'" (TLS
+    // address of the slot unusable at thread exit). The OS thread tears
+    // down TLS on return from run(), and nothing after this point may
+    // yield/resume on this worker.
     ctx_.gc_state = nullptr;
 }
 

@@ -120,6 +120,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:jit-rendering-coverage-stats)` | 780 | JIT / hot-update rendering coverage + readiness (4 fields) |
 | `(query:zero-copy-framebuffer-stats)` | 781 | Zero-copy byte buffer + framebuffer readiness (4 fields) |
 | `(query:terminal-rendering-module-stats)` | 782 | Terminal rendering module + profiling integration readiness (4 fields) |
+| `(query:stable-ref-cross-cow-provenance-stats)` | 818 | full provenance + cross-COW auto-resolve (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -576,6 +577,15 @@ Distinct from the existing `#766` `(query:ir-soa-migration-stats)` (5 fields + s
 - `schema` — 783 (drift sentinel)
 
 Distinct from the existing `(query:orchestration-metrics)` (#451) + `(query:scheduler-mutation-coord-stats)` (#618/#591): those primitives surface the coarse `steal_deferred_mutation_boundary_count_` as one lumped figure (no outermost/inner split) and don't expose the cross-fiber safe steal signal. `#783` is the FIRST observability surface that splits the steal deferral into the production-grade components the body asks for ("separate outermost_deferred vs inner_deferred; expose via `query:orchestration-steal-outermost-stats`"), exposes the `cross_fiber_mutation_safe_steal` counter, and marks the Phase 2+ deferred work (StableRef / EnvFrame version refresh + `#754` bias-driven deferral) as hardcoded "not yet" flags.
+### `(query:stable-ref-cross-cow-provenance-stats)` fields (#818)
+
+- `provenance-enforced-hits` — `stable_ref_provenance_enforced_total` (full provenance validate on mutate/query StableRef unpack)
+- `cross-cow-refresh-hits` — `stable_ref_cross_cow_refresh_hits_total` (`workspace:resolve-stable-ref` / `validate_or_refresh` success)
+- `fiber-workspace-mismatch-prevented` — `stable_ref_fiber_workspace_mismatch_prevented_total` (fiber/workspace id inconsistency caught)
+- `steal-auto-refresh-hits` — `stable_ref_steal_auto_refresh_total` (fiber steal/resume auto-refresh)
+- `schema` — 818 (drift sentinel)
+
+Distinct from `(query:stable-ref-provenance-sv-stats)` (#641) / `(query:stable-ref-layer-stats)` (#715) / `(query:stable-ref-boundary-stats-hash)` (#738): #818 is the unified full-provenance + cross-COW auto-resolve enforcement dashboard for multi-Agent EDSL orchestration.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

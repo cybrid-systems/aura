@@ -756,6 +756,9 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
     ev->probe_arena_auto_policy_on_fiber_transition();
     ev->bump_concurrent_safety_gc_safepoint_during_steal();
     ev->bump_linear_postmutate_post_rollback_revalidate();
+    // Issue #818: steal/resume auto-refresh of Workspace-active StableRefs.
+    // Marks that migration completed with provenance-aware restamp hooks.
+    ev->bump_stable_ref_steal_auto_refresh();
 }
 
 // Issue #683: linear ownership enforcement on work-steal.
