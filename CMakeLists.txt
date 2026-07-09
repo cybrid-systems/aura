@@ -3915,6 +3915,26 @@ add_dependencies(all_test_issue_targets test_issue_768)
 aura_add_issue_test(test_issue_769)
 aura_issue_test_link_llvm_jit(test_issue_769)
 add_dependencies(all_test_issue_targets test_issue_769)
+# Issue #770: solve_delta + reverify with subtree-aware dirty spans
+# to eliminate truncation — already-shipped verification (scope-
+# limited close). The 4 body items all ship on latest main via
+# prior commits:
+# 1. FlatAST subtree dirty descriptors (#411/#487) — ast.ixx:4363/5611
+# 2. Dynamic reverify limit + Occurrence priority (#745 commit 3b61c5da
+#    2026-07-08) — type_checker_impl.cpp
+# 3. affected_subtree_from_mutation wired into infer_flat_partial
+#    (#411/#487) — type_checker_impl.cpp:4951
+# 4. Heavy nested mutate regression tests (#411/#745) — multiple tests
+#    including test_typesystem_solve_delta_occurrence_priority_heavy_mutate
+# Metrics surface for "100% conflict detection coverage" ships via
+# 5 primitives: (#509/#573/#608/#628/#745/#798) all in
+# kObservabilityStatsPrimitives.
+# 5 ACs: FlatAST subtree API reachable + type-incremental-fidelity-stats
+# schema 798 + constraint-reverify-occurrence-stats schema 745 + heavy
+# nested mutate no truncation + sibling observability regression.
+aura_add_issue_test(test_issue_770)
+aura_issue_test_link_llvm_jit(test_issue_770)
+add_dependencies(all_test_issue_targets test_issue_770)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
