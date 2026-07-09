@@ -4165,6 +4165,46 @@ public:
             m->registry_extension_validation_passes_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #803: SEVA Long-Running Concurrent Verification
+    // Evolution SLO bump helpers (P0 EDA-SV-verification-
+    // production long-running concurrent multi-agent harness
+    // foundation; consolidates/non-duplicates #794 + #755 + #773
+    // + #774 + #802). Called from the planned Phase 2+ wire-up
+    // sites:
+    // - bump_seva_concurrent_ref_drift_prevented() in
+    //   evaluator_fiber_mutation.cpp + ast.ixx stable-ref +
+    //   guard-framework integration when a ref-drift is caught
+    //   during a long-running concurrent SEVA round and
+    //   prevented (i.e. StableNodeRef.refresh_if_stale + auto
+    //   re-resolve succeeded within the round)
+    // - bump_seva_concurrent_steal_during_verification_mutate()
+    //   in evaluator_fiber_mutation.cpp when fiber steal
+    //   fires during a verification mutate (mutation_stack_ +
+    //   outermost MutationBoundaryGuard active during a SEVA
+    //   round)
+    // - bump_seva_concurrent_dirty_propagation_hits() in
+    //   ast.ixx mark_dirty_upward + verify_dirty_ pass-mark
+    //   during a SEVA round (no-fail signal — the inverse
+    //   would be a dirty inconsistency violation)
+    void bump_seva_concurrent_ref_drift_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->seva_concurrent_ref_drift_prevented_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_seva_concurrent_steal_during_verification_mutate(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->seva_concurrent_steal_during_verification_mutate_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_seva_concurrent_dirty_propagation_hits(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->seva_concurrent_dirty_propagation_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #772: SV Verification closed-loop SLO observability
     // counters backing the (query:sv-closedloop-slo) primitive.
     // These are public so future hardware_backend.ixx emit_sv_

@@ -4449,6 +4449,19 @@ add_dependencies(all_test_issue_targets test_issue_797)
 aura_add_issue_test(test_issue_806)
 aura_issue_test_link_llvm_jit(test_issue_806)
 add_dependencies(all_test_issue_targets test_issue_806)
+# Issue #803: P0 EDA-SV-verification-production
+# long-running concurrent multi-agent verification
+# evolution harness (consolidation of #794/#755/#773/
+# #774/#802; non-duplicative with each component
+# primitive). 5 ACs: hash shape (create(16) with 8
+# fields + schema), fresh-zero split-rule, schema
+# sentinel == 803, 3 NEW bump helpers callable +
+# slo-derived convergence-rate + hygiene-safe-rollback-
+# pct in valid range, sibling #802 + #759 + #806 + #794
+# + #783 regression.
+aura_add_issue_test(test_issue_803)
+aura_issue_test_link_llvm_jit(test_issue_803)
+add_dependencies(all_test_issue_targets test_issue_803)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

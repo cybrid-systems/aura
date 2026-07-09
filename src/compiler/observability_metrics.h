@@ -656,6 +656,37 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_self_evo_structured_mutate_total{0};
     std::atomic<std::uint64_t> sv_self_evo_closed_loop_rounds_total{0};
     std::atomic<std::uint64_t> sv_self_evo_convergence_hits_total{0};
+    // Issue #803: SEVA Long-Running Concurrent Verification Evolution
+    // SLO observability counters (P0 EDA-SV-verification-production
+    // long-running concurrent multi-agent harness foundation;
+    // consolidates/non-duplicates #794 + #755 + #773 + #774 + #802).
+    // #803 is the FIRST observability surface that tracks the
+    // *long-running concurrent SEVA production harness signals* —
+    // the per-decision-point counters the Agent consumes to monitor
+    // production readiness for commercial multi-agent deployment:
+    //   - seva_concurrent_ref_drift_prevented_total: ref_drift
+    //     attempts that were caught + prevented during long-running
+    //     concurrent SEVA loop. Distinct from #762
+    //     workspace_closedloop_stale_ref_prevented_eda_loops_total
+    //     (which tracks workspace-level staleness in EDA verification
+    //     loops); #803 tracks harness-loop-level ref drift.
+    //   - seva_concurrent_steal_during_verification_mutate_total:
+    //     count of fiber steal events that occurred during a
+    //     verification mutate inside the long-running harness —
+    //     a high-fidelity load metric for the SEVA test surface.
+    //   - seva_concurrent_dirty_propagation_hits_total: count of
+    //     dirty propagation consistency checks that passed during
+    //     harness round (a no-fail signal — the inverse would be
+    //     a dirty inconsistency violation).
+    // P0 ships the counters + the (query:seva-longrunning-
+    // concurrent-slo, schema 803) primitive so the Agent has a
+    // dashboard today; values are 0 until the Phase 2+
+    // harness + SLO CI gate + self-heal hooks land. Consumed by
+    // tests/test_seva_longrunning_concurrent_verification_
+    // evolution.cpp (Phase 2+).
+    std::atomic<std::uint64_t> seva_concurrent_ref_drift_prevented_total{0};
+    std::atomic<std::uint64_t> seva_concurrent_steal_during_verification_mutate_total{0};
+    std::atomic<std::uint64_t> seva_concurrent_dirty_propagation_hits_total{0};
     // Issue #766: IR-SoA migration observability + DirtyAware
     // incremental pipeline counters (P0 high-perf C++26 DOD/SoA
     // foundation; refines #167/#463/#741; non-duplicative with

@@ -108,6 +108,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
 | `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
 | `(query:registry-extension-stats)`        | 806    | Registry-Extension AI-Agent primitives + auto-validation + SLO (7 fields) |
+| `(query:seva-longrunning-concurrent-slo)`  | 803    | SEVA Long-Running Concurrent Verification Evolution SLO (8 fields) |
 | `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
 | `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
 | `(query:closed-loop-convergence-stats)` | 774 | Verification feedback-driven self-evolution convergence rate (4 fields) |
@@ -316,6 +317,20 @@ Distinct from `(query:extension-kit-stats)` (#775): `#806` is the **registry-int
 - `schema` — 776 (drift sentinel)
 
 Distinct from `(query:primitives-hotpath-stats)` (#614/#584) and `(query:primitives-contract-stats)` (#751): `#614` ships 11 hot-path counters (primitive-call-total + pair-alloc-total + linear-traverse-total + cdr-depth-max + call-rate + alloc-per-call + regex-time-us + stability-score + hotpath-schema + primitives-hotpath-total + primitives-hotpath-recommendation); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version). `#776` is the FIRST observability surface that aggregates the **primitives hot-path SLO composite** — current-vs-baseline-pct (stability_score as fixed-point pct) + contract-violations + fastpath-hit-rate-pct + regression-flag — as a single deployment-grade SLO dashboard the Agent reads to decide whether the stdlib hot-path is production-ready under AI Agent mutation + fiber load.
+
+### `(query:seva-longrunning-concurrent-slo)` fields (#803)
+
+- `convergence-rate` — derived (`sv_self_evo_convergence_hits_total / sv_self_evo_closed_loop_rounds_total × 10000`; 10000 = 100.00% baseline when closed_loop_rounds == 0 = vacuous-true default; SLO target >98% = 9800 per body "convergence rate >98% without manual intervention")
+- `ref-drift-prevented` — `seva_concurrent_ref_drift_prevented_total` (NEW atomic #803 — # of ref-drift attempts caught + prevented during long-running concurrent SEVA round; bumped by `bump_seva_concurrent_ref_drift_prevented()` when StableNodeRef.refresh_if_stale + auto re-resolve succeeds; distinct from #762 workspace_closedloop_stale_ref_prevented_eda_loops_total which is workspace-level staleness)
+- `hygiene-safe-rollback-pct` — derived (`code_as_data_rollback_hygiene_safe_total / (#632 atomic_batch_sv_rollback_total + 1)`) × 10000 (vacuous-true 10000 baseline; SLO target 100% = 10000 per body "hygiene_safe_rollback 100%")
+- `steal-during-verification-mutate` — `seva_concurrent_steal_during_verification_mutate_total` (NEW atomic #803 — # of fiber steal events during a verification mutate inside the long-running harness; high-fidelity load metric; bumped by `bump_seva_concurrent_steal_during_verification_mutate()` when fiber steal fires during mutation_stack_ + outermost MutationBoundaryGuard active)
+- `dirty-consistency-hits` — `seva_concurrent_dirty_propagation_hits_total` (NEW atomic #803 — no-fail signal; bumped by `bump_seva_concurrent_dirty_propagation_hits()` at the mark_dirty_upward + verify_dirty_ pass-mark during a SEVA round)
+- `avg-rounds-to-target` — derived (`closed_loop_rounds / (convergence_hits + 1)`); 0 baseline when no convergence hits; a typical long-running SEVA converges in ~3-7 rounds; rising values = SLO drift / non-convergence
+- `longrunning-harness-active` — hardcoded 0 (Phase 2+ — the actual `tests/test_seva_longrunning_concurrent_verification_evolution.cpp` + CI gate step + SLO dashboard + self-heal hooks + SEVA tutorial extension)
+- `recommendation` — derived 0/1/2/3 (0 = production-ready when SLO met + harness active; 1 = near-production when SLO met but harness not yet active; 2 = partial Phase 1 when convergence seen but not yet SLO; 3 = early-stage)
+- `schema` — 803 (drift sentinel)
+
+Distinct from `(query:sv-verification-self-evolution-stats)` (#802), `(query:closed-loop-reliability-stats)` (#726), `(query:concurrent-safety-full-cycle-stats)` (#755), `(query:workspace-closedloop-fiber-eda-stats)` (#773), `(query:closed-loop-convergence-stats)` (#774), and `(query:full-closedloop-compiler-edsl-fidelity-stats)` (#794): those primitives surface per-component SV-verification or concurrent-safety signals individually. `#803` is the FIRST observability surface that aggregates the **production-scale long-running concurrent SEVA SLO composite** — convergence rate + ref-drift-prevented + hygiene-safe-rollback-pct + steal-during-verification-mutate + dirty-consistency-hits + avg-rounds-to-target + longrunning-harness-active — as a single deployment-grade SLO composite the Agent reads to decide whether the long-running concurrent verification self-evolution harness is production-ready for commercial multi-agent EDA agent deployment at SoC scale. The body explicitly cites the gap: "no single production-scale long-running harness that exercises full multi-agent concurrent SEVA-style verification evolution under realistic fiber steal/GC/AOT/steal-during-boundary load with measurable SLO gates".
 
 ### `(query:eda-production-readiness)` fields (#777)
 
