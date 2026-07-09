@@ -884,6 +884,160 @@ struct CompilerMetrics {
     // demo + docs).
     std::atomic<std::uint64_t> arena_auto_compact_fiber_yield_during_compact_total{0};
     std::atomic<std::uint64_t> arena_auto_compact_defrag_blocked_fibers_total{0};
+    // Issue #768: Shape + Pass + Contracts hot-path observability
+    // (P0 high-perf C++26 Contracts/Concepts adoption foundation;
+    // builds on #507 hot-path Contracts; non-duplicative with
+    // #570 query:shape-stability-stats, #492 query:shape-profiler-
+    // stats, #494 query:pass-pipeline-stats, #571 query:evalvalue-
+    // v2-dispatch-stats, #744 shape_jit_pass_closedloop_stats).
+    // These are public so future shape_profiler.cpp inline_shape_of
+    // + history push + dominant compute + record_shape stability
+    // transition + pass_manager.ixx JITFriendlyPass + DirtyAwarePass
+    // + arena.ixx shape_inval_on_compact hook + ir_soa.ixx shape_ids_
+    // column can call them at each decision point (hot-path contract
+    // checks / shape stability transitions / JIT epoch sync / targeted
+    // deopt skips / Concept violations caught).
+    //
+    // Non-duplicative with the existing #570/#492/#494/#571/#744
+    // observability surfaces which cover ShapeProfiler stability +
+    // deopt + dirty + JIT recompile closed-loop (stable_shape /
+    // stability_churn_deopts / dirty_from_shape / incremental_
+    // recompile_hits / speculative_win_lost). #768 is the FIRST
+    // observability surface that tracks the *production hot-path
+    // Contracts coverage + ShapeProfiler epoch sync with JIT/Pass
+    // Pipeline + stronger Concept constraints for Dirty/JITFriendly
+    // composition* — contract_checks_hotpath (zero-overhead debug
+    // catches in SoA/dirty/shape dispatch), shape_stability_
+    // transitions (proxy for "how often the dominant shape
+    // flipped"), jit_epoch_sync_hits (ShapeProfiler version
+    // bumped in sync with mutation_epoch_ + JIT epoch hint),
+    // deopt_targeted_skips (DirtyAware or impact_scope targeted
+    // invalidation saved a full recompile), concept_violations_
+    // caught (static_assert in pipeline templates fired) — as
+    // separate per-decision-point counters the Agent consumes
+    // to monitor the speculative opt + debug layer production-
+    // readiness under AI mutation churn.
+    //
+    //   - shape_pass_contract_checks_hotpath_total: # of
+    //                                            contract_assert /
+    //                                            pre / post
+    //                                            checks that
+    //                                            fired in hot
+    //                                            paths
+    //                                            (inline_shape_of
+    //                                            / history push /
+    //                                            dominant compute
+    //                                            / record_shape /
+    //                                            dirty propagate /
+    //                                            shape dispatch).
+    //                                            In release builds
+    //                                            with Contracts
+    //                                            disabled, this
+    //                                            stays 0; in debug
+    //                                            builds it shows
+    //                                            coverage of the
+    //                                            zero-overhead
+    //                                            safety net.
+    //                                            High rate on
+    //                                            long-running
+    //                                            Agent sessions =
+    //                                            the hot path is
+    //                                            well-guarded; 0
+    //                                            in debug = hot
+    //                                            paths slipped
+    //                                            through without
+    //                                            contracts.
+    //   - shape_stability_transitions_total: # of dominant-shape
+    //                                        transitions recorded
+    //                                        by ShapeProfiler
+    //                                        (proxy for "how
+    //                                        often the dominant
+    //                                        shape flipped" —
+    //                                        high rate = the
+    //                                        workload is
+    //                                        polymorphic; low
+    //                                        rate = stable
+    //                                        shape dominates
+    //                                        and JIT can
+    //                                        specialize
+    //                                        aggressively).
+    //   - jit_epoch_sync_hits_total: # of ShapeProfiler version
+    //                                bumps synced with
+    //                                mutation_epoch_ + JIT
+    //                                epoch hint (proxy for
+    //                                "how often the
+    //                                speculative layer
+    //                                correctly tracks the
+    //                                mutation epoch" —
+    //                                high value =
+    //                                cross-layer epoch
+    //                                invariant holds;
+    //                                drift = shape
+    //                                stability vs JIT
+    //                                mismatch).
+    //   - deopt_targeted_skips_total: # of deopt events where
+    //                                  DirtyAware or
+    //                                  impact_scope targeted
+    //                                  invalidation saved
+    //                                  a full recompile
+    //                                  (proxy for "how
+    //                                  often the dirty
+    //                                  short-circuit
+    //                                  prevented a global
+    //                                  deopt" — high
+    //                                  value = the SoA +
+    //                                  DirtyAware story
+    //                                  pays off in
+    //                                  practice).
+    //   - concept_violations_caught_total: # of static_assert
+    //                                      in pipeline
+    //                                      templates that
+    //                                      fired (JITFriendlyPass
+    //                                      / DirtyAwarePass /
+    //                                      SoAView /
+    //                                      ShapeStablePass
+    //                                      Concept
+    //                                      violations; proxy
+    //                                      for "how many
+    //                                      compile-time
+    //                                      guardrails caught
+    //                                      a misconfigured
+    //                                      Pass composition
+    //                                      at build time" —
+    //                                      high value = the
+    //                                      Concepts layer is
+    //                                      doing its job
+    //                                      catching
+    //                                      misconfigurations
+    //                                      early).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual shape_profiler.cpp inline_shape_of + history push
+    // + dominant compute + record_shape stability transition +
+    // wire version bump to mutation_epoch_ + JIT epoch hint +
+    // on_deopt consult DirtyAware or impact_scope for targeted
+    // invalidation + pass_manager.ixx JITFriendlyPass +
+    // DirtyAwarePass + SoAView / ShapeStablePass Concept
+    // (requires const run on SoA view + shape_id consult) +
+    // integrate ShapeProfiler dominant_shape into ComputeKind
+    // or new ShapePropagationPass + short-circuit on stable
+    // shape match + arena.ixx shape_inval_on_compact auto bump
+    // ShapeProfiler versions for affected blocks + mark dirty +
+    // tests/test_highperf_shape_pass_contracts_jit_epoch.cpp
+    // harness (define with shape-varying calls + heavy mutate +
+    // JIT recompile under debug/release → assert Contracts
+    // catch in debug only, shape stability drives targeted
+    // deopt/recompile, epoch sync correct, Dirty/JIT concepts
+    // enforced, metrics, TSan clean) + SEVA speculative
+    // scenarios + CI gate + docs are all follow-up work (each
+    // is a dedicated session in shape_profiler.cpp + value.ixx +
+    // pass_manager.ixx + arena.ixx + ir_soa.ixx + new test +
+    // SEVA demo + docs).
+    std::atomic<std::uint64_t> shape_pass_contract_checks_hotpath_total{0};
+    std::atomic<std::uint64_t> shape_stability_transitions_total{0};
+    std::atomic<std::uint64_t> jit_epoch_sync_hits_total{0};
+    std::atomic<std::uint64_t> deopt_targeted_skips_total{0};
+    std::atomic<std::uint64_t> concept_violations_caught_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

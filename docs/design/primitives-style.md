@@ -106,6 +106,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:sv-verification-self-evolution-stats)` | 802 | feedback-driven SV self-evolution closed-loop (5 fields) |
 | `(query:ir-soa-migration-stats)`         | 766    | IR-SoA migration + DirtyAware incremental pipeline (5 fields) |
 | `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
+| `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -224,6 +225,17 @@ Distinct from `(query:soa-hotpath-stats)` (#729) and `(query:incremental-quote-l
 - `schema` — 767 (drift sentinel)
 
 Distinct from `(query:arena-auto-compact-stats)` (#685) and `(query:arena-auto-compaction-stats)` (#642): #767 adds 2 truly new counters (`fiber-yield-during-compact` actual-yield vs #685 yield-checks-hit observability-only, and `defrag-blocked-fibers` introducing the hidden defrag-fiber interaction cost metric) on top of the 4 reused arena stats — completes the production auto-compact policy + live defrag + fiber/GC safepoint yield observability surface.
+
+### `(query:shape-pass-hotpath-stats)` fields (#768)
+
+- `contract-checks-hotpath` — `shape_pass_contract_checks_hotpath_total` (zero-overhead `contract_assert` / pre / post checks that fired in `inline_shape_of` / history push / dominant compute / record_shape / dirty propagate / shape dispatch hot paths)
+- `shape-stability-transitions` — `shape_stability_transitions_total` (dominant-shape transitions recorded by ShapeProfiler; high rate = polymorphic workload)
+- `jit-epoch-sync-hits` — `jit_epoch_sync_hits_total` (ShapeProfiler version bumped in sync with `mutation_epoch_` + JIT epoch hint)
+- `deopt-targeted-skips` — `deopt_targeted_skips_total` (DirtyAware or `impact_scope` targeted invalidation saved a full recompile)
+- `concept-violations-caught` — `concept_violations_caught_total` (static_assert in pipeline templates fired for `JITFriendlyPass` / `DirtyAwarePass` / `SoAView` / `ShapeStablePass` Concept violations)
+- `schema` — 768 (drift sentinel)
+
+Distinct from `(query:shape-stability-stats)` (#570), `(query:shape-profiler-stats)` (#492), `(query:pass-pipeline-stats)` (#494), `(query:evalvalue-v2-dispatch-stats)` (#571), and `shape_jit_pass_closedloop_stats` (#744): #768 is the FIRST observability surface that tracks the *production hot-path Contracts coverage + ShapeProfiler epoch sync with JIT/Pass Pipeline + stronger Concept constraints for Dirty/JITFriendly composition* — 5 truly new counters beyond what #570/#492/#494/#571/#744 cover.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

@@ -4042,6 +4042,47 @@ public:
                                                                         std::memory_order_relaxed);
         }
     }
+    // Issue #768: Shape + Pass + Contracts hot-path observability
+    // counters backing the (query:shape-pass-hotpath-stats)
+    // primitive. These are public so future shape_profiler.cpp
+    // inline_shape_of + history push + dominant compute +
+    // record_shape stability transition + pass_manager.ixx
+    // JITFriendlyPass + DirtyAwarePass + SoAView /
+    // ShapeStablePass Concept + arena.ixx shape_inval_on_compact
+    // hook + ir_soa.ixx shape_ids_ column can call them at each
+    // decision point (hot-path contract checks / shape stability
+    // transitions / JIT epoch sync / targeted deopt skips /
+    // Concept violations caught).
+    void bump_shape_pass_contract_checks_hotpath(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->shape_pass_contract_checks_hotpath_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_shape_stability_transitions(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->shape_stability_transitions_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_epoch_sync_hits(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_epoch_sync_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_deopt_targeted_skips(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->deopt_targeted_skips_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_concept_violations_caught(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->concept_violations_caught_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx
