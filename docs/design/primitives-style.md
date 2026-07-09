@@ -123,6 +123,15 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:terminal-rendering-module-stats)` | 782 | Terminal rendering module + profiling integration readiness (4 fields) |
 | `(query:stable-ref-cross-cow-provenance-stats)` | 818 | full provenance + cross-COW auto-resolve (5 fields) |
 | `(query:primitives-hotpath-registry-stats)` | 805 | registry + list-apply load samples SLO (6 fields) |
+| `(query:error-handling-policy-stats)` | 809 | exception policy + interop counters |
+| `(query:fiber-scheduler-init-stats)` | 810 | Fiber/Scheduler AuraResult init path |
+| `(query:jit-exception-bridge-stats)` | 811 | guest Raise vs internal Result |
+| `(query:orchestration-steal-arena-gc-stats)` | 812 | steal + arena compact + GC yield |
+| `(query:guard-error-stats)` | 813 | MutationBoundaryGuard Result path |
+| `(query:runtime-production-health)` | 814 | unified production health + self-heal |
+| `(query:macro-introduced-provenance-stats)` | 815 | SyntaxMarker→IR provenance |
+| `(query:edsl-struct-meta-stats)` | 816 | edsl:define-struct validate meta |
+| `(query:dirty-epoch-marker-stats)` | 817 | MacroIntroduced dirty/epoch |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)

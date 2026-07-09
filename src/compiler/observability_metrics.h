@@ -1273,6 +1273,40 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hotpath_registry_bench_runs_total{0};
     std::atomic<std::uint64_t> hotpath_registry_extension_reg_ns_total{0};
     std::atomic<std::uint64_t> hotpath_registry_linear_cost_total{0};
+    // ── Issues #809–#817 Phase 1 observability (error policy, fiber/JIT,
+    // steal+arena, Guard, production health, macro IR, edsl-struct, dirty-epoch)
+    // #809 formalize exception policy + interop
+    std::atomic<std::uint64_t> error_policy_interop_conversions_total{0};
+    std::atomic<std::uint64_t> error_policy_contract_as_aura_error_total{0};
+    // #810 fiber/scheduler init AuraResult path
+    std::atomic<std::uint64_t> fiber_init_aura_result_ok_total{0};
+    std::atomic<std::uint64_t> fiber_init_aura_result_err_total{0};
+    std::atomic<std::uint64_t> scheduler_init_aura_result_ok_total{0};
+    std::atomic<std::uint64_t> scheduler_init_aura_result_err_total{0};
+    // #811 JIT exception bridge classification
+    std::atomic<std::uint64_t> jit_guest_exception_bridge_total{0};
+    std::atomic<std::uint64_t> jit_internal_aura_result_path_total{0};
+    // #812 steal + arena + GC safepoint coordination
+    std::atomic<std::uint64_t> steal_arena_yield_during_compact_total{0};
+    std::atomic<std::uint64_t> steal_outermost_only_enforced_total{0};
+    std::atomic<std::uint64_t> steal_linear_probe_on_success_total{0};
+    // #813 MutationBoundaryGuard AuraResult migration telemetry
+    std::atomic<std::uint64_t> guard_aura_result_path_total{0};
+    std::atomic<std::uint64_t> guard_panic_checkpoint_aura_result_total{0};
+    // #814 unified runtime production health + self-heal
+    std::atomic<std::uint64_t> runtime_self_heal_invocations_total{0};
+    std::atomic<std::uint64_t> runtime_health_drift_detected_total{0};
+    // #815 macro-introduced IR source_marker provenance
+    std::atomic<std::uint64_t> macro_ir_source_marker_stamps_total{0};
+    std::atomic<std::uint64_t> macro_provenance_query_total{0};
+    // #816 edsl:define-struct + runtime reflect validate
+    std::atomic<std::uint64_t> edsl_define_struct_total{0};
+    std::atomic<std::uint64_t> edsl_define_struct_validate_pass_total{0};
+    std::atomic<std::uint64_t> edsl_define_struct_validate_fail_total{0};
+    // #817 dirty-epoch-marker macro awareness
+    std::atomic<std::uint64_t> dirty_epoch_macro_introduced_hits_total{0};
+    std::atomic<std::uint64_t> dirty_epoch_targeted_relower_total{0};
+    std::atomic<std::uint64_t> dirty_epoch_hygiene_drift_prevented_total{0};
     // Issue #620: StableNodeRef provenance query counter.
     // Bumped on every (query:stable-ref-provenance) call so the
     // Agent can see how often the provenance surface is being

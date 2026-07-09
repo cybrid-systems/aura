@@ -1586,13 +1586,15 @@ public:
     [[nodiscard]] aura::core::AuraResult<types::EvalValue>
     eval_as_aura_result(std::string_view input) {
         auto r = eval(input);
+        // Issue #809: count Diagnostic→AuraError interop at Evaluator boundary.
+        evaluator_.bump_error_policy_interop_conversion();
         if (r)
             return *r;
         const auto& d = r.error();
         return aura::core::make_unexpected_from_kind_name(aura::diag::kind_name(d.kind), d.message);
     }
 
-    // Issue #807/#808: convert an existing EvalResult without re-running eval.
+    // Issue #807/#808/#809: convert an existing EvalResult without re-running eval.
     [[nodiscard]] static aura::core::AuraResult<types::EvalValue>
     eval_result_to_aura(const EvalResult& r) {
         if (r)
