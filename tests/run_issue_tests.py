@@ -54,7 +54,13 @@ def discover_test_issue_binaries() -> list[str]:
         if not entry.is_file():
             continue
         name = entry.name
-        if name.startswith("test_issues_") or (name.startswith("test_issue_") and name not in bundled):
+        if (
+            name.startswith("test_issues_")
+            or name.startswith("test_obs_")
+            or name.startswith("test_aura_result_")
+            or (name.startswith("test_issue_") and name not in bundled)
+            or name.startswith("test_primitives_hotpath")
+        ):
             bins.append(name)
     return bins
 
@@ -78,7 +84,13 @@ def discover_test_issue_targets() -> list[str]:
             continue
         name = line.split(":", 1)[0].strip()
         if (
-            (name.startswith("test_issues_") or name.startswith("test_issue_"))
+            (
+                name.startswith("test_issues_")
+                or name.startswith("test_issue_")
+                or name.startswith("test_obs_")
+                or name.startswith("test_aura_result_")
+                or name.startswith("test_primitives_hotpath")
+            )
             and not name.startswith("CMakeFiles")
             and "cmake_object" not in name
         ):

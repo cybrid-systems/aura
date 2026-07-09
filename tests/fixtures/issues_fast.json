@@ -1,6 +1,7 @@
 {
-  "description": "Representative issue targets for PR/fast CI (bundles + standalone).",
+  "description": "PR/fast CI: domain suites first (obs matrix, error policy), then profile bundles + samples.",
   "targets": [
+    "test_obs_schema_matrix",
     "test_issues_light",
     "test_issues_jit_minimal",
     "test_issues_jit_tests",
@@ -25,6 +26,8 @@
     "test_issues_jit_late3",
     "test_issues_jit_late4",
     "test_issues_jit_late5",
-    "test_issues_light_late"
+    "test_issues_light_late",
+    "test_aura_result_error_policy",
+    "test_primitives_hotpath_registry_slo"
   ]
 }
