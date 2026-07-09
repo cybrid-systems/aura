@@ -795,14 +795,15 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
 // ESCAPED: PairSlot allocated from global heap
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
-    // Issue #157 Phase 1: write lock — push_back on g_pair_slots +
-    // g_owned_pair_slots_ is a write, must be exclusive vs readers
-    // and other writers. Released in Phase 1 as a no-op when no
-    // CompilerService is registered (single-threaded default).
-    aura_lock_workspace_write();
+    // Issue #898 Phase 1: allocate PairSlot *outside* the global write
+    // lock; only the vector publish is critical. Reduces lock hold time
+    // vs malloc-under-lock (full TLS free-list is Phase 2).
     auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
+    if (!slot)
+        return 0;
     slot->car = car;
     slot->cdr = cdr;
+    aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
     g_owned_pair_slots_.push_back(slot);
@@ -837,13 +838,13 @@ int64_t aura_pair_cdr(int64_t pair_val) {
 // Arena-based pair allocation (for NON_ESCAPING pairs, Phase 2)
 // Allocates PairSlot from TL arena instead of global heap.
 int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
-    // Issue #157 Phase 1: write lock — push_back on g_pair_slots
-    // is the same race as aura_alloc_pair; the arena alloc is just
-    // a different backing store.
-    aura_lock_workspace_write();
+    // Issue #898: arena alloc outside lock; only publish under lock.
     auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
+    if (!slot)
+        return 0;
     slot->car = car;
     slot->cdr = cdr;
+    aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
     aura_unlock_workspace_write();
