@@ -107,6 +107,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:ir-soa-migration-stats)`         | 766    | IR-SoA migration + DirtyAware incremental pipeline (5 fields) |
 | `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
 | `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
+| `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -236,6 +237,18 @@ Distinct from `(query:arena-auto-compact-stats)` (#685) and `(query:arena-auto-c
 - `schema` — 768 (drift sentinel)
 
 Distinct from `(query:shape-stability-stats)` (#570), `(query:shape-profiler-stats)` (#492), `(query:pass-pipeline-stats)` (#494), `(query:evalvalue-v2-dispatch-stats)` (#571), and `shape_jit_pass_closedloop_stats` (#744): #768 is the FIRST observability surface that tracks the *production hot-path Contracts coverage + ShapeProfiler epoch sync with JIT/Pass Pipeline + stronger Concept constraints for Dirty/JITFriendly composition* — 5 truly new counters beyond what #570/#492/#494/#571/#744 cover.
+
+### `(query:sv-closedloop-slo)` fields (#772)
+
+- `slo-status` — computed at primitive-call time from current counters + SLO thresholds. 0 = ok (fidelity ≥ 99% AND re-emit latency max ≤ 50 ms AND no explicit breach bumps); 1 = warn (fidelity 95-99% OR latency 50-100 ms); 2 = breach (fidelity < 95% OR latency > 100 ms OR any explicit `bump_sv_slo_breach` fires).
+- `emit-parse-success` — `sv_slo_emit_parse_success_total` (numerator for fidelity rate)
+- `emit-parse-failure` — `sv_slo_emit_parse_failure_total` (denominator for fidelity rate)
+- `reemit-latency-max-us` — `sv_slo_reemit_latency_max_us` (high-water mark of incremental re-emit latency in microseconds; bumped via compare-exchange so only updates when new value exceeds current max)
+- `reemit-hits` — `sv_slo_reemit_hits_total` (incremental re-emit trigger count)
+- `slo-breach-total` — `sv_slo_breach_total` (cumulative SLO breach counter; any explicit bump forces `slo-status = 2`)
+- `schema` — 772 (drift sentinel)
+
+Distinct from `(query:sv-verification-structure-stats)` (#748), `(query:sv-commercial-emit-fidelity-stats)` (#801), and `(query:sv-verification-self-evolution-stats)` (#802): #748 tracks structure mutate / dirty re-emit / emit fidelity pass-fail; #801 tracks commercial emit roundtrip + dirty re-emit; #802 tracks structured self-evolution closed-loop. #772 is the FIRST observability surface that tracks the *production SLO status of the SV verification closed-loop* — the computed slo-status + fidelity rate + re-emit latency max + breach counter — as a deployment-grade dashboard the Agent reads to decide whether the closed-loop is production-ready for commercial VCS / Questa / JasperGold emit acceptance.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

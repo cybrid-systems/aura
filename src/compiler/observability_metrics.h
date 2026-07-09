@@ -1038,6 +1038,77 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_epoch_sync_hits_total{0};
     std::atomic<std::uint64_t> deopt_targeted_skips_total{0};
     std::atomic<std::uint64_t> concept_violations_caught_total{0};
+    // Issue #772: SV Verification closed-loop SLO observability
+    // (P0 EDA production standard foundation; consolidates/refines
+    // #693/#724/#725/#726/#748; non-duplicative with #748 query:
+    // sv-verification-structure-stats, #801 query:sv-commercial-
+    // emit-fidelity-stats, #802 query:sv-verification-self-
+    // evolution-stats). These are public so future hardware_backend
+    // emit_sv_verification_structured + sv_ir_impl.cpp dirty-
+    // triggered incremental re-emit queue + eda:validate-sv-emit
+    // roundtrip stub can call them at each decision point (emit
+    // parse success/failure / re-emit latency / SLO breach).
+    //
+    // Non-duplicative with #748/#801/#802 which track structure
+    // mutate + dirty re-emit + emit fidelity pass/fail + self-evolution
+    // closed-loop counters. #772 is the FIRST observability surface
+    // that tracks the *production SLO status of the SV verification
+    // closed-loop* — fidelity rate (>99% threshold) + re-emit
+    // latency max (the bound threshold) + breach counter — as
+    // separate per-decision-point counters + a computed slo-status
+    // field the Agent can read to decide whether the closed-loop is
+    // production-ready for commercial VCS/Questa/JasperGold emit
+    // acceptance.
+    //
+    //   - sv_slo_emit_parse_success_total: # of successful emit
+    //                                      passes through the
+    //                                      roundtrip validate
+    //                                      stub (the fidelity
+    //                                      numerator).
+    //   - sv_slo_emit_parse_failure_total: # of failed emit passes
+    //                                      (the fidelity
+    //                                      denominator — breach
+    //                                      trigger if rate
+    //                                      < 99%).
+    //   - sv_slo_reemit_latency_max_us:   max re-emit latency in
+    //                                      us (high-water mark;
+    //                                      breach trigger if
+    //                                      > X threshold).
+    //   - sv_slo_reemit_hits_total:       # of incremental
+    //                                      re-emits triggered by
+    //                                      verification_dirty or
+    //                                      ppa_dirty success
+    //                                      (proxy for "how often
+    //                                      the dirty-triggered
+    //                                      incremental path
+    //                                      fired instead of
+    //                                      full re-emit").
+    //   - sv_slo_breach_total:            # of SLO breaches
+    //                                      observed (cumulative;
+    //                                      0 = production-ready,
+    //                                      > 0 = investigate
+    //                                      fidelity or latency
+    //                                      root cause).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual hardware_backend.ixx emit_sv_verification_
+    // structured for VCS/Questa/JasperGold compat + sv_ir_impl.cpp
+    // dirty-triggered incremental re-emit queue + eda:validate-
+    // sv-emit roundtrip stub (slang/Verilator stub) + tests/
+    // test_sv_verification_edsl_emit_fidelity_closedloop.cpp
+    // harness + extend SEVA with full class/constraint/covergroup/
+    // SVA self-evo scenarios (coverage hole → mutate constraint/
+    // coverpoint; assert fail → weaken property + re-emit) + large
+    // multi-clock/interface fixture + Prometheus exposure with
+    // (query:sv-closedloop-slo) thresholds + SEVA tutorial update +
+    // CI gate + docs are all follow-up work (each is a dedicated
+    // session in hardware_backend.ixx + sv_ir_impl.cpp + eda_
+    // primitives_eda.cpp + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> sv_slo_emit_parse_success_total{0};
+    std::atomic<std::uint64_t> sv_slo_emit_parse_failure_total{0};
+    std::atomic<std::uint64_t> sv_slo_reemit_latency_max_us{0};
+    std::atomic<std::uint64_t> sv_slo_reemit_hits_total{0};
+    std::atomic<std::uint64_t> sv_slo_breach_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
