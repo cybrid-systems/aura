@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**828** registrations scanned from `src/**/*.cpp`.
+**829** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 127 primitives (15%)
 - **core**: 213 primitives (26%)
-- **internal-observable**: 341 primitives (41%)
+- **internal-observable**: 342 primitives (41%)
 - **convenience**: 147 primitives (18%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,11 +21,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (341)
+## Query: (342)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ai-native-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-checkpoint-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-concurrent-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-hot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1310,11 +1311,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (341)
+### Internal observable (stats/counters) (342)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ai-native-extension-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-checkpoint-version-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-concurrent-hotupdate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-hot-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
