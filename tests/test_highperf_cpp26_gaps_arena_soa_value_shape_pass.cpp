@@ -108,8 +108,11 @@ static void run_matrix(CompilerService& cs) {
     auto vdisp = cs.eval("(query:value-dispatch-stats)");
     auto shape = cs.eval("(query:shape-stability-stats)");
     CHECK(soa && is_hash(*soa), "soa-dirty-stats regression");
-    CHECK(vdisp && is_int(*vdisp), "value-dispatch-stats regression");
-    CHECK(shape && is_int(*shape), "shape-stability-stats regression");
+    // #571 was int; later observability surfaces upgraded to hash with schema.
+    CHECK(vdisp && (is_int(*vdisp) || is_hash(*vdisp)),
+          "value-dispatch-stats regression (int or hash)");
+    CHECK(shape && (is_int(*shape) || is_hash(*shape)),
+          "shape-stability-stats regression (int or hash)");
 }
 
 } // namespace aura_658_detail

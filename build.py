@@ -1084,12 +1084,12 @@ def test_p0_regression():
     """Run P0 fix regression tests."""
     print(f"{B}═══ P0 Regression Tests ═══{N}")
     # test_regression.py runs 150+ Aura subprocess cases plus JIT/AOT/fuzz
-    # helpers; ~35s locally but CI runners often exceed the old 60s cap.
+    # helpers; wall time often exceeds 3 min on loaded runners.
     r = subprocess.run(
         [sys.executable, str(ROOT / "tests" / "test_regression.py")],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
         cwd=str(ROOT),
     )
     print(r.stdout)

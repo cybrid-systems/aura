@@ -37,9 +37,10 @@ Scheduler::Scheduler(int num_workers) {
     // Create epoll instance
 #if AURA_HAVE_EPOLL
     epoll_fd_ = ::epoll_create1(0);
-    if (epoll_fd_ == -1)
+    if (epoll_fd_ == -1) {
         aura_scheduler_init_record_err();
-    throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
+        throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
+    }
 
     // Register stdin (fd 0) with edge-triggered mode so the IO
     // thread can wake when input arrives (REPL / serve-async mode).
