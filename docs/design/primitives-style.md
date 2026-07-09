@@ -104,6 +104,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:eda-infra-stats)`                | 841    | EDA production infrastructure parse/mutate/feedback/co-sim (5 fields) |
 | `(query:sv-commercial-emit-fidelity-stats)` | 801 | SV commercial emit roundtrip + dirty re-emit fidelity (5 fields) |
 | `(query:sv-verification-self-evolution-stats)` | 802 | feedback-driven SV self-evolution closed-loop (5 fields) |
+| `(query:ir-soa-migration-stats)`         | 766    | IR-SoA migration + DirtyAware incremental pipeline (5 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -199,6 +200,17 @@ Distinct from `(query:sv-verification-structure-stats)` (#748): #801 tracks comm
 - `schema` — 802 (drift sentinel)
 
 Distinct from `(query:closed-loop-reliability-stats)` (#726): #802 tracks structured feedback parse + mutate orchestration; #726 tracks ref-drift/rollback/feedback-round reliability.
+
+### `(query:ir-soa-migration-stats)` fields (#766)
+
+- `soa-instructions-emitted` — `ir_soa_instructions_emitted_total` (cumulative `IRModuleV2::add_instruction` calls)
+- `dirty-block-skips` — `ir_soa_dirty_block_skips_total` (DirtyAware short-circuit block skips when `is_block_dirty==0`)
+- `clean-block-hit-rate` — `ir_soa_clean_block_hit_rate_pct` (0–10000 fixed-point percent × 100 of blocks clean at re-lower entry)
+- `pmr-column-utilization` — `ir_soa_pmr_column_utilization_pct` (0–10000 fixed-point percent × 100 of SoA column capacity in use)
+- `jit-soa-codegen-time-ns` — `ir_soa_jit_codegen_time_ns_total` (cumulative SoA codegen ns in `aura_jit.cpp`)
+- `schema` — 766 (drift sentinel)
+
+Distinct from `(query:soa-hotpath-stats)` (#729) and `(query:incremental-quote-lambda-linear-stats)` (#765): #766 tracks the production migration of `IRModuleV2` + `DirtyAware` incremental pipeline (cache-locality recovery under AI mutation load); #729 tracks SoA list/cdr-walk hot-path telemetry; #765 tracks incremental quote/lambda/closure compile safety.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
