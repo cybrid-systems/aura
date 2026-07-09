@@ -1,8 +1,9 @@
 # File size policy
 
-This document is the source of truth for the `.ixx` file size limits
+This document is the source of truth for source-file size limits
 in the Aura codebase. It pairs with `scripts/check_file_size.py`,
-which enforces the limits in CI.
+which enforces the limits (on-demand via `lint_file_size`, and
+optionally in CI).
 
 ## Why
 
@@ -23,19 +24,27 @@ implementation unit), as established by #378 and #379.
 
 ## Thresholds
 
-Two configurable thresholds (see `scripts/check_file_size.py
---help`):
+### `.ixx` (module interfaces) — Issue #382
 
 | Threshold | Default | Meaning                                                  |
 |-----------|---------|----------------------------------------------------------|
 | Warning   | 800     | File is over the per-issue target. Schedule a split.     |
 | Blocker   | 2000    | File is too large. Must be split before merging new code.|
 
-The default warning of 800 matches the "≤ 600-800 lines" target
-in Issue #382's body. The blocker of 2000 is a soft cap — files
-over it block the CI check from passing clean.
+### `.cpp` / `.h` (implementation + metrics headers)
 
-Both thresholds are CLI-configurable for one-off inspections.
+| Threshold | Default | Meaning |
+|-----------|---------|---------|
+| Warning | 2500 | Schedule a split for non-capped files |
+| Blocker | 5000 | New files must not land above this |
+| **Caps** | per-path | Known mega-TUs in `FILE_LINE_CAPS` — **must not grow** past the listed line count |
+
+Capped files (e.g. `evaluator.ixx`, `evaluator_primitives_observability.cpp`)
+are reported as `capped` while under their freeze limit, and as
+`blocker` if a PR grows them past the cap. Shrink and lower the
+cap over time; remove the cap entry when under the normal blocker.
+
+Use `--no-cpp` for legacy ixx-only behavior.
 
 ## Current state (as of #382 scope-limited first cut)
 
@@ -99,29 +108,13 @@ pattern established by #378 / #379 / #380 / #381):
 
 ## Usage
 
-Lint a single file (one-off):
 ```bash
-python3 scripts/check_file_size.py
-```
-
-Custom thresholds (e.g., to preview the state at a stricter
-policy):
-```bash
+python3 scripts/check_file_size.py              # ixx + cpp/h
+python3 scripts/check_file_size.py --no-cpp     # ixx only (#382)
 python3 scripts/check_file_size.py --warning 500 --blocker 1000
-```
-
-Machine-readable output (for CI dashboards):
-```bash
 python3 scripts/check_file_size.py --json > file_size.json
-```
-
-CMake integration (custom target, run on demand, not auto-built):
-```bash
 cmake --build build --target lint_file_size
 ```
-
-The CMake target re-runs the script on every invocation, so
-local edits to `.ixx` files are picked up immediately.
 
 ## CI integration (future)
 

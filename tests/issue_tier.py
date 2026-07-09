@@ -12,7 +12,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = _SCRIPT_DIR.parent
 FAST_FIXTURE = _SCRIPT_DIR / "fixtures" / "issues_fast.json"
 PROFILES_FIXTURE = _SCRIPT_DIR / "fixtures" / "issue_link_profiles.json"
-ISSUE_CPP_RE = re.compile(r"^tests/(test_[\w]+)\.cpp$")
+# Match tests/test_*.cpp and tests/domain/test_*.cpp (domain suites).
+ISSUE_CPP_RE = re.compile(r"^tests/(?:domain/)?(test_[\w]+)\.cpp$")
 
 BUNDLE_PROFILES = (
     "light",

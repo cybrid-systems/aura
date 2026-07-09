@@ -1,48 +1,43 @@
 # Aura 测试
 
-## 目录结构
+## 目录结构（2026 结构优化）
 
 ```
 tests/
-├── run-tests.sh           # Bash 回归测试（117 个用例）
-├── edsl_benchmark.py      # LLM 代码生成基准（85 个任务）
-├── run_bench_all.py       # 多模型自动对比（调用 edsl_benchmark.py）
-├── build.py               # 统一测试入口 → ./build.py test [suite]
+├── domain/                # ★ 首选：C++ 领域套件（issue = 标签）
+│   ├── cases/             #   表驱动 case（obs_schema_cases.hpp 等）
+│   ├── test_domain_*.cpp
+│   └── test_obs_schema_matrix.cpp
 │
-├── suite/                 # Aura 测试套件(.aura)
-│   ├── core.aura, typesystem.aura, stdlib.aura, macros.aura
-│   ├── edsl.aura, errors.aura, intent.aura, module.aura
-│   └── run-tests.aura
+├── suite/                 # Aura 语言 E2E（.aura）— 注意是单数 suite
+├── suites/                # 重定向说明 → domain/（勿再往这里加文件）
 │
-├── tasks/                 # EDSL 基准任务（85 个 .aura 文件）
-│   ├── adt/ algorithm/ basic/ coercion/ edsl/ ffi/
-│   ├── hash/ hash-algo/ json/ list/ recursion/
-│   └── string/ type/
+├── fixtures/              # issues_fast / link profiles / integ JSON
+├── bundles/               # 生成的 bundle main（gen_issue_bundles.py）
+├── regression/            # 已知 bug 回归（.aura）
+├── tasks/                 # EDSL 基准任务
 │
-├── regression/            # 已知 bug 回归测试
-│   ├── 01_closure_let_dangling.aura
-│   ├── 02_json_get_string.aura
-│   ├── 03_div_zero_ub.aura
-│   ├── 04_json_roundtrip.aura
-│   ├── 05_redline.aura
-│   └── 06_linear.aura
+├── test_issue_*.cpp       # 遗留：历史 issue 二进制（只减不增）
+├── test_ir.cpp            # C++ 单元（IR 等）
+├── test_concurrent.cpp
 │
-├── fixtures/              # 测试用夹具
-│   └── basic_add.aura
-│
-├── agent_demo.py          # Agent 管线演示（build.py test demo）
-├── ai_agent_demo.py       # AI Agent 端到端演示（build.py test ai）
-├── mutation_loop.py       # 变异测试循环（build.py test mutation）
-├── test_fuzz.py           # LLM 驱动模糊测试（build.py test fuzz）
-├── check_gradual.py       # 渐变保证验证（build.py test gradual）
-├── benchmark.py           # 编译器性能基准（build.py test bench）
-│
-├── test_ir.cpp            # C++ 单元测试
-├── validate_node_layout.cpp  # AST 节点布局验证
-│
-└── import_std_demo/       # C++26 模块导入示例
-    └── main.cpp
+├── run_issue_tests.py     # issue/domain 统一 runner
+├── issue_tier.py          # fast/full 档
+├── fixture_check.py
+└── *_harness* / fuzz / bench / demos …
 ```
+
+### 新测试落点（强制偏好）
+
+| 类型 | 落点 |
+|------|------|
+| `query:*` schema / stats 门禁 | `domain/cases/` + `test_obs_schema_matrix` |
+| Fiber / hygiene / typed 行为 | `domain/test_domain_*.cpp` |
+| Aura 语言行为 | `suite/*.aura` 或 fixtures JSON |
+| 真·单测（IR/AST） | `test_ir.cpp` 等 unit，或新 `test_<topic>.cpp` |
+| **禁止默认** | `test_issue_<N>.cpp` |
+
+详见 [`domain/README.md`](domain/README.md) 与 [`docs/contributing.md`](../docs/contributing.md)。
 
 ## 运行方式
 
@@ -55,34 +50,23 @@ tests/
 
 # 指定套件
 ./build.py test unit        # C++ 单元测试
-./build.py test integ       # 集成测试（118 个用例）
-./build.py test bash        # Bash 回归（117 个用例）
-./build.py test typecheck   # 类型检查
-./build.py test bench       # 编译器基准
-./build.py test regression  # 回归测试
-./build.py test gradual     # 渐变保证
-./build.py test demo        # Agent 管线演示
-./build.py test ai          # AI Agent 端到端
-./build.py test fuzz        # 模糊测试
+./build.py test integ       # 集成测试
+./build.py test issues      # issue/domain runner（AURA_ISSUES_TIER）
+./build.py test issues-fast # PR fast 档
 
-# LLM 基准（需 API key）
-LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 3
-
-# 多模型对比
-python3 tests/run_bench_all.py
+# 领域套件（日常推荐）
+ninja -C build test_obs_schema_matrix test_domain_fiber_orchestration
+./build/test_obs_schema_matrix
 ```
 
-## 测试套件说明
+## Issue 档位
 
-| 套件 | 文件 | 说明 |
-|------|------|------|
-| unit | `test_ir.cpp` | 内存池、ArenaGroup、quote 等 C++ 单元 |
-| integ | `build.py` 内联 | 118 个端到端管线测试 |
-| bash | `run-tests.sh` | 117 个 shell 级别的回归测试 |
-| bench | `benchmark.py` | 编译器性能基线 + 回归检测 |
-| regression | `regression/*.aura` | 已知 bug 的回归验证 |
-| gradual | `check_gradual.py` | 渐变保证验证脚本 |
-| demo | `agent_demo.py` | Agent 管线演示 |
-| ai | `ai_agent_demo.py` | AI Agent 端到端演示 |
-| mutation | `mutation_loop.py` | 变异测试循环 |
-| fuzz | `test_fuzz.py` | LLM 驱动模糊测试 |
+| 环境变量 | 含义 |
+|----------|------|
+| `AURA_ISSUES_TIER=fast` | `fixtures/issues_fast.json` + git 变更 |
+| `AURA_ISSUES_TIER=full` | `all_test_issue_targets`（bundle + domain + 少量 standalone） |
+
+## 历史说明
+
+旧 README 中的 `edsl_benchmark` / bash 回归数字会随时间漂移；以
+`./build.py list` 与 CI 配置为准。

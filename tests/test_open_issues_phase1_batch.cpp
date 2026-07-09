@@ -1,11 +1,11 @@
 // test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.
 //
-// Prefer: tests/test_obs_schema_matrix.cpp + suites/obs_schema_cases.hpp
+// Prefer: tests/domain/test_obs_schema_matrix.cpp + domain/cases/obs_schema_cases.hpp
 // This file remains so late-bundle membership / old docs still resolve.
 // Implementation is the shared domain matrix (included below).
 
 #include "test_harness.hpp"
-#include "suites/obs_schema_cases.hpp"
+#include "domain/cases/obs_schema_cases.hpp"
 
 #include <cstdint>
 #include <cstring>

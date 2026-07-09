@@ -1,40 +1,13 @@
 #!/usr/bin/env python3
-"""check_file_size.py — Issue #382 file size policy enforcer.
+"""check_file_size.py — file size policy enforcer (#382 + structure P0).
 
-Walks src/ for .ixx files and reports any file over the warning
-threshold. Exit code:
-  0  no file is over the blocker threshold
-  1  at least one file is over the blocker threshold (CI fail)
-  2  script misuse (bad arguments, src/ missing)
-
-Two thresholds (configurable via CLI flags):
-  --warning N    lines count that triggers a warning (default 800)
-  --blocker N    lines count that triggers a CI failure (default 2000)
-
-Why two thresholds? Many existing .ixx files are over the
-800-line "target" but we don't want to fail CI for all of them
-on day 1. The blocker (2000) is the hard limit — anything
-over it is considered a bug that should be split before merging
-new code. Files over the warning but under the blocker are
-flagged for the next split cycle.
-
-The policy itself is documented in scripts/file_size_policy.md.
-
-Usage:
-  ./scripts/check_file_size.py                  # default thresholds
-  ./scripts/check_file_size.py --warning 1000   # custom warning
-  ./scripts/check_file_size.py --blocker 1500   # custom blocker
-  ./scripts/check_file_size.py --json           # machine-readable output
+Walks src/ for .ixx (and optionally large .cpp/.h) and reports files over
+thresholds. See scripts/file_size_policy.md.
 
 Exit codes:
-  0  clean (no blockers)
-  1  at least one blocker found
-  2  script error
-
-Issue #382 scope-limited first cut. The full AC asks for
-clang-tidy integration; this script is the simpler, dependency-
-free alternative that covers the same use case (CI flagging
-oversized files).
+  0  no blocker
+  1  at least one blocker
+  2  script misuse
 """
 
 from __future__ import annotations
@@ -46,16 +19,41 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+# Known oversized TUs — must not grow past these caps.
+# Shrink over time; remove an entry when under the normal blocker.
+# Caps are slightly above the measured size at introduction of this check.
+FILE_LINE_CAPS: dict[str, int] = {
+    # .ixx interfaces (pre-existing #382 debt)
+    "src/compiler/evaluator.ixx": 9600,
+    "src/compiler/service.ixx": 9200,
+    "src/core/ast.ixx": 6600,
+    "src/compiler/pass_manager.ixx": 4000,
+    # .cpp / .h implementations
+    "src/compiler/evaluator_primitives_observability.cpp": 22000,
+    "src/compiler/evaluator_primitives_query.cpp": 8000,
+    "src/compiler/type_checker_impl.cpp": 6500,
+    "src/compiler/observability_metrics.h": 5600,
+    "src/compiler/evaluator_primitives_compile.cpp": 5400,
+    "src/compiler/evaluator_primitives_mutate.cpp": 4300,
+    "src/compiler/evaluator_eval_flat.cpp": 4200,
+    "src/compiler/evaluator_primitives_security.cpp": 3600,
+    "src/compiler/aura_jit.cpp": 3100,
+    "src/main.cpp": 2900,
+}
+
+# Back-compat alias for docs / --json consumers.
+CPP_LINE_CAPS = FILE_LINE_CAPS
+
 
 @dataclass(frozen=True)
 class FileReport:
     path: str
     lines: int
-    status: str  # "ok" | "warning" | "blocker"
+    status: str  # "ok" | "warning" | "blocker" | "capped"
+    kind: str  # "ixx" | "cpp" | "h"
 
 
 def count_lines(path: Path) -> int:
-    """Count newlines in a file. O(1) memory for big files."""
     count = 0
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1 << 16), b""):
@@ -63,21 +61,26 @@ def count_lines(path: Path) -> int:
     return count
 
 
-def walk_ixx_files(src_root: Path) -> list[Path]:
-    """Find all .ixx files under src/. Skips hidden dirs + .git."""
+def walk_files(src_root: Path, suffixes: tuple[str, ...]) -> list[Path]:
     if not src_root.is_dir():
         return []
-    files = []
+    files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(src_root):
-        # Skip hidden / vendored dirs
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for name in filenames:
-            if name.endswith(".ixx"):
+            if name.endswith(suffixes):
                 files.append(Path(dirpath) / name)
     return sorted(files)
 
 
-def classify(lines: int, warning: int, blocker: int) -> str:
+def classify_file(rel: str, lines: int, warning: int, blocker: int) -> str:
+    """Capped files: blocker only if over freeze cap. Others: normal thresholds."""
+    if rel in FILE_LINE_CAPS:
+        if lines > FILE_LINE_CAPS[rel]:
+            return "blocker"
+        if lines >= warning:
+            return "capped"
+        return "ok"
     if lines >= blocker:
         return "blocker"
     if lines >= warning:
@@ -85,40 +88,45 @@ def classify(lines: int, warning: int, blocker: int) -> str:
     return "ok"
 
 
+def rel_path(path: Path, repo: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(repo.resolve()))
+    except ValueError:
+        return str(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Enforce Issue #382 file size policy on .ixx files",
+        description="Enforce file size policy on .ixx and large .cpp/.h under src/",
     )
+    parser.add_argument("--src", default="src", help="Source root (default: src)")
+    parser.add_argument("--warning", type=int, default=800, help="ixx warning lines")
+    parser.add_argument("--blocker", type=int, default=2000, help="ixx blocker lines")
     parser.add_argument(
-        "--src",
-        default="src",
-        help="Source root directory (default: src)",
-    )
-    parser.add_argument(
-        "--warning",
+        "--cpp-warning",
         type=int,
-        default=800,
-        help="Warning threshold in lines (default: 800)",
+        default=2500,
+        help="cpp/h warning lines for non-capped files (default: 2500)",
     )
     parser.add_argument(
-        "--blocker",
+        "--cpp-blocker",
         type=int,
-        default=2000,
-        help="Blocker threshold in lines (default: 2000)",
+        default=5000,
+        help="cpp/h blocker for non-capped files (default: 5000)",
     )
     parser.add_argument(
-        "--json",
+        "--no-cpp",
         action="store_true",
-        help="Emit machine-readable JSON output instead of human-readable text",
+        help="Only scan .ixx (legacy #382 behavior)",
     )
+    parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
 
-    # Sanity-check the thresholds.
     if args.warning <= 0 or args.blocker <= 0:
-        print(f"error: thresholds must be positive (warning={args.warning}, blocker={args.blocker})", file=sys.stderr)
+        print("error: thresholds must be positive", file=sys.stderr)
         return 2
     if args.blocker < args.warning:
-        print(f"error: blocker ({args.blocker}) must be >= warning ({args.warning})", file=sys.stderr)
+        print("error: blocker must be >= warning", file=sys.stderr)
         return 2
 
     src_root = Path(args.src)
@@ -126,56 +134,88 @@ def main() -> int:
         print(f"error: source root '{src_root}' is not a directory", file=sys.stderr)
         return 2
 
-    files = walk_ixx_files(src_root)
-    if not files:
+    repo = src_root.parent if src_root.name == "src" else Path.cwd()
+    classified: list[FileReport] = []
+
+    ixx_files = walk_files(src_root, (".ixx",))
+    if not ixx_files:
         print(f"error: no .ixx files found under '{src_root}'", file=sys.stderr)
         return 2
 
-    reports = [
-        FileReport(
-            path=str(f.relative_to(src_root.parent)) if src_root.parent else str(f),
-            lines=count_lines(f),
-            status="",
+    for f in ixx_files:
+        lines = count_lines(f)
+        rel = rel_path(f, repo)
+        classified.append(
+            FileReport(
+                path=rel,
+                lines=lines,
+                status=classify_file(rel, lines, args.warning, args.blocker),
+                kind="ixx",
+            )
         )
-        for f in files
-    ]
-    classified = [
-        FileReport(path=r.path, lines=r.lines, status=classify(r.lines, args.warning, args.blocker)) for r in reports
-    ]
+
+    if not args.no_cpp:
+        for f in walk_files(src_root, (".cpp", ".h", ".hh", ".hpp")):
+            lines = count_lines(f)
+            rel = rel_path(f, repo)
+            kind = "h" if f.suffix in {".h", ".hh", ".hpp"} else "cpp"
+            classified.append(
+                FileReport(
+                    path=rel,
+                    lines=lines,
+                    status=classify_file(rel, lines, args.cpp_warning, args.cpp_blocker),
+                    kind=kind,
+                )
+            )
 
     blockers = [r for r in classified if r.status == "blocker"]
     warnings = [r for r in classified if r.status == "warning"]
+    capped = [r for r in classified if r.status == "capped"]
     ok = [r for r in classified if r.status == "ok"]
 
     if args.json:
         out = {
-            "thresholds": {"warning": args.warning, "blocker": args.blocker},
+            "thresholds": {
+                "ixx_warning": args.warning,
+                "ixx_blocker": args.blocker,
+                "cpp_warning": args.cpp_warning,
+                "cpp_blocker": args.cpp_blocker,
+            },
+            "file_line_caps": FILE_LINE_CAPS,
             "summary": {
                 "total": len(classified),
                 "ok": len(ok),
                 "warning": len(warnings),
+                "capped": len(capped),
                 "blocker": len(blockers),
             },
-            "files": [{"path": r.path, "lines": r.lines, "status": r.status} for r in classified],
+            "files": [{"path": r.path, "lines": r.lines, "status": r.status, "kind": r.kind} for r in classified],
         }
         print(json.dumps(out, indent=2))
     else:
-        # Human-readable report.
-        print(f"Issue #382 file size policy — {len(classified)} .ixx files")
-        print(f"  warning threshold: {args.warning} lines")
-        print(f"  blocker threshold: {args.blocker} lines")
+        print(f"File size policy — {len(classified)} files under {src_root}")
+        print(f"  ixx:  warning={args.warning}  blocker={args.blocker}")
+        if not args.no_cpp:
+            print(f"  cpp:  warning={args.cpp_warning}  blocker={args.cpp_blocker}  (+ caps)")
         print()
         if blockers:
-            print(f"BLOCKERS ({len(blockers)}) — must be split before merging new code:")
+            print(f"BLOCKERS ({len(blockers)}) — must shrink / split before merge:")
             for r in sorted(blockers, key=lambda x: -x.lines):
-                print(f"  {r.lines:>5d}  {r.path}")
+                cap = FILE_LINE_CAPS.get(r.path)
+                extra = f"  (cap {cap})" if cap is not None else ""
+                print(f"  {r.lines:>6d}  [{r.kind}]  {r.path}{extra}")
+            print()
+        if capped:
+            print(f"CAPPED ({len(capped)}) — grandfathered; must not exceed cap:")
+            for r in sorted(capped, key=lambda x: -x.lines):
+                print(f"  {r.lines:>6d}  [{r.kind}]  {r.path}  cap={FILE_LINE_CAPS[r.path]}")
             print()
         if warnings:
-            print(f"WARNINGS ({len(warnings)}) — schedule for next split cycle:")
+            print(f"WARNINGS ({len(warnings)}) — schedule split:")
             for r in sorted(warnings, key=lambda x: -x.lines):
-                print(f"  {r.lines:>5d}  {r.path}")
+                print(f"  {r.lines:>6d}  [{r.kind}]  {r.path}")
             print()
-        print(f"OK ({len(ok)} files under warning threshold)")
+        print(f"OK ({len(ok)} files under warning / within policy)")
 
     return 1 if blockers else 0
 

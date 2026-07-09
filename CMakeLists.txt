@@ -532,9 +532,12 @@ endif()
 # only wires modules + the per-test sources a few callers still need
 # (observability headers; JIT is aura_jit_test_objects).
 function(aura_add_issue_test NAME)
-    add_executable(${NAME} tests/${NAME}.cpp)
+    # Source: tests/domain/<NAME>.cpp (preferred) or tests/<NAME>.cpp
+    aura_resolve_test_cpp(${NAME} _aura_test_src)
+    add_executable(${NAME} ${_aura_test_src})
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
-    target_include_directories(${NAME} PRIVATE src)
+    # tests/ for test_harness.hpp and domain/cases/* includes
+    target_include_directories(${NAME} PRIVATE src tests)
     # Fix #2: no FILE_SET .ixx here. The prebuilt BMIs in
     # AURA_MODULE_BMI_DIR (built by aura_test_objects) are made
     # visible in the per-target dir via the launcher-installed
@@ -4810,34 +4813,8 @@ aura_issue_test_link_llvm_jit(test_primitives_hotpath_registry_slo)
 # monadic and_then, classic eval regression.
 aura_add_issue_test(test_aura_result_error_policy)
 aura_issue_test_link_llvm_jit(test_aura_result_error_policy)
-# Legacy Phase 1 batches — superseded by domain suites below.
-# EXCLUDE_FROM_ALL: on-demand only (`ninja test_issues_809_817_batch`).
-aura_add_issue_test(test_issues_809_817_batch)
-aura_issue_test_link_llvm_jit(test_issues_809_817_batch)
-set_target_properties(test_issues_809_817_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
-aura_add_issue_test(test_issues_819_829_batch)
-aura_issue_test_link_llvm_jit(test_issues_819_829_batch)
-set_target_properties(test_issues_819_829_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
-# Remaining open issues Phase 1 batch (schemas 395,830-840,842-870,872,875-886).
-# Legacy alias — prefer test_obs_schema_matrix (domain suite).
-aura_add_issue_test(test_open_issues_phase1_batch)
-aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
-target_include_directories(test_open_issues_phase1_batch PRIVATE tests)
-# Domain suites (preferred): issue id = label, not a new binary.
-# Extend suites/ or these TUs instead of tests/test_issue_N.cpp.
-aura_add_issue_test(test_obs_schema_matrix)
-aura_issue_test_link_llvm_jit(test_obs_schema_matrix)
-target_include_directories(test_obs_schema_matrix PRIVATE tests)
-add_dependencies(all_test_issue_targets test_obs_schema_matrix)
-aura_add_issue_test(test_domain_fiber_orchestration)
-aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
-add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
-aura_add_issue_test(test_domain_hygiene_dirty)
-aura_issue_test_link_llvm_jit(test_domain_hygiene_dirty)
-add_dependencies(all_test_issue_targets test_domain_hygiene_dirty)
-aura_add_issue_test(test_domain_typed_mutate)
-aura_issue_test_link_llvm_jit(test_domain_typed_mutate)
-add_dependencies(all_test_issue_targets test_domain_typed_mutate)
+# Domain suites + legacy phase-1 batches (see cmake/AuraDomainTests.cmake).
+include(${CMAKE_SOURCE_DIR}/cmake/AuraDomainTests.cmake)
 # Issue #804: P0 stdlib-Registry unified primitive
 # error semantics + provenance tracking + recovery
 # hooks (refine/consolidate #585 + #751 + #775 + #478).
@@ -5568,22 +5545,6 @@ add_dependencies(all_test_issue_targets test_issue_222)
 add_dependencies(all_test_issue_targets test_issue_223)
 
 
-# ── Issue #382: file size lint ──────────────────────────────────
-#
-# Custom target that runs scripts/check_file_size.py to enforce
-# the .ixx file size policy (see scripts/file_size_policy.md).
-#
-# Run on demand:
-#   cmake --build build --target lint_file_size
-#
-# Exits 1 if any .ixx file is over the blocker threshold (2000
-# lines by default). Exits 0 if everything is under the warning
-# threshold (800 lines by default).
-#
-# Not added to the default `all` target — it's a manual lint,
-# not an auto-build step. CI can invoke it via:
-#   cmake --build build --target lint_file_size
-# and check the exit code.
 # Issue #677: production install layout (extends #374).
 include(GNUInstallDirs)
 install(TARGETS aura RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -5593,12 +5554,14 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/demos
         DESTINATION ${CMAKE_INSTALL_DATADIR}/aura
         OPTIONAL)
 
+# File size lint (.ixx + large .cpp/.h caps). See scripts/file_size_policy.md.
+# On demand: cmake --build build --target lint_file_size
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_custom_target(lint_file_size
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_file_size.py
                 --src ${CMAKE_SOURCE_DIR}/src
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        COMMENT "Linting .ixx file sizes (Issue #382 policy)"
+        COMMENT "Linting source file sizes (.ixx + cpp caps)"
         VERBATIM)
 endif()
