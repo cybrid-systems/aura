@@ -4083,6 +4083,53 @@ public:
             m->concept_violations_caught_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #772: SV Verification closed-loop SLO observability
+    // counters backing the (query:sv-closedloop-slo) primitive.
+    // These are public so future hardware_backend.ixx emit_sv_
+    // verification_structured + sv_ir_impl.cpp dirty-triggered
+    // incremental re-emit queue + eda:validate-sv-emit roundtrip
+    // stub can call them at each decision point (emit parse
+    // success/failure / re-emit latency max / SLO breach).
+    //
+    // The bump_sv_slo_reemit_latency_max_us helper uses compare-
+    // exchange to maintain a high-water mark (only updates if the
+    // new value exceeds the current max). The other helpers use
+    // fetch_add for cumulative counters.
+    void bump_sv_slo_emit_parse_success(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_slo_emit_parse_success_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_slo_emit_parse_failure(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_slo_emit_parse_failure_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_slo_reemit_latency_max_us(std::uint64_t us) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            auto cur = m->sv_slo_reemit_latency_max_us.load(std::memory_order_relaxed);
+            while (us > cur) {
+                if (m->sv_slo_reemit_latency_max_us.compare_exchange_weak(
+                        cur, us, std::memory_order_relaxed))
+                    break;
+            }
+        }
+    }
+    void bump_sv_slo_reemit_hits(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_slo_reemit_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_sv_slo_breach(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->sv_slo_breach_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx

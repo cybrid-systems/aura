@@ -3967,6 +3967,23 @@ add_dependencies(all_test_issue_targets test_issue_770)
 aura_add_issue_test(test_issue_771)
 aura_issue_test_link_llvm_jit(test_issue_771)
 add_dependencies(all_test_issue_targets test_issue_771)
+# Issue #772: Consolidated SV Verification EDSL + Backend Emit
+# Fidelity + Roundtrip Validation + Dirty-Driven Incremental Re-emit
+# Harness for Commercial Tool Interop (consolidates/refines
+# #693/#724/#725/#726/#748). 5 CompilerMetrics atomics
+# (sv_slo_*_total + sv_slo_reemit_latency_max_us) +
+# (query:sv-closedloop-slo, schema 772) + 5 bump helpers on
+# Evaluator (bump_sv_slo_emit_parse_success /
+# bump_sv_slo_emit_parse_failure /
+# bump_sv_slo_reemit_latency_max_us [compare-exchange high-water
+# mark] / bump_sv_slo_reemit_hits / bump_sv_slo_breach). 5 ACs:
+# hash shape, fresh-service zero state, schema sentinel, bump-
+# helper accessibility + SLO status transitions (ok/warn/breach),
+# regression of #748/#801/#802/#766. Non-duplicative with #748/
+# #801/#802.
+aura_add_issue_test(test_issue_772)
+aura_issue_test_link_llvm_jit(test_issue_772)
+add_dependencies(all_test_issue_targets test_issue_772)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
