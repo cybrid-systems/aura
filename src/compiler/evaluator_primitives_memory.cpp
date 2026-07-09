@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -266,9 +267,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         auto vals = ht->values();
         auto cap = ht->capacity;
         for (auto& [k, v] : kv) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -615,9 +616,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -747,9 +748,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -897,9 +898,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         auto vals = ht->values();
         auto hcap = ht->capacity;
         for (auto& [k, v] : kv) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -1036,9 +1037,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         // Helper: insert a (string-key, EvalValue) pair into the hash.
         // String values are interned in ev.string_heap_ first.
         auto hput = [&](const std::string& k, const EvalValue& v) -> bool {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision

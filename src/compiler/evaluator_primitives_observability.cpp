@@ -16,6 +16,8 @@ module;
 #include "primitives_meta.h"
 #include "primitives_detail.h"
 #include "serve/metrics.h"
+#include "hash_meta.h"    // FNV constants (#901)
+#include "basis_points.h" // #905
 
 module aura.compiler.evaluator;
 
@@ -1432,9 +1434,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -1530,9 +1532,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -1699,9 +1701,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -1822,9 +1824,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -1958,9 +1960,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2029,9 +2031,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2155,9 +2157,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2282,9 +2284,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2430,9 +2432,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, EvalValue v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -2504,9 +2506,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2574,9 +2576,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2659,9 +2661,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2721,9 +2723,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2781,9 +2783,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2845,9 +2847,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2908,9 +2910,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -2969,9 +2971,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3098,9 +3100,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3224,9 +3226,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3345,9 +3347,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3486,9 +3488,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3618,9 +3620,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3765,9 +3767,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -3900,9 +3902,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4047,9 +4049,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4198,9 +4200,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4340,9 +4342,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4401,9 +4403,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4468,9 +4470,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4536,9 +4538,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4603,9 +4605,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4667,9 +4669,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4738,9 +4740,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -4816,9 +4818,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -4924,9 +4926,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5056,9 +5058,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5211,9 +5213,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5320,9 +5322,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5433,9 +5435,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5548,9 +5550,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5683,9 +5685,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5810,9 +5812,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -5930,9 +5932,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -6048,9 +6050,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -6175,9 +6177,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -6308,9 +6310,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -6417,9 +6419,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6497,9 +6499,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6565,9 +6567,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6620,9 +6622,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6695,9 +6697,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6756,9 +6758,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6824,9 +6826,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6885,9 +6887,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -6946,9 +6948,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7011,9 +7013,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7077,9 +7079,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7142,9 +7144,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7299,8 +7301,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         // closed_loop_rounds == 0; otherwise integer division.
         std::int64_t convergence_rate = 10000;
         if (closed_loop_rounds > 0) {
-            convergence_rate =
-                static_cast<std::int64_t>((convergence_hits * 10000) / closed_loop_rounds);
+            convergence_rate = static_cast<std::int64_t>(
+                (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds);
         }
         // Derived hygiene_safe_rollback_pct: 10000 baseline when no
         // rollbacks have happened; otherwise (hygiene_safe / total) ×
@@ -7309,8 +7311,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         std::int64_t hygiene_safe_rollback_pct = 10000;
         const std::int64_t total_rollbacks = sv_rollback_total;
         if (hygiene_safe_total + total_rollbacks > 0) {
-            hygiene_safe_rollback_pct =
-                static_cast<std::int64_t>((hygiene_safe_total * 10000) / (total_rollbacks + 1));
+            hygiene_safe_rollback_pct = static_cast<std::int64_t>(
+                (hygiene_safe_total * ::aura::compiler::kBasisPointScale) / (total_rollbacks + 1));
         }
         // Derived avg_rounds_to_target: 0 baseline when no convergence
         // hits; otherwise rounds / (hits + 1).
@@ -7344,9 +7346,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7424,9 +7426,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7561,9 +7563,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7640,9 +7642,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7710,9 +7712,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7791,7 +7793,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             m ? static_cast<std::int64_t>(m->sv_slo_breach_total.load(std::memory_order_relaxed))
               : 0;
         // Compute slo-status from current counters + SLO thresholds:
-        //   fidelity >= 99% (numerator/denominator * 10000 >= 9900)
+        //   fidelity >= 99% (numerator/denominator * ::aura::compiler::kBasisPointScale >= 9900)
         //   latency   <= 50ms (50_000us)
         //   breach    = 0
         // The thresholds match the issue body's "fidelity >99%,
@@ -7804,7 +7806,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         if (total_emits > 0) {
             // Fixed-point fidelity in basis points × 100
             // (10000 = 100.00%).
-            const std::int64_t fidelity_bp_x100 = (emit_success * 10000) / total_emits;
+            const std::int64_t fidelity_bp_x100 =
+                (emit_success * ::aura::compiler::kBasisPointScale) / total_emits;
             if (fidelity_bp_x100 < 9500) {
                 slo_status = 2; // breach — fidelity < 95%
             } else if (fidelity_bp_x100 < 9900) {
@@ -7831,9 +7834,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -7883,12 +7886,12 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //                                (workspace_closedloop_concurrent_
     //                                 query_mutate_total /
     //                                 (success + failure derivable from
-    //                                 total counter) * 10000 =
+    //                                 total counter) * ::aura::compiler::kBasisPointScale =
     //                                 0-10000 fixed-point percent × 100)
     //   - cross-cow-ref-validity-pct   derived from #762 atomics
     //                                (workspace_closedloop_cross_cow_
     //                                 ref_valid_total / (valid + invalid
-    //                                 derivable) * 10000)
+    //                                 derivable) * ::aura::compiler::kBasisPointScale)
     //   - yield-points-hit             #762 atomic
     //                                workspace_closedloop_yield_points_
     //                                hit_total (reused)
@@ -7970,9 +7973,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8018,7 +8021,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //   - convergence-rate         derived from #802 atomics
     //                              (sv_self_evo_convergence_hits_total /
     //                               sv_self_evo_closed_loop_rounds_total
-    //                               * 10000 = 0-10000 fixed-point
+    //                               * ::aura::compiler::kBasisPointScale = 0-10000 fixed-point
     //                               percent × 100; 10000 = 100.00%
     //                               when rounds == 0)
     //   - closed-loop-rounds       #802 atomic
@@ -8065,12 +8068,13 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         // When closed_loop_rounds == 0, return 10000 (100.00% baseline
         // — the closed loop hasn't run yet, so no failed convergence
         // can be reported). When rounds > 0, compute
-        //   (convergence_hits * 10000) / closed_loop_rounds
+        //   (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds
         // using integer division to avoid float drift under parallel
         // updates (the #766/#767/#772 fixed-point pattern).
         std::int64_t convergence_rate_pct = 10000; // 100.00% default
         if (closed_loop_rounds > 0) {
-            convergence_rate_pct = (convergence_hits * 10000) / closed_loop_rounds;
+            convergence_rate_pct =
+                (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds;
         }
         auto* ht = FlatHashTable::create(8);
         if (!ht)
@@ -8080,9 +8084,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8138,7 +8142,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //                               violation when no error_counter
     //                               on a mutate path)
     //   - meta_completeness_pct    derived (schema_documented_meta
-    //                              _count / slot_count) * 10000
+    //                              _count / slot_count) * ::aura::compiler::kBasisPointScale
     //                              (0-10000 fixed-point percent
     //                               × 100; 10000 = 100.00% baseline
     //                               when slot_count == 0; SLO target
@@ -8186,7 +8190,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
               : 0;
         // Derived meta_completeness_pct — same integer-division
         // pattern as #669 + #774: (schema_documented_meta_count /
-        // slot_count) * 10000, 10000 baseline when slot_count == 0.
+        // slot_count) * ::aura::compiler::kBasisPointScale, 10000 baseline when slot_count == 0.
         // The SLO target is >95% (= 9500) for Agent-generated
         // extensions; production baseline (all primitives fully
         // meta-documented) is 10000.
@@ -8194,7 +8198,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::uint64_t total = ev.primitives_.slot_count();
         std::int64_t meta_completeness_pct = 10000; // 100.00% baseline
         if (total > 0) {
-            meta_completeness_pct = static_cast<std::int64_t>((schema_documented * 10000) / total);
+            meta_completeness_pct = static_cast<std::int64_t>(
+                (schema_documented * ::aura::compiler::kBasisPointScale) / total);
         }
         auto* ht = FlatHashTable::create(8);
         if (!ht)
@@ -8204,9 +8209,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8270,7 +8275,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //                             primitives that failed the
     //                             capture contract probe)
     //   - meta-completeness      derived (schema_documented_meta
-    //                            _count / slot_count) * 10000
+    //                            _count / slot_count) * ::aura::compiler::kBasisPointScale
     //                            (0-10000 fixed-point percent
     //                            × 100; 10000 = 100.00% baseline
     //                            when slot_count == 0; SLO target
@@ -8278,7 +8283,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //                            mirrors #775)
     //   - slo-validation-pct     derived (validation-pass /
     //                            (validation-pass + validation-
-    //                            fail + 1)) * 10000 (10000 =
+    //                            fail + 1)) * ::aura::compiler::kBasisPointScale (10000 =
     //                            100.00% baseline when both
     //                            counts are 0; SLO target >98%
     //                            = 9800)
@@ -8331,18 +8336,20 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::uint64_t total = ev.primitives_.slot_count();
         std::int64_t meta_completeness = 10000;
         if (total > 0) {
-            meta_completeness = static_cast<std::int64_t>((schema_documented * 10000) / total);
+            meta_completeness = static_cast<std::int64_t>(
+                (schema_documented * ::aura::compiler::kBasisPointScale) / total);
         }
         // Derived slo_validation_pct — vacuous-true 10000 when no
-        // activity, otherwise (pass / (pass + fail + 1)) * 10000 to
+        // activity, otherwise (pass / (pass + fail + 1)) * ::aura::compiler::kBasisPointScale to
         // avoid div-by-zero. The +1 in the denominator also makes
         // the vacuous-true semantics explicit when one of either
         // counter is 0 (which would otherwise yield a misleading
         // 0% or 100%).
         std::int64_t slo_validation_pct = 10000; // vacuous-true baseline
         if (validation_pass + validation_fail > 0) {
-            slo_validation_pct = static_cast<std::int64_t>((validation_pass * 10000) /
-                                                           (validation_pass + validation_fail + 1));
+            slo_validation_pct =
+                static_cast<std::int64_t>((validation_pass * ::aura::compiler::kBasisPointScale) /
+                                          (validation_pass + validation_fail + 1));
         }
         // Hardcoded "not yet" flag for the actual extend primitive
         // — Phase 2+ deferred per body Actionable #1.
@@ -8368,9 +8375,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8508,9 +8515,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8574,8 +8581,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         // matches the #614 alloc_per_call formula.
         std::int64_t fastpath_hit_rate_pct = 10000; // 100.00% baseline
         if (call_total > 0) {
-            fastpath_hit_rate_pct =
-                static_cast<std::int64_t>((fastpath_hits * 10000) / (call_total + 1));
+            fastpath_hit_rate_pct = static_cast<std::int64_t>(
+                (fastpath_hits * ::aura::compiler::kBasisPointScale) / (call_total + 1));
         }
         // regression-flag: 1 if current-vs-baseline-pct < 5000
         // (= stability_score < 50, the #614 "regression" threshold
@@ -8589,9 +8596,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8687,7 +8694,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:eda-production-readiness", [&ev](const auto&) -> EvalValue {
         // Helper: count how many expected primitives are registered.
         // Returns found_count + computes completeness as
-        // (found * 10000) / total via integer division.
+        // (found * ::aura::compiler::kBasisPointScale) / total via integer division.
         auto milestone_pct = [&](std::initializer_list<const char*> expected) -> std::int64_t {
             std::size_t total = expected.size();
             if (total == 0)
@@ -8697,7 +8704,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (ev.primitives_.lookup(name).has_value())
                     ++found;
             }
-            return static_cast<std::int64_t>((found * 10000) / total);
+            return static_cast<std::int64_t>((found * ::aura::compiler::kBasisPointScale) / total);
         };
         // M1: basic feedback primitives + emit (5 expected)
         const std::int64_t m1_pct = milestone_pct({
@@ -8754,9 +8761,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8860,9 +8867,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -8961,9 +8968,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9081,9 +9088,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9203,9 +9210,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9353,9 +9360,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9476,9 +9483,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9545,9 +9552,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9618,9 +9625,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9698,9 +9705,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9776,9 +9783,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -9817,9 +9824,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -9903,9 +9910,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -9996,9 +10003,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10073,9 +10080,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10253,8 +10260,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         // 10000 per body "100% primitives use unified path".
         std::int64_t unified_path_pct = 10000;
         if (error_count_total > 0) {
-            unified_path_pct =
-                static_cast<std::int64_t>((with_provenance * 10000) / error_count_total);
+            unified_path_pct = static_cast<std::int64_t>(
+                (with_provenance * ::aura::compiler::kBasisPointScale) / error_count_total);
         }
         // Hardcoded "not yet" flag — Phase 2+ deferred.
         const std::int64_t unified_error_path_active = 0;
@@ -10282,9 +10289,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -10387,9 +10394,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10461,9 +10468,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10536,9 +10543,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10595,9 +10602,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10680,9 +10687,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10754,9 +10761,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10839,9 +10846,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10911,9 +10918,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -10963,9 +10970,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -11099,9 +11106,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -11199,9 +11206,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -11275,9 +11282,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -11339,9 +11346,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -11419,9 +11426,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -11524,9 +11531,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -11624,9 +11631,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             {"schema", make_int(739)},
         };
         for (auto& [k, v] : fields) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -11801,9 +11808,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -11867,9 +11874,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -11937,9 +11944,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -12000,9 +12007,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -12055,9 +12062,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -12174,9 +12181,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -12261,9 +12268,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -12385,9 +12392,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -12476,9 +12483,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -12621,9 +12628,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto cap = ht->capacity;
             for (auto& [k, v] : kv) {
                 // Hash the key with FNV-1a (matches user-level (hash ...) behavior).
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -12774,9 +12781,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -12908,9 +12915,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -13061,9 +13068,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -13228,9 +13235,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -13401,9 +13408,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -13553,9 +13560,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -13721,9 +13728,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -13888,9 +13895,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -14057,9 +14064,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -14230,9 +14237,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -14389,9 +14396,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -14553,9 +14560,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -14725,9 +14732,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -14905,9 +14912,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -15079,9 +15086,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto vals = ht->values();
                 auto hcap = ht->capacity;
                 for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
                         fp = 0xFE;
@@ -15310,9 +15317,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -15447,9 +15454,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -15560,11 +15567,12 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         const std::int64_t found = static_cast<std::int64_t>(found_count);
         const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
-        // Coverage in 0-10000 fixed-point: (found * 10000)
+        // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
         // / total. When total == 0 (degenerate) the
         // primitive returns 0 — but total is always 8
         // here (constant array).
-        const std::int64_t sub_primitive_coverage = total > 0 ? (found * 10000) / total : 0;
+        const std::int64_t sub_primitive_coverage =
+            total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
         // 4 derived percentages (initial values:
         // 10000 = "vacuously true — no measurements yet
         // so can't fail"; #786 explicitly defers the
@@ -15609,9 +15617,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -15751,11 +15759,12 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         const std::int64_t found = static_cast<std::int64_t>(found_count);
         const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
-        // Coverage in 0-10000 fixed-point: (found * 10000)
+        // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
         // / total. When total == 0 (degenerate) the
         // primitive returns 0 — but total is always 6
         // here (constant array).
-        const std::int64_t sub_primitive_coverage = total > 0 ? (found * 10000) / total : 0;
+        const std::int64_t sub_primitive_coverage =
+            total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
         // 4 hardcoded "not yet" fidelity signals
         // (Phase 2+ to wire to actual post-rollback /
         // post-reload / steal-resume validation
@@ -15792,9 +15801,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -15919,9 +15928,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         const std::int64_t found = static_cast<std::int64_t>(found_count);
         const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
-        // Coverage in 0-10000 fixed-point: (found * 10000)
+        // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
         // / total.
-        const std::int64_t sub_primitive_coverage = total > 0 ? (found * 10000) / total : 0;
+        const std::int64_t sub_primitive_coverage =
+            total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
         // 4 hardcoded "not yet" AI-extension fidelity
         // signals (Phase 2+ to wire to actual
         // define-struct / set-policy! / extend-kit
@@ -15957,9 +15967,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -16104,9 +16114,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -16257,9 +16267,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -16426,9 +16436,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;
@@ -16593,9 +16603,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -16752,9 +16762,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -16924,9 +16934,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17088,9 +17098,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17268,9 +17278,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17326,9 +17336,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17382,9 +17392,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17434,9 +17444,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17489,9 +17499,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17541,9 +17551,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17626,9 +17636,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17683,9 +17693,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17747,9 +17757,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17803,9 +17813,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17883,7 +17893,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                 return 10000;
             auto h = m->pattern_hygiene_index_enforced_hits_total.load(std::memory_order_relaxed);
             auto y = m->pattern_hygiene_yield_enforced_total.load(std::memory_order_relaxed);
-            // proxy hit rate: hits / (hits+1) * 10000 when only hits wired
+            // proxy hit rate: hits / (hits+1) * ::aura::compiler::kBasisPointScale when only hits
+            // wired
             return static_cast<std::int64_t>((h * 10000ull) / (h + y + 1));
         })();
         const std::int64_t f_safe_span_enforced =
@@ -17907,9 +17918,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -17974,9 +17985,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18030,9 +18041,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18087,9 +18098,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18140,9 +18151,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18201,9 +18212,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18260,9 +18271,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18318,9 +18329,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18372,9 +18383,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18429,9 +18440,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18491,9 +18502,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18586,9 +18597,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18638,9 +18649,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18690,9 +18701,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18742,9 +18753,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18794,9 +18805,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18847,9 +18858,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18898,9 +18909,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -18950,9 +18961,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19001,9 +19012,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19052,9 +19063,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19104,9 +19115,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19155,9 +19166,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19206,9 +19217,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19257,9 +19268,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19309,9 +19320,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19360,9 +19371,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19412,9 +19423,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19463,9 +19474,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19515,9 +19526,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19566,9 +19577,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19618,9 +19629,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19670,9 +19681,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19721,9 +19732,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19773,9 +19784,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19825,9 +19836,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19876,9 +19887,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19927,9 +19938,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -19978,9 +19989,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20029,9 +20040,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20080,9 +20091,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20132,9 +20143,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20184,9 +20195,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20235,9 +20246,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20286,9 +20297,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20337,9 +20348,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20388,9 +20399,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20440,9 +20451,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20491,9 +20502,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20542,9 +20553,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20593,9 +20604,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20644,9 +20655,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20696,9 +20707,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20748,9 +20759,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20800,9 +20811,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20852,9 +20863,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20903,9 +20914,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -20955,9 +20966,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21007,9 +21018,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21059,9 +21070,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21110,9 +21121,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21162,9 +21173,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21213,9 +21224,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21264,9 +21275,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
@@ -21316,9 +21327,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         auto vals = ht->values();
         auto hcap = ht->capacity;
         auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;

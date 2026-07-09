@@ -15,6 +15,7 @@
 #include "serve/scheduler.h"
 #include "serve/http_health.h"
 #include "serve/aura_platform.h"
+#include "compiler/runtime_paths.h" // #906
 
 import std;
 import aura.core;
@@ -1937,7 +1938,7 @@ int main(int argc, char* argv[]) {
         // runtime (which would re-load modules, leak module arenas, and
         // can segfault the IR pipeline on CI).
         {
-            static const std::string std_root = "lib/std/";
+            static const std::string std_root = aura::compiler::paths::resolve_stdlib_root();
 
             // Find the matching close paren starting from an open paren,
             // respecting string literals and nested parens.

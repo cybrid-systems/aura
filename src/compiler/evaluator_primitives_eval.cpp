@@ -7,6 +7,7 @@ module;
 #include <unistd.h>
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
+#include "prim_names.h" // #904
 
 module aura.compiler.evaluator;
 
@@ -29,149 +30,150 @@ using namespace types;
 void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
                               std::function<void()> destroy_defuse_index) {
 
-    add("set-code", [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-        if (ev.workspace_read_only_)
-            return mev("read-only", "workspace is read-only");
-        // Clear any previous set-code error and eval-current cache
-        ev.last_set_code_error_kind_.clear();
-        ev.last_set_code_error_msg_.clear();
-        ev.last_eval_current_result_.reset();
-        ev.coverage_counters_[0]++;
-        ev.coverage_counters_[5]++;
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (set-code code-string)");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return mev("bad-arg", "code string index out of range");
-        if (!ev.arena_)
-            return mev("internal", "no arena allocator available");
+    add(aura::compiler::prim::kSetCode,
+        [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
+            std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
+            if (ev.workspace_read_only_)
+                return mev("read-only", "workspace is read-only");
+            // Clear any previous set-code error and eval-current cache
+            ev.last_set_code_error_kind_.clear();
+            ev.last_set_code_error_msg_.clear();
+            ev.last_eval_current_result_.reset();
+            ev.coverage_counters_[0]++;
+            ev.coverage_counters_[5]++;
+            if (a.empty() || !is_string(a[0]))
+                return mev("bad-arg", "usage: (set-code code-string)");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return mev("bad-arg", "code string index out of range");
+            if (!ev.arena_)
+                return mev("internal", "no arena allocator available");
 
-        // Issue #230 #3: allocate fresh pool/flat on every set-code
-        // (don't reuse the old one). Reason: registered macros
-        // (via defmacro / define-hygienic-macro) hold raw pointers
-        // into the old pool/flat for their body. Reusing the same
-        // pool/flat and clearing it would invalidate those pointers
-        // — old macros would silently fail to expand (the lookup
-        // finds the macro in `ev.macros_` but clone_macro_body reads
-        // from a cleared flat and returns NULL_NODE → macro
-        // returns make_void()). Allocating fresh each call keeps
-        // the old pool/flat intact in the arena, so previously
-        // registered macros keep working after subsequent
-        // set-codes.
-        //
-        // Trade-off: arena grows by one pool/flat per set-code
-        // call. The previous OOM-fix comment about "750
-        // consecutive set-codes" is no longer protected, but in
-        // practice test scripts do < 10 set-codes and the arena
-        // size stays bounded. The correctness win (macros
-        // survive set-code) is worth the small arena growth.
-        auto alloc = ev.arena_->allocator();
-        auto* pool_ptr = ev.arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = ev.arena_->create<aura::ast::FlatAST>(alloc);
-        bool fresh_alloc = true;
-
-        auto pr = aura::parser::parse_to_flat(ev.string_heap_[idx], *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            // Return structured parse error: ("parse" "message")
-            std::string err;
-            if (!pr.errors.empty()) {
-                for (auto& e : pr.errors) {
-                    if (!err.empty())
-                        err += "; ";
-                    err += e.format();
-                }
-            } else if (!pr.error.empty()) {
-                err = pr.error;
-            } else {
-                err = "parse error";
-            }
-            // Store error for eval-current/eval-current-output to propagate
-            ev.last_set_code_error_kind_ = "parse";
-            ev.last_set_code_error_msg_ = err;
-            ev.coverage_counters_[5]--;
-            return mev("parse", err);
-        }
-        flat_ptr->root = pr.root;
-        ev.workspace_flat_ = flat_ptr;
-        ev.workspace_pool_ = pool_ptr;
-        // Issue #211: invalidate the (tag, arity) index
-        // when the workspace changes. (The set_workspace_flat
-        // hook would do this, but set-code assigns directly
-        // here, so we invalidate inline.)
-        ev.invalidate_tag_arity_index();
-        // Issue #490: optional eager rebuild after workspace swap.
-        ev.maybe_eager_rebuild_pattern_index_after_cow();
-        ev.update_shared_tree_root();
-        // Invalidate def-use index (new workspace)
-        // (ASAN fix #107 leak) delete the old index; without this,
-        // each set-code leaks the previous DefUseIndex (~3KB each).
-        destroy_defuse_index();
-        // Phase 2: a fresh workspace means every cached define is potentially
-        // changed. Mark all dirty so the next (eval-current) re-evaluates.
-        if (ev.mark_all_defines_dirty_fn_)
-            ev.mark_all_defines_dirty_fn_();
-        // Pre-populate the v2 IR cache from the new workspace's defines.
-        // For unchanged defines, this is a cache hit (skip lowering).
-        // For new/changed defines, this lowers them once and stores the result.
-        if (ev.pre_cache_workspace_defines_fn_)
-            ev.pre_cache_workspace_defines_fn_();
-        // Issue #165 follow-up: extract MacroDef nodes from the new
-        // workspace and register them in the runtime `ev.macros_` registry.
-        // Without this, subsequent eval("(m)") parses a fresh FlatAST
-        // that has no MacroDef node, so macro_expand_all finds nothing
-        // and the call resolves to an undefined variable. The fix
-        // walks the workspace and inserts every MacroDef (defmacro /
-        // define-hygienic-macro) into ev.macros_, mirroring what eval_flat
-        // would have done if the workspace had been evaluated inline.
-        {
-            // set-code is single-threaded at this point (we hold
-            // ev.workspace_mtx_ above), so a plain unsynchronized
-            // write to ev.macros_ is fine. If concurrent set-code
-            // becomes a real scenario, add a ev.macros_mtx_ in
-            // evaluator.ixx alongside ev.closures_mtx_.
+            // Issue #230 #3: allocate fresh pool/flat on every set-code
+            // (don't reuse the old one). Reason: registered macros
+            // (via defmacro / define-hygienic-macro) hold raw pointers
+            // into the old pool/flat for their body. Reusing the same
+            // pool/flat and clearing it would invalidate those pointers
+            // — old macros would silently fail to expand (the lookup
+            // finds the macro in `ev.macros_` but clone_macro_body reads
+            // from a cleared flat and returns NULL_NODE → macro
+            // returns make_void()). Allocating fresh each call keeps
+            // the old pool/flat intact in the arena, so previously
+            // registered macros keep working after subsequent
+            // set-codes.
             //
-            // Issue #230 #3: DON'T clear ev.macros_ on set-code.
-            // The loop below adds/overrides macros from the new
-            // workspace, but the macros registered BEFORE this
-            // set-code (e.g. via (require "std/test" all:))
-            // need to survive so they can still be invoked
-            // after the workspace is replaced. The new
-            // pool/flat pointers are fresh, but the OLD
-            // pool/flat (referenced by the surviving macros)
-            // is still in the arena and untouched (we no
-            // longer reuse/clear it on set-code), so the
-            // stored MacroDef::flat/::pool pointers are
-            // valid and the macro bodies can still be cloned
-            // and expanded.
-            for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
-                auto v = flat_ptr->get(id);
-                if (v.tag != aura::ast::NodeTag::MacroDef)
-                    continue;
-                auto macro_name = std::string(pool_ptr->resolve(v.sym_id));
-                if (macro_name.empty())
-                    continue;
-                std::vector<std::string> param_names;
-                param_names.reserve(v.params.size());
-                for (auto pid : v.params)
-                    param_names.emplace_back(pool_ptr->resolve(pid));
-                auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                bool is_dotted = (v.int_value & 1) != 0;
-                bool is_hygienic = (v.int_value & 2) != 0;
-                // Issue #230 #2: bit 2 of int_val_ flags the
-                // `define-hygienic-macro*` (preserved-params) variant.
-                bool is_preserved = (v.int_value & 4) != 0;
-                ev.macros_[macro_name] = MacroDef{std::move(param_names),
-                                                  is_dotted,
-                                                  is_hygienic,
-                                                  is_preserved,
-                                                  flat_ptr,
-                                                  pool_ptr,
-                                                  body_id};
+            // Trade-off: arena grows by one pool/flat per set-code
+            // call. The previous OOM-fix comment about "750
+            // consecutive set-codes" is no longer protected, but in
+            // practice test scripts do < 10 set-codes and the arena
+            // size stays bounded. The correctness win (macros
+            // survive set-code) is worth the small arena growth.
+            auto alloc = ev.arena_->allocator();
+            auto* pool_ptr = ev.arena_->create<aura::ast::StringPool>(alloc);
+            auto* flat_ptr = ev.arena_->create<aura::ast::FlatAST>(alloc);
+            bool fresh_alloc = true;
+
+            auto pr = aura::parser::parse_to_flat(ev.string_heap_[idx], *flat_ptr, *pool_ptr);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                // Return structured parse error: ("parse" "message")
+                std::string err;
+                if (!pr.errors.empty()) {
+                    for (auto& e : pr.errors) {
+                        if (!err.empty())
+                            err += "; ";
+                        err += e.format();
+                    }
+                } else if (!pr.error.empty()) {
+                    err = pr.error;
+                } else {
+                    err = "parse error";
+                }
+                // Store error for eval-current/eval-current-output to propagate
+                ev.last_set_code_error_kind_ = "parse";
+                ev.last_set_code_error_msg_ = err;
+                ev.coverage_counters_[5]--;
+                return mev("parse", err);
             }
-        }
-        return make_bool(true);
-    });
+            flat_ptr->root = pr.root;
+            ev.workspace_flat_ = flat_ptr;
+            ev.workspace_pool_ = pool_ptr;
+            // Issue #211: invalidate the (tag, arity) index
+            // when the workspace changes. (The set_workspace_flat
+            // hook would do this, but set-code assigns directly
+            // here, so we invalidate inline.)
+            ev.invalidate_tag_arity_index();
+            // Issue #490: optional eager rebuild after workspace swap.
+            ev.maybe_eager_rebuild_pattern_index_after_cow();
+            ev.update_shared_tree_root();
+            // Invalidate def-use index (new workspace)
+            // (ASAN fix #107 leak) delete the old index; without this,
+            // each set-code leaks the previous DefUseIndex (~3KB each).
+            destroy_defuse_index();
+            // Phase 2: a fresh workspace means every cached define is potentially
+            // changed. Mark all dirty so the next (eval-current) re-evaluates.
+            if (ev.mark_all_defines_dirty_fn_)
+                ev.mark_all_defines_dirty_fn_();
+            // Pre-populate the v2 IR cache from the new workspace's defines.
+            // For unchanged defines, this is a cache hit (skip lowering).
+            // For new/changed defines, this lowers them once and stores the result.
+            if (ev.pre_cache_workspace_defines_fn_)
+                ev.pre_cache_workspace_defines_fn_();
+            // Issue #165 follow-up: extract MacroDef nodes from the new
+            // workspace and register them in the runtime `ev.macros_` registry.
+            // Without this, subsequent eval("(m)") parses a fresh FlatAST
+            // that has no MacroDef node, so macro_expand_all finds nothing
+            // and the call resolves to an undefined variable. The fix
+            // walks the workspace and inserts every MacroDef (defmacro /
+            // define-hygienic-macro) into ev.macros_, mirroring what eval_flat
+            // would have done if the workspace had been evaluated inline.
+            {
+                // set-code is single-threaded at this point (we hold
+                // ev.workspace_mtx_ above), so a plain unsynchronized
+                // write to ev.macros_ is fine. If concurrent set-code
+                // becomes a real scenario, add a ev.macros_mtx_ in
+                // evaluator.ixx alongside ev.closures_mtx_.
+                //
+                // Issue #230 #3: DON'T clear ev.macros_ on set-code.
+                // The loop below adds/overrides macros from the new
+                // workspace, but the macros registered BEFORE this
+                // set-code (e.g. via (require "std/test" all:))
+                // need to survive so they can still be invoked
+                // after the workspace is replaced. The new
+                // pool/flat pointers are fresh, but the OLD
+                // pool/flat (referenced by the surviving macros)
+                // is still in the arena and untouched (we no
+                // longer reuse/clear it on set-code), so the
+                // stored MacroDef::flat/::pool pointers are
+                // valid and the macro bodies can still be cloned
+                // and expanded.
+                for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
+                    auto v = flat_ptr->get(id);
+                    if (v.tag != aura::ast::NodeTag::MacroDef)
+                        continue;
+                    auto macro_name = std::string(pool_ptr->resolve(v.sym_id));
+                    if (macro_name.empty())
+                        continue;
+                    std::vector<std::string> param_names;
+                    param_names.reserve(v.params.size());
+                    for (auto pid : v.params)
+                        param_names.emplace_back(pool_ptr->resolve(pid));
+                    auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+                    bool is_dotted = (v.int_value & 1) != 0;
+                    bool is_hygienic = (v.int_value & 2) != 0;
+                    // Issue #230 #2: bit 2 of int_val_ flags the
+                    // `define-hygienic-macro*` (preserved-params) variant.
+                    bool is_preserved = (v.int_value & 4) != 0;
+                    ev.macros_[macro_name] = MacroDef{std::move(param_names),
+                                                      is_dotted,
+                                                      is_hygienic,
+                                                      is_preserved,
+                                                      flat_ptr,
+                                                      pool_ptr,
+                                                      body_id};
+                }
+            }
+            return make_bool(true);
+        });
 
     // (ir-cache-v2:dirty? name) — #t if the named define's IR cache entry is
     // marked dirty.
@@ -308,7 +310,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         return make_void();
     });
 
-    add("current-source", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add(aura::compiler::prim::kCurrentSource, [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Dual-workspace (Phase 1): default reads the per-eval current source
         // (the AST being evaluated right now), set by CompilerService::eval /
         // eval_ir / exec_jit. Optional :workspace keyword reads the persistent
@@ -498,7 +500,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     });
 
     // (eval-current) — Evaluate the current workspace AST
-    add("eval-current", [&ev, mev](const auto& a) -> EvalValue {
+    add(aura::compiler::prim::kEvalCurrent, [&ev, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         // Phase 4: (eval-current :jit) — compile-and-run via the IR/JIT
         // pipeline. Falls back to tree-walker if the hook isn't installed
@@ -684,7 +686,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
     // (eval-current-output) — Evaluate workspace, return display output as string
     // Captures all display output during eval via fd-level redirection.
-    add("eval-current-output", [&ev, mev](const auto&) {
+    add(aura::compiler::prim::kEvalCurrentOutput, [&ev, mev](const auto&) {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         // If set-code failed on the last call, propagate the diagnostic immediately
         if (!ev.last_set_code_error_kind_.empty()) {

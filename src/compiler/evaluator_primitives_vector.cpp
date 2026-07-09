@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -126,9 +127,9 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 auto i = as_string_idx(k);
                 if (i < sh->size()) {
                     auto& s = (*sh)[i];
-                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : s)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     return h;
                 }
             }
@@ -245,9 +246,10 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 else if (is_string(a[1])) {
                     auto idx = as_string_idx(a[1]);
                     if (idx < sh->size()) {
-                        h = 0xcbf29ce484222325ull;
+                        h = ::aura::compiler::stats::kFnvOffsetBasis;
                         for (char c : (*sh)[idx])
-                            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                            h = (h ^ static_cast<std::uint8_t>(c)) *
+                                ::aura::compiler::stats::kFnvPrime;
                     }
                 }
                 meta[i] = static_cast<std::uint8_t>(h >> 57) | 0x80;

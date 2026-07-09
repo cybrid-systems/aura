@@ -10,6 +10,7 @@ module;
 #include <variant>
 #include <vector>
 #include "observability_metrics.h"
+#include "value_tags.h" // kClosureIdHighBit #907
 export module aura.compiler.ir_executor;
 import std;
 import aura.core;
@@ -279,7 +280,7 @@ private:
     CompilerMetrics* metrics_ = nullptr;
 
     // Per-instance closure storage
-    std::uint64_t next_closure_id_ = 1ull << 48;
+    std::uint64_t next_closure_id_ = aura::compiler::types::kClosureIdHighBit; // #907
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
 
     // Per-instance mutable cell heap (for letrec)

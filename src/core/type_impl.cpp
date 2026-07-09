@@ -1,4 +1,5 @@
 module;
+#include "compiler/hash_meta.h" // FNV constants (#901)
 
 module aura.core.type;
 import std;
@@ -1072,8 +1073,8 @@ std::uint32_t TypeRegistry::compact() {
 // effects) sort first for hash invariance.
 std::uint64_t TypeRegistry::type_hash(TypeId a) const {
     auto tag = tag_of(a);
-    std::uint64_t h = 0xcbf29ce484222325ull;
-    auto mix = [&](std::uint64_t v) { h = (h ^ v) * 0x100000001b3ull; };
+    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+    auto mix = [&](std::uint64_t v) { h = (h ^ v) * ::aura::compiler::stats::kFnvPrime; };
     mix(static_cast<std::uint64_t>(tag));
     switch (tag) {
         case TypeTag::TYPE_VAR:

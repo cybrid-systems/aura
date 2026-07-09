@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "observability_metrics.h" // for FnMetrics
+#include "basis_points.h"          // #905
 
 namespace aura::compiler {
 
@@ -92,7 +93,7 @@ struct CompilerSnapshot {
     // observability. Mirrors the 2 lifetime
     // counters in CompilerMetrics. The derived
     // dirty_trigger_rate_bp is should_relower /
-    // affected_subtree * 10000 — measures how
+    // affected_subtree * ::aura::compiler::kBasisPointScale — measures how
     // often the dirty path actually triggers a
     // re-lower (vs. just enumerating affected
     // nodes).
@@ -186,7 +187,7 @@ struct CompilerSnapshot {
     std::uint64_t typecheck_stale_cache_total = 0;
     // Issue #412: mirror of typecheck_gen_saved_total +
     // derived gen_saved_ratio_bp (basis points: gen_saved /
-    // (stale_cache + gen_saved) * 10000). 0 when neither
+    // (stale_cache + gen_saved) * ::aura::compiler::kBasisPointScale). 0 when neither
     // counter has been bumped.
     std::uint64_t typecheck_gen_saved_total = 0;
     std::uint64_t typecheck_gen_saved_ratio_bp = 0;
@@ -194,7 +195,7 @@ struct CompilerSnapshot {
     // observability. Mirrors the 2 lifetime counters in
     // CompilerMetrics. The derived
     // per_binding_gen_hit_ratio_bp = per_binding_gen_hits /
-    // (per_binding_gen_hits + stale_cache) * 10000
+    // (per_binding_gen_hits + stale_cache) * ::aura::compiler::kBasisPointScale
     // measures the share of stale rejections rescued by
     // the per-binding check (post-#412 follow-up #1).
     std::uint64_t per_binding_gen_hits_total = 0;
@@ -214,7 +215,7 @@ struct CompilerSnapshot {
     // Issue #386: narrowing observability. Mirrors
     // the 3 lifetime counters in CompilerMetrics. The
     // applied_ratio_bp = applied / (applied + skipped)
-    // * 10000 measures narrowing effectiveness.
+    // * ::aura::compiler::kBasisPointScale measures narrowing effectiveness.
     std::uint64_t narrowing_applied_total = 0;
     std::uint64_t narrowing_skipped_total = 0;
     std::uint64_t narrowing_reanalyzed_total = 0;
@@ -236,7 +237,7 @@ struct CompilerSnapshot {
     // Issue #390: per-node schema cache observability.
     // Mirrors the 2 lifetime counters in
     // CompilerMetrics. The hit rate (basis points) is
-    // hits / lookups * 10000.
+    // hits / lookups * ::aura::compiler::kBasisPointScale.
     std::uint64_t schema_cache_lookups_total = 0;
     std::uint64_t schema_cache_hits_total = 0;
     std::uint64_t schema_cache_hit_rate_bp = 0;
@@ -244,7 +245,7 @@ struct CompilerSnapshot {
     // tracking observability. Mirrors the 2 lifetime
     // counters in CompilerMetrics. The derived
     // delta_solve_constraints_ratio_bp is
-    // processed / total * 10000 — measures how much
+    // processed / total * ::aura::compiler::kBasisPointScale — measures how much
     // the reverse map prunes. A low ratio means
     // the filter is doing useful work.
     std::uint64_t delta_constraints_processed_total = 0;
@@ -331,7 +332,7 @@ struct CompilerSnapshot {
     // observability. Mirrors the 3 lifetime
     // counters in CompilerMetrics. The derived
     // poly_dedup_ratio_bp is dedup_hits /
-    // register * 10000 — measures cache
+    // register * ::aura::compiler::kBasisPointScale — measures cache
     // effectiveness. 0 when no register calls
     // have happened.
     std::uint64_t poly_register_total = 0;
@@ -344,7 +345,7 @@ struct CompilerSnapshot {
     // Mirrors CompilerMetrics::{ir_instructions_total,
     // ir_instructions_with_type_total}. The derived
     // type_propagation_coverage_bp is computed at snapshot
-    // read time as with_type*10000/total in basis points.
+    // read time as with_type* ::aura::compiler::kBasisPointScale/total in basis points.
     std::uint64_t ir_instructions_total = 0;
     std::uint64_t ir_instructions_with_type_total = 0;
     std::uint64_t type_propagation_coverage_bp = 0;
@@ -352,7 +353,7 @@ struct CompilerSnapshot {
     // CompilerMetrics::{per_symbol_dirty_lookups_total,
     // per_symbol_dirty_uses_total}. The derived
     // per_symbol_dirty_reduction_bp is computed at snapshot
-    // read time: uses_total * 10000 / (avg ancestor
+    // read time: uses_total * ::aura::compiler::kBasisPointScale / (avg ancestor
     // propagation depth * lookups_total). Higher = bigger
     // savings from per-symbol vs ancestor-only.
     std::uint64_t per_symbol_dirty_lookups_total = 0;
@@ -364,7 +365,7 @@ struct CompilerSnapshot {
     // incremental_typecheck_re_inferred_total}. The derived
     // incremental_typecheck_avg_re_inferred_bp is computed
     // at snapshot read time as
-    // re_inferred * 10000 / max(auto_invocations, 1) —
+    // re_inferred * ::aura::compiler::kBasisPointScale / max(auto_invocations, 1) —
     // average re-inferred nodes per auto-invocation, in
     // basis points. The follow-up per-symbol wiring (Issue
     // #410 Phase 2/2) will reduce this metric.
@@ -375,7 +376,7 @@ struct CompilerSnapshot {
     // observability. Mirrors the 4 lifetime counters in
     // CompilerMetrics. The derived
     // per_symbol_path_share_bp = per_symbol_visited /
-    // (per_symbol_visited + ancestor_visited) * 10000 is the
+    // (per_symbol_visited + ancestor_visited) * ::aura::compiler::kBasisPointScale is the
     // share of re-inference work that went through the
     // per-symbol (fast) path. The follow-up #410 Phase 2/2
     // (O(uses) DefUseIndex routing) will push this further

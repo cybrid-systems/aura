@@ -33,6 +33,7 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "hash_meta.h" // FNV constants (#901)
 
 export module aura.compiler.ir_cache_pure;
 
@@ -204,10 +205,10 @@ try_extract_define(const aura::ast::FlatAST& flat, const aura::ast::StringPool& 
 // hash logic can be unit-tested in isolation. Same input
 // bytes → same hash, no global state.
 std::size_t fnv1a_64(std::string_view s) noexcept {
-    std::size_t h = 0xcbf29ce484222325ULL;
+    std::size_t h = ::aura::compiler::stats::kFnvOffsetBasis;
     for (unsigned char c : s) {
         h ^= static_cast<std::size_t>(c);
-        h *= 0x100000001b3ULL;
+        h *= ::aura::compiler::stats::kFnvPrime;
     }
     return h;
 }

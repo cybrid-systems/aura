@@ -47,6 +47,7 @@ module;
 #include "shape.h"
 #include "shape_profiler.h"
 #include "spec_jit_controller.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 export module aura.compiler.service;
 import std;
@@ -4755,10 +4756,10 @@ public:
     // FNV-1a 64-bit hash, for stable source canonicalization.
     // Public so caller-side debugging can compute the same hash.
     static std::size_t fnv1a_64(const std::string& s) {
-        std::uint64_t h = 0xcbf29ce484222325ULL;
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (unsigned char c : s) {
             h ^= c;
-            h *= 0x100000001b3ULL;
+            h *= ::aura::compiler::stats::kFnvPrime;
         }
         return static_cast<std::size_t>(h);
     }

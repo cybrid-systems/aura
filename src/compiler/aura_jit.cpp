@@ -38,6 +38,7 @@ namespace types = aura::compiler::types;
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include "hash_meta.h" // #908
 
 namespace aura::jit {
 
@@ -1686,7 +1687,8 @@ struct LLVMBuilder {
                 irb->SetInsertPoint(check_bb);
                 auto meta_gep = irb->CreateGEP(i8_ty, meta_ptr, phi_idx);
                 auto meta_val = irb->CreateLoad(i8_ty, meta_gep);
-                auto is_empty = irb->CreateICmpEQ(meta_val, irb->getInt8(0xFF));
+                auto is_empty =
+                    irb->CreateICmpEQ(meta_val, irb->getInt8(aura::compiler::hash::kEmptySlot));
                 irb->CreateCondBr(is_empty, next_bb, cmp_bb);
 
                 // ── Compare keys[i] with key_val ──
