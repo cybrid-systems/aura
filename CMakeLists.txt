@@ -4437,6 +4437,18 @@ add_dependencies(all_test_issue_targets test_issue_796)
 aura_add_issue_test(test_issue_797)
 aura_issue_test_link_llvm_jit(test_issue_797)
 add_dependencies(all_test_issue_targets test_issue_797)
+# Issue #806: P0 stdlib AI-native registry +
+# extension first-class AI Agent primitives for
+# safe stdlib extension via registry (refine/
+# consolidate #775 non-duplicative focus on
+# registry integration). 5 ACs: hash shape, fresh-
+# zero split-rule, schema sentinel == 806, NEW
+# bump helper callable + slo-validation-pct /
+# recommendation transition, sibling #775 + #633
+# + #797 regression.
+aura_add_issue_test(test_issue_806)
+aura_issue_test_link_llvm_jit(test_issue_806)
+add_dependencies(all_test_issue_targets test_issue_806)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

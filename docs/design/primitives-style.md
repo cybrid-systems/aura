@@ -107,6 +107,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:ir-soa-migration-stats)`         | 766    | IR-SoA migration + DirtyAware incremental pipeline (5 fields) |
 | `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
 | `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
+| `(query:registry-extension-stats)`        | 806    | Registry-Extension AI-Agent primitives + auto-validation + SLO (7 fields) |
 | `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
 | `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
 | `(query:closed-loop-convergence-stats)` | 774 | Verification feedback-driven self-evolution convergence rate (4 fields) |
@@ -292,6 +293,19 @@ Distinct from `(query:closed-loop-reliability-stats)` (#726) and `(query:sv-veri
 - `schema` — 775 (drift sentinel)
 
 Distinct from `(query:primitives-extension-stats)` (#697), `(query:primitives-contract-stats)` (#751), and `(query:primitives-meta-stats)` (#669): `#697` ships 8 registry-level counters (eda-meta-backfilled + category-sva + category-verification + category-eda + documented-with-schema + extension-kit-version + registry-slots + skeleton-generations); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version); `#669` ships 4 meta-axis counters (meta-hits + documented-count + schema-documented + total-registered). `#775` is the FIRST observability surface that aggregates the **Agent-facing extension kit SLO composite** — extensions_registered + contract_violations_caught + meta_completeness_pct + test_skeletons_generated — as a single deployment-grade dashboard the Agent reads to decide whether the stdlib extension kit is production-ready.
+
+### `(query:registry-extension-stats)` fields (#806)
+
+- `extensions` — reused `#633` atomic `stdlib_extension_count_total` (# of new primitives registered through any path; 0 until AC3 wire-up)
+- `validation-pass` — `registry_extension_validation_passes_total` (NEW atomic #806 introduces the *positive* validation pass count distinct from #775's contract_violations_caught failure count; bumped by `bump_registry_extension_validation_pass()` per successful capture-contract + PrimMeta backfill + schema + safety-flag probe pass)
+- `validation-fail` — reused `#751` atomic `primitive_capture_violations_total` (# of primitives that failed the capture contract probe)
+- `meta-completeness` — derived (`schema_documented_meta_count / slot_count × 10000`; 10000 = 100.00% baseline when slot_count == 0; SLO target 100% = 10000 for extensions; mirrors #775)
+- `slo-validation-pct` — derived (`validation-pass / (validation-pass + validation-fail + 1) × 10000`; 10000 = 100.00% vacuous-true baseline when both counts are 0; SLO target >98% = 9800)
+- `extend-registry-safe-active` — hardcoded 0 (Phase 2+ deferred — the actual `(primitive:extend-registry-safe name doc schema [category] [safety] body-expr)` generative primitive + capture-contract auto-probe + PrimMeta backfill + structured-error + Agent prompt patterns + `tests/test_primitives_extension_registry_ai_gen.cpp` harness)
+- `recommendation` — derived 0/1/2/3 (0 = production-ready when SLO met + extend primitive active; 1 = near-production when SLO met but extend primitive not yet; 2 = partial Phase 1 when validation-pass seen but not yet SLO; 3 = early-stage when no activity yet)
+- `schema` — 806 (drift sentinel)
+
+Distinct from `(query:extension-kit-stats)` (#775): `#806` is the **registry-integration phase** observability surface — distinct from `#775`'s kit SLO composite (`extensions_registered` + `contract_violations_caught` + `meta_completeness_pct` + `test_skeletons_generated`). `#806` adds the *pass* counter (positive signal — what's gone right) where `#775` only tracks the *violation* counter (negative signal — what's gone wrong); the pair enables a true SLO percentage instead of a violation ratio. `#806` also adds the `extend-registry-safe-active` flag + `recommendation` ordinal to make the production-readiness transition visible as a single ordinal without exposing `frag_ratio`-style raw percentages.
 
 ### `(query:primitives-hotpath-slo-stats)` fields (#776)
 

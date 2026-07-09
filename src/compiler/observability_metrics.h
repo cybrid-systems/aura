@@ -1257,6 +1257,27 @@ struct CompilerMetrics {
     // extension macro + AI-generate path lands.
     std::atomic<std::uint64_t> stdlib_extension_count_total{0};
     std::atomic<std::uint64_t> ai_native_primitive_hits_total{0};
+    // Issue #806: registry-extension validation-pass counter
+    // (P0 stdlib AI-native extension surface foundation; refines/
+    // consolidates #775 Extension Kit + #711 + #480; non-duplicative
+    // with #775 query:extension-kit-stats and #633 query:stdlib-
+    // compiler-demands-stats-hash). #806 introduces the FIRST
+    // observability signal for `validation_pass` (the *pass* counter
+    // for `(primitive:extend-registry-safe ...)` auto-validation
+    // pipeline) — distinct from #775's contract_violations_caught
+    // (which tracks the *failure* counter). The Agent-side SLO
+    // requires BOTH: total extensions + validation passes + meta
+    // completeness. The total extension count already exists via
+    // `stdlib_extension_count_total`; the validation *pass* count
+    // is what #806 adds so the slo-validation-pct (pass / total)
+    // derivation has a direct atomic instead of being computed as
+    // (total - violations_caught). P0 ships the counter + the
+    // (query:registry-extension-stats, schema 806) primitive so
+    // the Agent has a deployment-grade dashboard today; value is
+    // 0 until the future `(primitive:extend-registry-safe ...)`
+    // primitive + capture-contract auto-probe + PrimMeta backfill
+    // wire-up lands.
+    std::atomic<std::uint64_t> registry_extension_validation_passes_total{0};
     // Issue #637: IRClosure + EnvFrame versioning + bridge
     // invalidate protocol counters (P0 memory-safety foundation).
     // These are scaffolding for the future AC1 + AC2 + AC3

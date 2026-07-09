@@ -725,6 +725,22 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // skeletons_generated) as a single deployment-grade
     // dashboard.
     "query:extension-kit-stats",
+    // Issue #806 — Registry-Extension surface for AI Agent
+    // safe stdlib extension via registry (P0 stdlib
+    // AI-native extension observability foundation;
+    // refines/consolidates #775 Extension Kit + #711 +
+    // #480; non-duplicative with #775 query:extension-kit-
+    // stats and #633 query:stdlib-compiler-demands-stats).
+    // #806 is the FIRST observability surface that tracks
+    // the *registry-integration pass counter (extensions /
+    // validation_pass / meta_completeness) + slo-validation
+    // pct + extend-registry-safe-active* — the registry
+    // integration phase of the AI Native stdlib extension
+    // story — as a single deployment-grade dashboard the
+    // Agent reads to decide whether the
+    // `(primitive:extend-registry-safe ...)` auto-validation
+    // pipeline is production-ready.
+    "query:registry-extension-stats",
     // Issue #776 — Integrated Primitives Hot-Path
     // Benchmark Suite + Mutation/Fiber-Load Regression
     // Gate with Quantitative SLOs observability
@@ -7813,6 +7829,173 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("meta_completeness_pct", meta_completeness_pct);
         insert_kv("test_skeletons_generated", test_skeletons_generated);
         insert_kv("schema", 775);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #806: query:registry-extension-stats — Registry-
+    // Extension surface for AI Agent safe stdlib extension via
+    // registry (P0 stdlib AI-native extension observability
+    // foundation; refines/consolidates #775 Extension Kit + #711
+    // + #480; non-duplicative with #775 query:extension-kit-
+    // stats and #633 query:stdlib-compiler-demands-stats-hash).
+    // #806 is the FIRST observability surface that tracks the
+    // *registry-integration pass counter + SLO pct + extend-
+    // registry-safe primitive activation flag* — the registry
+    // integration phase of the AI Native stdlib extension story
+    // — as a single deployment-grade dashboard the Agent reads
+    // to decide whether the `(primitive:extend-registry-safe ...)`
+    // auto-validation pipeline is production-ready.
+    //
+    // Fields (7 + sentinel):
+    //   - extensions             stdlib_extension_count_total
+    //                            (reused #633 atomic; # of
+    //                             new primitives registered
+    //                             through any path — extension
+    //                             macro OR new registry call;
+    //                             0 until AC3 wire-up)
+    //   - validation-pass        registry_extension_validation_
+    //                            passes_total (NEW atomic, #806
+    //                            introduces the *positive*
+    //                            validation pass count distinct
+    //                            from #775's violation count;
+    //                            bumped by
+    //                            bump_registry_extension_
+    //                            validation_pass() per
+    //                            successful capture-contract +
+    //                            PrimMeta backfill + schema
+    //                            check pass)
+    //   - validation-fail        primitive_capture_violations_
+    //                            total (reused #751 atomic; # of
+    //                             primitives that failed the
+    //                             capture contract probe)
+    //   - meta-completeness      derived (schema_documented_meta
+    //                            _count / slot_count) * 10000
+    //                            (0-10000 fixed-point percent
+    //                            × 100; 10000 = 100.00% baseline
+    //                            when slot_count == 0; SLO target
+    //                            100% = 10000 for extensions;
+    //                            mirrors #775)
+    //   - slo-validation-pct     derived (validation-pass /
+    //                            (validation-pass + validation-
+    //                            fail + 1)) * 10000 (10000 =
+    //                            100.00% baseline when both
+    //                            counts are 0; SLO target >98%
+    //                            = 9800)
+    //   - extend-registry-safe-active  hardcoded 0 (Phase 2+;
+    //                            the actual
+    //                            `(primitive:extend-registry-safe
+    //                            name doc schema [category]
+    //                            [safety] body-expr)` generative
+    //                            primitive + capture-contract auto
+    //                            probe + PrimMeta backfill +
+    //                            structured-error + Agent prompt
+    //                            patterns + tests/test_
+    //                            primitives_extension_registry_
+    //                            ai_gen.cpp harness all remain
+    //                            follow-up work)
+    //   - recommendation         derived 0/1/2/3 (3 = early-
+    //                            stage when no activity; 2 = Phase
+    //                            1 partial when validation-pass
+    //                            seen but not yet >98% SLO; 1 =
+    //                            near-production when SLO met
+    //                            but extend primitive not yet
+    //                            active; 0 = production-ready
+    //                            when SLO met + extend primitive
+    //                            active)
+    //   - schema == 806          drift sentinel
+    add("query:registry-extension-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = ev.compiler_metrics()
+                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                            : nullptr;
+        // Reused #633 atomic.
+        const std::int64_t extensions =
+            m ? static_cast<std::int64_t>(
+                    m->stdlib_extension_count_total.load(std::memory_order_relaxed))
+              : 0;
+        // NEW #806 atomic — validation *pass* count (distinct from
+        // the reused #751 violation count below).
+        const std::int64_t validation_pass =
+            m ? static_cast<std::int64_t>(
+                    m->registry_extension_validation_passes_total.load(std::memory_order_relaxed))
+              : 0;
+        // Reused #751 atomic.
+        const std::int64_t validation_fail =
+            m ? static_cast<std::int64_t>(
+                    m->primitive_capture_violations_total.load(std::memory_order_relaxed))
+              : 0;
+        // Derived meta_completeness — identical to #775 derivation:
+        // integer division, 10000 baseline when slot_count == 0
+        // (vacuous-true).
+        const std::uint64_t schema_documented = ev.primitives_.schema_documented_meta_count();
+        const std::uint64_t total = ev.primitives_.slot_count();
+        std::int64_t meta_completeness = 10000;
+        if (total > 0) {
+            meta_completeness = static_cast<std::int64_t>((schema_documented * 10000) / total);
+        }
+        // Derived slo_validation_pct — vacuous-true 10000 when no
+        // activity, otherwise (pass / (pass + fail + 1)) * 10000 to
+        // avoid div-by-zero. The +1 in the denominator also makes
+        // the vacuous-true semantics explicit when one of either
+        // counter is 0 (which would otherwise yield a misleading
+        // 0% or 100%).
+        std::int64_t slo_validation_pct = 10000; // vacuous-true baseline
+        if (validation_pass + validation_fail > 0) {
+            slo_validation_pct = static_cast<std::int64_t>((validation_pass * 10000) /
+                                                           (validation_pass + validation_fail + 1));
+        }
+        // Hardcoded "not yet" flag for the actual extend primitive
+        // — Phase 2+ deferred per body Actionable #1.
+        const std::int64_t extend_active = 0;
+        // Recommendation derivation:
+        //   0 = production-ready (SLO met + extend primitive active)
+        //   1 = near-production (SLO met but extend primitive not yet)
+        //   2 = partial Phase 1 (validation-pass seen but not yet SLO)
+        //   3 = early-stage (no activity yet)
+        std::int64_t recommendation = 3;
+        if (validation_pass + validation_fail + extensions > 0) {
+            if (slo_validation_pct >= 9800 && meta_completeness >= 10000) {
+                recommendation = extend_active ? 0 : 1;
+            } else {
+                recommendation = 2;
+            }
+        }
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta_hash = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta_hash[idx] == 0xFF) {
+                    meta_hash[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("extensions", extensions);
+        insert_kv("validation-pass", validation_pass);
+        insert_kv("validation-fail", validation_fail);
+        insert_kv("meta-completeness", meta_completeness);
+        insert_kv("slo-validation-pct", slo_validation_pct);
+        insert_kv("extend-registry-safe-active", extend_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 806);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

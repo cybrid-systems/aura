@@ -4147,6 +4147,24 @@ public:
             m->on_compact_hook_invocations_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #806: registry-extension validation-pass counter
+    // (P0 stdlib AI-native extension surface foundation; refines/
+    // consolidates #775 Extension Kit + #711 + #480; non-duplicative
+    // with #775 query:extension-kit-stats and #633 query:stdlib-
+    // compiler-demands-stats-hash). Called from the planned
+    // Phase 2+ wire-up sites:
+    // - bump_registry_extension_validation_pass() in
+    //   evaluator_primitives_registry.cpp when
+    //   `(primitive:extend-registry-safe ...)` auto-validation
+    //   pipeline runs the capture-contract probe + PrimMeta
+    //   backfill + schema check + safety-flag check and the
+    //   probe returns ok (then bumps +1)
+    void bump_registry_extension_validation_pass(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->registry_extension_validation_passes_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #772: SV Verification closed-loop SLO observability
     // counters backing the (query:sv-closedloop-slo) primitive.
     // These are public so future hardware_backend.ixx emit_sv_
