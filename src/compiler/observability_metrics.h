@@ -1985,6 +1985,25 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pattern_match_index_hits_total{0};
     std::atomic<std::uint64_t> pattern_match_wildcard_total{0};
     std::atomic<std::uint64_t> pattern_match_hygiene_filtered_total{0};
+    // Issue #789: SafePCVSpan mandate + tag_arity_index_
+    // hot-path + deep :marker provenance predicate
+    // enforcement observability (refine/consolidate
+    // #760 non-duplicative). 2 NEW atomics:
+    //   - pattern_safe_span_uses_total: # of children_
+    //     safe_view / SafePCVSpan pin calls in the
+    //     matcher (Phase 2+ to wire from query_matcher.cpp
+    //     + evaluator_primitives_query.cpp pattern
+    //     iterator paths). The mandate enforcement
+    //     signal — tracks how often the safe-span path
+    //     is exercised.
+    //   - pattern_dangling_prevented_total: # of times
+    //     the generation pin check fired and prevented
+    //     a dangling span (Phase 2+ to wire from
+    //     ast.ixx children_safe_view). The safety net
+    //     signal — tracks how often the safety check
+    //     caught a potential UAF.
+    std::atomic<std::uint64_t> pattern_safe_span_uses_total{0};
+    std::atomic<std::uint64_t> pattern_dangling_prevented_total{0};
     // Issue #761: end-to-end atomic batch mutate primitives +
     // suppressed generation bump observability + cross-fiber
     // safety metrics for reliable multi-step AI iterative edits

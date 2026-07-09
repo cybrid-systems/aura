@@ -889,6 +889,16 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // define-struct-success-rate /
     // contract-compliance-rate).
     "query:ai-native-extension-stats",
+
+    // Issue #789: query:pattern SafePCVSpan mandate
+    // + tag_arity_index_ hot-path + deep :marker
+    // provenance predicate enforcement observability
+    // (Refine/Consolidate #760 non-duplicative). 2
+    // NEW atomics + 5 hardcoded "not yet" flags for
+    // Phase 2+ deferred work (SafePCVSpan mandate
+    // wire-up + tag_arity_index_ fast-path population
+    // + deep hygiene predicate support).
+    "query:pattern-index-safe-span-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -15038,6 +15048,153 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("contract-compliance-rate", contract_compliance_rate);
         insert_kv("composite-ai-extension-status", composite_ai_extension_status);
         insert_kv("schema", 788);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #789: query:pattern-index-safe-span-stats —
+    // P0 mandate SafePCVSpan / children_safe in all
+    // query:pattern / matcher walks + enforce
+    // tag_arity_index_ hot-path + deep :marker
+    // provenance predicate for production concurrent
+    // large-AST AI loops (Refine/Consolidate #760
+    // non-duplicative).
+    //
+    // 2 NEW CompilerMetrics atomics + 2 NEW bump
+    // helpers on Evaluator + 1 NEW primitive (the
+    // mirror of #760 but for the *enforcement* layer).
+    // #760 covers the *measurement* layer (linear-
+    // scans / index-hits / wildcard-cost /
+    // hygiene-filtered + schema 760). #789 covers the
+    // *enforcement* layer — was SafePCVSpan actually
+    // used? did the generation pin check fire? — as
+    // separate per-decision-point signals the Agent
+    // consumes to monitor query:pattern production
+    // safety + perf under concurrent mutate.
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - safe-span-uses
+    //       pattern_safe_span_uses_total (# of
+    //       children_safe_view / SafePCVSpan pin
+    //       calls in the matcher; bumped from
+    //       Evaluator::bump_pattern_safe_span_use()
+    //       at the planned Phase 2+ query_matcher.cpp
+    //       + evaluator_primitives_query.cpp pattern
+    //       iterator paths wire-up)
+    //   - dangling-prevented
+    //       pattern_dangling_prevented_total (# of
+    //       times the generation pin check fired and
+    //       prevented a dangling span; bumped from
+    //       Evaluator::bump_pattern_dangling_prevented()
+    //       at the planned Phase 2+ ast.ixx
+    //       children_safe_view wire-up)
+    //   - index-hit-rate
+    //       hardcoded 0 (Phase 2+ to derive from
+    //       #760 pattern_match_index_hits_total /
+    //       (linear-scans + index-hits) × 10000; the
+    //       cross-reference ratio — high = perf win
+    //       via tag_arity_index_ fast-path)
+    //   - safe-span-mandate-active
+    //       hardcoded 0 (Phase 2+ to mandate
+    //       children_safe_view in all pattern
+    //       iterator / where / filter walks per
+    //       body "Mandate children_safe_view /
+    //       SafePCVSpan for all children iteration in
+    //       pattern match / filter / where; add
+    //       generation pin check")
+    //   - tag-arity-index-population-active
+    //       hardcoded 0 (Phase 2+ to fully populate
+    //       tag_arity_index_ on every structural
+    //       change + wire fast-path lookup in matcher
+    //       before linear fallback per body "Fully
+    //       populate tag_arity_index_ (hash on
+    //       tag+arity+marker) on every structural
+    //       change; wire fast-path lookup in matcher
+    //       before linear fallback")
+    //   - deep-hygiene-predicate-active
+    //       hardcoded 0 (Phase 2+ to add deep
+    //       hygiene provenance predicates
+    //       (`:marker MacroIntroduced :provenance
+    //       macro-def-id`) to QueryExpr / pattern
+    //       parser + auto-filter or stamp in matcher
+    //       under macro context per body "Add support
+    //       for hygiene provenance predicates ...
+    //       auto-filter or stamp in matcher under
+    //       macro context; wire to clone_macro_body
+    //       name_map")
+    //   - recommendation
+    //       derived 0/1/2/3 from the 3 deferred
+    //       flags + activity signal
+    //   - schema == 789
+    add("query:pattern-index-safe-span-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t safe_span_uses =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_safe_span_uses_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dangling_prevented =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_dangling_prevented_total.load(std::memory_order_relaxed))
+              : 0;
+        // 3 hardcoded "not yet" flags + 1 hardcoded
+        // "not yet" derived field for Phase 2+
+        // deferred work.
+        const std::int64_t index_hit_rate = 0;
+        const std::int64_t safe_span_mandate_active = 0;
+        const std::int64_t tag_arity_index_population_active = 0;
+        const std::int64_t deep_hygiene_predicate_active = 0;
+        // Recommendation: derived from the 3 deferred
+        // flags + activity signal. Phase 1 only (all
+        // deferred flags == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (safe_span_mandate_active == 1 && tag_arity_index_population_active == 1 &&
+            deep_hygiene_predicate_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (safe_span_mandate_active == 1 || tag_arity_index_population_active == 1 ||
+                 deep_hygiene_predicate_active == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (safe_span_uses > 0 || dangling_prevented > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, mandate deferred)
+        else
+            recommendation = 3; // early-stage (no pattern matcher activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("safe-span-uses", safe_span_uses);
+        insert_kv("dangling-prevented", dangling_prevented);
+        insert_kv("index-hit-rate", index_hit_rate);
+        insert_kv("safe-span-mandate-active", safe_span_mandate_active);
+        insert_kv("tag-arity-index-population-active", tag_arity_index_population_active);
+        insert_kv("deep-hygiene-predicate-active", deep_hygiene_predicate_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 789);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

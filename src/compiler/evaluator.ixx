@@ -4655,6 +4655,29 @@ public:
             m->pattern_match_hygiene_filtered_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #789: SafePCVSpan mandate + generation pin
+    // check observability bump helpers (refine
+    // #760). Called from the planned Phase 2+
+    // query_matcher.cpp + evaluator_primitives_query.cpp
+    // + ast.ixx children_safe_view wire-up sites:
+    // - bump_pattern_safe_span_use() when children_
+    //   safe_view / SafePCVSpan pin succeeds in
+    //   matcher paths
+    // - bump_pattern_dangling_prevented() when the
+    //   generation pin check fires and prevents a
+    //   potential UAF (mandate enforcement signal)
+    void bump_pattern_safe_span_use() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_safe_span_uses_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_pattern_dangling_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pattern_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #761: end-to-end atomic batch mutate primitives +
     // suppressed generation bump observability + cross-fiber
     // safety metrics for reliable multi-step AI iterative edits.

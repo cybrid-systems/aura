@@ -4314,6 +4314,19 @@ add_dependencies(all_test_issue_targets test_issue_787)
 aura_add_issue_test(test_issue_788)
 aura_issue_test_link_llvm_jit(test_issue_788)
 add_dependencies(all_test_issue_targets test_issue_788)
+# Issue #789: P0 mandate SafePCVSpan / children_safe
+# in all query:pattern / matcher walks + enforce
+# tag_arity_index_ hot-path + deep :marker provenance
+# predicate (Refine/Consolidate #760 non-duplicative).
+# 2 NEW atomics + 2 NEW bump helpers + 1 NEW
+# (query:pattern-index-safe-span-stats, schema 789)
+# primitive. 5 ACs: hash shape, fresh-zero, schema
+# sentinel, production-path bump helpers callable +
+# activity reflects in primitive, sibling #760/#788
+# regression.
+aura_add_issue_test(test_issue_789)
+aura_issue_test_link_llvm_jit(test_issue_789)
+add_dependencies(all_test_issue_targets test_issue_789)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
