@@ -21,21 +21,27 @@
 ;   32	 trees of depth 8	 check: -32
 ;   long lived tree of depth 8	 check: -1
 ;
-; Why no gc-temp reclaim here:
-;   gc-temp would reset ev.vector_heap_ and reclaim each iteration's tree —
-;   but it ALSO erases (a) the long-lived tree held across the loop, and
-;   (b) the named-let loop/inner closures created after any gc-freeze point,
-;   which segfaults the run. So we let vectors accumulate and rely on the
-;   array representation's ~1-allocation-per-tree budget to reach deeper N
-;   than the cons variant before Aura's lack of running GC forces an OOM.
+; IMPORTANT — root cause of the N≥9 failure (corrected diagnosis):
+;   NOT OOM and NOT the lack of running GC. Peak RSS at the N=10 crash is
+;   only ~57 MB; ev.vector_heap_ stays small. The real failure is that
+;   Aura's named-let loops have NO tail-call optimization: every `loop` /
+;   `inner` iteration is a real recursive C++ call into eval_flat whose
+;   frame never releases. With the default 8 MB thread stack, ~450
+;   iterations deep the stack overflows; the SIGSEGV is swallowed and the
+;   process exits 0 mid-loop with no further output.
 ;
-; Measured ceiling: completes through N=8 (~3s). N≥9: prints the stretch-tree
-; line then SIGSEGV (139) once ev.vector_heap_ exhausts memory. N=10 (the
-; default) hits this — so the array variant and the cons variant both reach
-; the same wall at N=10, the array one just gets one depth further first.
-; The cons-cell companion (binarytrees_cons.aura) is the faithful per-node
-; malloc/free variant but OOMs earlier (N≈8) because it allocates 2^(d+1)-1
-; cells per tree instead of one vector.
+;   Workaround: raise the stack before running —
+;     ( ulimit -s unlimited; B=10 ./build-gcc16/aura < binarytrees_array.aura )
+;   This completes N=10 with byte-identical output to the reference.
+;
+;   A second, independent cap remains: the evaluator aborts named-let at
+;   "recursion depth exceeded (>2000)", so even with an unlimited stack
+;   N=12+ fails (stretch line printed, then the >2000 error).
+;
+;   Without the ulimit workaround, the measured ceiling on the default stack
+;   is N=8 (array) / N=7 (cons). The array variant reaches one depth further
+;   than the cons variant only because each tree is a single vector
+;   allocation instead of 2^(d+1)-1 cons cells — not because of GC behaviour.
 ;
 ; Naming note: the checksum function is `tree-check`, not `check` — `check`
 ; shadows a built-in primitive and mis-resolves to a constant under
