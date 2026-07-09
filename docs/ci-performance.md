@@ -22,7 +22,7 @@
 
 | Change | Knob | Effect |
 |--------|------|--------|
-| **mold / lld** linker | `AURA_USE_MOLD=1` (default; probes mold, falls back to lld); `=0` to disable | Faster link of many fat test binaries. Mold is skipped when incompatible with GCC 16 `libatomic_asneeded` scripts |
+| **mold / lld** linker | `AURA_USE_MOLD=1` (default; probes mold, falls back to lld); `=0` to disable | Faster link of many fat test binaries. Mold is skipped when incompatible with GCC 16 `libatomic_asneeded` scripts. lld is invoked via `scripts/linker-bin/ld.lld` to hide benign libxml2 SONAME noise from `/usr/local` LLVM builds |
 | **Link job pool** | `AURA_LINK_JOBS=4` (CMake, default 4) | Avoids RAM thrash from N parallel LLVM links |
 | **Phase timings** | always printed by `build.py build` | `⏱ cmake configure / build aura / …` for profiling |
 | **ccache (local auto)** | on PATH + unset `CCACHE_DISABLE`; CI keeps `CCACHE_DISABLE=1` | Local recompiles faster; CI stays clean |
