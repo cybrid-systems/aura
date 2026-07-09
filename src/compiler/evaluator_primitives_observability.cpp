@@ -607,6 +607,19 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // epoch bump on impact, EnvFrame version refresh, linear state
     // refreshed).
     "query:incremental-quote-lambda-linear-stats",
+    // Issue #766 — IR-SoA migration observability + DirtyAware
+    // incremental pipeline (P0 high-perf C++26 DOD/SoA
+    // foundation; refines #167/#463/#741; non-duplicative with
+    // #729 soa-hotpath-stats and #765 incremental-quote-lambda-
+    // linear-stats). #766 is the FIRST observability surface
+    // that tracks the *production migration of IRModuleV2 +
+    // DirtyAware incremental pipeline* — IR SoA column counts /
+    // DirtyAware short-circuit hits / pmr column utilization /
+    // JIT SoA codegen time — as separate per-decision-point
+    // counters the Agent consumes to monitor the SoA migration +
+    // DirtyAware short-circuit production-readiness under
+    // incremental AI mutation flows.
+    "query:ir-soa-migration-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -6649,6 +6662,83 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("closed-loop-rounds", closed_loop_rounds);
         insert_kv("convergence-hits", convergence);
         insert_kv("schema", 802);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #766: query:ir-soa-migration-stats — IR-SoA migration
+    // observability + DirtyAware incremental pipeline dashboard
+    // (P0 high-perf C++26 DOD/SoA foundation; refines #167/#463/
+    // #741; non-duplicative with #729 query:soa-hotpath-stats and
+    // #765 query:incremental-quote-lambda-linear-stats).
+    //
+    // Fields (5 + sentinel):
+    //   - soa-instructions-emitted     ir_soa_instructions_emitted_total
+    //   - dirty-block-skips            ir_soa_dirty_block_skips_total
+    //   - clean-block-hit-rate         ir_soa_clean_block_hit_rate_pct
+    //                                   (0-10000 fixed-point percent × 100;
+    //                                    10000 = 100.00%)
+    //   - pmr-column-utilization       ir_soa_pmr_column_utilization_pct
+    //                                   (0-10000 fixed-point percent × 100;
+    //                                    5000 = 50.00%)
+    //   - jit-soa-codegen-time-ns      ir_soa_jit_codegen_time_ns_total
+    //   - schema == 766
+    add("query:ir-soa-migration-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t soa_instructions_emitted =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_instructions_emitted_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dirty_block_skips =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_dirty_block_skips_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t clean_block_hit_rate =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_clean_block_hit_rate_pct.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t pmr_column_utilization =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_pmr_column_utilization_pct.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t jit_soa_codegen_time_ns =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_jit_codegen_time_ns_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("soa-instructions-emitted", soa_instructions_emitted);
+        insert_kv("dirty-block-skips", dirty_block_skips);
+        insert_kv("clean-block-hit-rate", clean_block_hit_rate);
+        insert_kv("pmr-column-utilization", pmr_column_utilization);
+        insert_kv("jit-soa-codegen-time-ns", jit_soa_codegen_time_ns);
+        insert_kv("schema", 766);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

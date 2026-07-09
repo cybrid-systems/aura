@@ -4989,6 +4989,54 @@ public:
             m->sv_self_evo_convergence_hits_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #766: IR-SoA migration observability + DirtyAware
+    // incremental pipeline counters backing the (query:ir-soa-
+    // migration-stats) primitive. These are public so future
+    // ir_soa.ixx IRFunctionSoA + IRModuleV2 add_instruction /
+    // mark_block_dirty / mark_all_blocks_dirty + pass_manager.ixx
+    // DirtyAwarePass + run_incremental_dirty_pipeline +
+    // lowering_impl.cpp set_soa_emit_path + apply_soa_view +
+    // evaluator_impl.cpp soa_interp_dispatch + aura_jit.cpp
+    // emit_soa_function can call them at each decision point
+    // (IR SoA column counts / DirtyAware short-circuit hits /
+    // pmr column utilization / JIT SoA codegen time).
+    //
+    // The clean_block_hit_rate_pct and pmr_column_utilization_pct
+    // bumps take a 0-10000 fixed-point percent (× 100) so the
+    // primitive can report 100.00% as 10000 without float drift
+    // under parallel update. The jit_codegen_time_ns bump takes
+    // a nanosecond delta so the caller can record the actual
+    // elapsed ns without tracking it locally.
+    void bump_ir_soa_instructions_emitted(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_instructions_emitted_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_soa_dirty_block_skips(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_dirty_block_skips_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void set_ir_soa_clean_block_hit_rate_pct(std::uint64_t pct_x100) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_clean_block_hit_rate_pct.store(pct_x100, std::memory_order_relaxed);
+        }
+    }
+    void set_ir_soa_pmr_column_utilization_pct(std::uint64_t pct_x100) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_pmr_column_utilization_pct.store(pct_x100, std::memory_order_relaxed);
+        }
+    }
+    void bump_ir_soa_jit_codegen_time_ns(std::uint64_t ns) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_jit_codegen_time_ns_total.fetch_add(ns, std::memory_order_relaxed);
+        }
+    }
     [[nodiscard]] std::uint64_t get_sv_self_evo_feedback_parse() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

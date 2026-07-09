@@ -656,6 +656,136 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_self_evo_structured_mutate_total{0};
     std::atomic<std::uint64_t> sv_self_evo_closed_loop_rounds_total{0};
     std::atomic<std::uint64_t> sv_self_evo_convergence_hits_total{0};
+    // Issue #766: IR-SoA migration observability + DirtyAware
+    // incremental pipeline counters (P0 high-perf C++26 DOD/SoA
+    // foundation; refines #167/#463/#741; non-duplicative with
+    // #729 query:soa-hotpath-stats and #765 query:incremental-
+    // quote-lambda-linear-stats). These are public so future
+    // ir_soa.ixx IRFunctionSoA + IRModuleV2 add_instruction /
+    // mark_block_dirty / mark_all_blocks_dirty + pass_manager.
+    // ixx DirtyAwarePass + run_incremental_dirty_pipeline +
+    // lowering_impl.cpp set_soa_emit_path + apply_soa_view +
+    // evaluator_impl.cpp soa_interp_dispatch + aura_jit.cpp
+    // emit_soa_function + tests/test_highperf_ir_soa_migration_
+    // dirty_incremental.cpp harness (large define + quote/lambda
+    // + heavy mutate:rebind on body → impact_scope + DirtyAware
+    // partial re-lower + JIT recompile → assert SoA path used,
+    // clean blocks skipped, metrics accurate, no regression vs
+    // AoS, TSan/ASan clean) can call them at each decision point
+    // (IR SoA column counts / DirtyAware short-circuit hits /
+    // pmr column utilization / JIT SoA codegen time).
+    //
+    // Non-duplicative with #729 (query:soa-hotpath-stats), #752
+    // (query:list-soa-hotpath-stats), #765 (query:incremental-
+    // quote-lambda-linear-stats) which cover SoA list/cdr-walk /
+    // SoA hot path telemetry + incremental quote/lambda/closure
+    // compile safety. #766 is the FIRST observability surface
+    // that tracks the *production migration of IRModuleV2 +
+    // DirtyAware incremental pipeline* — soa_instructions_emitted
+    // (IRModuleV2.add_instruction cumulative count),
+    // dirty_block_skips (DirtyAware short-circuit hits that
+    // skipped a clean block), clean_block_hit_rate (0-100
+    // percent of blocks that were clean when re-lower entered),
+    // pmr_column_utilization (0-100 percent of SoA column
+    // capacity currently in use), jit_soa_codegen_time_ns
+    // (cumulative SoA codegen time in aura_jit.cpp) — as
+    // separate per-decision-point counters the Agent consumes
+    // to monitor the SoA migration + DirtyAware short-circuit
+    // production-readiness under incremental AI mutation flows.
+    //
+    //   - ir_soa_instructions_emitted_total: # of instructions
+    //                                        emitted to SoA
+    //                                        columns via
+    //                                        IRModuleV2::
+    //                                        add_instruction
+    //                                        (proxy for "how
+    //                                        much of the hot
+    //                                        path is going
+    //                                        through the SoA
+    //                                        emit" — high
+    //                                        value = migration
+    //                                        in progress).
+    //   - ir_soa_dirty_block_skips_total: # of DirtyAware
+    //                                      short-circuit
+    //                                      block skips
+    //                                      (re-lower entered
+    //                                      a function but
+    //                                      is_block_dirty
+    //                                      ==0 → skipped
+    //                                      cached IR; proxy
+    //                                      for "how much
+    //                                      cache-locality
+    //                                      we recovered
+    //                                      under incremental
+    //                                      re-lower" — high
+    //                                      value = the whole
+    //                                      point of the
+    //                                      SoA+DirtyAware
+    //                                      story).
+    //   - ir_soa_clean_block_hit_rate_pct: 0-100 percent of
+    //                                       blocks that
+    //                                       re-lower saw as
+    //                                       clean (composite
+    //                                       of dirty_block_
+    //                                       skips / total
+    //                                       blocks visited;
+    //                                       recorded as pct
+    //                                       × 100 so 10000
+    //                                       = 100.00% — fixed-
+    //                                       point percent
+    //                                       prevents floating-
+    //                                       point observability
+    //                                       drift under
+    //                                       parallel update).
+    //   - ir_soa_pmr_column_utilization_pct: 0-100 percent of
+    //                                        SoA column
+    //                                        capacity currently
+    //                                        in use (opcodes_
+    //                                        size / opcodes_
+    //                                        capacity, sampled
+    //                                        at primitive-call
+    //                                        time; recorded as
+    //                                        pct × 100 so 5000
+    //                                        = 50.00% — fixed-
+    //                                        point avoids
+    //                                        float drift).
+    //   - ir_soa_jit_codegen_time_ns_total: cumulative SoA
+    //                                       codegen time in
+    //                                       aura_jit.cpp
+    //                                       emit_soa_function
+    //                                       (ns; proxy for
+    //                                       "how much JIT
+    //                                       time we spent on
+    //                                       SoA codegen" —
+    //                                       pair with mutation
+    //                                       rate to see JIT
+    //                                       cost under AI
+    //                                       self-mod).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual ir_soa.ixx IRFunctionSoA + IRModuleV2 add_
+    // instruction / mark_block_dirty / mark_all_blocks_dirty +
+    // pass_manager.ixx DirtyAwarePass + run_incremental_dirty_
+    // pipeline + lowering_impl.cpp set_soa_emit_path + apply_
+    // soa_view + evaluator_impl.cpp soa_interp_dispatch +
+    // aura_jit.cpp emit_soa_function + tests/test_highperf_ir_
+    // soa_migration_dirty_incremental.cpp harness (large define
+    // + quote/lambda + heavy mutate:rebind on body → impact_scope
+    // + DirtyAware partial re-lower + JIT recompile → assert SoA
+    // path used, clean blocks skipped, metrics accurate, no
+    // regression vs AoS, TSan/ASan clean) + SEVA SoA migration
+    // incremental demo + sync with ShapeProfiler versioning +
+    // Pass Pipeline JITFriendly epoch hints + Arena compact
+    // shape_inval_on_compact hook + pmr/arena hosting of
+    // remaining SoA columns + CI gate + docs are all follow-up
+    // work (each is a dedicated session in ir_soa.ixx +
+    // pass_manager.ixx + lowering_impl.cpp + evaluator_impl.cpp +
+    // aura_jit.cpp + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> ir_soa_instructions_emitted_total{0};
+    std::atomic<std::uint64_t> ir_soa_dirty_block_skips_total{0};
+    std::atomic<std::uint64_t> ir_soa_clean_block_hit_rate_pct{0};
+    std::atomic<std::uint64_t> ir_soa_pmr_column_utilization_pct{0};
+    std::atomic<std::uint64_t> ir_soa_jit_codegen_time_ns_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

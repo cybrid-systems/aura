@@ -3859,6 +3859,18 @@ add_dependencies(all_test_issue_targets test_sv_verification_commercial_emit_fid
 aura_add_issue_test(test_sv_verification_self_evolution_closed_loop_reliability)
 aura_issue_test_link_llvm_jit(test_sv_verification_self_evolution_closed_loop_reliability)
 add_dependencies(all_test_issue_targets test_sv_verification_self_evolution_closed_loop_reliability)
+# Issue #766: IR-SoA migration observability + DirtyAware incremental
+# pipeline dashboard. 5 CompilerMetrics atomics (ir_soa_*_total) +
+# (query:ir-soa-migration-stats, schema 766) + 5 bump helpers on
+# Evaluator (bump_ir_soa_instructions_emitted /
+# bump_ir_soa_dirty_block_skips / set_ir_soa_clean_block_hit_rate_pct /
+# set_ir_soa_pmr_column_utilization_pct /
+# bump_ir_soa_jit_codegen_time_ns). 5 ACs: hash shape, fresh-service
+# zero state, schema sentinel, bump-helper accessibility, regression
+# of #758/#763/#764. Non-duplicative with #729/#752/#765.
+aura_add_issue_test(test_issue_766)
+aura_issue_test_link_llvm_jit(test_issue_766)
+add_dependencies(all_test_issue_targets test_issue_766)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
