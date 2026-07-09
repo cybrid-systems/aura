@@ -4094,6 +4094,33 @@ add_dependencies(all_test_issue_targets test_issue_776)
 aura_add_issue_test(test_issue_777)
 aura_issue_test_link_llvm_jit(test_issue_777)
 add_dependencies(all_test_issue_targets test_issue_777)
+# Issue #778: FFI call overhead observability for batch
+# terminal output + rendering engine hot-path (P1 perf
+# surface). 0 NEW CompilerMetrics atomics (uses existing
+# coverage_counters_[8] which all FFI primitives already
+# increment) + 0 NEW bump helpers (production-path
+# bumps already wired up in ffi_primitives_impl.cpp) +
+# 1 NEW public accessor on Evaluator (get_ffi_call_count)
+# + (query:ffi-call-overhead-stats, schema 778) primitive
+# returning 4 body-specified fields + schema sentinel
+# (5-entry hash: ffi-call-count + batch-ffi-supported +
+# terminal-batch-write-supported + recommendation +
+# schema). 5 ACs: hash shape, fresh-zero (ffi-call-count
+# == 0 because fresh service hasn't called any FFI
+# primitive yet; both batch-ffi-supported and terminal-
+# batch-write-supported == 0; recommendation == 3
+# early-stage), schema sentinel, production-path bump
+# accessibility (call c-func + c-alloc via EDSL → ffi-
+# call-count grows), FFI call overhead benchmark (c-func
+# lookup + c-alloc + c-opaque measured for ns/op under
+# 1000 iterations), sibling observability regression
+# of #777. Non-duplicative with #131 (FFI extraction)
+# and #699 (ffi-calls-stats) — parallel companion
+# primitive that exposes FFI call volume + batch
+# primitive readiness signals.
+aura_add_issue_test(test_issue_778)
+aura_issue_test_link_llvm_jit(test_issue_778)
+add_dependencies(all_test_issue_targets test_issue_778)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

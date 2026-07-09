@@ -749,6 +749,19 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // EDA stdlib is production-ready for commercial
     // verification self-evolution.
     "query:eda-production-readiness",
+    // Issue #778 — FFI call overhead observability
+    // for batch terminal output + rendering engine
+    // hot-path (P1 perf surface). Non-duplicative with
+    // #131 (FFI primitive extraction) and #699 (ffi-
+    // calls-stats). #778 is the FIRST observability
+    // surface that tracks the FFI call volume at the
+    // primitive-call layer (c-load + c-func + c-opaque
+    // + c-alloc + c-struct-set! + c-struct-ref all
+    // increment coverage_counters_[8]) + exposes the
+    // production-readiness signals for the deferred
+    // batch FFI primitive + (terminal-batch-write)
+    // work the body asks for.
+    "query:ffi-call-overhead-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -7853,6 +7866,110 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("blocking-issues-count", blocking_issues_count);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 777);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #778: query:ffi-call-overhead-stats — FFI
+    // call overhead observability for batch terminal
+    // output + rendering engine hot-path (P1 perf
+    // surface; non-duplicative with #131 FFI primitive
+    // extraction, #699 query:ffi-calls-stats). #778 is
+    // the FIRST observability surface that tracks the FFI
+    // call volume at the primitive-call layer (c-load +
+    // c-func + c-opaque + c-alloc + c-struct-set! +
+    // c-struct-ref — all of which increment
+    // coverage_counters_[8]) + exposes the production-
+    // readiness signals for the deferred batch FFI
+    // primitive + (terminal-batch-write) work the body
+    // asks for. The actual ns/op measurement is in
+    // test_issue_778.cpp as a benchmark (the production
+    // wiring is deferred — see body Phase 2+).
+    //
+    // Fields (4 + sentinel):
+    //   - ffi-call-count         read from
+    //                              ev.get_ffi_call_count() =
+    //                              coverage_counters_[8] (total FFI
+    //                              primitive invocations; bumps
+    //                              monotonically over the
+    //                              Evaluator's lifetime)
+    //   - batch-ffi-supported    fixed 0 (the batch FFI
+    //                              primitive is Phase 2+ deferred
+    //                              per body "Add batch FFI
+    //                              primitive or memory view
+    //                              support in
+    //                              ffi_primitives_impl.cpp")
+    //   - terminal-batch-write-supported
+    //                            fixed 0 (the terminal-batch-
+    //                              write primitive is Phase 2+
+    //                              deferred per body "Provide
+    //                              terminal-batch-write or
+    //                              similar high-level primitive
+    //                              that minimizes crossings")
+    //   - recommendation         0=production-ready (both
+    //                              batch-ffi-supported and
+    //                              terminal-batch-write-
+    //                              supported = 1), 1=partial
+    //                              (one = 1, other = 0),
+    //                              2=missing-primitive (both
+    //                              = 0 but ffi-call-count > 0
+    //                              means Agent is using FFI),
+    //                              3=early-stage (both = 0
+    //                              and no FFI usage yet)
+    //   - schema == 778
+    add("query:ffi-call-overhead-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t ffi_call_count = static_cast<std::int64_t>(ev.get_ffi_call_count());
+        // Hardcoded flags for the deferred batch-FFI primitives.
+        // When the actual batch FFI primitive + terminal-batch-
+        // write primitive ship (Phase 2+ per body), these will
+        // be derived from a primitive existence check (mirror
+        // #777's live lookup pattern).
+        const std::int64_t batch_ffi_supported = 0;
+        const std::int64_t terminal_batch_write_supported = 0;
+        // Recommendation: derived from the 2 supported flags +
+        // FFI usage signal.
+        std::int64_t recommendation = 3;
+        if (batch_ffi_supported == 1 && terminal_batch_write_supported == 1)
+            recommendation = 0; // production-ready
+        else if (batch_ffi_supported == 1 || terminal_batch_write_supported == 1)
+            recommendation = 1; // partial
+        else if (ffi_call_count > 0)
+            recommendation = 2; // missing-primitive (Agent is using FFI)
+        else
+            recommendation = 3; // early-stage (no FFI usage yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("ffi-call-count", ffi_call_count);
+        insert_kv("batch-ffi-supported", batch_ffi_supported);
+        insert_kv("terminal-batch-write-supported", terminal_batch_write_supported);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 778);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

@@ -113,6 +113,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:extension-kit-stats)` | 775 | Formal Primitives Extension Kit AI-Agent SLO (4 fields) |
 | `(query:primitives-hotpath-slo-stats)` | 776 | Integrated Primitives Hot-Path SLO + Regression Gate (4 fields) |
 | `(query:eda-production-readiness)` | 777 | Consolidated EDA Stdlib Production Readiness Roadmap (6 fields) |
+| `(query:ffi-call-overhead-stats)` | 778 | FFI call overhead + batch primitive readiness (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -308,6 +309,16 @@ Distinct from `(query:primitives-hotpath-stats)` (#614/#584) and `(query:primiti
 - `schema` — 777 (drift sentinel)
 
 Distinct from any individual EDA primitive (`#726`/`#748`/`#772`/`#774`/`#749`/`#738`/`#725`/`724`): each individual primitive covers one specific surface; `#777` is the FIRST observability surface that aggregates the **EDA production readiness composite** — 4 milestone completeness pcts + blocking-issues-count + recommendation — as a single deployment-grade production-readiness dashboard the Agent reads to decide whether the EDA stdlib is production-ready for commercial verification self-evolution.
+
+### `(query:ffi-call-overhead-stats)` fields (#778)
+
+- `ffi-call-count` — read from `ev.get_ffi_call_count()` (alias of `coverage_counters_[8]`; total FFI primitive invocations across c-load + c-func + c-opaque + c-alloc + c-struct-set! + c-struct-ref)
+- `batch-ffi-supported` — fixed 0 (the batch FFI primitive is Phase 2+ deferred per body "Add batch FFI primitive or memory view support in `ffi_primitives_impl.cpp`")
+- `terminal-batch-write-supported` — fixed 0 (the `terminal-batch-write` primitive is Phase 2+ deferred per body "Provide `terminal-batch-write` or similar high-level primitive that minimizes crossings")
+- `recommendation` — derived 0/1/2/3 (0 = production-ready if both batch flags = 1; 1 = partial if one flag = 1; 2 = missing-primitive if both = 0 but `ffi-call-count > 0`; 3 = early-stage if both = 0 and no FFI usage)
+- `schema` — 778 (drift sentinel)
+
+Distinct from `(query:ffi-calls-stats)` (#699) and the `#131` FFI primitive extraction: `#131` ships the FFI primitives themselves; `#699` tracks FFI call patterns; `#778` is the FIRST observability surface that tracks FFI call volume + exposes the production-readiness signals for the deferred batch FFI + `terminal-batch-write` work. The actual `ns/op` measurement is in `tests/test_issue_778.cpp` as a benchmark (the production wiring is deferred).
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
