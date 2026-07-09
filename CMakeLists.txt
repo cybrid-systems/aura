@@ -4121,6 +4121,30 @@ add_dependencies(all_test_issue_targets test_issue_777)
 aura_add_issue_test(test_issue_778)
 aura_issue_test_link_llvm_jit(test_issue_778)
 add_dependencies(all_test_issue_targets test_issue_778)
+# Issue #779: Dirty region / delta rendering observability
+# for terminal rendering engine (P2 perf surface). 0 NEW
+# CompilerMetrics atomics + 0 NEW bump helpers (no existing
+# dirty region counter on main; would be added with the
+# Phase 2+ (terminal-dirty-region) primitive) + 1 NEW
+# primitive (query:dirty-region-rendering-stats, schema
+# 779) returning 4 body-specified fields + schema sentinel
+# (5-entry hash: dirty-region-count hardcoded 0 +
+# present-delta-supported hardcoded 0 + terminal-dirty-
+# region-supported hardcoded 0 + recommendation + schema).
+# 5 ACs: hash shape, fresh-zero (all 3 fields == 0,
+# recommendation == 3 early-stage), schema sentinel,
+# vector primitive ns/op benchmark (the existing vector
+# primitives are the rendering hot path the body mentions;
+# benchmark (make-vector 64) + 100x (vector-set! ...) to
+# measure baseline ns/op for the full-redraw path the
+# delta-rendering optimization would replace), sibling
+# observability regression of #777/#778. Non-duplicative
+# with the vector primitives in evaluator_primitives
+# _vector.cpp — parallel companion observability surface
+# for the deferred dirty region + present-delta work.
+aura_add_issue_test(test_issue_779)
+aura_issue_test_link_llvm_jit(test_issue_779)
+add_dependencies(all_test_issue_targets test_issue_779)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

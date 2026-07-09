@@ -114,6 +114,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:primitives-hotpath-slo-stats)` | 776 | Integrated Primitives Hot-Path SLO + Regression Gate (4 fields) |
 | `(query:eda-production-readiness)` | 777 | Consolidated EDA Stdlib Production Readiness Roadmap (6 fields) |
 | `(query:ffi-call-overhead-stats)` | 778 | FFI call overhead + batch primitive readiness (4 fields) |
+| `(query:dirty-region-rendering-stats)` | 779 | Dirty region / delta rendering readiness (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -319,6 +320,16 @@ Distinct from any individual EDA primitive (`#726`/`#748`/`#772`/`#774`/`#749`/`
 - `schema` — 778 (drift sentinel)
 
 Distinct from `(query:ffi-calls-stats)` (#699) and the `#131` FFI primitive extraction: `#131` ships the FFI primitives themselves; `#699` tracks FFI call patterns; `#778` is the FIRST observability surface that tracks FFI call volume + exposes the production-readiness signals for the deferred batch FFI + `terminal-batch-write` work. The actual `ns/op` measurement is in `tests/test_issue_778.cpp` as a benchmark (the production wiring is deferred).
+
+### `(query:dirty-region-rendering-stats)` fields (#779)
+
+- `dirty-region-count` — hardcoded 0 (no existing counter for dirty regions on main; would be bumped by the `(terminal-dirty-region)` primitive when it ships)
+- `present-delta-supported` — hardcoded 0 (the `(present-delta)` primitive is Phase 2+ deferred per body "Implement efficient `present-delta` that only outputs changed areas")
+- `terminal-dirty-region-supported` — hardcoded 0 (the `(terminal-dirty-region)` primitive is Phase 2+ deferred per body "Add `terminal-dirty-region` tracking primitives")
+- `recommendation` — derived 0/1/2/3 (0 = production-ready if both flags = 1; 1 = partial if one flag = 1; 2 = missing-primitive if both = 0 but `dirty-region-count > 0`; 3 = early-stage if both = 0 and no dirty region activity)
+- `schema` — 779 (drift sentinel)
+
+Distinct from the existing vector primitives (`vector-set!`, `vector-ref`, `make-vector`, `vector-length`, `vector->list` in `evaluator_primitives_vector.cpp`): the vector primitives provide direct access to contiguous cells but offer no dirty region tracking or delta rendering optimization. `#779` is the FIRST observability surface that exposes the production-readiness signals for the deferred dirty region + `present-delta` work the body asks for. The actual `ns/op` measurement on the vector primitives is in `tests/test_issue_779.cpp` as a benchmark.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

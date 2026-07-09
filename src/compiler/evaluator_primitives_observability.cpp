@@ -762,6 +762,16 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // batch FFI primitive + (terminal-batch-write)
     // work the body asks for.
     "query:ffi-call-overhead-stats",
+    // Issue #779 — Dirty region / delta rendering
+    // observability for terminal rendering engine
+    // (P2 perf surface). Non-duplicative with the
+    // existing vector primitives in
+    // evaluator_primitives_vector.cpp. #779 is the
+    // FIRST observability surface that exposes the
+    // production-readiness signals for the deferred
+    // dirty region + present-delta work the body asks
+    // for.
+    "query:dirty-region-rendering-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -7970,6 +7980,107 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("terminal-batch-write-supported", terminal_batch_write_supported);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 778);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #779: query:dirty-region-rendering-stats — Dirty
+    // region / delta rendering observability for terminal
+    // rendering engine (P2 perf surface; non-duplicative with
+    // the existing vector primitives in
+    // evaluator_primitives_vector.cpp). #779 is the FIRST
+    // observability surface that exposes the
+    // production-readiness signals for the deferred dirty
+    // region / delta rendering work the body asks for
+    // (terminal-dirty-region tracking + present-delta
+    // efficient output). The actual primitives are
+    // Phase 2+ deferred — when they ship, the 2 hardcoded
+    // "not yet supported" flags flip to 1 via the live
+    // primitive lookup pattern (mirror #777).
+    //
+    // Fields (4 + sentinel):
+    //   - dirty-region-count        hardcoded 0 (no existing
+    //                                counter for dirty regions
+    //                                on main; would be bumped by
+    //                                the (terminal-dirty-region)
+    //                                primitive when it ships)
+    //   - present-delta-supported   hardcoded 0 (the
+    //                                (present-delta) primitive
+    //                                is Phase 2+ deferred per
+    //                                body "Implement efficient
+    //                                present-delta that only
+    //                                outputs changed areas")
+    //   - terminal-dirty-region-supported
+    //                              hardcoded 0 (the
+    //                                (terminal-dirty-region)
+    //                                primitive is Phase 2+
+    //                                deferred per body "Add
+    //                                terminal-dirty-region
+    //                                tracking primitives")
+    //   - recommendation            0=production-ready (both
+    //                                supported flags = 1),
+    //                                1=partial (one = 1),
+    //                                2=missing-primitive (both
+    //                                = 0 but dirty-region-
+    //                                count > 0 indicates
+    //                                rendering activity),
+    //                                3=early-stage (both = 0
+    //                                AND no dirty region
+    //                                activity)
+    //   - schema == 779
+    add("query:dirty-region-rendering-stats", [&ev](const auto&) -> EvalValue {
+        // No existing counter for dirty regions on main; the
+        // (terminal-dirty-region) primitive + the dirty-region
+        // counter will be added when Phase 2 ships.
+        const std::int64_t dirty_region_count = 0;
+        // Hardcoded flags for the deferred primitives (mirror
+        // #778 batch-ffi-supported pattern).
+        const std::int64_t present_delta_supported = 0;
+        const std::int64_t terminal_dirty_region_supported = 0;
+        // Recommendation: derived from the 2 supported flags +
+        // dirty-region-count signal.
+        std::int64_t recommendation = 3;
+        if (present_delta_supported == 1 && terminal_dirty_region_supported == 1)
+            recommendation = 0; // production-ready
+        else if (present_delta_supported == 1 || terminal_dirty_region_supported == 1)
+            recommendation = 1; // partial
+        else if (dirty_region_count > 0)
+            recommendation = 2; // missing-primitive (rendering active)
+        else
+            recommendation = 3; // early-stage (no rendering yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("dirty-region-count", dirty_region_count);
+        insert_kv("present-delta-supported", present_delta_supported);
+        insert_kv("terminal-dirty-region-supported", terminal_dirty_region_supported);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 779);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
