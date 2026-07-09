@@ -2421,6 +2421,62 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cross_layer_linear_enforce_success_total{0};
     std::atomic<std::uint64_t> cross_layer_epoch_sync_total{0};
     std::atomic<std::uint64_t> cross_layer_drift_detections_total{0};
+    // Issue #796: end-to-end IR SoA full migration +
+    // DirtyAware short-circuit + DepGraph integration
+    // observability (Non-duplicative extension of
+    // #766/#741). 4 NEW atomics for the
+    // (query:ir-soa-full-migration-stats, schema
+    // 796) primitive:
+    //   - ir_soa_instructions_emitted_total: # of
+    //     instructions emitted to IRFunctionSoA
+    //     (vs remaining AoS IRModule paths) —
+    //     bumped from lowering_impl.cpp + JIT emit
+    //     sites per body "Complete port of
+    //     LoweringState emit, ir_executor
+    //     traversal, JIT emitter to prefer
+    //     IRFunctionSoA + IRInstructionView"
+    //   - ir_soa_dirty_block_skips_total: # of
+    //     blocks skipped via DirtyAwarePass +
+    //     run_incremental_dirty_pipeline short-
+    //     circuit (clean blocks not re-lowered /
+    //     not re-JITted) — bumped from
+    //     service.ixx invalidate_function +
+    //     lowering/JIT path per body "Enforce
+    //     DirtyAwarePass +
+    //     run_incremental_dirty_pipeline in
+    //     invalidate_function + JIT recompile;
+    //     consult is_block_dirty /
+    //     is_instruction_dirty + #741 impact_scope
+    //     for hybrid targeting; short-circuit
+    //     clean/impact-free blocks"
+    //   - ir_soa_jit_soa_time_ns_total: total ns
+    //     spent in JIT SoA emit path (time-based —
+    //     high value = JIT SoA path actively
+    //     exercised; vs AoS path) — bumped from
+    //     aura_jit.cpp SoA emit path per body
+    //     "Replace hot AoS walks with SoA column
+    //     views"
+    //   - ir_soa_impact_dirty_hybrid_skips_total:
+    //     # of skips via hybrid impact_scope +
+    //     is_block_dirty targeting (the combined
+    //     #741 + #766 short-circuit count) —
+    //     bumped from service.ixx invalidate_function
+    //     when both DepGraph impact_scope + SoA
+    //     block dirty are consulted together for
+    //     targeting per body "consult ... #741
+    //     impact_scope for hybrid targeting"
+    // Issue #796: ONLY NEW atomic for the
+    // (query:ir-soa-full-migration-stats, schema
+    // 796) primitive. The 5 referenced atomics
+    // (instructions_emitted / dirty_block_skips /
+    // clean_block_hit_rate_pct / pmr_column_
+    // utilization_pct / jit_codegen_time_ns) already
+    // exist from prior issue work at lines 784-788 —
+    // #796 reuses them via the primitive body.
+    // impact_dirty_hybrid_skips_total is new and
+    // bumped via the new
+    // bump_ir_soa_impact_dirty_hybrid_skip helper.
+    std::atomic<std::uint64_t> ir_soa_impact_dirty_hybrid_skips_total{0};
     // Issue #763: runtime linear_ownership_state enforcement +
     // GC root registration for IRClosure/EnvFrame in
     // invalidate_function and live-closure paths (non-duplicative

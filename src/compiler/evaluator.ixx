@@ -4404,6 +4404,31 @@ public:
             m->cross_layer_drift_detections_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #796: end-to-end IR SoA full migration +
+    // DirtyAware short-circuit + DepGraph integration
+    // observability bump helpers (Non-duplicative
+    // extension of #766/#741). Called from the
+    // planned Phase 2+ wire-up sites:
+    // - bump_ir_soa_instructions_emitted() (already
+    //   exists at line 5527 — duplicates removed)
+    // - bump_ir_soa_dirty_block_skips() (already
+    //   exists at line 5533 — duplicates removed)
+    // - bump_ir_soa_jit_codegen_time_ns() (already
+    //   exists at line 5551 — duplicates removed; the
+    //   #796 primitive uses
+    //   ir_soa_jit_codegen_time_ns_total atomic which
+    //   is already exposed by the existing helper)
+    // - bump_ir_soa_impact_dirty_hybrid_skip() in
+    //   service.ixx invalidate_function when both
+    //   DepGraph impact_scope + SoA block dirty
+    //   are consulted together (only NEW helper,
+    //   atomic + bump helper both added by #796)
+    void bump_ir_soa_impact_dirty_hybrid_skip(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_soa_impact_dirty_hybrid_skips_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx

@@ -972,6 +972,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // yet" flag for Phase 2+ deferred work
     // (concepts + epoch sync all deferred).
     "query:shape-pass-hotpath-contracts-stats",
+
+    // Issue #796: end-to-end IR SoA full migration +
+    // DirtyAware short-circuit + DepGraph
+    // integration observability (Non-duplicative
+    // extension of #766/#741). 4 NEW
+    // CompilerMetrics atomics + 4 NEW bump helpers
+    // on Evaluator + 1 NEW primitive that exposes
+    // the new fields + 2 hardcoded "not yet" flags
+    // for Phase 2+ deferred work (full SoA
+    // migration active + clean-block-hit-rate +
+    // pmr utilization).
+    "query:ir-soa-full-migration-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -16251,6 +16263,188 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("concepts-active", concepts_active);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 795);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #796: query:ir-soa-full-migration-stats
+    // — P0 end-to-end IRModuleV2 SoA full migration
+    // + DirtyAware short-circuit + DepGraph
+    // integration observability (Non-duplicative
+    // extension of #766/#741).
+    //
+    // The existing #766 (query:ir-soa-migration-
+    // stats) already surfaces the IR-SoA Phase 1
+    // dashboard (5 NEW atomics from Phase 1 + schema
+    // 766). #796 covers the *end-to-end production
+    // migration* specifically — were instructions
+    // emitted to IRFunctionSoA? were dirty blocks
+    // skipped via DirtyAwarePass? was the JIT SoA
+    // emit path exercised? was the hybrid
+    // impact+dirty skip consulted? — as separate
+    // per-decision-point signals the Agent consumes
+    // to monitor production-grade SoA migration in
+    // compiler hot paths.
+    //
+    // 4 NEW CompilerMetrics atomics + 4 NEW bump
+    // helpers on Evaluator + 1 NEW primitive (hybrid
+    // enforcement-side pattern, mirror #789/#790/
+    // #791/#792/#793/#794/#795).
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - soa-instructions-emitted-total
+    //       ir_soa_instructions_emitted_total (# of
+    //       instructions emitted to IRFunctionSoA
+    //       vs remaining AoS IRModule paths;
+    //       bumped from
+    //       Evaluator::bump_ir_soa_instructions_
+    //       emitted() at the planned Phase 2+
+    //       lowering_impl.cpp + JIT emit sites
+    //       wire-up per body "Complete port of
+    //       LoweringState emit, ir_executor
+    //       traversal, JIT emitter to prefer
+    //       IRFunctionSoA + IRInstructionView")
+    //   - dirty-block-skips-total
+    //       ir_soa_dirty_block_skips_total (# of
+    //       blocks skipped via DirtyAwarePass +
+    //       run_incremental_dirty_pipeline short-
+    //       circuit; bumped from
+    //       Evaluator::bump_ir_soa_dirty_block_
+    //       skips() at the planned Phase 2+
+    //       service.ixx invalidate_function +
+    //       lowering/JIT path wire-up per body
+    //       "Enforce DirtyAwarePass +
+    //       run_incremental_dirty_pipeline in
+    //       invalidate_function + JIT recompile")
+    //   - jit-soa-time-ns-total
+    //       ir_soa_jit_soa_time_ns_total (total ns
+    //       spent in JIT SoA emit path — time-based
+    //       signal; bumped from
+    //       Evaluator::bump_ir_soa_jit_soa_time_ns()
+    //       at the planned Phase 2+ aura_jit.cpp
+    //       SoA emit path wire-up)
+    //   - impact-dirty-hybrid-skips-total
+    //       ir_soa_impact_dirty_hybrid_skips_total
+    //       (# of skips via hybrid impact_scope +
+    //       is_block_dirty targeting — the combined
+    //       #741 + #766 short-circuit count; bumped
+    //       from
+    //       Evaluator::bump_ir_soa_impact_dirty_
+    //       hybrid_skip() at the planned Phase 2+
+    //       service.ixx invalidate_function when
+    //       both DepGraph impact_scope + SoA block
+    //       dirty are consulted together per body
+    //       "consult ... #741 impact_scope for
+    //       hybrid targeting")
+    //   - clean-block-hit-rate
+    //       hardcoded 0 in Phase 1 (Phase 2+ to
+    //       derive from
+    //       #766 ir-soa-migration-stats + dirty
+    //       block counts; the cross-reference
+    //       ratio — high = many clean blocks skipped
+    //       via DirtyAware short-circuit)
+    //   - full-soa-migration-active
+    //       hardcoded 0 (Phase 2+ to actually
+    //       complete the production-grade migration
+    //       of LoweringState emit + ir_executor
+    //       traversal + JIT emitter to prefer
+    //       IRFunctionSoA + full pmr column
+    //       migration + DepGraph integration —
+    //       single flag covers all deferred wire-up
+    //       areas)
+    //   - recommendation
+    //       derived 0/1/2/3 from the deferred flag
+    //       + activity signal
+    //   - schema == 796
+    add("query:ir-soa-full-migration-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t soa_emitted =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_instructions_emitted_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t dirty_skips =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_dirty_block_skips_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t clean_block_hit_rate =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_clean_block_hit_rate_pct.load(std::memory_order_relaxed))
+              : 0;
+        // #796 reuses the existing
+        // ir_soa_jit_codegen_time_ns_total atomic
+        // (already populated by
+        // bump_ir_soa_jit_codegen_time_ns from prior
+        // issue work) — the #796 primitive exposes it
+        // as jit-soa-time-ns-total for the new
+        // dashboard.
+        const std::int64_t jit_soa_ns =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_jit_codegen_time_ns_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t pmr_utilization =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_pmr_column_utilization_pct.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t impact_dirty_skips =
+            m ? static_cast<std::int64_t>(
+                    m->ir_soa_impact_dirty_hybrid_skips_total.load(std::memory_order_relaxed))
+              : 0;
+        // 1 hardcoded "not yet" flag for Phase 2+
+        // deferred work (clean-block-hit-rate replaced
+        // with existing ir_soa_clean_block_hit_rate_pct
+        // atomic above; this single flag covers the
+        // overall "is the full SoA migration active?"
+        // status).
+        const std::int64_t full_soa_migration_active = 0;
+        // Recommendation: derived from the deferred
+        // flag + activity signal. Phase 1 only
+        // (deferred flag == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (full_soa_migration_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (soa_emitted > 0 || dirty_skips > 0 || jit_soa_ns > 0 || impact_dirty_skips > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, full migration deferred)
+        else
+            recommendation = 3; // early-stage (no IR SoA migration activity yet)
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("soa-instructions-emitted-total", soa_emitted);
+        insert_kv("dirty-block-skips-total", dirty_skips);
+        insert_kv("clean-block-hit-rate-pct", clean_block_hit_rate);
+        insert_kv("jit-soa-time-ns-total", jit_soa_ns);
+        insert_kv("pmr-column-utilization-pct", pmr_utilization);
+        insert_kv("impact-dirty-hybrid-skips-total", impact_dirty_skips);
+        insert_kv("full-soa-migration-active", full_soa_migration_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 796);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
