@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**853** registrations scanned from `src/**/*.cpp`.
+**869** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 127 primitives (15%)
-- **core**: 215 primitives (25%)
-- **internal-observable**: 364 primitives (43%)
+- **core**: 220 primitives (25%)
+- **internal-observable**: 375 primitives (43%)
 - **convenience**: 147 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (364)
+## Query: (375)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -44,6 +44,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:arena-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:arena-compaction-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-fragmentation-snapshot` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:arena-live-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-production-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:ast-column-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -165,6 +166,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:ir-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-metadata-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-full-enforcement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:ir-soa-full-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:ir-soa-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-soa-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -173,11 +175,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:jit-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:jit-exception-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-fallback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-fiber-exception-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-hotswap-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-rendering-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:l2-specialization-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:last-mutation-blame` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-jit-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-occurrence-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -206,6 +210,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:match-exhaustiveness-notes` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:multi-fiber-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutate-atomic-batch-e2e-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:mutate-batch-atomic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:mutation-audit-log` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:mutation-boundary-invariant-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -230,6 +235,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-typing-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
+- `query:opcode-coverage-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:orchestration-llm-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:orchestration-metrics` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:orchestration-steal-arena-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -243,6 +249,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pass-pipeline-incremental-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pass-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pattern-hygiene-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:pattern-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-policy` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:pattern-index-rebuild-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -293,6 +300,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:reflection-schema-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:reflection-selfmod-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:registry-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:render-ffi-buffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:render-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:runtime-observability-correlated-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:runtime-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -317,6 +326,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:shape-profiler-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-value-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:shape-value-pass-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:siblings` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:soa-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -365,6 +375,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:task6-concurrent-fidelity` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:task6-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `query:terminal-render-production-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:terminal-rendering-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:top5-commercial-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-incremental-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -975,6 +986,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
+## Terminal: (5)
+
+- `terminal:clear` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:draw-batch` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:mark-dirty-region` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:present` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:present-delta` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+
 ## Thread_Pool: (1)
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1125,7 +1144,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (215)
+### Core builtins (must remain primitive) (220)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1327,6 +1346,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 - `take` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` — `src/compiler/evaluator_primitives_math.cpp`
+- `terminal:clear` — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:draw-batch` — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:mark-dirty-region` — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:present` — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:present-delta` — `src/compiler/evaluator_primitives_observability.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `use` — `src/compiler/evaluator_primitives_module.cpp`
@@ -1343,7 +1367,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (364)
+### Internal observable (stats/counters) (375)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1366,6 +1390,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:arena-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:arena-compaction-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-fragmentation-snapshot` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:arena-live-defrag-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-production-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:ast-column-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1487,6 +1512,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:ir-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-metadata-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-full-enforcement-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:ir-soa-full-migration-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:ir-soa-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-soa-migration-stats` — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1495,11 +1521,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:jit-consistency-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:jit-exception-bridge-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-fallback-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-fiber-exception-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-hotswap-closure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-rendering-coverage-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:jit-typed-mutation-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:l2-specialization-deopt-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:last-mutation-blame` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-jit-safety-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-occurrence-mutate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1528,6 +1556,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:match-exhaustiveness-notes` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:multi-fiber-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutate-atomic-batch-e2e-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:mutate-batch-atomic-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:mutation-audit-log` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:mutation-boundary-invariant-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1552,6 +1581,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-typing-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:opcode-coverage-deopt-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:orchestration-llm-bottleneck-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:orchestration-metrics` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:orchestration-steal-arena-gc-stats` — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1565,6 +1595,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pass-pipeline-incremental-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pass-pipeline-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pattern-hygiene-provenance-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:pattern-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:pattern-index-rebuild-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1615,6 +1646,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:reflection-schema-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:reflection-selfmod-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:registry-extension-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:runtime-observability-correlated-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:runtime-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1639,6 +1672,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:shape-profiler-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-jit-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-value-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:shape-value-pass-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:soa-adoption-stats` — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1687,6 +1721,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:task6-concurrent-fidelity` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:task6-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` — `src/compiler/evaluator_primitives_agent.cpp`
+- `query:terminal-render-production-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:terminal-rendering-module-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:top5-commercial-coverage-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-incremental-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`

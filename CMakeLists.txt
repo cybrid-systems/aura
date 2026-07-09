@@ -4549,6 +4549,12 @@ add_dependencies(all_test_issue_targets test_aura_result_error_policy)
 aura_add_issue_test(test_issues_809_817_batch)
 aura_issue_test_link_llvm_jit(test_issues_809_817_batch)
 add_dependencies(all_test_issue_targets test_issues_809_817_batch)
+# Issues #819–#829 Phase 1 batch: pattern hygiene provenance,
+# mutate atomic-batch e2e, JIT fiber-ex/L2/opcode, terminal render,
+# render FFI/hotpath, shape contracts, IR-SoA enforcement, arena live defrag.
+aura_add_issue_test(test_issues_819_829_batch)
+aura_issue_test_link_llvm_jit(test_issues_819_829_batch)
+add_dependencies(all_test_issue_targets test_issues_819_829_batch)
 # Issue #804: P0 stdlib-Registry unified primitive
 # error semantics + provenance tracking + recovery
 # hooks (refine/consolidate #585 + #751 + #775 + #478).
