@@ -4555,6 +4555,10 @@ add_dependencies(all_test_issue_targets test_issues_809_817_batch)
 aura_add_issue_test(test_issues_819_829_batch)
 aura_issue_test_link_llvm_jit(test_issues_819_829_batch)
 add_dependencies(all_test_issue_targets test_issues_819_829_batch)
+# Remaining open issues Phase 1 batch (schemas 395,830-840,842-870,872,875-886).
+aura_add_issue_test(test_open_issues_phase1_batch)
+aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
+add_dependencies(all_test_issue_targets test_open_issues_phase1_batch)
 # Issue #804: P0 stdlib-Registry unified primitive
 # error semantics + provenance tracking + recovery
 # hooks (refine/consolidate #585 + #751 + #775 + #478).

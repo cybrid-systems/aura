@@ -184,6 +184,61 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:shape-value-hotpath-contracts-stats",
     "query:ir-soa-full-enforcement-stats",
     "query:arena-live-defrag-stats",
+    // Remaining open issues Phase 1 batch
+    "query:pass-shape-epoch-stats",
+    "query:edsl-hotpath-real-stats",
+    "query:dead-coercion-elim-stats",
+    "query:occurrence-renarrow-stats",
+    "query:linear-escape-mutate-stats",
+    "query:typed-mutate-coercion-stats",
+    "query:fiber-epoch-type-safety-stats",
+    "query:sv-verification-feedback-mutate-stats",
+    "query:seva-longrunning-harness-v2-stats",
+    "query:typed-mutation-audit-stats",
+    "query:stable-ref-full-provenance-v2-stats",
+    "query:longrunning-ai-infra-stats",
+    "query:ai-native-meta-extension-stats",
+    "query:orchestration-telemetry-pipeline-stats",
+    "query:per-fiber-exception-state-stats",
+    "query:aot-hotswap-pipeline-stats",
+    "query:macro-hygiene-query-provenance-v2-stats",
+    "query:reflection-edsl-extension-v2-stats",
+    "query:self-evolution-hygiene-dirty-epoch-stats",
+    "query:sv-verification-feedback-closedloop-stats",
+    "query:pattern-defuse-hygiene-full-stats",
+    "query:stable-ref-mutation-log-hardening-stats",
+    "query:dirtyaware-impact-enforcement-v2-stats",
+    "query:live-irclosure-envframe-gc-stats",
+    "query:source-marker-linear-consistency-stats",
+    "query:terminal-buffer-diff-present-stats",
+    "query:render-observability-v2-stats",
+    "query:render-jit-soa-hotpath-stats",
+    "query:arena-live-defrag-full-v2-stats",
+    "query:ir-soa-dirty-hybrid-full-v2-stats",
+    "query:value-shape-consteval-full-v2-stats",
+    "query:defuse-infer-partial-stats",
+    "query:ownership-escape-postmutate-stats",
+    "query:typed-mutation-audit-pass-stats",
+    "query:sv-backend-emit-bidirectional-stats",
+    "query:large-sv-pattern-defuse-stats",
+    "query:longrunning-stable-ref-dirty-stats",
+    "query:sv-eda-primitives-cluster-stats",
+    "query:primitives-resource-quota-fiber-stats",
+    "query:declarative-primitive-registry-stats",
+    "query:primitives-namespace-alias-stats",
+    "query:guard-steal-gc-safety-v2-stats",
+    "query:dirtyaware-ir-cache-consistency-stats",
+    "query:stats-builder-refactor-stats",
+    "query:load-or-zero-helper-stats",
+    "query:cpp26-modernization-sweep-stats",
+    "query:metrics-meta-reflection-stats",
+    "query:test-harness-bootstrap-stats",
+    "query:bundle-codegen-decouple-stats",
+    "query:test-bundle-migration-stats",
+    "query:test-profile-flag-stats",
+    "query:test-harness-module-stats",
+    "query:test-json-report-stats",
+    "query:gcc16-modules-buildenv-stats",
     // Issue #750 — Runtime reflection schema validation for macro/EDSL mutate
     "query:reflection-schema-stats",
     // Issue #659 — Type system typed-mutate incremental gaps
@@ -18507,6 +18562,2819 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             m->render_hp_present_delta_total.fetch_add(1, std::memory_order_relaxed);
         }
         return make_bool(true);
+    });
+    // Issue #830: query:pass-shape-epoch-stats
+    add("query:pass-shape-epoch-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->pass_shape_epoch_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->pass_shape_epoch_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->pass_shape_epoch_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 830);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #831: query:edsl-hotpath-real-stats
+    add("query:edsl-hotpath-real-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->edsl_hotpath_real_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->edsl_hotpath_real_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->edsl_hotpath_real_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 831);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #832: query:dead-coercion-elim-stats
+    add("query:dead-coercion-elim-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->dead_coercion_elim_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->dead_coercion_elim_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->dead_coercion_elim_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 832);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #833: query:occurrence-renarrow-stats
+    add("query:occurrence-renarrow-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->occurrence_renarrow_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->occurrence_renarrow_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->occurrence_renarrow_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 833);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #834: query:linear-escape-mutate-stats
+    add("query:linear-escape-mutate-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->linear_escape_mutate_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->linear_escape_mutate_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->linear_escape_mutate_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 834);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #835: query:typed-mutate-coercion-stats
+    add("query:typed-mutate-coercion-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(
+                    m->typed_mutate_coercion_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->typed_mutate_coercion_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->typed_mutate_coercion_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 835);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #836: query:fiber-epoch-type-safety-stats
+    add("query:fiber-epoch-type-safety-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->fiber_epoch_type_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->fiber_epoch_type_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->fiber_epoch_type_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 836);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #837: query:sv-verification-feedback-mutate-stats
+    add("query:sv-verification-feedback-mutate-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->sv_feedback_mutate_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->sv_feedback_mutate_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->sv_feedback_mutate_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 837);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #838: query:seva-longrunning-harness-v2-stats
+    add("query:seva-longrunning-harness-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->seva_harness_v2_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->seva_harness_v2_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->seva_harness_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 838);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #839: query:typed-mutation-audit-stats
+    add("query:typed-mutation-audit-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->typed_mut_audit_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->typed_mut_audit_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->typed_mut_audit_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 839);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #840: query:stable-ref-full-provenance-v2-stats
+    add("query:stable-ref-full-provenance-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->stable_ref_full_v2_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_full_v2_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_full_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 840);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #842: query:longrunning-ai-infra-stats
+    add("query:longrunning-ai-infra-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->longrun_ai_infra_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->longrun_ai_infra_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->longrun_ai_infra_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 842);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #843: query:ai-native-meta-extension-stats
+    add("query:ai-native-meta-extension-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->ai_native_meta_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->ai_native_meta_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->ai_native_meta_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 843);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #844: query:orchestration-telemetry-pipeline-stats
+    add("query:orchestration-telemetry-pipeline-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->orch_telemetry_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->orch_telemetry_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->orch_telemetry_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 844);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #845: query:per-fiber-exception-state-stats
+    add("query:per-fiber-exception-state-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->per_fiber_ex_state_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->per_fiber_ex_state_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->per_fiber_ex_state_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 845);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #846: query:aot-hotswap-pipeline-stats
+    add("query:aot-hotswap-pipeline-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->aot_hotswap_pipe_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->aot_hotswap_pipe_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->aot_hotswap_pipe_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 846);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #847: query:macro-hygiene-query-provenance-v2-stats
+    add("query:macro-hygiene-query-provenance-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->macro_hyg_query_v2_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->macro_hyg_query_v2_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->macro_hyg_query_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 847);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #848: query:reflection-edsl-extension-v2-stats
+    add("query:reflection-edsl-extension-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->reflect_edsl_v2_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->reflect_edsl_v2_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->reflect_edsl_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 848);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #849: query:self-evolution-hygiene-dirty-epoch-stats
+    add("query:self-evolution-hygiene-dirty-epoch-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->selfevo_hyg_dirty_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->selfevo_hyg_dirty_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->selfevo_hyg_dirty_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 849);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #850: query:sv-verification-feedback-closedloop-stats
+    add("query:sv-verification-feedback-closedloop-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->sv_fb_closedloop_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->sv_fb_closedloop_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->sv_fb_closedloop_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 850);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #851: query:pattern-defuse-hygiene-full-stats
+    add("query:pattern-defuse-hygiene-full-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->pattern_defuse_hyg_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_defuse_hyg_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_defuse_hyg_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 851);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #852: query:stable-ref-mutation-log-hardening-stats
+    add("query:stable-ref-mutation-log-hardening-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->stable_ref_mutlog_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_mutlog_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->stable_ref_mutlog_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 852);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #853: query:dirtyaware-impact-enforcement-v2-stats
+    add("query:dirtyaware-impact-enforcement-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->dirty_impact_v2_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->dirty_impact_v2_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->dirty_impact_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 853);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #854: query:live-irclosure-envframe-gc-stats
+    add("query:live-irclosure-envframe-gc-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->live_irclosure_gc_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->live_irclosure_gc_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->live_irclosure_gc_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 854);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #855: query:source-marker-linear-consistency-stats
+    add("query:source-marker-linear-consistency-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->src_marker_linear_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->src_marker_linear_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->src_marker_linear_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 855);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #856: query:terminal-buffer-diff-present-stats
+    add("query:terminal-buffer-diff-present-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->term_buf_diff_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->term_buf_diff_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->term_buf_diff_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 856);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #857: query:render-observability-v2-stats
+    add("query:render-observability-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->render_obs_v2_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->render_obs_v2_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->render_obs_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 857);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #858: query:render-jit-soa-hotpath-stats
+    add("query:render-jit-soa-hotpath-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->render_jit_soa_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->render_jit_soa_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->render_jit_soa_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 858);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #859: query:arena-live-defrag-full-v2-stats
+    add("query:arena-live-defrag-full-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->arena_ldefrag_v2_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->arena_ldefrag_v2_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->arena_ldefrag_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 859);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #860: query:ir-soa-dirty-hybrid-full-v2-stats
+    add("query:ir-soa-dirty-hybrid-full-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->irsoa_dirty_v2_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->irsoa_dirty_v2_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->irsoa_dirty_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 860);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #861: query:value-shape-consteval-full-v2-stats
+    add("query:value-shape-consteval-full-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->val_shape_ceval_v2_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->val_shape_ceval_v2_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->val_shape_ceval_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 861);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #862: query:defuse-infer-partial-stats
+    add("query:defuse-infer-partial-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->defuse_infer_part_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->defuse_infer_part_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->defuse_infer_part_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 862);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #863: query:ownership-escape-postmutate-stats
+    add("query:ownership-escape-postmutate-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->own_escape_post_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->own_escape_post_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->own_escape_post_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 863);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #864: query:typed-mutation-audit-pass-stats
+    add("query:typed-mutation-audit-pass-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->typed_audit_pass_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->typed_audit_pass_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->typed_audit_pass_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 864);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #865: query:sv-backend-emit-bidirectional-stats
+    add("query:sv-backend-emit-bidirectional-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->sv_backend_bi_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->sv_backend_bi_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->sv_backend_bi_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 865);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #866: query:large-sv-pattern-defuse-stats
+    add("query:large-sv-pattern-defuse-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->large_sv_pattern_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->large_sv_pattern_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->large_sv_pattern_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 866);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #867: query:longrunning-stable-ref-dirty-stats
+    add("query:longrunning-stable-ref-dirty-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->longrun_sref_dirty_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->longrun_sref_dirty_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->longrun_sref_dirty_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 867);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #868: query:sv-eda-primitives-cluster-stats
+    add("query:sv-eda-primitives-cluster-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->sv_eda_prims_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->sv_eda_prims_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->sv_eda_prims_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 868);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #869: query:primitives-resource-quota-fiber-stats
+    add("query:primitives-resource-quota-fiber-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->prim_quota_fiber_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->prim_quota_fiber_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->prim_quota_fiber_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 869);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #870: query:declarative-primitive-registry-stats
+    add("query:declarative-primitive-registry-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->decl_prim_reg_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->decl_prim_reg_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->decl_prim_reg_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 870);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #872: query:primitives-namespace-alias-stats
+    add("query:primitives-namespace-alias-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->prim_ns_alias_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->prim_ns_alias_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->prim_ns_alias_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 872);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #875: query:guard-steal-gc-safety-v2-stats
+    add("query:guard-steal-gc-safety-v2-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->guard_steal_gc_v2_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->guard_steal_gc_v2_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->guard_steal_gc_v2_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 875);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #876: query:dirtyaware-ir-cache-consistency-stats
+    add("query:dirtyaware-ir-cache-consistency-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->dirty_ircache_cons_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->dirty_ircache_cons_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->dirty_ircache_cons_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 876);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #877: query:stats-builder-refactor-stats
+    add("query:stats-builder-refactor-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->stats_builder_ref_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->stats_builder_ref_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->stats_builder_ref_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 877);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #878: query:load-or-zero-helper-stats
+    add("query:load-or-zero-helper-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->load_or_zero_help_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->load_or_zero_help_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->load_or_zero_help_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 878);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #879: query:cpp26-modernization-sweep-stats
+    add("query:cpp26-modernization-sweep-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->cpp26_mod_sweep_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->cpp26_mod_sweep_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->cpp26_mod_sweep_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 879);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #880: query:metrics-meta-reflection-stats
+    add("query:metrics-meta-reflection-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->metrics_meta_refl_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->metrics_meta_refl_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->metrics_meta_refl_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 880);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #881: query:test-harness-bootstrap-stats
+    add("query:test-harness-bootstrap-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->test_harness_boot_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->test_harness_boot_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->test_harness_boot_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 881);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #882: query:bundle-codegen-decouple-stats
+    add("query:bundle-codegen-decouple-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->bundle_codegen_dec_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->bundle_codegen_dec_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->bundle_codegen_dec_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 882);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #883: query:test-bundle-migration-stats
+    add("query:test-bundle-migration-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->test_bundle_mig_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->test_bundle_mig_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->test_bundle_mig_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 883);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #884: query:test-profile-flag-stats
+    add("query:test-profile-flag-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->test_profile_flag_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->test_profile_flag_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->test_profile_flag_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 884);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #885: query:test-harness-module-stats
+    add("query:test-harness-module-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->test_harness_mod_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->test_harness_mod_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->test_harness_mod_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 885);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #886: query:test-json-report-stats
+    add("query:test-json-report-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total =
+            m ? static_cast<std::int64_t>(m->test_json_report_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hits = m ? static_cast<std::int64_t>(m->test_json_report_hits_total.load(
+                                          std::memory_order_relaxed))
+                                    : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->test_json_report_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 886);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    // Issue #395: query:gcc16-modules-buildenv-stats
+    add("query:gcc16-modules-buildenv-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
+        const std::int64_t total = m ? static_cast<std::int64_t>(m->gcc16_modules_env_total.load(
+                                           std::memory_order_relaxed))
+                                     : 0;
+        const std::int64_t hits =
+            m ? static_cast<std::int64_t>(
+                    m->gcc16_modules_env_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t savings =
+            m ? static_cast<std::int64_t>(
+                    m->gcc16_modules_env_savings_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t active = 1;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("total", total);
+        insert_kv("hits", hits);
+        insert_kv("savings", savings);
+        insert_kv("active", active);
+        insert_kv("schema", 395);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #856: terminal:create-buffer / terminal:diff (Phase 1 stubs)
+    add("terminal:create-buffer", [&ev](const auto& a) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_buf_diff_total.fetch_add(1, std::memory_order_relaxed);
+            m->term_buf_diff_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+    add("terminal:diff", [&ev](const auto&) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->term_buf_diff_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->render_obs_v2_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+    // Issue #872: primitives:alias name target (Phase 1 registry of aliases)
+    add("primitives:alias", [&ev](const auto& a) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->prim_ns_alias_total.fetch_add(1, std::memory_order_relaxed);
+            bool ok = a.size() >= 2 && (is_string(a[0]) || is_keyword(a[0]));
+            if (ok)
+                m->prim_ns_alias_hits_total.fetch_add(1, std::memory_order_relaxed);
+            else
+                m->prim_ns_alias_savings_total.fetch_add(1, std::memory_order_relaxed);
+            return make_bool(ok);
+        }
+        return make_bool(a.size() >= 2);
     });
 }
 

@@ -234,3 +234,15 @@ inline int RUN_ALL_TESTS() {
 }
 
 #endif // AURA_TEST_HARNESS_HPP
+// Issue #881: AURA_ISSUE_BOOTSTRAP — minimal main scaffolding for issue tests.
+// Usage:
+//   AURA_ISSUE_BOOTSTRAP(aura_issue_N_detail::run_matrix)
+// expands to a main() that constructs CompilerService and runs the matrix.
+#ifndef AURA_ISSUE_BOOTSTRAP
+#define AURA_ISSUE_BOOTSTRAP(run_fn)                                                               \
+    int main() {                                                                                   \
+        aura::compiler::CompilerService cs;                                                        \
+        run_fn(cs);                                                                                \
+        return RUN_ALL_TESTS();                                                                    \
+    }
+#endif
