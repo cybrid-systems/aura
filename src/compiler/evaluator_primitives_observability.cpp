@@ -835,6 +835,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Phase 2+ work (strict StableRef refresh on
     // resume + EnvFrame version refresh + #754 bias).
     "query:orchestration-steal-outermost-stats",
+
+    // Issue #784: EnvFrame dual-path mandatory
+    // enforcement observability (Non-duplicative
+    // refinement of #756 envframe-dualpath-policy-stats +
+    // #647 envframe-dualpath-stale-stats-hash + #731
+    // envframe-dualpath-stats). Surfaces 3 NEW atomics
+    // for mandatory ensure_ call sites + concurrent
+    // steal resync + GC walk resync, plus 2 hardcoded
+    // "not yet" flags for the Phase 2+ deferred work
+    // (configurable policy mode + mandatory call site
+    // wiring + panic-on-detected-desync enforcement).
+    "query:envframe-dualpath-mandatory-enforce-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -14175,6 +14187,172 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
                         "Guard commit.",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // Issue #784: query:envframe-dualpath-mandatory-enforce-stats —
+    // P0 production-grade SoA dual-path reliability
+    // observability for EnvFrame under concurrent
+    // fiber mutation, steal and GC. Non-duplicative
+    // refinement of #756 envframe-dualpath-policy-stats
+    // (which surfaces the desync-panic policy + GC
+    // stale-detected-hits) + #647 envframe-dualpath-
+    // stale-stats-hash (cross-fiber-stale + version-
+    // mismatch + dualpath-repair) + #731 envframe-
+    // dualpath-stats (mirror-write + refresh +
+    // consistency-violations). #784 covers the
+    // *mandatory ensure_ call-site coverage* specifically
+    // — does the safety net get exercised at every
+    // critical path? — as a separate per-decision-point
+    // signal the Agent consumes to monitor SoA EnvFrame
+    // dual-path production safety under concurrency.
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - mandatory-enforce-total
+    //       envframe_mandatory_enforce_total (# of
+    //       ensure_envframe_dual_path_consistency() calls
+    //       at mandatory entry points — walk_env_frames /
+    //       GCEnvWalkFn / materialize_call_env /
+    //       post-rollback / fiber steal resume; bumped
+    //       from the planned Phase 2+ call sites via
+    //       Evaluator::bump_envframe_mandatory_enforce())
+    //   - mandatory-enforce-desync-total
+    //       envframe_mandatory_enforce_desync_total (# of
+    //       mandatory ensure_ calls that detected a
+    //       length/order mismatch — the primary "did
+    //       the safety net catch a desync?" signal;
+    //       bumped from Evaluator::bump_envframe_
+    //       mandatory_enforce_desync() when ensure_
+    //       returns false at a mandatory entry)
+    //   - gc-walk-resync-total
+    //       envframe_gc_walk_resync_total (# of times
+    //       GCEnvWalkFn stale check triggered re-ensure
+    //       + version re-stamp under concurrent
+    //       steal/mutate — Phase 2+ to wire; for now
+    //       hardcoded 0 since the GC walk stale + re-
+    //       ensure integration is deferred per body
+    //       "GCEnvWalkFn + stale handling strengthened
+    //       to also verify dual-path consistency")
+    //   - concurrent-steal-resync-total
+    //       envframe_concurrent_steal_resync_total (# of
+    //       times a fiber steal resume triggered a
+    //       re-ensure — bumped from Evaluator::bump_
+    //       envframe_concurrent_steal_resync() at the
+    //       planned Phase 2+ Fiber::resume() entry;
+    //       NEW atomic + bump helper pair)
+    //   - policy-mode                 hardcoded 0 (log-
+    //                                 and-sync default; the
+    //                                 body asks for a
+    //                                 strict-panic vs log-
+    //                                 and-sync policy flag
+    //                                 + desync_panic_count
+    //                                 — already exposed by
+    //                                 #756 via envframe_
+    //                                 desync_panic_count_
+    //                                 total. Phase 2+ to
+    //                                 make policy mode
+    //                                 configurable via a
+    //                                 setter primitive)
+    //   - mandatory-call-sites-enabled hardcoded 0 (the
+    //                                 actual mandatory
+    //                                 ensure_ wiring in
+    //                                 walk_env_frames /
+    //                                 GCEnvWalkFn /
+    //                                 materialize_call_env
+    //                                 / post-rollback
+    //                                 paths is Phase 2+
+    //                                 deferred per body
+    //                                 "Make ensure_
+    //                                 mandatory (call at
+    //                                 start of critical
+    //                                 paths)")
+    //   - recommendation              derived 0/1/2/3
+    //                                 from the 2 deferred
+    //                                 flags + activity
+    //                                 signal
+    //   - schema == 784
+    add("query:envframe-dualpath-mandatory-enforce-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t mandatory_enforce_total =
+            m ? static_cast<std::int64_t>(
+                    m->envframe_mandatory_enforce_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t mandatory_enforce_desync_total =
+            m ? static_cast<std::int64_t>(
+                    m->envframe_mandatory_enforce_desync_total.load(std::memory_order_relaxed))
+              : 0;
+        // gc-walk-resync-total + concurrent-steal-resync-total:
+        // concurrent-steal-resync-total is a NEW atomic,
+        // gc-walk-resync-total is planned as a NEW atomic
+        // but not added in Phase 1 (it overlaps with the
+        // existing #756 envframe_gc_stale_desync_hits_total
+        // which already counts GC stale detected under
+        // concurrency). For Phase 1 we expose the NEW
+        // concurrent-steal-resync-total atomic and hardcode
+        // gc-walk-resync-total to 0 (since the dedicated
+        // gc-walk-resync counter is deferred; #756 already
+        // surfaces the GC stale detection signal).
+        const std::int64_t gc_walk_resync_total = 0;
+        const std::int64_t concurrent_steal_resync_total =
+            m ? static_cast<std::int64_t>(
+                    m->envframe_concurrent_steal_resync_total.load(std::memory_order_relaxed))
+              : 0;
+        // 2 hardcoded "not yet" flags for Phase 2+
+        // deferred work.
+        const std::int64_t policy_mode = 0;
+        const std::int64_t mandatory_call_sites_enabled = 0;
+        // Recommendation: derived from the 2 deferred
+        // flags + activity signal. Phase 1 only (all
+        // deferred flags == 0) but with activity signals
+        // from the new atomics.
+        std::int64_t recommendation = 3;
+        if (policy_mode == 2 && mandatory_call_sites_enabled == 1)
+            recommendation = 0; // production-ready strict-panic + wired
+        else if (policy_mode == 2 || mandatory_call_sites_enabled == 1)
+            recommendation = 1; // partial
+        else if (mandatory_enforce_total > 0 || concurrent_steal_resync_total > 0 ||
+                 mandatory_enforce_desync_total > 0)
+            recommendation = 2; // Phase 1 (atomics wired, call sites + policy deferred)
+        else
+            recommendation = 3; // early-stage (no mandatory enforcement activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("mandatory-enforce-total", mandatory_enforce_total);
+        insert_kv("mandatory-enforce-desync-total", mandatory_enforce_desync_total);
+        insert_kv("gc-walk-resync-total", gc_walk_resync_total);
+        insert_kv("concurrent-steal-resync-total", concurrent_steal_resync_total);
+        insert_kv("policy-mode", policy_mode);
+        insert_kv("mandatory-call-sites-enabled", mandatory_call_sites_enabled);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 784);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

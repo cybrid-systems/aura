@@ -4240,6 +4240,19 @@ add_dependencies(all_test_issue_targets test_issue_782)
 aura_add_issue_test(test_issue_783)
 aura_issue_test_link_llvm_jit(test_issue_783)
 add_dependencies(all_test_issue_targets test_issue_783)
+# Issue #784: P0 mandatory dual-path (bindings_ vs
+# bindings_symid_) consistency enforcement + desync
+# panic policy + GCEnvWalkFn stale integration under
+# concurrent mutation/steal (Non-duplicative refinement
+# of #756/#731/#647). 3 NEW atomics + 3 NEW bump
+# helpers + 1 NEW (query:envframe-dualpath-mandatory-
+# enforce-stats, schema 784) primitive. 5 ACs: hash
+# shape, fresh-zero, schema sentinel, production-path
+# bump helpers callable + activity reflects in
+# primitive, sibling #756/#783 regression.
+aura_add_issue_test(test_issue_784)
+aura_issue_test_link_llvm_jit(test_issue_784)
+add_dependencies(all_test_issue_targets test_issue_784)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

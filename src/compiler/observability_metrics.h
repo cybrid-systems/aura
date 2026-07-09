@@ -1591,6 +1591,27 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_desync_panic_count_total{0};
     std::atomic<std::uint64_t> envframe_gc_stale_desync_hits_total{0};
 
+    // Issue #784: mandatory dual-path consistency
+    // enforcement + GC/steal resync counters under
+    // concurrent mutation (refines #756). 3 NEW atomics:
+    //   - envframe_mandatory_enforce_total: # of times
+    //     ensure_envframe_dual_path_consistency() was
+    //     called at a mandatory entry point (walk_env_frames,
+    //     GCEnvWalkFn, materialize_call_env, post-rollback).
+    //   - envframe_mandatory_enforce_desync_total: # of
+    //     times a mandatory ensure_ call detected a
+    //     dual-path desync (length/order mismatch) — the
+    //     primary "did the safety net catch a desync?"
+    //     signal.
+    //   - envframe_concurrent_steal_resync_total: # of
+    //     times a concurrent steal/resume triggered a
+    //     re-ensure + version re-stamp — covers the
+    //     "concurrent steal caused a temporary desync
+    //     that was auto-corrected" signal.
+    std::atomic<std::uint64_t> envframe_mandatory_enforce_total{0};
+    std::atomic<std::uint64_t> envframe_mandatory_enforce_desync_total{0};
+    std::atomic<std::uint64_t> envframe_concurrent_steal_resync_total{0};
+
     // Issue #757: fine-grained MacroIntroduced provenance
     // tracking + dynamic inliner policy + AI-queryable hygiene
     // violation correlation counters backing the

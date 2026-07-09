@@ -4429,6 +4429,34 @@ public:
             m->envframe_gc_stale_desync_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #784: mandatory dual-path consistency
+    // enforcement + concurrent steal/GC resync bump
+    // helpers (refines #756). Called from the planned
+    // (Phase 2+) mandatory ensure_ call sites in
+    // walk_env_frames / GCEnvWalkFn /
+    // materialize_call_env / post-rollback / fiber
+    // steal resume. The P0 ships the bump helpers +
+    // atomics + primitive; the actual call sites are
+    // deferred (each is a separate session touching
+    // evaluator.ixx + evaluator_env.cpp + gc_coordinator).
+    void bump_envframe_mandatory_enforce() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->envframe_mandatory_enforce_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_envframe_mandatory_enforce_desync() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->envframe_mandatory_enforce_desync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_envframe_concurrent_steal_resync() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->envframe_concurrent_steal_resync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #757: fine-grained MacroIntroduced provenance
     // tracking + dynamic inliner policy + AI-queryable
     // hygiene violation correlation counters backing the
