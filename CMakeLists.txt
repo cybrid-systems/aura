@@ -4424,6 +4424,19 @@ add_dependencies(all_test_issue_targets test_issue_795)
 aura_add_issue_test(test_issue_796)
 aura_issue_test_link_llvm_jit(test_issue_796)
 add_dependencies(all_test_issue_targets test_issue_796)
+# Issue #797: P0 Arena live-object defrag + auto-compact
+# policy + fiber/GC safepoint yield + Shape/Dirty
+# integration (complete #300 P1 + #767 + #685). 5 ACs:
+# hash shape (existing #767 primitive now exposes
+# production-readiness derived field), fresh-zero,
+# schema sentinel == 767, production-path #767 bump
+# helpers callable + observability only bumps do NOT
+# flip production-readiness (conservative semantics —
+# derive from arena stats + yield together), sibling
+# observability regression #685 + #642 + #569 + #796.
+aura_add_issue_test(test_issue_797)
+aura_issue_test_link_llvm_jit(test_issue_797)
+add_dependencies(all_test_issue_targets test_issue_797)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

@@ -225,7 +225,7 @@ Distinct from `(query:closed-loop-reliability-stats)` (#726): #802 tracks struct
 
 Distinct from `(query:soa-hotpath-stats)` (#729) and `(query:incremental-quote-lambda-linear-stats)` (#765): #766 tracks the production migration of `IRModuleV2` + `DirtyAware` incremental pipeline (cache-locality recovery under AI mutation load); #729 tracks SoA list/cdr-walk hot-path telemetry; #765 tracks incremental quote/lambda/closure compile safety.
 
-### `(query:arena-auto-compact-defrag-fiber-stats)` fields (#767)
+### `(query:arena-auto-compact-defrag-fiber-stats)` fields (#767, enhanced #797)
 
 - `auto-compact-triggers` — arena stats `auto_alloc_trigger_count` / `auto_triggers` (auto-compact policy fires)
 - `frag-reduced-bp` — arena stats `frag_reduced_bp` (basis points × 100; 5000 = 50.00%)
@@ -233,9 +233,10 @@ Distinct from `(query:soa-hotpath-stats)` (#729) and `(query:incremental-quote-l
 - `fiber-yield-during-compact` — `arena_auto_compact_fiber_yield_during_compact_total` (actual fiber yields inside compact/defrag)
 - `shape-inval-count` — arena stats `shape_inval_on_compact`
 - `defrag-blocked-fibers` — `arena_auto_compact_defrag_blocked_fibers_total` (fibers blocked waiting for defrag)
-- `schema` — 767 (drift sentinel)
+- `production-readiness` — derived ordinal (#797): 0 = production-ready (auto-policy fires AND fiber-yield observed under sustained load), 1 = partial Phase 1 only (some activity but no fiber-yield / no defrag-blocked surface observed yet), 2 = early-stage (no auto-compact activity yet — service has not exercised the tiered pool hot path). Body AC4 "SLO frag <0.3 under load" maps here as an observable ordinal rather than raw `frag_ratio`.
+- `schema` — 767 (drift sentinel; #797 enhances the existing primitive with one derived field instead of creating a new primitive at a different schema, to keep the catalog lean)
 
-Distinct from `(query:arena-auto-compact-stats)` (#685) and `(query:arena-auto-compaction-stats)` (#642): #767 adds 2 truly new counters (`fiber-yield-during-compact` actual-yield vs #685 yield-checks-hit observability-only, and `defrag-blocked-fibers` introducing the hidden defrag-fiber interaction cost metric) on top of the 4 reused arena stats — completes the production auto-compact policy + live defrag + fiber/GC safepoint yield observability surface.
+Distinct from `(query:arena-auto-compact-stats)` (#685) and `(query:arena-auto-compaction-stats)` (#642): #767 adds 2 truly new counters (`fiber-yield-during-compact` actual-yield vs #685 yield-checks-hit observability-only, and `defrag-blocked-fibers` introducing the hidden defrag-fiber interaction cost metric) on top of the 4 reused arena stats — completes the production auto-compact policy + live defrag + fiber/GC safepoint yield observability surface. #797 enhances the same primitive with the `production-readiness` derived ordinal so the Agent can observe the body AC4 SLO without exposing `frag_ratio` directly; the field costs one branch per call and shares the existing atomics. Live-object-moving defrag (pointer fixup for StableRef/children/GC roots) + actual `WorkerContext` yield coordination + sustained-mutate harness (`tests/test_highperf_arena_live_defrag_auto_compact_fiber_yield.cpp`) remain Phase 2+ follow-up.
 
 ### `(query:shape-pass-hotpath-stats)` fields (#768)
 
