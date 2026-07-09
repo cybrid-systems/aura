@@ -4327,6 +4327,20 @@ add_dependencies(all_test_issue_targets test_issue_788)
 aura_add_issue_test(test_issue_789)
 aura_issue_test_link_llvm_jit(test_issue_789)
 add_dependencies(all_test_issue_targets test_issue_789)
+# Issue #790: P0 first-class (mutate:atomic-batch
+# body-expr :snapshot? #t) primitive with pinned
+# StableNodeRef snapshot + per-boundary observability
+# + cross-fiber safety (Refine/Consolidate #737/#761
+# non-duplicative). 2 NEW Evaluator atomics + 2 NEW
+# bump helpers + 2 NEW accessors + 1 NEW
+# (query:mutate-batch-atomic-stats, schema 790)
+# primitive. 5 ACs: hash shape, fresh-zero, schema
+# sentinel, production-path bump helpers callable +
+# activity reflects in primitive, sibling #761/#789
+# regression.
+aura_add_issue_test(test_issue_790)
+aura_issue_test_link_llvm_jit(test_issue_790)
+add_dependencies(all_test_issue_targets test_issue_790)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

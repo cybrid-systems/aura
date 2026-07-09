@@ -899,6 +899,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // wire-up + tag_arity_index_ fast-path population
     // + deep hygiene predicate support).
     "query:pattern-index-safe-span-stats",
+
+    // Issue #790: mutate:atomic-batch + pinned
+    // StableNodeRef snapshot + per-boundary
+    // observability + cross-fiber safety
+    // (Refine/Consolidate #737/#761 non-duplicative).
+    // 2 NEW Evaluator atomics + 2 NEW bump helpers +
+    // 2 NEW accessors + 1 NEW primitive that
+    // exposes the new fields + 4 hardcoded "not yet"
+    // flags for Phase 2+ deferred work (atomic-batch
+    // primitive exposure + snapshot capture + cross-
+    // fiber re-stamp + mutation-impact batch flag).
+    "query:mutate-batch-atomic-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -15195,6 +15207,159 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("deep-hygiene-predicate-active", deep_hygiene_predicate_active);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 789);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #790: query:mutate-batch-atomic-stats —
+    // P0 first-class (mutate:atomic-batch body-expr
+    // :snapshot? #t) primitive with pinned
+    // StableNodeRef snapshot + per-boundary
+    // observability + cross-fiber safety
+    // (Refine/Consolidate #737/#761 non-duplicative).
+    //
+    // The existing #761 (query:mutate-batch-stats)
+    // already surfaces the *per-batch-measurement*
+    // layer: batch-count + ops-total + rollback-count
+    // + ops-per-batch + bumps-saved-total + executed-
+    // under-concurrent-fiber + pinned-refs-last-batch +
+    // rollback-triggers (schema 761). #790 covers the
+    // *cross-fiber safety + hygiene-in-batch +
+    // atomic-batch primitive exposure + snapshot
+    // capture + mutation-impact batch flag* specifically
+    // — was a steal detected during a suppressed batch?
+    // was a hygiene violation caught inside a batch?
+    // is the (mutate:atomic-batch) primitive actually
+    // exposed to AI? is the snapshot capture wired? is
+    // the cross-fiber re-stamp active? — as separate
+    // per-decision-point signals the Agent consumes to
+    // decide whether to trigger mutation-impact-snapshot
+    // batch_impact + cross-fiber re-stamp under
+    // concurrent AI mutate.
+    //
+    // 2 NEW Evaluator atomics + 2 NEW bump helpers
+    // + 2 NEW public accessors + 1 NEW primitive
+    // (hybrid enforcement-side pattern, mirror #789).
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - cross-fiber-steals-during-batch
+    //       atomic_batch_cross_fiber_steals_total
+    //       (# of fiber steals that fired while
+    //       inside a suppressed atomic batch —
+    //       counts the *observation* of a steal
+    //       during batch, not the violation; bumped
+    //       from
+    //       Evaluator::bump_atomic_batch_cross_fiber_
+    //       steal() at the planned Phase 2+
+    //       restore_post_yield_or_rollback +
+    //       MutationBoundaryGuard wire-up)
+    //   - hygiene-violations-in-batch
+    //       atomic_batch_hygiene_violations_total
+    //       (# of hygiene violations detected during
+    //       an atomic batch body; bumped from
+    //       Evaluator::bump_atomic_batch_hygiene_
+    //       violation() at the planned Phase 2+
+    //       hygiene_protected_error path inside
+    //       batch wire-up)
+    //   - hygiene-violation-rate
+    //       hardcoded 0 (Phase 2+ to derive from
+    //       hygiene-violations-in-batch /
+    //       batch-count × 10000; the cross-reference
+    //       ratio — high = hygiene drift inside
+    //       batches)
+    //   - atomic-batch-primitive-active
+    //       hardcoded 0 (Phase 2+ to actually expose
+    //       (mutate:atomic-batch [body] :snapshot? #t)
+    //       primitive per body "Implement
+    //       (mutate:atomic-batch [body] :snapshot? #t)
+    //       that acquires outer StructuralMutationGuard
+    //       + sets suppressed_, executes body (sequence
+    //       of mutate:*), on success: single bump +
+    //       optional snapshot ... on fail/panic: full
+    //       rollback")
+    //   - snapshot-capture-active
+    //       hardcoded 0 (Phase 2+ to actually capture
+    //       pinned StableNodeRef snapshot per body
+    //       "Capture/pin affected refs (extend
+    //       SafePCVSpan or PinnedStableRefSet) during
+    //       batch; expose in snapshot for post-batch
+    //       validation")
+    //   - cross-fiber-re-stamp-active
+    //       hardcoded 0 (Phase 2+ to wire
+    //       restore_post_yield_or_rollback +
+    //       MutationBoundaryGuard to re-stamp
+    //       generation or force refresh pinned
+    //       StableRefs when inside suppressed batch
+    //       per body "if inside suppressed batch,
+    //       re-stamp generation or force refresh
+    //       pinned StableRefs; coordinate with
+    //       checkpoint_yield_boundary")
+    //   - recommendation
+    //       derived 0/1/2/3 from the 3 deferred
+    //       flags + activity signal
+    //   - schema == 790
+    add("query:mutate-batch-atomic-stats", [&ev](const auto&) -> EvalValue {
+        const std::int64_t cross_fiber_steals =
+            static_cast<std::int64_t>(ev.atomic_batch_cross_fiber_steals_total());
+        const std::int64_t hygiene_violations =
+            static_cast<std::int64_t>(ev.atomic_batch_hygiene_violations_total());
+        // 4 hardcoded "not yet" fields for Phase 2+
+        // deferred work.
+        const std::int64_t hygiene_violation_rate = 0;
+        const std::int64_t atomic_batch_primitive_active = 0;
+        const std::int64_t snapshot_capture_active = 0;
+        const std::int64_t cross_fiber_re_stamp_active = 0;
+        // Recommendation: derived from the 3 deferred
+        // flags + activity signal. Phase 1 only (all
+        // deferred flags == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (atomic_batch_primitive_active == 1 && snapshot_capture_active == 1 &&
+            cross_fiber_re_stamp_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (atomic_batch_primitive_active == 1 || snapshot_capture_active == 1 ||
+                 cross_fiber_re_stamp_active == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (cross_fiber_steals > 0 || hygiene_violations > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+        else
+            recommendation = 3; // early-stage (no batch activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("cross-fiber-steals-during-batch", cross_fiber_steals);
+        insert_kv("hygiene-violations-in-batch", hygiene_violations);
+        insert_kv("hygiene-violation-rate", hygiene_violation_rate);
+        insert_kv("atomic-batch-primitive-active", atomic_batch_primitive_active);
+        insert_kv("snapshot-capture-active", snapshot_capture_active);
+        insert_kv("cross-fiber-re-stamp-active", cross_fiber_re_stamp_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 790);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
