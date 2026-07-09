@@ -110,6 +110,10 @@ export enum class IROpcode : std::uint8_t {
     TopCellLoad, // TopCellLoad: result_slot, cell_index
 };
 
+// Issue #910 Phase 1: opcode count for dispatch-table migration.
+export inline constexpr std::size_t kIROpcodeCount = 54;
+
+
 // ── Issue #217 Cycle 3: IR types are reflection-ready ────────
 //
 // The IR types below (IRInstruction, OpcodeInfo, BasicBlock,

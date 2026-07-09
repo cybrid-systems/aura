@@ -1187,6 +1187,8 @@ struct LLVMBuilder {
                     // a small RAII guard. Since the same function
                     // may have multiple OpRaise (nested try/catch),
                     // we add the catchall once and reuse it.
+                    // Issue #900: bound catchall cache (was unbounded thread_local map).
+                    static constexpr std::size_t kCatchallCacheCap = 256;
                     static thread_local std::unordered_map<llvm::Function*, llvm::BasicBlock*>
                         s_catchall_cache;
                     llvm::BasicBlock* catchall_bb = nullptr;
@@ -1194,6 +1196,8 @@ struct LLVMBuilder {
                     if (it != s_catchall_cache.end()) {
                         catchall_bb = it->second;
                     } else {
+                        if (s_catchall_cache.size() >= kCatchallCacheCap)
+                            s_catchall_cache.clear(); // simple bound; invalidate is rare
                         catchall_bb = llvm::BasicBlock::Create(ctx, "raise_catchall", parent);
                         // Landingpad: declare the personality.
                         // (Actually, the personality is set on

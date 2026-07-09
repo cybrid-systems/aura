@@ -164,11 +164,12 @@ std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
+// Implemented inline in class for lookup_cstr; slot_for_name O(1) via reverse index.
 std::size_t Primitives::slot_for_name(const std::string& name) const {
-    for (std::size_t i = 0; i < ordered_names_.size(); ++i) {
-        if (ordered_names_[i] == name)
-            return i;
-    }
+    // Issue #899: O(1) via reverse index (populated in add()).
+    auto it = name_to_slot_.find(std::string_view(name));
+    if (it != name_to_slot_.end())
+        return it->second;
     return std::numeric_limits<std::size_t>::max();
 }
 

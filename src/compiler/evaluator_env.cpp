@@ -31,14 +31,16 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
         ~_() { --g_env_lookup_depth; }
     } dec;
 
-    // 1. Check local bindings
+    // 1. Check local bindings — Issue #894: O(1) via binding_index_
+    if (auto it = binding_index_.find(n); it != binding_index_.end()) {
+        const auto idx = it->second;
+        if (idx < bindings_.size() && bindings_[idx].first == n)
+            return bindings_[idx].second;
+    }
+    // Fallback linear scan (index may be stale after rare rewrites)
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n) {
-            auto& v = it->second;
-            // P0 step 2: return raw (cell sentinel if applicable).
-            // No cells_ member on Env. Deref centralized in Evaluator
-            // scope using its cells_ (or explicit for cell ptr paths).
-            return v;
+            return it->second;
         }
     // 2. Check parent
     if (parent_) {
@@ -158,8 +160,10 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
         // bind time; the int-compare is O(1) at lookup time.
         // Net: lookup is the hot path, so this is a win.
         std::string_view sv = pool_->resolve(s);
-        if (!sv.empty())
+        if (!sv.empty()) {
             bindings_.emplace_back(std::string(sv), v);
+            binding_index_[bindings_.back().first] = bindings_.size() - 1; // #894
+        }
     }
 }
 
