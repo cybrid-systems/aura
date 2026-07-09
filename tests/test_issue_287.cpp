@@ -14,12 +14,11 @@
 
 
 #include "test_harness.hpp"
+#include "compiler/aura_jit_bridge.h" // before import std (C-header hygiene)
 
 import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
-
-#include "compiler/aura_jit_bridge.h"
 
 namespace aura_issue_287_detail {
 

@@ -21,7 +21,8 @@
 //     9. Counter can be reset (store 0) without affecting others
 
 #include "aura_jit.h"
-#include "test_harness.hpp" // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
+#include "spec_jit_controller.h" // before import std (shape.h pulls cstring)
+#include "test_harness.hpp"      // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 
 // Stub: the full definition lives in service.ixx (under the
 // AURA_HAVE_LLVM guard). The test_issue_170 target only links
@@ -29,6 +30,10 @@
 // satisfy the link-time reference (aura_jit.cpp's init() registers
 // this symbol even though init() doesn't run for the empty-state
 // tests below).
+//
+// All traditional headers must appear *before* import std; otherwise
+// GCC 16 redefines string.h symbols (memchr/strchr/…) that the std
+// module already owns (cstring dual-include conflict).
 
 import std;
 extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t /*prim_id*/, std::int64_t* /*args*/,
@@ -254,7 +259,7 @@ bool test_exception_stack_nested() {
 // The spec controller consults AuraJIT's unhandled_opcode_count to
 // decide whether to attempt shape-based specialization. If ANY
 // unhandled opcode has been reported, specialization is skipped.
-#include "spec_jit_controller.h"
+// (spec_jit_controller.h is included at the top of this file.)
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

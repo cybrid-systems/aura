@@ -38,17 +38,16 @@
 //            function's index appears.
 
 #include "test_harness.hpp"
-
-import std;
-using aura::test::g_failed;
-using aura::test::g_passed;
-
 // Forward declare FlatFunction to avoid pulling in aura_jit.h's
 // heavy <functional> include (which conflicts with `import std`).
 namespace aura::jit {
 struct FlatFunction;
 }
-#include "aura_jit_bridge.h"
+#include "aura_jit_bridge.h" // before import std (C-header hygiene)
+
+import std;
+using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
