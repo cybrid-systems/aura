@@ -11761,12 +11761,12 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         if (ev.get_jit_stats_fn_) {
             const char* s = ev.get_jit_stats_fn_();
             if (s) {
-                auto parse_u64 = [&](const char* key) -> std::uint64_t {
-                    const char* p = std::strstr(s, key);
-                    if (!p)
+                auto parse_u64 = [&](std::string_view key) -> std::uint64_t {
+                    std::string_view hay(s);
+                    auto pos = hay.find(key);
+                    if (pos == std::string_view::npos)
                         return 0;
-                    p += std::strlen(key);
-                    return std::strtoull(p, nullptr, 10);
+                    return std::strtoull(hay.data() + pos + key.size(), nullptr, 10);
                 };
                 compiles = parse_u64("compiles=");
                 hot_swaps = parse_u64("hot_swaps=");

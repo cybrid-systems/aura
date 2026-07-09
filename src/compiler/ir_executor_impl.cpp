@@ -1,4 +1,5 @@
 module;
+#include <bit>
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -415,8 +416,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::ConstF64: {
                     std::uint64_t bits = static_cast<std::uint64_t>(ops[1]) |
                                          (static_cast<std::uint64_t>(ops[2]) << 32);
-                    double val;
-                    std::memcpy(&val, &bits, sizeof(val));
+                    double val = std::bit_cast<double>(bits);
                     locals[ops[0]] = make_float(val);
                     break;
                 }

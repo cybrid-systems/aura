@@ -54,6 +54,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
+#include <array>
 #include <vector>
 #include <cstring>
 #include <new>
@@ -615,10 +616,10 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             int32_t env_count = ce.env_count;
 
             // Stack buffer for small locals, fallback to heap for large
-            int64_t stack_buf[64];
+            std::array<int64_t, 64> stack_buf;
             std::vector<int64_t> heap_buf;
-            int64_t* locals = stack_buf;
-            if (static_cast<size_t>(nlocals) > sizeof(stack_buf) / sizeof(stack_buf[0])) {
+            int64_t* locals = stack_buf.data();
+            if (static_cast<size_t>(nlocals) > stack_buf.size()) {
                 heap_buf.resize(static_cast<size_t>(nlocals), 0);
                 locals = heap_buf.data();
             } else {
@@ -683,10 +684,10 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 
     // Stack buffer for small locals, fallback to heap for large
     int32_t nlocals = entry.local_count > 0 ? entry.local_count : 16;
-    int64_t stack_buf[64];
+    std::array<int64_t, 64> stack_buf;
     std::vector<int64_t> heap_buf;
-    int64_t* locals = stack_buf;
-    if (static_cast<size_t>(nlocals) > sizeof(stack_buf) / sizeof(stack_buf[0])) {
+    int64_t* locals = stack_buf.data();
+    if (static_cast<size_t>(nlocals) > stack_buf.size()) {
         heap_buf.resize(static_cast<size_t>(nlocals), 0);
         locals = heap_buf.data();
     } else {

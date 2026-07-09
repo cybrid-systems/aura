@@ -6,6 +6,7 @@
 #define AURA_COMPILER_HASH_META_H
 
 #include <cstdint>
+#include <string_view>
 
 namespace aura::compiler::hash {
 
@@ -30,6 +31,14 @@ inline constexpr std::uint64_t kFnvPrime = 0x100000001b3ull;
     std::uint64_t h = kFnvOffsetBasis;
     for (; p && *p; ++p)
         h = (h ^ static_cast<std::uint8_t>(*p)) * kFnvPrime;
+    return h;
+}
+
+// Issue #920: string_view path — O(1) length, no strlen.
+[[nodiscard]] inline std::uint64_t fnv1a_bytes(std::string_view sv) noexcept {
+    std::uint64_t h = kFnvOffsetBasis;
+    for (unsigned char c : sv)
+        h = (h ^ c) * kFnvPrime;
     return h;
 }
 
