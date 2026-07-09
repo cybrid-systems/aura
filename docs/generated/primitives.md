@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**817** registrations scanned from `src/**/*.cpp`.
+**818** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 127 primitives (16%)
 - **core**: 213 primitives (26%)
-- **internal-observable**: 330 primitives (40%)
+- **internal-observable**: 331 primitives (40%)
 - **convenience**: 147 primitives (18%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (330)
+## Query: (331)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -107,6 +107,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:eda-hw-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-primitives-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-production-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:eda-sv-closedloop-stress-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1299,7 +1300,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (330)
+### Internal observable (stats/counters) (331)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1385,6 +1386,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:eda-hw-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-infra-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-primitives-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-production-readiness` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:eda-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:eda-sv-closedloop-stress-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`

@@ -4070,6 +4070,30 @@ add_dependencies(all_test_issue_targets test_issue_775)
 aura_add_issue_test(test_issue_776)
 aura_issue_test_link_llvm_jit(test_issue_776)
 add_dependencies(all_test_issue_targets test_issue_776)
+# Issue #777: Consolidated EDA Infrastructure Primitives
+# Production Readiness Roadmap + Milestone Tracker. 0 NEW
+# CompilerMetrics atomics + 0 NEW bump helpers + 1 NEW
+# primitive (query:eda-production-readiness, schema 777)
+# returning 6 body-specified fields + schema sentinel
+# (7-entry hash: m1/m2/m3/m4-completeness-pct derived from
+# primitive lookup + blocking-issues-count + recommendation
+# + schema). Uses ev.primitives_.lookup(name) to check
+# existence of expected primitives for each milestone;
+# completeness = (found / total) × 10000 via integer
+# division. 5 ACs: hash shape, fresh-state completeness
+# (all milestones should be 100% on production build with
+# all related primitives shipped), schema sentinel,
+# derived completeness correctness (verify each milestone
+# computes the right percentage by checking individual
+# primitive existence), sibling observability regression
+# of #748/#772/#774/#775/#776. Non-duplicative with the
+# individual EDA primitives — #777 is the FIRST
+# observability surface that aggregates the EDA production
+# readiness composite as a single deployment-grade
+# production-readiness dashboard.
+aura_add_issue_test(test_issue_777)
+aura_issue_test_link_llvm_jit(test_issue_777)
+add_dependencies(all_test_issue_targets test_issue_777)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
