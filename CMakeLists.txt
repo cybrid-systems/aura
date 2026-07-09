@@ -4266,6 +4266,22 @@ add_dependencies(all_test_issue_targets test_issue_784)
 aura_add_issue_test(test_issue_785)
 aura_issue_test_link_llvm_jit(test_issue_785)
 add_dependencies(all_test_issue_targets test_issue_785)
+# Issue #786: P0 unified 'code-as-data' closed-loop
+# production health composite dashboard (Consolidate
+# #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
+# atomics + 0 NEW bump helpers + 1 NEW
+# (query:code-as-data-production-health, schema 786)
+# primitive that uses live primitive lookup to
+# aggregate the 8 expected sub-primitives + derive
+# composite SLO status (parallel companion pattern,
+# mirror #777 live lookup + #782 module
+# readiness). 5 ACs: hash shape, fresh-zero state,
+# schema sentinel, production-path coverage
+# correctness (live count matches independent EDSL
+# reachability check), sibling #785/#759 regression.
+aura_add_issue_test(test_issue_786)
+aura_issue_test_link_llvm_jit(test_issue_786)
+add_dependencies(all_test_issue_targets test_issue_786)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
