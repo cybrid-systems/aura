@@ -110,6 +110,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
 | `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
 | `(query:closed-loop-convergence-stats)` | 774 | Verification feedback-driven self-evolution convergence rate (4 fields) |
+| `(query:extension-kit-stats)` | 775 | Formal Primitives Extension Kit AI-Agent SLO (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -273,6 +274,16 @@ Distinct from `(query:workspace-closedloop-orchestration-stats)` (#762): `#762` 
 - `schema` — 774 (drift sentinel)
 
 Distinct from `(query:closed-loop-reliability-stats)` (#726) and `(query:sv-verification-self-evolution-stats)` (#802): `#726` ships 3 raw counters (ref-drift-prevented / rollback-success / feedback-mutate-rounds) for closed-loop *reliability*; `#802` ships 4 raw counters (feedback-parse-hits / structured-mutate-hits / closed-loop-rounds / convergence-hits) for the self-evolution *volume*. `#774` is the FIRST observability surface that exposes the **convergence_rate** pct the body asks for — a derived metric computed at primitive-call time that an Agent / SEVA controller can read to decide whether the closed-loop is converging in production multi-round SEVA scenarios.
+
+### `(query:extension-kit-stats)` fields (#775)
+
+- `extensions_registered` — reused `#633` atomic `stdlib_extension_count_total` (foundation for AC3 DEFINE_PRIMITIVE macro wire-up; bumped per new extension registered; 0 until AC3 wire-up)
+- `contract_violations_caught` — reused `#751` atomic `primitive_capture_violations_total` (# of primitives that failed the capture contract probe; bumped by `prim_record_capture_violation` when no error_counter on a mutate path)
+- `meta_completeness_pct` — derived (0–10000 fixed-point percent × 100; `schema_documented_meta_count / slot_count × 10000`; 10000 = 100.00% baseline when slot_count == 0; SLO target >95% = 9500 for Agent-generated extensions)
+- `test_skeletons_generated` — reused `#697` atomic `primitive_skeleton_generations_total` (# of `(primitive:generate-skeleton description-string)` invocations; production-path bump)
+- `schema` — 775 (drift sentinel)
+
+Distinct from `(query:primitives-extension-stats)` (#697), `(query:primitives-contract-stats)` (#751), and `(query:primitives-meta-stats)` (#669): `#697` ships 8 registry-level counters (eda-meta-backfilled + category-sva + category-verification + category-eda + documented-with-schema + extension-kit-version + registry-slots + skeleton-generations); `#751` ships 4 contract counters (capture-violations + prim-error-hits + style-compliance-pct + capture-contract-version); `#669` ships 4 meta-axis counters (meta-hits + documented-count + schema-documented + total-registered). `#775` is the FIRST observability surface that aggregates the **Agent-facing extension kit SLO composite** — extensions_registered + contract_violations_caught + meta_completeness_pct + test_skeletons_generated — as a single deployment-grade dashboard the Agent reads to decide whether the stdlib extension kit is production-ready.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
