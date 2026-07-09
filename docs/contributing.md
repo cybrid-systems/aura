@@ -518,3 +518,72 @@ AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()
 ```
 
 详见 [`tests/test_issue_711.cpp`](../tests/test_issue_711.cpp) — closed-loop Agent sim 把 1-4 串起来 end-to-end。
+
+## 减法原则 (Subtraction Principle) — Issue #871
+
+> 当新增东西的成本 (新文件/新 target/新 coupling) > 重构现有结构
+> 减少的 cost 时,先做减法。
+
+Issue #871 close 把架构简化定为 1-class permanent goal。下面是
+当前已经在做的减法:
+
+### 1. Test bundle consolidation (6 bundles + CTest LABELS)
+Issue 测试已经聚成 6 个 parameterized bundle:
+
+| Bundle | 角色 | N 个 issues |
+|--------|------|-------------|
+| `test_issues_light` | 不需要 LLVM JIT 的纯 observational 测试 | 几百 |
+| `test_issues_jit_minimal` | 只需要 minimal AOT path | 几十 |
+| `test_issues_jit_tests` | 完整 LLVM JIT 重编译测试 | 几十 |
+| `test_issues_jit_contract` | Contracts/Concepts + JIT hot-path | 几十 |
+| `test_issues_fiber` | Fiber + Mutation + GC 并发 | 几十 |
+| `test_issues_jit` | 全 JIT smoke | 几十 |
+
+每个 `test_issue_*` binary 通过 `aura_add_issue_test()` CMake
+helper 自动获得 `issue` CTest LABEL,这样 `ctest -L issue`
+可以一次跑完所有 issue verification。
+
+### 2. Diff-aware PR CI (`--changed`)
+不再为每个 PR 跑全 fast subset。Issue #871 close 新增
+`build.py` 的 `--changed` 模式,只跑 git working tree 中
+触摸到的 issue test source:
+
+```bash
+python3 build.py test_issues --changed        # 等价 AURA_ISSUES_TIER=fast
+python3 tests/run_issue_tests.py --changed    # 直接调用 runner
+```
+
+Fallback:nothing touched → fast subset,这样本地 cherry-pick
+PR 也总有 signal。
+
+### 3. Module BMI cleanup (`tools/clean_modules_bmi.py`)
+C++26 modules BMI cache (`build/module_cache/<producer>.dir/`)
+会保留 stale BMIs 在 `.ixx` 删除/重命名/旧 producer target
+移除之后。新增 `tools/clean_modules_bmi.py`:
+
+```bash
+python3 tools/clean_modules_bmi.py                # dry-run (default 30 day)
+python3 tools/clean_modules_bmi.py --older-than 7 # dry-run >7 day
+python3 tools/clean_modules_bmi.py --apply --older-than 30  # 实际清理
+```
+
+建议每月跑一次 `--apply --older-than 30` 回收累积磁盘占用
+(实测 ~1.1 GB / 156 BMIs in 本地 `build/`).
+
+### 4. Phase 2+ deferred (per #871 body, 后续 sessions)
+- ccache/sccache launcher 跟 `cmake/aura_module_launcher.sh`
+  嵌套 (1 天的子项目,需要决定 ccache layer 是在 launcher 之前
+  还是之后)
+- `bindings_` vs `symid_` legacy dual-path 移除 + grep gate
+  (`git grep -rn 'bindings_' src/` 应当返回 0 hits after refactor)
+- Split workflows:`gate.yml` (format/lint 30s) vs
+  `build-test.yml` (PR) vs `heavy.yml` (main only)
+
+### 5. 当你想新增文件时,先问
+1. 这个文件能 merge 进一个已存在的 `.cpp` (test bundle/observability
+   primitive registry)?
+2. 它的 `.gitignore` impact 是?会不会让 build dir cache 失效?
+3. 它的 pre-commit hook 触发 cost?clang-format + docs regen +
+   docs --check 加起来多少秒?
+
+如果三个问题的答案都 "no reduction possible",再考虑新文件。

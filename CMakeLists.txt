@@ -496,6 +496,15 @@ function(aura_add_issue_test NAME)
     # by all 55 test_issue_* binaries.
     target_link_libraries(${NAME} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
     add_test(NAME ${NAME}_verification COMMAND ./${NAME})
+    # Issue #871: 减法原则 — CTest LABELS for fast filtering.
+    # Each issue test gets the "issue" label so that
+    # `ctest -L issue` runs ALL issue_* tests; CTest LABELS
+    # must be set on the test (via set_tests_properties) — not
+    # on the target — to be picked up by `ctest --print-labels`
+    # and `ctest -L <label>` filtering. Bundle-specific labels
+    # (light / jit / fiber) can be added per-call as a third
+    # arg: aura_add_issue_test(test_issue_N "" bundle_name).
+    set_tests_properties(${NAME}_verification PROPERTIES LABELS "issue")
 endfunction()
 
 # Issue #115 verification tests (criterion #1 multi-core speedup

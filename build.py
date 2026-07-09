@@ -889,10 +889,24 @@ def test_issues():
 
     Tier controlled by AURA_ISSUES_TIER: full = all binaries,
     fast = issues_fast.json subset + git-changed issue tests.
+
+    Issue #871: --changed forces the runner to operate strictly on
+    git-diff-touched issue tests (no bundle subset). Useful for
+    PR simulation when the bundle subset is too aggressive, and
+    for local iteration when an issue is the only thing modified.
     """
     tier = issues_tier()
     jobs = os.environ.get("AURA_ISSUES_JOBS") or str(min(8, os.cpu_count() or 4))
-    print(f"{B}═══ Issue Tests (tier={tier}, jobs={jobs}) ═══{N}")
+    extra_args: list[str] = []
+    if "--changed" in sys.argv:
+        extra_args.append("--changed")
+        # Override the tier to fast when --changed is requested so
+        # the runner only emits the git-changed subset (no full
+        # issue bundle aggregate build).
+        if tier == "full":
+            tier = "fast"
+            os.environ["AURA_ISSUES_TIER"] = "fast"
+    print(f"{B}═══ Issue Tests (tier={tier}, jobs={jobs}{', --changed' if '--changed' in sys.argv else ''}) ═══{N}")
     r = subprocess.run(
         [
             sys.executable,
@@ -901,6 +915,7 @@ def test_issues():
             tier,
             "--jobs",
             jobs,
+            *extra_args,
         ],
         capture_output=True,
         text=True,
