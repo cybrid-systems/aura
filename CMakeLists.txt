@@ -73,6 +73,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # has a symlink to the shared .gcm.
 set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/cmake/aura_module_launcher.sh")
 
+# Issue #873/#874: limit concurrent links. Each test binary links
+# aura_test_objects + (often) aura_jit_test_objects + LLVM — parallel
+# links thrash RAM on 2-core CI runners more than they save wall time.
+# Compiles remain unbounded via ninja -j. Override: -DAURA_LINK_JOBS=N.
+if(NOT DEFINED AURA_LINK_JOBS)
+    set(AURA_LINK_JOBS 4)
+endif()
+if(AURA_LINK_JOBS GREATER 0)
+    set_property(GLOBAL PROPERTY JOB_POOLS "link_pool=${AURA_LINK_JOBS}")
+    set(CMAKE_JOB_POOL_LINK link_pool)
+    message(STATUS "Link job pool: ${AURA_LINK_JOBS} (AURA_LINK_JOBS)")
+endif()
+
 # macOS: ucontext.h functions (getcontext/makecontext/swapcontext) are
 # deprecated but still functional. Suppress the deprecation warnings
 # globally so the fiber scheduler compiles cleanly.
