@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Quiet wrapper around system ld.lld.
+#
+# /usr/local/bin/ld.lld (LLVM builds) often prints:
+#   ld.lld: /lib/.../libxml2.so.2: no version information available
+# when the distro libxml2 lacks the version symbols the LLVM binary
+# was linked against. Harmless for linking; filters stderr noise.
+#
+# Invoked via: g++ -B"$ROOT/scripts/linker-bin" -fuse-ld=lld ...
+set -u
+
+self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+real="${AURA_REAL_LLD:-}"
+
+if [[ -z "$real" || ! -x "$real" ]]; then
+  real=""
+  # Prefer fixed system locations first (skip this wrapper dir).
+  for cand in /usr/local/bin/ld.lld /usr/bin/ld.lld; do
+    if [[ -x "$cand" ]]; then
+      cand_dir=$(CDPATH= cd -- "$(dirname -- "$cand")" && pwd)
+      [[ "$cand_dir" == "$self_dir" ]] && continue
+      real=$cand
+      break
+    fi
+  done
+fi
+
+if [[ -z "$real" ]]; then
+  # PATH search, skipping our own directory.
+  IFS=':' read -r -a path_entries <<< "${PATH:-}"
+  for d in "${path_entries[@]}"; do
+    [[ -z "$d" ]] && continue
+    cand="$d/ld.lld"
+    [[ -x "$cand" ]] || continue
+    cand_dir=$(CDPATH= cd -- "$d" && pwd)
+    [[ "$cand_dir" == "$self_dir" ]] && continue
+    real=$cand
+    break
+  done
+fi
+
+if [[ -z "$real" || ! -x "$real" ]]; then
+  echo "scripts/linker-bin/ld.lld: no real ld.lld found (set AURA_REAL_LLD)" >&2
+  exit 1
+fi
+
+tmp=$(mktemp)
+set +e
+"$real" "$@" 2>"$tmp"
+status=$?
+set -e
+if [[ -s "$tmp" ]]; then
+  # Keep any real diagnostics; drop only the known libxml2 version noise.
+  grep -vF 'no version information available' "$tmp" >&2 || true
+fi
+rm -f "$tmp"
+exit "$status"
