@@ -19,8 +19,45 @@ import aura.diag;
 namespace aura::compiler {
 
 using types::EvalValue;
-using namespace types;
-using namespace aura::diag;
+// Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
+using types::as_bool;
+using types::as_cell_id;
+using types::as_closure_id;
+using types::as_float;
+using types::as_hash_idx;
+using types::as_int;
+using types::as_pair_idx;
+using types::as_primitive_slot;
+using types::as_string_idx;
+using types::as_vector_idx;
+using types::EvalValue;
+using types::is_bool;
+using types::is_cell;
+using types::is_closure;
+using types::is_error;
+using types::is_float;
+using types::is_hash;
+using types::is_int;
+using types::is_pair;
+using types::is_primitive;
+using types::is_string;
+using types::is_vector;
+using types::is_void;
+using types::make_bool;
+using types::make_cell;
+using types::make_closure;
+using types::make_error;
+using types::make_float;
+using types::make_hash;
+using types::make_int;
+using types::make_pair;
+using types::make_primitive;
+using types::make_string;
+using types::make_vector;
+using types::make_void;
+// Issue #918
+using aura::diag::Diagnostic;
+using aura::diag::ErrorKind;
 
 // Issue #107 part 4: inline typecheck helpers. Caller MUST hold
 // workspace_mtx_ (shared or unique). The two helpers share the
@@ -31,11 +68,7 @@ using namespace aura::diag;
 std::string Evaluator::run_typecheck_no_lock() {
     if (!workspace_flat_ || !workspace_pool_)
         return std::string("no workspace");
-    if (!type_registry_) {
-        type_registry_ = new aura::core::TypeRegistry();
-        owns_type_registry_ = true;
-    }
-    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
     aura::compiler::TypeChecker tc(treg);
     if (!declared_type_sigs_.empty()) {
         std::unordered_map<std::string, std::string> sig_map;
@@ -73,11 +106,7 @@ bool Evaluator::run_typecheck_no_lock_bool() {
     // CoercionMap before returning.
     if (!workspace_flat_ || !workspace_pool_)
         return true;
-    if (!type_registry_) {
-        type_registry_ = new aura::core::TypeRegistry();
-        owns_type_registry_ = true;
-    }
-    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
     aura::compiler::TypeChecker tc(treg);
     if (!declared_type_sigs_.empty()) {
         std::unordered_map<std::string, std::string> sig_map;
@@ -113,11 +142,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     // the log is empty (degenerate / pre-log mutations).
     if (!workspace_flat_ || !workspace_pool_)
         return true;
-    if (!type_registry_) {
-        type_registry_ = new aura::core::TypeRegistry();
-        owns_type_registry_ = true;
-    }
-    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
     aura::compiler::TypeChecker tc(treg);
     if (!declared_type_sigs_.empty()) {
         std::unordered_map<std::string, std::string> sig_map;

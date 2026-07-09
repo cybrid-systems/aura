@@ -15,13 +15,48 @@ import aura.compiler.value;
 namespace aura::compiler {
 
 using types::EvalValue;
-using namespace types;
+// Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
+using types::as_bool;
+using types::as_cell_id;
+using types::as_closure_id;
+using types::as_float;
+using types::as_hash_idx;
+using types::as_int;
+using types::as_pair_idx;
+using types::as_primitive_slot;
+using types::as_string_idx;
+using types::as_vector_idx;
+using types::EvalValue;
+using types::is_bool;
+using types::is_cell;
+using types::is_closure;
+using types::is_error;
+using types::is_float;
+using types::is_hash;
+using types::is_int;
+using types::is_pair;
+using types::is_primitive;
+using types::is_string;
+using types::is_vector;
+using types::is_void;
+using types::make_bool;
+using types::make_cell;
+using types::make_closure;
+using types::make_error;
+using types::make_float;
+using types::make_hash;
+using types::make_int;
+using types::make_pair;
+using types::make_primitive;
+using types::make_string;
+using types::make_vector;
+using types::make_void;
 
 // Depth guard: protects Env::lookup against cyclic parent chains
 // (thread_local since lookup can be called from multiple fibers)
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
 thread_local std::size_t g_env_lookup_depth = 0;
-std::optional<EvalValue> Env::lookup(const std::string& n) const {
+std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
         --g_env_lookup_depth;
@@ -129,7 +164,7 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
         // via the owner_ back-pointer (Issue #145 Phase 2.2 set
         // the owner_ on every Env registered with the Evaluator).
         if (owner_) {
-            if (auto slot = owner_->adt_runtime().find_ctor(n))
+            if (auto slot = owner_->adt_runtime().find_ctor(std::string(n)))
                 return make_primitive(*slot);
         }
     }
@@ -137,7 +172,7 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
 }
 
 // ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
-std::optional<EvalValue> Env::lookup_binding(const std::string& n) const {
+std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n)
@@ -249,7 +284,7 @@ std::vector<std::pair<std::string, types::EvalValue>> Env::bindings_with_names()
 // (apply_closure parent walk, EnvView parent walk, module
 // lookup, fn_name lookup, eval-time lookup, capture lookup)
 // will migrate one per Phase 2.5.0 commit.
-std::optional<types::EvalValue> Env::lookup_by_intern(const std::string& n,
+std::optional<types::EvalValue> Env::lookup_by_intern(std::string_view n,
                                                       const aura::ast::StringPool* pool) const {
     // Resolve which pool to use: legacy passed-in pool if
     // non-null, else fall back to the env's own pool_ (set
@@ -288,7 +323,7 @@ std::optional<types::EvalValue> Env::lookup_by_intern(const std::string& n,
         // via the owner_ back-pointer (see Env::lookup fix above
         // for the same pattern).
         if (owner_) {
-            if (auto slot = owner_->adt_runtime().find_ctor(n))
+            if (auto slot = owner_->adt_runtime().find_ctor(std::string(n)))
                 return make_primitive(*slot);
         }
     }
@@ -970,7 +1005,7 @@ ClosureView make_closure_view(const Closure& cl) {
 // Legacy Env* walk preserved as fallback for stack-allocated
 // Envs that aren't registered in env_frames_ (local eval scopes
 // before Phase 2.6 ships the rename).
-EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* cells) const {
+EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cells) const {
     if (!cells)
         return nullptr;
     // 1. Local bindings (no walk needed)
@@ -1053,7 +1088,7 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
 // Issue #145 Phase 2.2: same dual-path pattern as
 // lookup_cell_ptr. SoA walk via env_frames_ when registered,
 // legacy pointer walk otherwise.
-std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const {
+std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     // 1. Local bindings
     for (auto& b : bindings_) {
         if (b.first == n) {

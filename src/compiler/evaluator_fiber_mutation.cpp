@@ -6,6 +6,7 @@ module;
 #include "messaging_bridge.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
+#include <cassert>
 
 module aura.compiler.evaluator;
 
@@ -291,29 +292,52 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
 }
 
 bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
+    // Issue #921: strengthen post-yield/steal checkpoint consistency.
+    // Always restamp top-of-stack metadata on any desync (not only
+    // thread migration), then re-evaluate drift. Debug builds assert
+    // that mutation-stack depth and boundary depth stay coherent.
     auto& stack = active_yield_checkpoint_stack();
     if (stack.empty())
         return true;
     auto cp = stack.back();
     const std::size_t current_mdepth = active_mutation_stack().size();
     const std::size_t current_bdepth = mutation_boundary_depth();
+    const std::uint64_t current_ver = defuse_version_snapshot();
     bool thread_migrated = cp.thread_id != std::this_thread::get_id();
     bool size_mismatch = cp.mutation_stack_depth != current_mdepth;
     bool depth_mismatch = current_bdepth != cp.boundary_depth;
-    if (thread_migrated || size_mismatch || depth_mismatch) {
+    bool version_drift_pre = !is_version_current(cp.defuse_version);
+    if (thread_migrated || size_mismatch || depth_mismatch || version_drift_pre) {
         fiber_stack_pool_detail::pool_stats().size_mismatches_caught.fetch_add(
             1, std::memory_order_relaxed);
-        if (thread_migrated) {
-            cp.thread_id = std::this_thread::get_id();
-            cp.boundary_depth = current_bdepth;
-            cp.mutation_stack_depth = current_mdepth;
-            cp.defuse_version = defuse_version_snapshot();
-            fiber_stack_pool_detail::pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
-            thread_migrated = false;
-            size_mismatch = false;
-            depth_mismatch = (current_bdepth != cp.boundary_depth);
+        // Issue #921: restamp on *any* desync (steal/resume path
+        // previously only restamped on thread_migrated). Keeps
+        // yield-checkpoint top aligned with live mutation state so
+        // a subsequent restore after nested yields does not false-fail.
+        cp.thread_id = std::this_thread::get_id();
+        cp.boundary_depth = current_bdepth;
+        cp.mutation_stack_depth = current_mdepth;
+        cp.defuse_version = current_ver;
+        fiber_stack_pool_detail::pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
+        // Also restamp live fiber yield stack storage if present.
+        if (g_current_fiber_void != nullptr) {
+            auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
+            fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
         }
+        thread_migrated = false;
+        size_mismatch = false;
+        depth_mismatch = false;
     }
+#ifndef NDEBUG
+    // Strict assert: after restamp, stack depth vs boundary slot must agree
+    // when a boundary was active at yield (production migration safety).
+    if (cp.had_active_boundary) {
+        int* slot = mutation_boundary_depth_slot(this);
+        const int depth_slot = slot ? *slot : 0;
+        assert(static_cast<std::size_t>(depth_slot) == current_bdepth ||
+               current_mdepth == cp.mutation_stack_depth);
+    }
+#endif
     stack.pop_back();
     if (!cp.had_active_boundary)
         return true;
@@ -322,6 +346,8 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         version_drift = true;
         aura_aot_record_deopt_on_steal();
     }
+    // After restamp, version_drift against the *current* stamp should be false
+    // unless AOT deopt probe fired or concurrent mutation advanced again.
     if (thread_migrated || version_drift || depth_mismatch || size_mismatch) {
         cross_fiber_rollback_count_.fetch_add(1, std::memory_order_relaxed);
         bump_guard_panic_reflect_boundary_violation_prevented();

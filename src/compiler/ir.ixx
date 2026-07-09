@@ -113,6 +113,92 @@ export enum class IROpcode : std::uint8_t {
 // Issue #910 Phase 1: opcode count for dispatch-table migration.
 export inline constexpr std::size_t kIROpcodeCount = 54;
 
+// Issue #910 Phase 2: dense opcode class table for table-driven
+// dispatch (hot path can branch on class then dense secondary
+// switch, instead of one 54-way switch). Index = IROpcode ordinal.
+export enum class IROpcodeClass : std::uint8_t {
+    Nop = 0,
+    Const,
+    Load,    // Local / Arg / TopCellLoad
+    Arith,   // Add Sub Mul Div
+    Compare, // Eq Lt Gt Le Ge
+    Logic,   // And Or Not
+    Control, // Branch Jump Call Return Apply
+    Closure, // MakeClosure Capture CaptureRef
+    Cell,    // NewCell CellSet CellGet
+    Cast,
+    Pair,      // MakePair Car Cdr
+    Exception, // Raise IsError TryBegin TryEnd
+    Hash,      // HashRef HashSet HashRemove
+    Linear,    // LinearWrap MoveOp BorrowOp MutBorrowOp DropOp RefCountOp
+    Arena,     // ArenaPush ArenaPop
+    Guard,     // GuardShape
+    Prim,      // PrimCall Primitive
+};
+
+// Must stay in enum order of IROpcode (see above).
+export inline constexpr IROpcodeClass kIROpcodeClass[kIROpcodeCount] = {
+    IROpcodeClass::Nop,       // Nop
+    IROpcodeClass::Const,     // ConstI64
+    IROpcodeClass::Const,     // ConstF64
+    IROpcodeClass::Load,      // Local
+    IROpcodeClass::Load,      // Arg
+    IROpcodeClass::Arith,     // Add
+    IROpcodeClass::Arith,     // Sub
+    IROpcodeClass::Arith,     // Mul
+    IROpcodeClass::Arith,     // Div
+    IROpcodeClass::Compare,   // Eq
+    IROpcodeClass::Compare,   // Lt
+    IROpcodeClass::Compare,   // Gt
+    IROpcodeClass::Compare,   // Le
+    IROpcodeClass::Compare,   // Ge
+    IROpcodeClass::Logic,     // And
+    IROpcodeClass::Logic,     // Or
+    IROpcodeClass::Logic,     // Not
+    IROpcodeClass::Control,   // Branch
+    IROpcodeClass::Control,   // Jump
+    IROpcodeClass::Control,   // Call
+    IROpcodeClass::Control,   // Return
+    IROpcodeClass::Closure,   // MakeClosure
+    IROpcodeClass::Closure,   // Capture
+    IROpcodeClass::Closure,   // CaptureRef
+    IROpcodeClass::Control,   // Apply
+    IROpcodeClass::Cell,      // NewCell
+    IROpcodeClass::Cell,      // CellSet
+    IROpcodeClass::Cell,      // CellGet
+    IROpcodeClass::Cast,      // CastOp
+    IROpcodeClass::Const,     // ConstString
+    IROpcodeClass::Prim,      // PrimCall
+    IROpcodeClass::Prim,      // Primitive
+    IROpcodeClass::Const,     // ConstBool
+    IROpcodeClass::Const,     // ConstVoid
+    IROpcodeClass::Pair,      // MakePair
+    IROpcodeClass::Pair,      // Car
+    IROpcodeClass::Pair,      // Cdr
+    IROpcodeClass::Exception, // Raise
+    IROpcodeClass::Exception, // IsError
+    IROpcodeClass::Exception, // TryBegin
+    IROpcodeClass::Exception, // TryEnd
+    IROpcodeClass::Hash,      // HashRef
+    IROpcodeClass::Hash,      // HashSet
+    IROpcodeClass::Hash,      // HashRemove
+    IROpcodeClass::Linear,    // LinearWrap
+    IROpcodeClass::Linear,    // MoveOp
+    IROpcodeClass::Linear,    // BorrowOp
+    IROpcodeClass::Linear,    // MutBorrowOp
+    IROpcodeClass::Linear,    // DropOp
+    IROpcodeClass::Linear,    // RefCountOp
+    IROpcodeClass::Arena,     // ArenaPush
+    IROpcodeClass::Arena,     // ArenaPop
+    IROpcodeClass::Guard,     // GuardShape
+    IROpcodeClass::Load,      // TopCellLoad
+};
+
+export inline constexpr IROpcodeClass opcode_class(IROpcode op) noexcept {
+    const auto i = static_cast<std::size_t>(op);
+    return i < kIROpcodeCount ? kIROpcodeClass[i] : IROpcodeClass::Nop;
+}
+
 
 // ── Issue #217 Cycle 3: IR types are reflection-ready ────────
 //

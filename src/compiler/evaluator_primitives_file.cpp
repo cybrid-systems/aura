@@ -19,7 +19,42 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
-using namespace types;
+// Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
+using types::as_bool;
+using types::as_cell_id;
+using types::as_closure_id;
+using types::as_float;
+using types::as_hash_idx;
+using types::as_int;
+using types::as_pair_idx;
+using types::as_primitive_slot;
+using types::as_string_idx;
+using types::as_vector_idx;
+using types::EvalValue;
+using types::is_bool;
+using types::is_cell;
+using types::is_closure;
+using types::is_error;
+using types::is_float;
+using types::is_hash;
+using types::is_int;
+using types::is_pair;
+using types::is_primitive;
+using types::is_string;
+using types::is_vector;
+using types::is_void;
+using types::make_bool;
+using types::make_cell;
+using types::make_closure;
+using types::make_error;
+using types::make_float;
+using types::make_hash;
+using types::make_int;
+using types::make_pair;
+using types::make_primitive;
+using types::make_string;
+using types::make_vector;
+using types::make_void;
 
 void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
 

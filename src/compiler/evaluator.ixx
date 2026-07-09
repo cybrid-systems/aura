@@ -56,23 +56,59 @@ namespace aura::compiler {
 
 using EvalValue = types::EvalValue;
 
+// Issue #913: dual-path PrimFn — free-function pointers use a bare FnPtr
+// (no type-erasure heap); capturing lambdas use std::function. Both
+// copyable. table_["name"] = lambda works via converting assignment.
 export class PrimFn {
+    using FnPtr = EvalValue (*)(std::span<const EvalValue>);
+    FnPtr ptr_ = nullptr;
     std::function<EvalValue(std::span<const EvalValue>)> fn_;
 
 public:
     PrimFn() = default;
 
+    PrimFn(std::nullptr_t) noexcept {}
+
+    // Free function / function pointer — zero-allocation dispatch path.
+    PrimFn(FnPtr fn) noexcept
+        : ptr_(fn) {}
+
     template <class F>
+        requires(!std::is_same_v<std::decay_t<F>, PrimFn> &&
+                 !std::is_same_v<std::decay_t<F>, std::nullptr_t> &&
+                 !std::is_same_v<std::decay_t<F>, FnPtr>)
     PrimFn(F&& fn)
         : fn_(std::forward<F>(fn)) {}
 
-    EvalValue operator()(std::span<const EvalValue> args) const { return fn_(args); }
-
-    EvalValue operator()(std::initializer_list<EvalValue> args) const {
-        return fn_(std::span<const EvalValue>(args.begin(), args.size()));
+    template <class F>
+        requires(!std::is_same_v<std::decay_t<F>, PrimFn>)
+    PrimFn& operator=(F&& f) {
+        if constexpr (std::is_same_v<std::decay_t<F>, std::nullptr_t>) {
+            ptr_ = nullptr;
+            fn_ = nullptr;
+        } else if constexpr (std::is_convertible_v<std::decay_t<F>, FnPtr>) {
+            ptr_ = static_cast<FnPtr>(f);
+            fn_ = nullptr;
+        } else {
+            ptr_ = nullptr;
+            fn_ = std::forward<F>(f);
+        }
+        return *this;
     }
 
-    explicit operator bool() const noexcept { return static_cast<bool>(fn_); }
+    EvalValue operator()(std::span<const EvalValue> args) const {
+        if (ptr_)
+            return ptr_(args);
+        return fn_(args);
+    }
+
+    EvalValue operator()(std::initializer_list<EvalValue> args) const {
+        return (*this)(std::span<const EvalValue>(args.begin(), args.size()));
+    }
+
+    explicit operator bool() const noexcept { return ptr_ != nullptr || static_cast<bool>(fn_); }
+
+    [[nodiscard]] bool is_function_pointer() const noexcept { return ptr_ != nullptr; }
 };
 
 // Issue #480: lightweight metadata for self-describing primitives.
@@ -120,7 +156,8 @@ public:
     std::pmr::vector<std::string>& string_heap() { return *string_heap_; }
     // Slot-based lookup for primitive values
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
-    std::size_t slot_for_name(const std::string& name) const;
+    // Issue #914: string_view (transparent reverse index).
+    std::size_t slot_for_name(std::string_view name) const;
     std::size_t slot_count() const { return ordered_names_.size(); }
     // Issue #480: metadata accessors for primitive:describe.
     [[nodiscard]] const PrimMeta& meta_for_slot(std::size_t slot) const { return meta_[slot]; }
@@ -152,8 +189,9 @@ public:
         return n;
     }
 
-private:
-    // Transparent hash so lookup_cstr / slot_for_name avoid temporary std::string (#891).
+public:
+    // Transparent hash so lookup_cstr / slot_for_name / Env avoid temporary std::string
+    // (#891/#914).
     struct StringHash {
         using is_transparent = void;
         std::size_t operator()(std::string_view s) const noexcept {
@@ -167,6 +205,8 @@ private:
         using is_transparent = void;
         bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
     };
+
+private:
     std::unordered_map<std::string, PrimFn, StringHash, StringEq> table_;
     // Issue #899: reverse index name → slot for O(1) slot_for_name.
     std::unordered_map<std::string, std::size_t, StringHash, StringEq> name_to_slot_;
@@ -253,8 +293,8 @@ public:
     // bind_symid is a Cycle 2 item (requires pool_ to
     // become non-const, which is a bigger refactor that
     // touches many call sites).
-    void bind(const std::string& n, types::EvalValue v) {
-        bindings_.emplace_back(n, std::move(v));
+    void bind(std::string_view n, types::EvalValue v) {
+        bindings_.emplace_back(std::string(n), std::move(v));
         // Issue #894: O(1) local name index (shadows parent on rebind).
         binding_index_[bindings_.back().first] = bindings_.size() - 1;
     }
@@ -273,8 +313,8 @@ public:
     // instead of string compare. Returns the most recent binding
     // (shadowing semantics preserved).
     std::optional<types::EvalValue> lookup_by_symid(aura::ast::SymId s) const;
-    [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const
-        pre(!n.empty());
+    // Issue #914: string_view primary lookup (literals / views skip temp string).
+    [[nodiscard]] std::optional<types::EvalValue> lookup(std::string_view n) const pre(!n.empty());
     // Issue #145 follow-up / Phase 2.5.0: SymId-first lookup that
     // takes a name string. Interns via the given pool (canonical
     // pool in the post-migration path), then routes through
@@ -289,18 +329,18 @@ public:
     // env-captured). Pass canonical_pool() for new code; the
     // helper routes through pool_or_canonical semantics for
     // backward compat with pre-migration captures.
-    std::optional<types::EvalValue> lookup_by_intern(const std::string& n,
+    std::optional<types::EvalValue> lookup_by_intern(std::string_view n,
                                                      const aura::ast::StringPool* pool) const
         pre(!n.empty());
     // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
-    std::optional<types::EvalValue> lookup_binding(const std::string& n) const pre(!n.empty());
-    std::optional<PrimFn> lookup_primitive(const std::string& n) const {
+    std::optional<types::EvalValue> lookup_binding(std::string_view n) const pre(!n.empty());
+    std::optional<PrimFn> lookup_primitive(std::string_view n) const {
         return primitives_ ? primitives_->lookup(n) : std::nullopt;
     }
-    types::EvalValue* lookup_cell_ptr(const std::string& n,
+    types::EvalValue* lookup_cell_ptr(std::string_view n,
                                       std::vector<types::EvalValue>* cells) const;
     // Return cell index (stable across vector reallocation) or nullopt if not a cell
-    std::optional<std::uint64_t> lookup_cell_index(const std::string& n) const;
+    std::optional<std::uint64_t> lookup_cell_index(std::string_view n) const;
     const Env* parent() const { return parent_; }
     // Issue #207 (Cycle 1): legacy bindings() accessors —
     // bumped for the bindings_legacy_uses metric.
@@ -373,8 +413,10 @@ private:
     // or passed cells to lookup_cell helpers. This + EnvFrame
     // change eliminates one class of pointer-to-reallocatable-heap.
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
-    // Issue #894: name → last local index for O(1) Env::lookup locals.
-    std::unordered_map<std::string, std::size_t> binding_index_;
+    // Issue #894 / #914: name → last local index; transparent hash for
+    // string_view lookups without temporary std::string.
+    std::unordered_map<std::string, std::size_t, Primitives::StringHash, Primitives::StringEq>
+        binding_index_;
     // Issue #145: parallel SymId-keyed store. Both arrays
     // share the same length and order. lookup_by_symid reads
     // bindings_symid_ (integer compare). bind_symid writes to
@@ -955,6 +997,12 @@ public:
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
     void set_type_registry(void* reg); // Issue #911: defined in evaluator_ctor.cpp
+    // Issue #911/#912: ensure owned TypeRegistry (returns opaque void*; cast at
+    // use sites in TUs that import aura.core.type — TypeRegistry is incomplete
+    // in this module interface by design to avoid cross-module BMI cycles).
+    void* ensure_type_registry();
+    [[nodiscard]] void* type_registry_ptr() noexcept { return type_registry_; }
+    [[nodiscard]] const void* type_registry_ptr() const noexcept { return type_registry_; }
     // Issue #912: opaque handle remains void*; typed cast at call sites with core import.
     // Issue #252: closure dual-path observability. Pass a
     // CompilerMetrics* (or nullptr to disable). The Evaluator's
@@ -2323,23 +2371,21 @@ private:
     // observability snapshot + (compile:panic-recovery-stats).
     // Public getters + bump accessors live in the public section
     // below (around line 1955, alongside #211 test accessors).
-    std::atomic<std::uint64_t> panic_checkpoint_transfer_count_{0};
-    std::atomic<std::uint64_t> panic_checkpoint_lost_on_steal_{0};
-    std::atomic<std::uint64_t> gc_blocked_by_pending_panic_{0};
-    // Issue #548: panic-checkpoint lifecycle counters
-    // (save / restore / commit / rollback-success). Bumped
-    // by save_panic_checkpoint(), restore_panic_checkpoint(),
-    // commit_panic_checkpoint(), and the Guard dtor's
-    // rollback path. Stats-only (relaxed-ordering). Exposed
-    // via (query:panic-checkpoint-lifecycle-stats) primitive.
-    std::atomic<std::uint64_t> panic_checkpoint_save_count_{0};
-    std::atomic<std::uint64_t> panic_checkpoint_restore_count_{0};
-    std::atomic<std::uint64_t> panic_checkpoint_commit_count_{0};
-    // Issue #425: panic checkpoint size-mismatch counter.
-    // Bumped by restore_panic_checkpoint when the recorded
-    // snapshot size exceeds the current size (drift signal).
-    std::atomic<std::uint64_t> panic_checkpoint_size_mismatch_{0};
-    std::atomic<std::uint64_t> rollback_success_on_panic_{0};
+    // Issue #895 Phase 2: pack panic-checkpoint counters on one
+    // cache line (separate domain from AtomicBatchDomain).
+    struct alignas(64) PanicCheckpointDomain {
+        std::atomic<std::uint64_t> transfer_count{0};
+        std::atomic<std::uint64_t> lost_on_steal{0};
+        std::atomic<std::uint64_t> gc_blocked_by_pending{0};
+        std::atomic<std::uint64_t> save_count{0};
+        std::atomic<std::uint64_t> restore_count{0};
+        std::atomic<std::uint64_t> commit_count{0};
+        std::atomic<std::uint64_t> size_mismatch{0};
+        std::atomic<std::uint64_t> rollback_success_on_panic{0};
+    };
+    PanicCheckpointDomain panic_checkpoint_domain_{};
+    // Issue #425 / #548: size-mismatch + rollback-on-panic live in
+    // panic_checkpoint_domain_ (Issue #895 Phase 2 pack).
     // Issue #549: self-evolution-stability counters. Bumped
     // by validate_stable_ref + exit_mutation_boundary(false)
     // + fiber yield hooks. Stats-only (relaxed-ordering).
@@ -2899,22 +2945,22 @@ public:
     // can read + bump them. Read is for observability; bump is
     // for the transfer / GC-defer paths.
     [[nodiscard]] std::uint64_t get_panic_checkpoint_transfer_count() const noexcept {
-        return panic_checkpoint_transfer_count_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.transfer_count.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_panic_checkpoint_lost_on_steal() const noexcept {
-        return panic_checkpoint_lost_on_steal_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.lost_on_steal.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_gc_blocked_by_pending_panic() const noexcept {
-        return gc_blocked_by_pending_panic_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.gc_blocked_by_pending.load(std::memory_order_relaxed);
     }
     void bump_panic_checkpoint_transfer_count() noexcept {
-        panic_checkpoint_transfer_count_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.transfer_count.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_panic_checkpoint_lost_on_steal() noexcept {
-        panic_checkpoint_lost_on_steal_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.lost_on_steal.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_gc_blocked_by_pending_panic() noexcept {
-        gc_blocked_by_pending_panic_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.gc_blocked_by_pending.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #548: panic-checkpoint lifecycle counters
     // + bump helpers. Public so the
@@ -2924,29 +2970,29 @@ public:
     // (the follow-up wires these to the actual save/restore
     // call sites).
     [[nodiscard]] std::uint64_t get_panic_checkpoint_save_count() const noexcept {
-        return panic_checkpoint_save_count_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.save_count.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_panic_checkpoint_restore_count() const noexcept {
-        return panic_checkpoint_restore_count_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.restore_count.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_panic_checkpoint_commit_count() const noexcept {
-        return panic_checkpoint_commit_count_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.commit_count.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_rollback_success_on_panic() const noexcept {
-        return rollback_success_on_panic_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.rollback_success_on_panic.load(std::memory_order_relaxed);
     }
     // Issue #592: arena size mismatch counter observable from tests.
     [[nodiscard]] std::uint64_t get_panic_checkpoint_size_mismatch() const noexcept {
-        return panic_checkpoint_size_mismatch_.load(std::memory_order_relaxed);
+        return panic_checkpoint_domain_.size_mismatch.load(std::memory_order_relaxed);
     }
     void bump_panic_checkpoint_save_count() noexcept {
-        panic_checkpoint_save_count_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.save_count.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_panic_checkpoint_restore_count() noexcept {
-        panic_checkpoint_restore_count_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.restore_count.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_panic_checkpoint_commit_count() noexcept {
-        panic_checkpoint_commit_count_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.commit_count.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #425: bumped by restore_panic_checkpoint when the
     // recorded checkpoint size exceeds the current size (the
@@ -2956,10 +3002,10 @@ public:
     // counter is the observability hook. The post-truncate
     // skip is the safe behavior (don't corrupt the arena).
     void bump_panic_checkpoint_size_mismatch() noexcept {
-        panic_checkpoint_size_mismatch_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.size_mismatch.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_rollback_success_on_panic() noexcept {
-        rollback_success_on_panic_.fetch_add(1, std::memory_order_relaxed);
+        panic_checkpoint_domain_.rollback_success_on_panic.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #441 (rolled into #450): hot-path primitive
     // dispatch counter. Called from the primitive-dispatch

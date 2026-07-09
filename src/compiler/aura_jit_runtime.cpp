@@ -1324,7 +1324,7 @@ extern "C" void aura_exception_clear_all() {
 // === Display bridge ===
 void aura_display_int(int64_t val) {
     // Printf is available in JIT because we register printf too
-    fprintf(stdout, "%ld", (long)val);
+    fprintf(stdout, "%ld", static_cast<long>(val));
     fflush(stdout);
 }
 
