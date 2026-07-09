@@ -105,6 +105,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:sv-commercial-emit-fidelity-stats)` | 801 | SV commercial emit roundtrip + dirty re-emit fidelity (5 fields) |
 | `(query:sv-verification-self-evolution-stats)` | 802 | feedback-driven SV self-evolution closed-loop (5 fields) |
 | `(query:ir-soa-migration-stats)`         | 766    | IR-SoA migration + DirtyAware incremental pipeline (5 fields) |
+| `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -211,6 +212,18 @@ Distinct from `(query:closed-loop-reliability-stats)` (#726): #802 tracks struct
 - `schema` — 766 (drift sentinel)
 
 Distinct from `(query:soa-hotpath-stats)` (#729) and `(query:incremental-quote-lambda-linear-stats)` (#765): #766 tracks the production migration of `IRModuleV2` + `DirtyAware` incremental pipeline (cache-locality recovery under AI mutation load); #729 tracks SoA list/cdr-walk hot-path telemetry; #765 tracks incremental quote/lambda/closure compile safety.
+
+### `(query:arena-auto-compact-defrag-fiber-stats)` fields (#767)
+
+- `auto-compact-triggers` — arena stats `auto_alloc_trigger_count` / `auto_triggers` (auto-compact policy fires)
+- `frag-reduced-bp` — arena stats `frag_reduced_bp` (basis points × 100; 5000 = 50.00%)
+- `live-defrag-savings` — arena stats `defrag_savings_alloc` / `defrag_savings`
+- `fiber-yield-during-compact` — `arena_auto_compact_fiber_yield_during_compact_total` (actual fiber yields inside compact/defrag)
+- `shape-inval-count` — arena stats `shape_inval_on_compact`
+- `defrag-blocked-fibers` — `arena_auto_compact_defrag_blocked_fibers_total` (fibers blocked waiting for defrag)
+- `schema` — 767 (drift sentinel)
+
+Distinct from `(query:arena-auto-compact-stats)` (#685) and `(query:arena-auto-compaction-stats)` (#642): #767 adds 2 truly new counters (`fiber-yield-during-compact` actual-yield vs #685 yield-checks-hit observability-only, and `defrag-blocked-fibers` introducing the hidden defrag-fiber interaction cost metric) on top of the 4 reused arena stats — completes the production auto-compact policy + live defrag + fiber/GC safepoint yield observability surface.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

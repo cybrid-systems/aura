@@ -4012,6 +4012,36 @@ public:
             m->arena_fragmentation_post_mutate.store(ratio_scaled, std::memory_order_relaxed);
         }
     }
+    // Issue #767: Arena Auto-Compact Policy + Live Defrag + Fiber/GC
+    // Safepoint Yield observability counters backing the (query:
+    // arena-auto-compact-defrag-fiber-stats) primitive. These are
+    // public so future arena.ixx allocate_raw auto-compact policy +
+    // compact/defrag paths + gc_hooks.h + fiber integration +
+    // on_compact_hook_ Shape/Dirty integration can call them at
+    // each decision point (fiber yield during compact / defrag
+    // blocked fibers).
+    //
+    // fiber_yield_during_compact_total bumps on every actual fiber
+    // yield event inside compact()/defrag(); pairs with the existing
+    // #685 yield_checks_hit (observability-only). The defrag_blocked_
+    // fibers_total bump increments when a fiber hits a defrag
+    // safepoint and waits (a new metric #767 introduces to surface
+    // the hidden defrag-fiber interaction cost; no equivalent in
+    // #685 or #642).
+    void bump_arena_auto_compact_fiber_yield_during_compact(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_auto_compact_fiber_yield_during_compact_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    void bump_arena_auto_compact_defrag_blocked_fibers(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_auto_compact_defrag_blocked_fibers_total.fetch_add(n,
+                                                                        std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx

@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**810** registrations scanned from `src/**/*.cpp`.
+**811** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 127 primitives (16%)
 - **core**: 213 primitives (26%)
-- **internal-observable**: 323 primitives (40%)
+- **internal-observable**: 324 primitives (40%)
 - **convenience**: 147 primitives (18%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (323)
+## Query: (324)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -33,6 +33,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:aot-reload-func-table-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1292,7 +1293,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (323)
+### Internal observable (stats/counters) (324)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1304,6 +1305,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-defrag-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compaction-stats` — `src/compiler/evaluator_primitives_observability.cpp`
