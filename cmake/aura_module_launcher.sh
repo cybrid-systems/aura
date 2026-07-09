@@ -59,8 +59,11 @@ fi
 COMPILER="$1"
 shift
 
-# Optional ccache layer (CI sets CCACHE_DIR; local dev may skip).
-if command -v ccache >/dev/null 2>&1; then
+# Optional ccache layer (Issue #873/#874).
+# - CI sets CCACHE_DISABLE=1 → never wrap (avoids module BMI flakes).
+# - Local: auto-wrap when ccache is on PATH and CCACHE_DISABLE is unset.
+# - Explicit force-on: AURA_USE_CCACHE=1 / AURA_CCACHE=1 (build.py).
+if [ -z "${CCACHE_DISABLE:-}" ] && command -v ccache >/dev/null 2>&1; then
     CXX=(ccache "$COMPILER")
 else
     CXX=("$COMPILER")

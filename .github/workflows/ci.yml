@@ -1,12 +1,13 @@
 # Aura CI
 #
 # Wall-time layout (approx):
-#   gate (~1m) ──► build-test (~12–18m, no cross-run compile cache)
+#   gate (~1m) ──► build-test (~12–18m → target <8m, see docs/ci-performance.md)
 #   asan-build (~10m, parallel with gate+build-test) ──► asan-verify (~5m)
 #
-# Reproducibility-first: ccache is disabled in CI and we do not restore
-# stale compile artifacts from prior runs. pip cache uses an exact key only
-# (requirements-dev.txt hash) — no restore-keys fallback.
+# Issue #873/#874 CI performance: mold linker + link job pool + phase
+# timings. ccache stays disabled until module-launcher producer keys
+# are proven (see docs/ci-performance.md Phase 2).
+# pip cache uses an exact key only (requirements-dev.txt hash).
 #
 # PRs skip the ASAN track; main runs the full matrix.
 # Issue #675: PRs also run ubsan-smoke + security-scan;
@@ -27,6 +28,10 @@ env:
   AURA_ISSUES_JOBS: "4"
   # Cross-run ccache caused stale-object flakes; compile fresh every job.
   CCACHE_DISABLE: 1
+  # Issue #873/#874 Phase 1
+  AURA_USE_MOLD: "1"
+  AURA_LINK_JOBS: "4"
+  NINJA_STATUS: "[%f/%t %es] "
 
 jobs:
   gate:
@@ -100,6 +105,17 @@ jobs:
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
+
+    # Issue #873/#874: mold is much faster than ld.bfd when linking
+    # many fat test binaries (aura_test_objects + LLVM). Best-effort —
+    # if apt fails we still build with the default linker.
+    - name: Install mold (fast linker)
+      run: |
+        if command -v mold >/dev/null 2>&1; then
+          mold --version
+        else
+          apt-get update -qq && apt-get install -y -qq mold || echo "::warning::mold not installed"
+        fi
 
     - name: Build & Test
       env:

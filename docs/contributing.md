@@ -570,16 +570,23 @@ python3 tools/clean_modules_bmi.py --apply --older-than 30  # 实际清理
 建议每月跑一次 `--apply --older-than 30` 回收累积磁盘占用
 (实测 ~1.1 GB / 156 BMIs in 本地 `build/`).
 
-### 4. Phase 2+ deferred (per #871 body, 后续 sessions)
-- ccache/sccache launcher 跟 `cmake/aura_module_launcher.sh`
-  嵌套 (1 天的子项目,需要决定 ccache layer 是在 launcher 之前
-  还是之后)
-- `bindings_` vs `symid_` legacy dual-path 移除 + grep gate
-  (`git grep -rn 'bindings_' src/` 应当返回 0 hits after refactor)
-- Split workflows:`gate.yml` (format/lint 30s) vs
-  `build-test.yml` (PR) vs `heavy.yml` (main only)
+### 4. CI 加速 Phase 1 (Issues #873 / #874)
+详见 **[docs/ci-performance.md](ci-performance.md)**（目标 PR `build-test` &lt; 8min）。
 
-### 5. 当你想新增文件时,先问
+Phase 1 已落地：
+- **mold / lld** — `AURA_USE_MOLD=1`（PATH 上有 mold 时默认启用）
+- **Link job pool** — `AURA_LINK_JOBS=4`（限制并行 LLVM 链接）
+- **Build phase timings** — `build.py build` 打印 `⏱` 分段耗时
+- **ccache** — 本地 PATH 有 ccache 且未设 `CCACHE_DISABLE` 时自动启用；CI 仍 `CCACHE_DISABLE=1`
+- **Bundle-only issue smoke** — `AURA_ISSUE_BUILD=bundles`
+
+### 5. Phase 2+ deferred (per #871 / #873 / #874)
+- ccache 与 `cmake/aura_module_launcher.sh` 的 producer-keyed 安全策略
+- `bindings_` vs `symid_` legacy dual-path 移除 + grep gate
+- Split workflows: `gate.yml` vs `build-test.yml` vs `heavy.yml`
+- `aura_test_objects` 组件化拆库
+
+### 6. 当你想新增文件时,先问
 1. 这个文件能 merge 进一个已存在的 `.cpp` (test bundle/observability
    primitive registry)?
 2. 它的 `.gitignore` impact 是?会不会让 build dir cache 失效?

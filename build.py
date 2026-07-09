@@ -244,6 +244,24 @@ def _build_jobs() -> int:
     return os.cpu_count() or 4
 
 
+def _tool_available(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse AURA_*/env truthy flags: 1/true/yes/on vs 0/false/no/off."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _phase(label: str, t0: float) -> None:
+    """Issue #873/#874: always print wall-time for major build phases."""
+    dt = time.time() - t0
+    print(f"  {G}⏱{N} {label}: {dt:.1f}s", flush=True)
+
+
 def _cmake_configure_args() -> list[str]:
     args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"]
     build_type = os.environ.get("AURA_BUILD_TYPE", "").strip()
@@ -252,14 +270,47 @@ def _cmake_configure_args() -> list[str]:
     # Sanitizer flag injection (Issue #299). Active when BUILD was rebind
     # by _apply_sanitizer() to build_<san>/.
     san_name = BUILD.name.removeprefix("build_") if BUILD.name.startswith("build_") else ""
+    ldflags_extra: list[str] = []
+    cxxflags_extra: list[str] = []
     if san_name and san_name in SANITIZER_FLAGS:
         cxxflags, ldflags, build_type_override = SANITIZER_FLAGS[san_name]
         if build_type_override and not build_type:
             args.append(f"-DCMAKE_BUILD_TYPE={build_type_override}")
-        args.append(f"-DCMAKE_C_FLAGS={cxxflags}")
-        args.append(f"-DCMAKE_CXX_FLAGS={cxxflags}")
-        args.append(f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}")
-        args.append(f"-DCMAKE_SHARED_LINKER_FLAGS={ldflags}")
+        cxxflags_extra.append(cxxflags)
+        ldflags_extra.append(ldflags)
+
+    # Issue #873/#874 Phase 1: mold (or lld) for much faster linking of
+    # 100+ issue-test binaries. Default ON when the tool exists; set
+    # AURA_USE_MOLD=0 to force classic ld.bfd. Prefer mold over lld.
+    use_mold = _env_flag("AURA_USE_MOLD", default=True)
+    if use_mold and _tool_available("mold"):
+        ldflags_extra.append("-fuse-ld=mold")
+        info("linker: mold (AURA_USE_MOLD)")
+    elif use_mold and _tool_available("ld.lld"):
+        ldflags_extra.append("-fuse-ld=lld")
+        info("linker: lld (mold not found)")
+
+    # Issue #873/#874: ccache is auto-used by cmake/aura_module_launcher.sh
+    # when on PATH and CCACHE_DISABLE is unset. CI keeps CCACHE_DISABLE=1.
+    if os.environ.get("CCACHE_DISABLE"):
+        info("ccache: disabled (CCACHE_DISABLE set)")
+    elif _tool_available("ccache"):
+        info("ccache: available (module launcher will wrap compiles)")
+
+    # Cap concurrent link jobs (each links huge .a + LLVM). Compiles stay
+    # unbounded via ninja -j. Override with -DAURA_LINK_JOBS=N.
+    link_jobs = os.environ.get("AURA_LINK_JOBS", "").strip()
+    if link_jobs.isdigit() and int(link_jobs) > 0:
+        args.append(f"-DAURA_LINK_JOBS={link_jobs}")
+
+    if cxxflags_extra:
+        args.append(f"-DCMAKE_CXX_FLAGS={' '.join(cxxflags_extra)}")
+        args.append(f"-DCMAKE_C_FLAGS={' '.join(cxxflags_extra)}")
+    if ldflags_extra:
+        # Preserve any prior linker flags (sanitizer first).
+        joined = " ".join(ldflags_extra)
+        args.append(f"-DCMAKE_EXE_LINKER_FLAGS={joined}")
+        args.append(f"-DCMAKE_SHARED_LINKER_FLAGS={joined}")
     return args
 
 
@@ -268,8 +319,11 @@ def cmd_build():
     print(f"{B}═══ Build ═══{N}")
     BUILD.mkdir(parents=True, exist_ok=True)
     nproc = _build_jobs()
+    t_all = time.time()
 
+    t0 = time.time()
     r = run(_cmake_configure_args(), cwd=ROOT)
+    _phase("cmake configure", t0)
     if r != 0:
         return r
 
@@ -277,6 +331,7 @@ def cmd_build():
     # ninja -jN invocation races ast.ixx across aura/test_ir and can
     # trigger a flaky GCC 16 ICE in the ealias pass under -O2.
     for target in ("aura", "test_ir", "test_concurrent"):
+        t0 = time.time()
         r = run(
             [
                 "cmake",
@@ -303,6 +358,7 @@ def cmd_build():
                 ],
                 cwd=ROOT,
             )
+        _phase(f"build {target}", t0)
         if r != 0:
             fail(f"build {target} failed")
             return r
@@ -310,8 +366,18 @@ def cmd_build():
     # Build test_issue_* targets. Full tier uses the aggregate;
     # fast tier builds a representative subset plus any issue
     # tests touched in the current branch (see issue_tier.py).
+    # Issue #873/#874: AURA_ISSUE_BUILD=bundles builds only the 6
+    # profile bundles (much faster smoke); default remains full aggregate.
     tier = issues_tier()
-    if tier == "full":
+    issue_mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
+    t0 = time.time()
+    if tier == "full" and issue_mode == "bundles":
+        from issue_tier import BUNDLE_PROFILES
+
+        targets = [f"test_issues_{p}" for p in BUNDLE_PROFILES]
+        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]
+        info(f"issue tests: tier=full mode=bundles ({len(targets)} bundle targets)")
+    elif tier == "full":
         issue_cmd = [
             "ninja",
             "-C",
@@ -335,11 +401,13 @@ def cmd_build():
         # lib reduces this; retry covers residual races).
         warn("issue-test build failed — retrying once (module dyndep flake workaround)")
         r = run(issue_cmd, cwd=ROOT)
+    _phase("build issue tests", t0)
     if r != 0:
         # Don't fail cmd_build on partial-build errors —
         # the runner will skip the unbuilt binaries.
         print(f"{Y}  some test_issue_* targets failed to build (pre-existing); runner will skip them{N}")
 
+    _phase("build total", t_all)
     ok("build OK")
     return 0
 
