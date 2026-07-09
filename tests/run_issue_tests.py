@@ -261,6 +261,18 @@ def main():
         action="store_true",
         help="only run git-changed issue tests (Issue #871 diff-aware mode; force tier=fast)",
     )
+    # Issue #884: topic/profile-based selection (substring match on binary name).
+    ap.add_argument(
+        "--profile",
+        default=None,
+        help="topic profile filter (substring match on binary name, e.g. 'edsl', 'jit', '809')",
+    )
+    # Issue #886: machine-readable CI report.
+    ap.add_argument(
+        "--json",
+        action="store_true",
+        help="emit machine-readable JSON summary to stdout after the human report",
+    )
     args = ap.parse_args()
     tier = args.tier or issues_tier()
     jobs = args.jobs or int(os.environ.get("AURA_ISSUES_JOBS", str(min(8, os.cpu_count() or 4))))
@@ -272,6 +284,9 @@ def main():
     bins = filter_bins_for_tier(bins, tier)
     if args.filter:
         bins = [b for b in bins if args.filter in b]
+    if args.profile:
+        # Issue #884: profile is an additional name filter (topic-based).
+        bins = [b for b in bins if args.profile.lower() in b.lower()]
 
     if changed_only:
         # Issue #871: 减法 close diff-aware filter. Restrict
@@ -345,6 +360,23 @@ def main():
         print(f"\n{Y}Pre-existing Failures (NOT failing CI, tracked separately):{N}")
         for b, p, f, rc, _err in pre_existing_failures:
             print(f"  - {b}: rc={rc}, {p} passed, {f} failed")
+    if args.json:
+        # Issue #886: machine-readable summary for CI dashboards.
+        import json
+
+        report = {
+            "tier": tier,
+            "jobs": jobs,
+            "profile": args.profile,
+            "elapsed_s": round(elapsed, 3),
+            "bins": len(bins),
+            "passed": total_passed,
+            "failed": total_failed,
+            "skipped": len(skipped),
+            "pre_existing": len(pre_existing_failures),
+            "failures": [{"binary": b, "passed": p, "failed": f, "rc": rc} for b, p, f, rc, _ in failures],
+        }
+        print(json.dumps(report, indent=2))
     return 0 if not failures else 1
 
 

@@ -1364,6 +1364,223 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_ldefrag_fiber_yield_total{0};
     std::atomic<std::uint64_t> arena_ldefrag_shape_inval_total{0};
     std::atomic<std::uint64_t> arena_ldefrag_pointer_fixup_total{0};
+    // ── Open-issues Phase 1 batch (Close all remaining open issues) ──
+    // Issue #830: pass-shape-epoch-stats
+    std::atomic<std::uint64_t> pass_shape_epoch_total{0};
+    std::atomic<std::uint64_t> pass_shape_epoch_hits_total{0};
+    std::atomic<std::uint64_t> pass_shape_epoch_savings_total{0};
+    // Issue #831: edsl-hotpath-real-stats
+    std::atomic<std::uint64_t> edsl_hotpath_real_total{0};
+    std::atomic<std::uint64_t> edsl_hotpath_real_hits_total{0};
+    std::atomic<std::uint64_t> edsl_hotpath_real_savings_total{0};
+    // Issue #832: dead-coercion-elim-stats
+    std::atomic<std::uint64_t> dead_coercion_elim_total{0};
+    std::atomic<std::uint64_t> dead_coercion_elim_hits_total{0};
+    std::atomic<std::uint64_t> dead_coercion_elim_savings_total{0};
+    // Issue #833: occurrence-renarrow-stats
+    std::atomic<std::uint64_t> occurrence_renarrow_total{0};
+    std::atomic<std::uint64_t> occurrence_renarrow_hits_total{0};
+    std::atomic<std::uint64_t> occurrence_renarrow_savings_total{0};
+    // Issue #834: linear-escape-mutate-stats
+    std::atomic<std::uint64_t> linear_escape_mutate_total{0};
+    std::atomic<std::uint64_t> linear_escape_mutate_hits_total{0};
+    std::atomic<std::uint64_t> linear_escape_mutate_savings_total{0};
+    // Issue #835: typed-mutate-coercion-stats
+    std::atomic<std::uint64_t> typed_mutate_coercion_total{0};
+    std::atomic<std::uint64_t> typed_mutate_coercion_hits_total{0};
+    std::atomic<std::uint64_t> typed_mutate_coercion_savings_total{0};
+    // Issue #836: fiber-epoch-type-safety-stats
+    std::atomic<std::uint64_t> fiber_epoch_type_total{0};
+    std::atomic<std::uint64_t> fiber_epoch_type_hits_total{0};
+    std::atomic<std::uint64_t> fiber_epoch_type_savings_total{0};
+    // Issue #837: sv-verification-feedback-mutate-stats
+    std::atomic<std::uint64_t> sv_feedback_mutate_total{0};
+    std::atomic<std::uint64_t> sv_feedback_mutate_hits_total{0};
+    std::atomic<std::uint64_t> sv_feedback_mutate_savings_total{0};
+    // Issue #838: seva-longrunning-harness-v2-stats
+    std::atomic<std::uint64_t> seva_harness_v2_total{0};
+    std::atomic<std::uint64_t> seva_harness_v2_hits_total{0};
+    std::atomic<std::uint64_t> seva_harness_v2_savings_total{0};
+    // Issue #839: typed-mutation-audit-stats
+    std::atomic<std::uint64_t> typed_mut_audit_total{0};
+    std::atomic<std::uint64_t> typed_mut_audit_hits_total{0};
+    std::atomic<std::uint64_t> typed_mut_audit_savings_total{0};
+    // Issue #840: stable-ref-full-provenance-v2-stats
+    std::atomic<std::uint64_t> stable_ref_full_v2_total{0};
+    std::atomic<std::uint64_t> stable_ref_full_v2_hits_total{0};
+    std::atomic<std::uint64_t> stable_ref_full_v2_savings_total{0};
+    // Issue #842: longrunning-ai-infra-stats
+    std::atomic<std::uint64_t> longrun_ai_infra_total{0};
+    std::atomic<std::uint64_t> longrun_ai_infra_hits_total{0};
+    std::atomic<std::uint64_t> longrun_ai_infra_savings_total{0};
+    // Issue #843: ai-native-meta-extension-stats
+    std::atomic<std::uint64_t> ai_native_meta_total{0};
+    std::atomic<std::uint64_t> ai_native_meta_hits_total{0};
+    std::atomic<std::uint64_t> ai_native_meta_savings_total{0};
+    // Issue #844: orchestration-telemetry-pipeline-stats
+    std::atomic<std::uint64_t> orch_telemetry_total{0};
+    std::atomic<std::uint64_t> orch_telemetry_hits_total{0};
+    std::atomic<std::uint64_t> orch_telemetry_savings_total{0};
+    // Issue #845: per-fiber-exception-state-stats
+    std::atomic<std::uint64_t> per_fiber_ex_state_total{0};
+    std::atomic<std::uint64_t> per_fiber_ex_state_hits_total{0};
+    std::atomic<std::uint64_t> per_fiber_ex_state_savings_total{0};
+    // Issue #846: aot-hotswap-pipeline-stats
+    std::atomic<std::uint64_t> aot_hotswap_pipe_total{0};
+    std::atomic<std::uint64_t> aot_hotswap_pipe_hits_total{0};
+    std::atomic<std::uint64_t> aot_hotswap_pipe_savings_total{0};
+    // Issue #847: macro-hygiene-query-provenance-v2-stats
+    std::atomic<std::uint64_t> macro_hyg_query_v2_total{0};
+    std::atomic<std::uint64_t> macro_hyg_query_v2_hits_total{0};
+    std::atomic<std::uint64_t> macro_hyg_query_v2_savings_total{0};
+    // Issue #848: reflection-edsl-extension-v2-stats
+    std::atomic<std::uint64_t> reflect_edsl_v2_total{0};
+    std::atomic<std::uint64_t> reflect_edsl_v2_hits_total{0};
+    std::atomic<std::uint64_t> reflect_edsl_v2_savings_total{0};
+    // Issue #849: self-evolution-hygiene-dirty-epoch-stats
+    std::atomic<std::uint64_t> selfevo_hyg_dirty_total{0};
+    std::atomic<std::uint64_t> selfevo_hyg_dirty_hits_total{0};
+    std::atomic<std::uint64_t> selfevo_hyg_dirty_savings_total{0};
+    // Issue #850: sv-verification-feedback-closedloop-stats
+    std::atomic<std::uint64_t> sv_fb_closedloop_total{0};
+    std::atomic<std::uint64_t> sv_fb_closedloop_hits_total{0};
+    std::atomic<std::uint64_t> sv_fb_closedloop_savings_total{0};
+    // Issue #851: pattern-defuse-hygiene-full-stats
+    std::atomic<std::uint64_t> pattern_defuse_hyg_total{0};
+    std::atomic<std::uint64_t> pattern_defuse_hyg_hits_total{0};
+    std::atomic<std::uint64_t> pattern_defuse_hyg_savings_total{0};
+    // Issue #852: stable-ref-mutation-log-hardening-stats
+    std::atomic<std::uint64_t> stable_ref_mutlog_total{0};
+    std::atomic<std::uint64_t> stable_ref_mutlog_hits_total{0};
+    std::atomic<std::uint64_t> stable_ref_mutlog_savings_total{0};
+    // Issue #853: dirtyaware-impact-enforcement-v2-stats
+    std::atomic<std::uint64_t> dirty_impact_v2_total{0};
+    std::atomic<std::uint64_t> dirty_impact_v2_hits_total{0};
+    std::atomic<std::uint64_t> dirty_impact_v2_savings_total{0};
+    // Issue #854: live-irclosure-envframe-gc-stats
+    std::atomic<std::uint64_t> live_irclosure_gc_total{0};
+    std::atomic<std::uint64_t> live_irclosure_gc_hits_total{0};
+    std::atomic<std::uint64_t> live_irclosure_gc_savings_total{0};
+    // Issue #855: source-marker-linear-consistency-stats
+    std::atomic<std::uint64_t> src_marker_linear_total{0};
+    std::atomic<std::uint64_t> src_marker_linear_hits_total{0};
+    std::atomic<std::uint64_t> src_marker_linear_savings_total{0};
+    // Issue #856: terminal-buffer-diff-present-stats
+    std::atomic<std::uint64_t> term_buf_diff_total{0};
+    std::atomic<std::uint64_t> term_buf_diff_hits_total{0};
+    std::atomic<std::uint64_t> term_buf_diff_savings_total{0};
+    // Issue #857: render-observability-v2-stats
+    std::atomic<std::uint64_t> render_obs_v2_total{0};
+    std::atomic<std::uint64_t> render_obs_v2_hits_total{0};
+    std::atomic<std::uint64_t> render_obs_v2_savings_total{0};
+    // Issue #858: render-jit-soa-hotpath-stats
+    std::atomic<std::uint64_t> render_jit_soa_total{0};
+    std::atomic<std::uint64_t> render_jit_soa_hits_total{0};
+    std::atomic<std::uint64_t> render_jit_soa_savings_total{0};
+    // Issue #859: arena-live-defrag-full-v2-stats
+    std::atomic<std::uint64_t> arena_ldefrag_v2_total{0};
+    std::atomic<std::uint64_t> arena_ldefrag_v2_hits_total{0};
+    std::atomic<std::uint64_t> arena_ldefrag_v2_savings_total{0};
+    // Issue #860: ir-soa-dirty-hybrid-full-v2-stats
+    std::atomic<std::uint64_t> irsoa_dirty_v2_total{0};
+    std::atomic<std::uint64_t> irsoa_dirty_v2_hits_total{0};
+    std::atomic<std::uint64_t> irsoa_dirty_v2_savings_total{0};
+    // Issue #861: value-shape-consteval-full-v2-stats
+    std::atomic<std::uint64_t> val_shape_ceval_v2_total{0};
+    std::atomic<std::uint64_t> val_shape_ceval_v2_hits_total{0};
+    std::atomic<std::uint64_t> val_shape_ceval_v2_savings_total{0};
+    // Issue #862: defuse-infer-partial-stats
+    std::atomic<std::uint64_t> defuse_infer_part_total{0};
+    std::atomic<std::uint64_t> defuse_infer_part_hits_total{0};
+    std::atomic<std::uint64_t> defuse_infer_part_savings_total{0};
+    // Issue #863: ownership-escape-postmutate-stats
+    std::atomic<std::uint64_t> own_escape_post_total{0};
+    std::atomic<std::uint64_t> own_escape_post_hits_total{0};
+    std::atomic<std::uint64_t> own_escape_post_savings_total{0};
+    // Issue #864: typed-mutation-audit-pass-stats
+    std::atomic<std::uint64_t> typed_audit_pass_total{0};
+    std::atomic<std::uint64_t> typed_audit_pass_hits_total{0};
+    std::atomic<std::uint64_t> typed_audit_pass_savings_total{0};
+    // Issue #865: sv-backend-emit-bidirectional-stats
+    std::atomic<std::uint64_t> sv_backend_bi_total{0};
+    std::atomic<std::uint64_t> sv_backend_bi_hits_total{0};
+    std::atomic<std::uint64_t> sv_backend_bi_savings_total{0};
+    // Issue #866: large-sv-pattern-defuse-stats
+    std::atomic<std::uint64_t> large_sv_pattern_total{0};
+    std::atomic<std::uint64_t> large_sv_pattern_hits_total{0};
+    std::atomic<std::uint64_t> large_sv_pattern_savings_total{0};
+    // Issue #867: longrunning-stable-ref-dirty-stats
+    std::atomic<std::uint64_t> longrun_sref_dirty_total{0};
+    std::atomic<std::uint64_t> longrun_sref_dirty_hits_total{0};
+    std::atomic<std::uint64_t> longrun_sref_dirty_savings_total{0};
+    // Issue #868: sv-eda-primitives-cluster-stats
+    std::atomic<std::uint64_t> sv_eda_prims_total{0};
+    std::atomic<std::uint64_t> sv_eda_prims_hits_total{0};
+    std::atomic<std::uint64_t> sv_eda_prims_savings_total{0};
+    // Issue #869: primitives-resource-quota-fiber-stats
+    std::atomic<std::uint64_t> prim_quota_fiber_total{0};
+    std::atomic<std::uint64_t> prim_quota_fiber_hits_total{0};
+    std::atomic<std::uint64_t> prim_quota_fiber_savings_total{0};
+    // Issue #870: declarative-primitive-registry-stats
+    std::atomic<std::uint64_t> decl_prim_reg_total{0};
+    std::atomic<std::uint64_t> decl_prim_reg_hits_total{0};
+    std::atomic<std::uint64_t> decl_prim_reg_savings_total{0};
+    // Issue #872: primitives-namespace-alias-stats
+    std::atomic<std::uint64_t> prim_ns_alias_total{0};
+    std::atomic<std::uint64_t> prim_ns_alias_hits_total{0};
+    std::atomic<std::uint64_t> prim_ns_alias_savings_total{0};
+    // Issue #875: guard-steal-gc-safety-v2-stats
+    std::atomic<std::uint64_t> guard_steal_gc_v2_total{0};
+    std::atomic<std::uint64_t> guard_steal_gc_v2_hits_total{0};
+    std::atomic<std::uint64_t> guard_steal_gc_v2_savings_total{0};
+    // Issue #876: dirtyaware-ir-cache-consistency-stats
+    std::atomic<std::uint64_t> dirty_ircache_cons_total{0};
+    std::atomic<std::uint64_t> dirty_ircache_cons_hits_total{0};
+    std::atomic<std::uint64_t> dirty_ircache_cons_savings_total{0};
+    // Issue #877: stats-builder-refactor-stats
+    std::atomic<std::uint64_t> stats_builder_ref_total{0};
+    std::atomic<std::uint64_t> stats_builder_ref_hits_total{0};
+    std::atomic<std::uint64_t> stats_builder_ref_savings_total{0};
+    // Issue #878: load-or-zero-helper-stats
+    std::atomic<std::uint64_t> load_or_zero_help_total{0};
+    std::atomic<std::uint64_t> load_or_zero_help_hits_total{0};
+    std::atomic<std::uint64_t> load_or_zero_help_savings_total{0};
+    // Issue #879: cpp26-modernization-sweep-stats
+    std::atomic<std::uint64_t> cpp26_mod_sweep_total{0};
+    std::atomic<std::uint64_t> cpp26_mod_sweep_hits_total{0};
+    std::atomic<std::uint64_t> cpp26_mod_sweep_savings_total{0};
+    // Issue #880: metrics-meta-reflection-stats
+    std::atomic<std::uint64_t> metrics_meta_refl_total{0};
+    std::atomic<std::uint64_t> metrics_meta_refl_hits_total{0};
+    std::atomic<std::uint64_t> metrics_meta_refl_savings_total{0};
+    // Issue #881: test-harness-bootstrap-stats
+    std::atomic<std::uint64_t> test_harness_boot_total{0};
+    std::atomic<std::uint64_t> test_harness_boot_hits_total{0};
+    std::atomic<std::uint64_t> test_harness_boot_savings_total{0};
+    // Issue #882: bundle-codegen-decouple-stats
+    std::atomic<std::uint64_t> bundle_codegen_dec_total{0};
+    std::atomic<std::uint64_t> bundle_codegen_dec_hits_total{0};
+    std::atomic<std::uint64_t> bundle_codegen_dec_savings_total{0};
+    // Issue #883: test-bundle-migration-stats
+    std::atomic<std::uint64_t> test_bundle_mig_total{0};
+    std::atomic<std::uint64_t> test_bundle_mig_hits_total{0};
+    std::atomic<std::uint64_t> test_bundle_mig_savings_total{0};
+    // Issue #884: test-profile-flag-stats
+    std::atomic<std::uint64_t> test_profile_flag_total{0};
+    std::atomic<std::uint64_t> test_profile_flag_hits_total{0};
+    std::atomic<std::uint64_t> test_profile_flag_savings_total{0};
+    // Issue #885: test-harness-module-stats
+    std::atomic<std::uint64_t> test_harness_mod_total{0};
+    std::atomic<std::uint64_t> test_harness_mod_hits_total{0};
+    std::atomic<std::uint64_t> test_harness_mod_savings_total{0};
+    // Issue #886: test-json-report-stats
+    std::atomic<std::uint64_t> test_json_report_total{0};
+    std::atomic<std::uint64_t> test_json_report_hits_total{0};
+    std::atomic<std::uint64_t> test_json_report_savings_total{0};
+    // Issue #395: gcc16-modules-buildenv-stats
+    std::atomic<std::uint64_t> gcc16_modules_env_total{0};
+    std::atomic<std::uint64_t> gcc16_modules_env_hits_total{0};
+    std::atomic<std::uint64_t> gcc16_modules_env_savings_total{0};
     // Issue #620: StableNodeRef provenance query counter.
     // Bumped on every (query:stable-ref-provenance) call so the
     // Agent can see how often the provenance surface is being
