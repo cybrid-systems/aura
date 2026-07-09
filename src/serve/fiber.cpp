@@ -72,6 +72,28 @@ extern "C" std::uint64_t aura_fiber_current_id() {
 extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation() {
     return Fiber::static_gc_pause_attributed_to_mutation_total();
 }
+
+// Issue #783: C-linkage shims for the refined work-steal
+// metrics (outermost vs inner MutationBoundary split +
+// cross-fiber safe steal). Read by the
+// (query:orchestration-steal-outermost-stats) primitive.
+extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total() {
+    return Fiber::static_steal_outermost_mutation_boundary_total();
+}
+extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total() {
+    return Fiber::static_steal_inner_mutation_boundary_deferred_total();
+}
+extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total() {
+    return Fiber::static_cross_fiber_mutation_safe_steal_total();
+}
+
+// Issue #783: static aggregate atomic definitions.
+// Mirrors Fiber::static_gc_pause_attributed_to_mutation_count_.
+// Default-initialized to 0; bumped from the per-Fiber
+// bump helpers (which bump both per-Fiber and static).
+std::atomic<std::uint64_t> Fiber::static_steal_outermost_mutation_boundary_count_{0};
+std::atomic<std::uint64_t> Fiber::static_steal_inner_mutation_boundary_deferred_count_{0};
+std::atomic<std::uint64_t> Fiber::static_cross_fiber_mutation_safe_steal_count_{0};
 // The runtime-side hook installer (defined in
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());

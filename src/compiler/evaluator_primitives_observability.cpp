@@ -25,6 +25,17 @@ import aura.core.arena;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 
+// Issue #783: C-linkage shims for the refined work-steal
+// metrics (outermost vs inner MutationBoundary split +
+// cross-fiber safe steal). Defined in fiber.cpp. We
+// forward-declare here to avoid pulling in fiber.h (and
+// transitively scheduler/worker headers) from this
+// translation unit — the shims are tiny extern "C"
+// wrappers that just return a std::atomic<uint64_t>::load().
+extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
+extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
+extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total();
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -815,6 +826,15 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // lookup pattern (mirror #777) to count how many
     // of the 4 expected core primitives are registered.
     "query:terminal-rendering-module-stats",
+
+    // Issue #783: orchestration steal outermost stats.
+    // Splits the coarse steal_deferred_mutation_boundary
+    // _count_ metric into "outermost safe steal" +
+    // "inner deferred" + "cross-fiber safe steal", plus
+    // 3 hardcoded "not yet" flags for the deferred
+    // Phase 2+ work (strict StableRef refresh on
+    // resume + EnvFrame version refresh + #754 bias).
+    "query:orchestration-steal-outermost-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -8517,6 +8537,131 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("example-renderer-available", example_renderer_available);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 782);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #783: query:orchestration-steal-outermost-stats —
+    // P0 production-grade work-stealing observability for
+    // multi-fiber mutation under MutationBoundaryGuard.
+    // Refines the coarse steal_deferred_mutation_boundary_count_
+    // metric (#451) into "outermost safe steal" + "inner
+    // deferred" + "cross-fiber safe steal", and surfaces the
+    // Phase 2+ deferred work (strict StableRef refresh on
+    // resume + EnvFrame version refresh + #754 bias-driven
+    // outermost deferral).
+    //
+    // Fields (6 + sentinel):
+    //   - outermost-steal-total          process-wide lifetime
+    //                                    # of successful work-steals
+    //                                    at a MutationBoundary point
+    //                                    with depth==0 (safe +
+    //                                    boundary) — from the
+    //                                    new Fiber::static_steal_
+    //                                    outermost_mutation_
+    //                                    boundary_count_ atomic
+    //   - inner-deferred-total           process-wide lifetime
+    //                                    # of steal attempts
+    //                                    deferred because the
+    //                                    victim held an inner
+    //                                    MutationBoundary guard
+    //                                    (depth>0 — unsafe to
+    //                                    move) — from Fiber::
+    //                                    static_steal_inner_
+    //                                    mutation_boundary_
+    //                                    deferred_count_
+    //   - cross-fiber-safe-steal-total   process-wide lifetime
+    //                                    # of outermost safe
+    //                                    steals that crossed
+    //                                    between workers — from
+    //                                    Fiber::static_cross_
+    //                                    fiber_mutation_safe_
+    //                                    steal_count_
+    //   - strict-stable-ref-refresh     hardcoded 0 (Phase 2+
+    //                                    deferred: actually force
+    //                                    StableRef refresh on
+    //                                    resume of a stolen
+    //                                    outermost fiber)
+    //   - envframe-version-refresh      hardcoded 0 (Phase 2+
+    //                                    deferred: actually bump
+    //                                    EnvFrame::version_ on
+    //                                    resume of a stolen fiber)
+    //   - bias-deferred-outermost-total hardcoded 0 (#754 bias
+    //                                    feature not shipped —
+    //                                    would record outermost
+    //                                    defers driven by the
+    //                                    adaptive bias scheduler)
+    //   - recommendation                 0/1/2/3 derived from
+    //                                    the 3 deferred flags +
+    //                                    activity signal
+    //   - schema == 783
+    add("query:orchestration-steal-outermost-stats", [&ev](const auto&) -> EvalValue {
+        // Read the 3 NEW static aggregates (Issue #783).
+        const std::uint64_t outermost_total =
+            aura_fiber_static_steal_outermost_mutation_boundary_total();
+        const std::uint64_t inner_deferred_total =
+            aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
+        const std::uint64_t cross_fiber_total =
+            aura_fiber_static_cross_fiber_mutation_safe_steal_total();
+        // 3 hardcoded "not yet" flags for Phase 2+ deferred
+        // work (mirror #778/#779/#780/#781/#782 hardcoded
+        // flag pattern).
+        const std::int64_t strict_stable_ref_refresh = 0;
+        const std::int64_t envframe_version_refresh = 0;
+        const std::int64_t bias_deferred_outermost_total = 0;
+        // Recommendation: derived from the 3 deferred flags
+        // + activity signal. Note: the existing
+        // is_at_mutation_boundary_safe() already enforces
+        // depth==0 (Phase 1), so even with all 3 deferred
+        // flags == 0, the steal path is safe — just without
+        // the additional StableRef/EnvFrame safety nets.
+        std::int64_t recommendation = 3;
+        if (strict_stable_ref_refresh == 1 && envframe_version_refresh == 1 &&
+            bias_deferred_outermost_total == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (strict_stable_ref_refresh == 1 || envframe_version_refresh == 1 ||
+                 bias_deferred_outermost_total == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (outermost_total > 0 || inner_deferred_total > 0 || cross_fiber_total > 0)
+            recommendation = 2; // Phase 1 only (steal split shipped)
+        else
+            recommendation = 3; // early-stage (no steal activity yet)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("outermost-steal-total", static_cast<std::int64_t>(outermost_total));
+        insert_kv("inner-deferred-total", static_cast<std::int64_t>(inner_deferred_total));
+        insert_kv("cross-fiber-safe-steal-total", static_cast<std::int64_t>(cross_fiber_total));
+        insert_kv("strict-stable-ref-refresh", strict_stable_ref_refresh);
+        insert_kv("envframe-version-refresh", envframe_version_refresh);
+        insert_kv("bias-deferred-outermost-total", bias_deferred_outermost_total);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 783);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

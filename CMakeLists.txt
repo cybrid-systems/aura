@@ -4225,6 +4225,21 @@ add_dependencies(all_test_issue_targets test_issue_781)
 aura_add_issue_test(test_issue_782)
 aura_issue_test_link_llvm_jit(test_issue_782)
 add_dependencies(all_test_issue_targets test_issue_782)
+# Issue #783: P0 strict outermost MutationBoundary depth check +
+# defer logic observability (Non-duplicative refinement of #755 /
+# #730 / #451). Splits coarse steal_deferred_mutation_boundary_
+# count_ into outermost-steal-total + inner-deferred-total +
+# cross-fiber-safe-steal-total via 3 NEW Fiber atomics + 3 NEW
+# C-linkage shims + 1 NEW (query:orchestration-steal-outermost-
+# stats, schema 783) primitive. 5 ACs: hash shape, fresh-zero,
+# schema sentinel, production-path bump helpers callable +
+# activity reflects in primitive, sibling #781/#782/#779
+# regression. WorkerThread::steal() wires the refined bump
+# helpers into the existing is_at_mutation_boundary_safe()
+# branch (outermost success → 2 bumps; inner defer → 1 bump).
+aura_add_issue_test(test_issue_783)
+aura_issue_test_link_llvm_jit(test_issue_783)
+add_dependencies(all_test_issue_targets test_issue_783)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

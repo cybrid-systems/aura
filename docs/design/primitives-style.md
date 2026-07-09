@@ -367,6 +367,19 @@ Distinct from the existing memory primitives in `evaluator_primitives_memory.cpp
 
 Distinct from the existing vector + memory + I/O primitives in `evaluator_primitives_vector.cpp` / `_memory.cpp` / `_io.cpp`: those primitives provide general cell access but offer no dedicated terminal rendering module with `clear` / `draw-batch` / `present` / `dirty-tracking` primitives, no `shape_profiler.cpp` integration for rendering paths, and no example high-perf terminal renderer. `#782` is the FIRST observability surface that exposes the **terminal rendering module readiness composite** — `core-primitive-count` (live lookup) + 3 module flags + recommendation — as a single deployment-grade infrastructure-readiness dashboard the Agent reads to decide whether the terminal rendering module is production-ready for the planned cyber cat prototype.
 
+### `(query:orchestration-steal-outermost-stats)` fields (#783)
+
+- `outermost-steal-total` — process-wide lifetime # of successful work-steals at a MutationBoundary point with depth==0 (safe + boundary) — from the new `Fiber::static_steal_outermost_mutation_boundary_count_` atomic, bumped in `WorkerThread::steal()` when the victim yielded at MutationBoundary + `is_at_mutation_boundary_safe()` returns true (depth probe via `aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) == 0`)
+- `inner-deferred-total` — process-wide lifetime # of steal attempts deferred because the victim held an inner MutationBoundary guard (depth>0 — unsafe to move, would risk deadlock / hygiene drift) — from the new `Fiber::static_steal_inner_mutation_boundary_deferred_count_` atomic, bumped alongside the existing `bump_steal_deferred_mutation_boundary()` coarse counter
+- `cross-fiber-safe-steal-total` — process-wide lifetime # of outermost safe steals that crossed between workers — from the new `Fiber::static_cross_fiber_mutation_safe_steal_count_` atomic, bumped on every successful `MutationBoundary + depth==0` cross-fiber steal
+- `strict-stable-ref-refresh` — hardcoded 0 (Phase 2+ deferred: actually force StableRef refresh on resume of a stolen outermost fiber per body "On steal of outermost: force StableRef / EnvFrame version refresh on resume")
+- `envframe-version-refresh` — hardcoded 0 (Phase 2+ deferred: actually bump `EnvFrame::version_` on resume of a stolen fiber)
+- `bias-deferred-outermost-total` — hardcoded 0 (`#754` adaptive bias feature not shipped — would record outermost defers driven by the bias scheduler preferring different priority)
+- `recommendation` — derived 0/1/2/3 (0 = production-ready if all 3 Phase 2+ flags = 1; 1 = partial if any Phase 2+ flag = 1; 2 = Phase 1 only if all 3 flags = 0 but `outermost-steal-total > 0 || inner-deferred-total > 0 || cross-fiber-safe-steal-total > 0`; 3 = early-stage if all 3 flags = 0 AND no activity)
+- `schema` — 783 (drift sentinel)
+
+Distinct from the existing `(query:orchestration-metrics)` (#451) + `(query:scheduler-mutation-coord-stats)` (#618/#591): those primitives surface the coarse `steal_deferred_mutation_boundary_count_` as one lumped figure (no outermost/inner split) and don't expose the cross-fiber safe steal signal. `#783` is the FIRST observability surface that splits the steal deferral into the production-grade components the body asks for ("separate outermost_deferred vs inner_deferred; expose via `query:orchestration-steal-outermost-stats`"), exposes the `cross_fiber_mutation_safe_steal` counter, and marks the Phase 2+ deferred work (StableRef / EnvFrame version refresh + `#754` bias-driven deferral) as hardcoded "not yet" flags.
+
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
 - `chain-traversals` — `list_chain_traversals_total` (cdr-walk steps in map/filter/foldl)

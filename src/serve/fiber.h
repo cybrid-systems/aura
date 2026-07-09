@@ -24,6 +24,16 @@ extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutati
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
 extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation();
 
+// Issue #783: C-linkage shims for the refined work-steal
+// metrics (outermost vs inner MutationBoundary split +
+// cross-fiber safe steal). All process-wide aggregates
+// bumped from WorkerThread::steal() alongside the
+// per-Fiber counters. The (query:orchestration-steal-
+// outermost-stats) primitive reads these.
+extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
+extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
+extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total();
+
 namespace aura::serve {
 
 // ── Yield reason — why a fiber yielded (Issue #31) ────
@@ -198,11 +208,40 @@ public:
     [[nodiscard]] std::uint64_t steal_deferred_mutation_boundary_count() const noexcept {
         return steal_deferred_mutation_boundary_count_.load(std::memory_order_relaxed);
     }
+    // Issue #783: refined split (outermost vs inner) for
+    // the (query:orchestration-steal-outermost-stats)
+    // primitive. Per-Fiber counters; the process-wide
+    // aggregate is read via the static C-linkage shim.
+    [[nodiscard]] std::uint64_t steal_outermost_mutation_boundary_count() const noexcept {
+        return steal_outermost_mutation_boundary_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t steal_inner_mutation_boundary_deferred_count() const noexcept {
+        return steal_inner_mutation_boundary_deferred_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t cross_fiber_mutation_safe_steal_count() const noexcept {
+        return cross_fiber_mutation_safe_steal_count_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t gc_pause_attributed_to_mutation_count() const noexcept {
         return gc_pause_attributed_to_mutation_count_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] static std::uint64_t static_gc_pause_attributed_to_mutation_total() noexcept {
         return static_gc_pause_attributed_to_mutation_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #783: static aggregate accessors for the
+    // refined steal counters. Mirror static_gc_pause_...
+    // _total(). Read by the C-linkage shim (fiber.cpp)
+    // which is called by the
+    // (query:orchestration-steal-outermost-stats)
+    // primitive.
+    [[nodiscard]] static std::uint64_t static_steal_outermost_mutation_boundary_total() noexcept {
+        return static_steal_outermost_mutation_boundary_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t
+    static_steal_inner_mutation_boundary_deferred_total() noexcept {
+        return static_steal_inner_mutation_boundary_deferred_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t static_cross_fiber_mutation_safe_steal_total() noexcept {
+        return static_cross_fiber_mutation_safe_steal_count_.load(std::memory_order_relaxed);
     }
     // Issue #451: bump helpers (called by Fiber::yield()
     // + Fiber::check_gc_safepoint() + the work-steal path
@@ -227,6 +266,23 @@ public:
     }
     void bump_steal_deferred_mutation_boundary() noexcept {
         steal_deferred_mutation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #783: bump helpers for the refined split.
+    // Each bumps the per-Fiber counter AND the
+    // process-wide static aggregate so the primitive
+    // can read a global total without walking fibers.
+    void bump_steal_outermost_mutation_boundary() noexcept {
+        steal_outermost_mutation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+        static_steal_outermost_mutation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_steal_inner_mutation_boundary_deferred() noexcept {
+        steal_inner_mutation_boundary_deferred_count_.fetch_add(1, std::memory_order_relaxed);
+        static_steal_inner_mutation_boundary_deferred_count_.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+    void bump_cross_fiber_mutation_safe_steal() noexcept {
+        cross_fiber_mutation_safe_steal_count_.fetch_add(1, std::memory_order_relaxed);
+        static_cross_fiber_mutation_safe_steal_count_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_gc_pause_attributed_to_mutation() noexcept {
         gc_pause_attributed_to_mutation_count_.fetch_add(1, std::memory_order_relaxed);
@@ -296,6 +352,11 @@ private:
     std::atomic<std::uint64_t> yield_operation_boundary_count_{0};
     std::atomic<std::uint64_t> steal_success_count_{0};
     std::atomic<std::uint64_t> steal_deferred_mutation_boundary_count_{0};
+    // Issue #783: refined steal counters (outermost
+    // vs inner) — see bump helpers above.
+    std::atomic<std::uint64_t> steal_outermost_mutation_boundary_count_{0};
+    std::atomic<std::uint64_t> steal_inner_mutation_boundary_deferred_count_{0};
+    std::atomic<std::uint64_t> cross_fiber_mutation_safe_steal_count_{0};
     std::atomic<std::uint64_t> gc_pause_attributed_to_mutation_count_{0};
     int affinity_ = -1; // -1 = any worker, [0,N) = pinned to specific worker
     ucontext_t ctx_;
@@ -315,6 +376,11 @@ private:
     // the static aggregate + sums the per-Fiber counters
     // for a process-wide total.
     static std::atomic<std::uint64_t> static_gc_pause_attributed_to_mutation_count_;
+    // Issue #783: static aggregates for the refined
+    // steal metrics (mirror static_gc_pause_..._ count_).
+    static std::atomic<std::uint64_t> static_steal_outermost_mutation_boundary_count_;
+    static std::atomic<std::uint64_t> static_steal_inner_mutation_boundary_deferred_count_;
+    static std::atomic<std::uint64_t> static_cross_fiber_mutation_safe_steal_count_;
 
     // Trampoline: called when fiber starts
     static void trampoline(uint32_t high, uint32_t low);
