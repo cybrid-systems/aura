@@ -256,6 +256,72 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _cxx_driver() -> str:
+    """Compiler driver used for link probes (matches CMake preference)."""
+    for cand in (
+        os.environ.get("CXX", "").strip(),
+        "c++",
+        "g++",
+        "clang++",
+    ):
+        if cand and shutil.which(cand):
+            return cand
+    return "c++"
+
+
+def _fuse_ld_works(fuse_ld: str) -> bool:
+    """Probe whether ``-fuse-ld=<name>`` can link a trivial C++ program.
+
+    GCC 16 ships ``libatomic_asneeded.so`` linker scripts that older mold
+    mis-parses (``library not found: AS_NEEDED``), which breaks CMake's
+    compiler identification. Prefer probing over hard-coding versions.
+    """
+    import tempfile
+
+    cxx = _cxx_driver()
+    try:
+        with tempfile.TemporaryDirectory(prefix="aura_ldprobe_") as td:
+            src = Path(td) / "t.cpp"
+            out = Path(td) / "t.out"
+            src.write_text("int main(){return 0;}\n", encoding="utf-8")
+            r = subprocess.run(
+                [cxx, f"-fuse-ld={fuse_ld}", str(src), "-o", str(out)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if r.returncode == 0 and out.is_file():
+                return True
+            err = (r.stderr or "") + (r.stdout or "")
+            # Keep the first useful line for CI logs when we fall back.
+            first = next((ln.strip() for ln in err.splitlines() if ln.strip()), "")
+            if first:
+                warn(f"linker probe -fuse-ld={fuse_ld} failed: {first[:160]}")
+            return False
+    except (OSError, subprocess.TimeoutExpired) as e:
+        warn(f"linker probe -fuse-ld={fuse_ld} error: {e}")
+        return False
+
+
+def _select_fast_linker() -> str | None:
+    """Pick mold / lld when available *and* able to link with the toolchain.
+
+    Returns the ``-fuse-ld=`` value (``mold`` / ``lld``) or None for default ld.
+    """
+    # AURA_USE_MOLD=0 disables both mold and lld fast-path (classic ld.bfd).
+    if not _env_flag("AURA_USE_MOLD", default=True):
+        return None
+    # Prefer mold when it works; fall back to lld on GCC16/libatomic_asneeded
+    # incompatibility (mold issue #1545 / Gentoo #968893).
+    if _tool_available("mold") and _fuse_ld_works("mold"):
+        return "mold"
+    if _tool_available("ld.lld") and _fuse_ld_works("lld"):
+        return "lld"
+    if _tool_available("mold"):
+        warn("mold present but cannot link with this toolchain; falling back")
+    return None
+
+
 def _phase(label: str, t0: float) -> None:
     """Issue #873/#874: always print wall-time for major build phases."""
     dt = time.time() - t0
@@ -280,15 +346,19 @@ def _cmake_configure_args() -> list[str]:
         ldflags_extra.append(ldflags)
 
     # Issue #873/#874 Phase 1: mold (or lld) for much faster linking of
-    # 100+ issue-test binaries. Default ON when the tool exists; set
-    # AURA_USE_MOLD=0 to force classic ld.bfd. Prefer mold over lld.
-    use_mold = _env_flag("AURA_USE_MOLD", default=True)
-    if use_mold and _tool_available("mold"):
+    # 100+ issue-test binaries. Default ON when the tool works with the
+    # current GCC; set AURA_USE_MOLD=0 to force classic ld.bfd.
+    # Probe is required: GCC 16's libatomic_asneeded.so breaks some mold
+    # versions (CMake "CXX compiler is not able to compile a simple test").
+    fast_ld = _select_fast_linker()
+    if fast_ld == "mold":
         ldflags_extra.append("-fuse-ld=mold")
-        info("linker: mold (AURA_USE_MOLD)")
-    elif use_mold and _tool_available("ld.lld"):
+        info("linker: mold (AURA_USE_MOLD, probe ok)")
+    elif fast_ld == "lld":
         ldflags_extra.append("-fuse-ld=lld")
-        info("linker: lld (mold not found)")
+        info("linker: lld (mold unavailable/incompatible)")
+    else:
+        info("linker: default (ld.bfd / system)")
 
     # Issue #873/#874: ccache is auto-used by cmake/aura_module_launcher.sh
     # when on PATH and CCACHE_DISABLE is unset. CI keeps CCACHE_DISABLE=1.

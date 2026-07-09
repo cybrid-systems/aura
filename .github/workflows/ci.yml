@@ -106,16 +106,23 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Issue #873/#874: mold is much faster than ld.bfd when linking
-    # many fat test binaries (aura_test_objects + LLVM). Best-effort —
-    # if apt fails we still build with the default linker.
-    - name: Install mold (fast linker)
+    # Issue #873/#874: fast linker (mold preferred, lld fallback).
+    # build.py probes mold with a trivial link; GCC 16's
+    # libatomic_asneeded.so breaks some mold versions (AS_NEEDED
+    # parse error) — then we auto-select lld. Install both so CI
+    # always has a working fast path.
+    - name: Install mold / lld (fast linkers)
       run: |
-        if command -v mold >/dev/null 2>&1; then
-          mold --version
-        else
+        set -e
+        if ! command -v mold >/dev/null 2>&1; then
           apt-get update -qq && apt-get install -y -qq mold || echo "::warning::mold not installed"
         fi
+        if command -v mold >/dev/null 2>&1; then mold --version; fi
+        # lld is the reliable fallback under GCC 16 + mold incompatibility.
+        if ! command -v ld.lld >/dev/null 2>&1; then
+          apt-get update -qq && apt-get install -y -qq lld || echo "::warning::lld not installed"
+        fi
+        if command -v ld.lld >/dev/null 2>&1; then ld.lld --version | head -1; fi
 
     - name: Build & Test
       env:
