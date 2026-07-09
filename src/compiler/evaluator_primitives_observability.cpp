@@ -11376,18 +11376,20 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        std::size_t avg =
-            ev.atomic_batch_count_ > 0 ? ev.atomic_batch_ops_total_ / ev.atomic_batch_count_ : 0;
+        std::size_t avg = ev.atomic_batch_domain_.count > 0
+                              ? ev.atomic_batch_domain_.ops_total / ev.atomic_batch_domain_.count
+                              : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"batch-count", make_int(static_cast<std::int64_t>(ev.atomic_batch_count_))},
-            {"ops-total", make_int(static_cast<std::int64_t>(ev.atomic_batch_ops_total_))},
-            {"rollback-count", make_int(static_cast<std::int64_t>(ev.atomic_batch_rollbacks_))},
+            {"batch-count", make_int(static_cast<std::int64_t>(ev.atomic_batch_domain_.count))},
+            {"ops-total", make_int(static_cast<std::int64_t>(ev.atomic_batch_domain_.ops_total))},
+            {"rollback-count",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_domain_.rollbacks))},
             {"ops-per-batch", make_int(static_cast<std::int64_t>(avg))},
             // Issue #250: how many per-op generation bumps the
             // batches suppressed (lifetime total). Useful for
             // dashboards ("how much churn did batching save?").
             {"bumps-saved-total",
-             make_int(static_cast<std::int64_t>(ev.atomic_batch_bumps_saved_total_))},
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_domain_.bumps_saved_total))},
             // Issue #396 Phase 3: heuristic for "ran under
             // concurrent fiber pressure". Bumped when the
             // bridge fiber setter was active at commit time
@@ -11395,7 +11397,7 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             // test-binary paths where the hook is null.
             // Name matches the issue's proposed field.
             {"executed-under-concurrent-fiber",
-             make_int(static_cast<std::int64_t>(ev.atomic_batch_in_fiber_total_))},
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_domain_.in_fiber_total))},
             // Issue #737: pinning + snapshot rollback observability.
             {"pinned-refs-last-batch",
              make_int(static_cast<std::int64_t>(ev.atomic_batch_pinned_ref_count()))},

@@ -815,6 +815,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Lazily create persistent type registry (stable TypeIds across calls)
         if (!ev.type_registry_) {
             ev.type_registry_ = new aura::core::TypeRegistry();
+            ev.owns_type_registry_ = true;
         }
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         aura::compiler::TypeChecker tc(treg);
@@ -905,6 +906,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // across calls) — same pattern as typecheck-current.
         if (!ev.type_registry_) {
             ev.type_registry_ = new aura::core::TypeRegistry();
+            ev.owns_type_registry_ = true;
         }
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         aura::compiler::TypeChecker tc(treg);

@@ -4507,6 +4507,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return ev.make_merr("bad-arg", "type name string index out of range");
         if (!ev.type_registry_)
             ev.type_registry_ = new aura::core::TypeRegistry();
+        ev.owns_type_registry_ = true;
         auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         auto tid = reg.lookup_type(name);
         // Auto-register the type as INT if it doesn't exist.

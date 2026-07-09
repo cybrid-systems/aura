@@ -6592,11 +6592,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // closed loop (non-duplicative with #459 1-counter steal
     // ship, #553 7-counter batch matrix, and atomic-batch:stats
     // hash in observability):
-    //   - batch_commits: atomic_batch_count_
-    //   - batch_rollbacks: atomic_batch_rollbacks_
-    //   - bumps_saved: atomic_batch_bumps_saved_total_
+    //   - batch_commits: atomic_batch_domain_.count
+    //   - batch_rollbacks: atomic_batch_domain_.rollbacks
+    //   - bumps_saved: atomic_batch_domain_.bumps_saved_total
     //   - fiber_safety: atomic_batch_steal_violation_ +
-    //                   atomic_batch_in_fiber_total_
+    //                   atomic_batch_domain_.in_fiber_total
     //   - guard_rollbacks: mutation_log_rollback_count_
     //   - guard_success: mutation_impact_count_
     //   - panic_recovery: panic_checkpoint_restore_count_
@@ -6635,7 +6635,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     # of generation bumps SUPPRESSED by the
     //     batch (kGenerationSuppressed flag) — measures
     //     the "single bump per commit" optimization win
-    //   - atomic_batch_rollbacks_         (Evaluator, #192)
+    //   - atomic_batch_domain_.rollbacks         (Evaluator, #192)
     //     # of rollback_atomic_batch calls — strict
     //     subset of fail-fast paths that actually rolled
     //     back (vs succeed-but-with-partial-warning)
@@ -6685,7 +6685,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     (records needing full subtree restore)
     //   - field_log_rollbacks: mutation_log_rollback_count_
     //     (Guard boundary field_offset rollbacks incl. sym_id)
-    //   - batch_rollbacks: atomic_batch_rollbacks_
+    //   - batch_rollbacks: atomic_batch_domain_.rollbacks
     add("query:mutation-rollback-coverage-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();

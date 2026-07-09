@@ -1490,19 +1490,27 @@ static void collect_mutation_calls(const FlatAST& flat,
     }
 }
 
-// Check whether the subtree rooted at `root` contains any node
-// in `target_set`. Recursive via FlatAST::get(id).children.
-static bool subtree_uses_node(const FlatAST& flat, aura::ast::NodeId root,
-                              const std::unordered_set<aura::ast::NodeId>& target_set) {
+// Issue #896: memoized subtree reachability — O(N) total instead of
+// O(M·N·depth) repeated recursive walks. memo[id]: -1 unknown, 0/1 result.
+static bool subtree_uses_node_memo(const FlatAST& flat, aura::ast::NodeId root,
+                                   const std::unordered_set<aura::ast::NodeId>& target_set,
+                                   std::vector<std::int8_t>& memo) {
     if (root == aura::ast::NULL_NODE || root >= flat.size())
         return false;
-    if (target_set.count(root))
+    if (memo[root] >= 0)
+        return memo[root] != 0;
+    if (target_set.count(root)) {
+        memo[root] = 1;
         return true;
+    }
     auto v = flat.get(root);
     for (auto c : v.children) {
-        if (subtree_uses_node(flat, c, target_set))
+        if (subtree_uses_node_memo(flat, c, target_set, memo)) {
+            memo[root] = 1;
             return true;
+        }
     }
+    memo[root] = 0;
     return false;
 }
 
@@ -1539,8 +1547,10 @@ static IRModule lower_to_ir_impl(
     // that calls another function marked Evolution) is
     // Phase 2b/3 (call graph + mutation impact analysis).
     {
+        // Issue #896: one collect + shared memo for all Define/Lambda probes.
         std::unordered_set<aura::ast::NodeId> mutating_nodes;
         collect_mutation_calls(flat, mutating_nodes);
+        std::vector<std::int8_t> mut_memo(flat.size(), static_cast<std::int8_t>(-1));
         for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
             if (i >= flat.size())
                 break;
@@ -1551,14 +1561,14 @@ static IRModule lower_to_ir_impl(
                     continue;
                 if (flat.get_function_region_for_sym(sym).has_value())
                     continue;
-                if (subtree_uses_node(flat, v.child(0), mutating_nodes)) {
+                if (subtree_uses_node_memo(flat, v.child(0), mutating_nodes, mut_memo)) {
                     flat.set_function_region(
                         sym, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
                 }
             } else if (v.tag == aura::ast::NodeTag::Lambda) {
                 if (flat.get_function_region_for_lambda(i).has_value())
                     continue;
-                if (subtree_uses_node(flat, i, mutating_nodes)) {
+                if (subtree_uses_node_memo(flat, i, mutating_nodes, mut_memo)) {
                     flat.set_function_region_lambda(
                         i, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
                 }

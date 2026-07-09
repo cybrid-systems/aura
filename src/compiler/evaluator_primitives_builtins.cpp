@@ -159,8 +159,8 @@ Primitives::Primitives() {
     set_meta("-", {.arity = 255, .pure = true, .doc = "Variadic subtraction."});
     set_meta("not", {.arity = 1, .pure = true, .doc = "Boolean negation."});
 }
-std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
-    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
+std::optional<PrimFn> Primitives::lookup(std::string_view n) const {
+    // Issue #914: transparent hash — no temporary std::string.
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }

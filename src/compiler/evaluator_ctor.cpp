@@ -12,6 +12,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.type;
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -163,6 +164,16 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
         m->primitive_eda_meta_backfill_total.fetch_add(10, std::memory_order_relaxed);
 }
 
+void Evaluator::set_type_registry(void* reg) {
+    // Issue #911: drop owned registry before adopting external.
+    if (owns_type_registry_ && type_registry_ && type_registry_ != reg) {
+        delete static_cast<aura::core::TypeRegistry*>(type_registry_);
+        owns_type_registry_ = false;
+    }
+    type_registry_ = reg;
+    owns_type_registry_ = false;
+}
+
 Evaluator::~Evaluator() {
     // Issue #63723: clear all thread-local Evaluator* slots
     // that might still point at this dying instance. Without
@@ -197,6 +208,12 @@ Evaluator::~Evaluator() {
     opaque_heap_.clear();
     string_heap_.clear();
     strategies_.clear();
+    // Issue #911: free Evaluator-owned TypeRegistry
+    if (owns_type_registry_ && type_registry_) {
+        delete static_cast<aura::core::TypeRegistry*>(type_registry_);
+        type_registry_ = nullptr;
+        owns_type_registry_ = false;
+    }
 }
 
 } // namespace aura::compiler
