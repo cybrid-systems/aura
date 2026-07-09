@@ -50,11 +50,13 @@
 - [ ] Selective unity builds for non-module pure `.cpp` clusters
 - [ ] PCH only where modules cannot replace
 
-### Phase 5 — Test layering
+### Phase 5 — Test layering ✅ (started)
 
-- [ ] `ctest -L issue` / `-L fiber` already partially via #871 labels — expand
-- [ ] Main CI: bundles + unbundled standalones only (skip dead dual standalones)
-- [ ] Nightly: full individual matrix
+- [x] **Domain suite** `test_obs_schema_matrix` — table-driven `query:*` schemas (`tests/suites/`)
+- [x] Contributing policy: issue id = label; add case rows, not new binaries
+- [ ] Migrate remaining `test_issue_*` AC bodies into domain suites, then delete files
+- [ ] PR default: domain suites + bundles only
+- [ ] Nightly: optional long-tail / chaos
 
 ## Local usage
 

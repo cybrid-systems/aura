@@ -1,8 +1,15 @@
-// test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.
+// test_obs_schema_matrix.cpp — Domain suite: observability query schemas
 //
-// Prefer: tests/test_obs_schema_matrix.cpp + suites/obs_schema_cases.hpp
-// This file remains so late-bundle membership / old docs still resolve.
-// Implementation is the shared domain matrix (included below).
+// Replaces the "one test_issue_N.cpp per stats surface" pattern for
+// schema/bump gate ACs. Add new Close #N observability surfaces by
+// editing tests/suites/obs_schema_cases.hpp — do not add a new binary.
+//
+// Coverage:
+//   - StandardTotalHits: total/hits/savings/active + schema + bump
+//   - FieldList: schema + required field keys present
+//   - Light primitives used by late surfaces (terminal:*, primitives:alias)
+//
+// See tests/suites/README.md for the testing policy.
 
 #include "test_harness.hpp"
 #include "suites/obs_schema_cases.hpp"
@@ -16,11 +23,6 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
-
-// Reuse the same runner logic as test_obs_schema_matrix by defining
-// the entry point name expected by jit_late3 bundle membership.
-// (Duplicate TU is intentional for back-compat; new cases go only in
-// obs_schema_cases.hpp + test_obs_schema_matrix.cpp.)
 
 namespace {
 
@@ -44,9 +46,12 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
     return as_int(*r);
 }
 
+// Map bump_slug → Evaluator bump helpers (standard total/hits/savings).
 void bump_standard(Evaluator& ev, const char* slug) {
     if (!slug || !*slug)
         return;
+    // Keep this switch in sync with kStandardCases[].bump_slug.
+    // Prefer adding a row + CASE over a new test_issue_*.cpp.
 #define CASE(s)                                                                                    \
     if (std::strcmp(slug, #s) == 0) {                                                              \
         ev.bump_##s();                                                                             \
@@ -111,8 +116,9 @@ void bump_standard(Evaluator& ev, const char* slug) {
 #undef CASE
 }
 
-void run_all(CompilerService& cs) {
+void run_standard_cases(CompilerService& cs) {
     auto& ev = cs.evaluator();
+    std::println("\n=== Domain suite: standard total/hits schemas ({}) ===", kStandardCasesCount);
     for (std::size_t i = 0; i < kStandardCasesCount; ++i) {
         const StandardCase& c = kStandardCases[i];
         auto h = cs.eval(std::format("({})", c.query));
@@ -126,6 +132,10 @@ void run_all(CompilerService& cs) {
         CHECK(href(cs, c.query, "hits") >= 1, std::format("{} hits", c.query));
         CHECK(href(cs, c.query, "savings") >= 2, std::format("{} savings", c.query));
     }
+}
+
+void run_field_list_cases(CompilerService& cs) {
+    std::println("\n=== Domain suite: field-list schemas ({}) ===", kFieldListCasesCount);
     for (std::size_t i = 0; i < kFieldListCasesCount; ++i) {
         const FieldListCase& c = kFieldListCases[i];
         auto h = cs.eval(std::format("({})", c.query));
@@ -133,20 +143,41 @@ void run_all(CompilerService& cs) {
         CHECK(href(cs, c.query, "schema") == c.schema,
               std::format("{} schema == {}", c.query, c.schema));
         for (std::size_t f = 0; f < c.n_fields; ++f) {
-            auto v = cs.eval(std::format("(hash-ref ({}) '{}')", c.query, c.fields[f]));
-            CHECK(v.has_value(), std::format("{} field present", c.query));
+            const char* key = c.fields[f];
+            auto v = cs.eval(std::format("(hash-ref ({}) '{}')", c.query, key));
+            CHECK(v.has_value(), std::format("{} field '{}' present", c.query, key));
         }
     }
-    (void)cs.eval("(terminal:create-buffer)");
-    (void)cs.eval("(terminal:diff)");
-    (void)cs.eval("(primitives:alias \"q\" \"query:pattern\")");
+}
+
+void run_light_primitives(CompilerService& cs) {
+    std::println("\n=== Domain suite: light production primitives ===");
+    auto buf = cs.eval("(terminal:create-buffer)");
+    CHECK(buf && is_bool(*buf), "terminal:create-buffer");
+    auto diff = cs.eval("(terminal:diff)");
+    CHECK(diff && is_bool(*diff), "terminal:diff");
+    auto alias = cs.eval("(primitives:alias \"q\" \"query:pattern\")");
+    CHECK(alias && is_bool(*alias), "primitives:alias");
+    auto alias_bad = cs.eval("(primitives:alias)");
+    CHECK(alias_bad && is_bool(*alias_bad), "primitives:alias arity-fail");
+}
+
+void run_regression(CompilerService& cs) {
+    std::println("\n=== Domain suite: classic eval regression ===");
     auto c = cs.eval("(+ 19 23)");
-    CHECK(c && is_int(*c) && as_int(*c) == 42, "classic eval");
+    CHECK(c && is_int(*c) && as_int(*c) == 42, "classic eval (+ 19 23) == 42");
+}
+
+void run_all(CompilerService& cs) {
+    run_standard_cases(cs);
+    run_field_list_cases(cs);
+    run_light_primitives(cs);
+    run_regression(cs);
 }
 
 } // namespace
 
-int aura_issue_open_issues_phase1_batch_run() {
+int aura_issue_obs_schema_matrix_run() {
     aura::compiler::CompilerService cs;
     run_all(cs);
     return RUN_ALL_TESTS();
@@ -154,6 +185,6 @@ int aura_issue_open_issues_phase1_batch_run() {
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
-    return aura_issue_open_issues_phase1_batch_run();
+    return aura_issue_obs_schema_matrix_run();
 }
 #endif

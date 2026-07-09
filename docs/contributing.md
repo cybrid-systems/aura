@@ -531,6 +531,30 @@ See [`docs/design/error-handling-policy.md`](design/error-handling-policy.md)
 (authoritative) and [`docs/design/core/exception_policy.md`](design/core/exception_policy.md)
 for the full audit table and migration phases.
 
+
+## 测试策略：领域套件优先 (Domain suites)
+
+> Issue 号是 **标签**，不是 **进程**。不要为每个 Close #N 默认新建 `test_issue_N.cpp`。
+
+### 默认路径
+
+1. **Observability / `query:*` schema** → 给 [`tests/suites/obs_schema_cases.hpp`](../tests/suites/obs_schema_cases.hpp) 加一行，跑 `test_obs_schema_matrix`
+2. **Exception / AuraResult** → 扩展 `test_aura_result_error_policy`
+3. **Fiber / steal / Guard** → 优先扩 `test_concurrent` 或现有 fiber 场景
+4. 无法归类时 → `tests/test_<domain>_<topic>.cpp`（**不要**再叫 `test_issue_N`）
+
+说明见 [`tests/suites/README.md`](../tests/suites/README.md)。
+
+### 构建
+
+```bash
+# 领域套件（推荐日常）
+ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix
+
+# Full issue tier：profile bundles + 少量 standalone（非 200+ 独立二进制）
+AURA_ISSUES_TIER=full ./build.py build
+```
+
 ## 减法原则 (Subtraction Principle) — Issue #871
 
 > 当新增东西的成本 (新文件/新 target/新 coupling) > 重构现有结构
