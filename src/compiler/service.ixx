@@ -66,6 +66,7 @@ import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.compiler.cache;
 import aura.diag;
+import aura.core.error; // Issue #807/#808: AuraResult bridge
 
 // ── JIT primitive call dispatcher ────────────────────────
 // Bridges OpPrimCall/OpPrimitive from JIT code to evaluator PrimFn table.
@@ -1576,6 +1577,28 @@ public:
     }
     [[nodiscard]] std::uint64_t get_needs_tree_walker_slow_path_hits() const noexcept {
         return metrics_.needs_tree_walker_slow_path_hits.load(std::memory_order_relaxed);
+    }
+
+    // Issue #808 Phase 1: AuraResult-facing eval entry (wraps EvalResult).
+    // Hot-path eval_flat still returns EvalResult during migration; this
+    // surface makes failure explicit as aura::core::AuraResult without
+    // throwing. Prefer this for new Agent control-loop call sites.
+    [[nodiscard]] aura::core::AuraResult<types::EvalValue>
+    eval_as_aura_result(std::string_view input) {
+        auto r = eval(input);
+        if (r)
+            return *r;
+        const auto& d = r.error();
+        return aura::core::make_unexpected_from_kind_name(aura::diag::kind_name(d.kind), d.message);
+    }
+
+    // Issue #807/#808: convert an existing EvalResult without re-running eval.
+    [[nodiscard]] static aura::core::AuraResult<types::EvalValue>
+    eval_result_to_aura(const EvalResult& r) {
+        if (r)
+            return *r;
+        const auto& d = r.error();
+        return aura::core::make_unexpected_from_kind_name(aura::diag::kind_name(d.kind), d.message);
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {

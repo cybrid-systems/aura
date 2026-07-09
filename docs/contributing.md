@@ -519,6 +519,17 @@ AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()
 
 详见 [`tests/test_issue_711.cpp`](../tests/test_issue_711.cpp) — closed-loop Agent sim 把 1-4 串起来 end-to-end。
 
+## Exception / AuraResult policy (Issues #807 / #808)
+
+Hot paths (**eval**, mutate, fiber resume) must not use exceptions for
+ordinary failures. Prefer:
+
+- `EvalResult` (today) or `aura::core::AuraResult<T>` (migration)
+- `CompilerService::eval_as_aura_result` for new Agent control-loop code
+
+See [`docs/design/core/exception_policy.md`](design/core/exception_policy.md)
+for the full audit table and migration phases.
+
 ## 减法原则 (Subtraction Principle) — Issue #871
 
 > 当新增东西的成本 (新文件/新 target/新 coupling) > 重构现有结构

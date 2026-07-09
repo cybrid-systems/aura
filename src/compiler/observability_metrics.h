@@ -1256,6 +1256,23 @@ struct CompilerMetrics {
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
+    // Issue #805: Integrated primitives hot-path + registry load SLO
+    // (non-duplicative with #776 hotpath-slo composite — this surface
+    // tracks registry/list-apply samples under mutation+fiber load).
+    //   - hotpath_registry_apply_samples_total: # of timed apply/map/filter
+    //     samples recorded by the bench harness or list apply path.
+    //   - hotpath_registry_ns_accum_total: cumulative nanoseconds for those
+    //     samples (ns_per_apply = accum / samples).
+    //   - hotpath_registry_bench_runs_total: full bench-suite invocations.
+    //   - hotpath_registry_extension_reg_ns_total: cumulative ns spent in
+    //     register_all_primitives / extension kit registration probes.
+    //   - hotpath_registry_linear_cost_total: linear cdr-walk cost samples
+    //     (pairs with linear_traverse / list chain counters).
+    std::atomic<std::uint64_t> hotpath_registry_apply_samples_total{0};
+    std::atomic<std::uint64_t> hotpath_registry_ns_accum_total{0};
+    std::atomic<std::uint64_t> hotpath_registry_bench_runs_total{0};
+    std::atomic<std::uint64_t> hotpath_registry_extension_reg_ns_total{0};
+    std::atomic<std::uint64_t> hotpath_registry_linear_cost_total{0};
     // Issue #620: StableNodeRef provenance query counter.
     // Bumped on every (query:stable-ref-provenance) call so the
     // Agent can see how often the provenance surface is being

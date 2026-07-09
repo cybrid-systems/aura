@@ -4529,6 +4529,20 @@ add_dependencies(all_test_issue_targets test_issue_803)
 aura_add_issue_test(test_stable_ref_cross_cow_provenance_enforcement)
 aura_issue_test_link_llvm_jit(test_stable_ref_cross_cow_provenance_enforcement)
 add_dependencies(all_test_issue_targets test_stable_ref_cross_cow_provenance_enforcement)
+# Issue #805: query:primitives-hotpath-registry-stats (schema 805)
+# — sample-based registry + list-apply load SLO (ns/apply,
+# linear-cost, extension-reg-ns, bench-runs). Non-duplicative
+# with #776 hotpath-slo stability composite. 8 ACs.
+aura_add_issue_test(test_primitives_hotpath_registry_slo)
+aura_issue_test_link_llvm_jit(test_primitives_hotpath_registry_slo)
+add_dependencies(all_test_issue_targets test_primitives_hotpath_registry_slo)
+# Issues #807/#808: exception policy + AuraResult Phase 1 bridge
+# (map_kind_name / eval_as_aura_result / eval_result_to_aura).
+# 8 ACs: kind mappers, policy kinds, success/failure AuraResult,
+# monadic and_then, classic eval regression.
+aura_add_issue_test(test_aura_result_error_policy)
+aura_issue_test_link_llvm_jit(test_aura_result_error_policy)
+add_dependencies(all_test_issue_targets test_aura_result_error_policy)
 # Issue #804: P0 stdlib-Registry unified primitive
 # error semantics + provenance tracking + recovery
 # hooks (refine/consolidate #585 + #751 + #775 + #478).

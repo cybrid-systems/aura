@@ -122,6 +122,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:zero-copy-framebuffer-stats)` | 781 | Zero-copy byte buffer + framebuffer readiness (4 fields) |
 | `(query:terminal-rendering-module-stats)` | 782 | Terminal rendering module + profiling integration readiness (4 fields) |
 | `(query:stable-ref-cross-cow-provenance-stats)` | 818 | full provenance + cross-COW auto-resolve (5 fields) |
+| `(query:primitives-hotpath-registry-stats)` | 805 | registry + list-apply load samples SLO (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -601,6 +602,17 @@ Distinct from the existing `(query:orchestration-metrics)` (#451) + `(query:sche
 - `schema` — 818 (drift sentinel)
 
 Distinct from `(query:stable-ref-provenance-sv-stats)` (#641) / `(query:stable-ref-layer-stats)` (#715) / `(query:stable-ref-boundary-stats-hash)` (#738): #818 is the unified full-provenance + cross-COW auto-resolve enforcement dashboard for multi-Agent EDSL orchestration.
+
+### `(query:primitives-hotpath-registry-stats)` fields (#805)
+
+- `fastpath-hit-rate-pct` — derived `primitive_fastpath_hits_total / primitive_call_total × 10000`
+- `ns-per-apply` — `hotpath_registry_ns_accum_total / hotpath_registry_apply_samples_total`
+- `linear-cost` — `hotpath_registry_linear_cost_total` (cdr-walk sample cost)
+- `extension-reg-ns` — `hotpath_registry_extension_reg_ns_total` (registry extension probe cost)
+- `bench-runs` — `hotpath_registry_bench_runs_total`
+- `schema` — 805 (drift sentinel)
+
+Distinct from `(query:primitives-hotpath-slo-stats)` (#776): #776 is stability-score + regression-flag composite; #805 is **sample-based** registry/list-apply load metrics (ns/apply, extension reg cost) for CI SLO gates under mutation+fiber load.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
