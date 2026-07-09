@@ -540,18 +540,23 @@ for the full audit table and migration phases.
 
 1. **Observability / `query:*` schema** → 给 [`tests/suites/obs_schema_cases.hpp`](../tests/suites/obs_schema_cases.hpp) 加一行，跑 `test_obs_schema_matrix`
 2. **Exception / AuraResult** → 扩展 `test_aura_result_error_policy`
-3. **Fiber / steal / Guard** → 优先扩 `test_concurrent` 或现有 fiber 场景
-4. 无法归类时 → `tests/test_<domain>_<topic>.cpp`（**不要**再叫 `test_issue_N`）
+3. **Fiber / steal / Guard / JIT exception** → 扩展 `test_domain_fiber_orchestration`
+4. **Macro/pattern hygiene / dirty-epoch / terminal render** → 扩展 `test_domain_hygiene_dirty`
+5. **Typed mutate / type-system / shape-SoA** → 扩展 `test_domain_typed_mutate`
+6. 无法归类时 → `tests/test_domain_<topic>.cpp` 或 `tests/test_<domain>_<topic>.cpp`（**不要**再叫 `test_issue_N`）
 
 说明见 [`tests/suites/README.md`](../tests/suites/README.md)。
 
 ### 构建
 
 ```bash
-# 领域套件（推荐日常）
-ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix
+# 领域套件（推荐日常 / PR fast 默认）
+ninja -C build test_obs_schema_matrix test_domain_fiber_orchestration \
+  test_domain_hygiene_dirty test_domain_typed_mutate
+./build/test_obs_schema_matrix
+./build/test_domain_fiber_orchestration
 
-# Full issue tier：profile bundles + 少量 standalone（非 200+ 独立二进制）
+# Full issue tier：profile bundles + domain suites（非 200+ 独立二进制）
 AURA_ISSUES_TIER=full ./build.py build
 ```
 

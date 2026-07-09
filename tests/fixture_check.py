@@ -55,6 +55,7 @@ def check_issues_fast(errors: list[str]) -> None:
             target.startswith("test_issue_")
             or target.startswith("test_issues_")
             or target.startswith("test_obs_")  # domain suites
+            or target.startswith("test_domain_")  # domain suites
             or target.startswith("test_aura_result_")
             or target.startswith("test_primitives_")
         ):
