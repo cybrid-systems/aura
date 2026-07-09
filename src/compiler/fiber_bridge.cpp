@@ -50,7 +50,9 @@ __attribute__((weak)) void aura_evaluator_resume_fiber_migration() {}
 // Issue #812: steal + arena/GC safepoint coordination (worker.cpp).
 // Strong defs live in evaluator_fiber_mutation.cpp; weak no-ops keep
 // test_concurrent / other non-evaluator link units happy.
-__attribute__((weak)) void aura_evaluator_bump_steal_arena_yield() {}
-__attribute__((weak)) void aura_evaluator_bump_steal_outermost_enforced() {}
+// `used` prevents --gc-sections from dropping empty weak stubs before
+// resolution (observed as undefined symbol under ASAN+lld rebuilds).
+__attribute__((weak, used)) void aura_evaluator_bump_steal_arena_yield() {}
+__attribute__((weak, used)) void aura_evaluator_bump_steal_outermost_enforced() {}
 
 } // extern "C"
