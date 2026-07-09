@@ -4267,6 +4267,53 @@ public:
             m->compiler_live_closure_stale_prevented_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #793: JIT/AOT hot-swap fidelity observability
+    // bump helpers (Consolidate #785/#787/#755
+    // non-duplicative). Called from the planned Phase
+    // 2+ wire-up sites:
+    // - bump_jit_deopt_forced_on_reload() in
+    //   aura_jit.cpp + aura_jit_bridge.cpp hot-swap
+    //   path on successful refcount swap / region
+    //   reload when active fiber holds GuardShape/
+    //   Apply on affected func
+    // - bump_jit_linear_violation_prevented() in
+    //   aura_jit.cpp JIT codegen for Linear* ops
+    //   when runtime version_ probe or bridge_epoch
+    //   compare catches a stale check
+    // - bump_jit_env_version_sync_hit() in
+    //   evaluator_fiber_mutation.cpp + apply_closure
+    //   on steal resume / post-rollback when
+    //   JIT-executed closure triggers EnvFrame
+    //   version_ sync
+    // - bump_jit_guardshape_stale_reject() in
+    //   ir_executor.ixx + evaluator.ixx apply_
+    //   closure bridge_epoch check when
+    //   GuardShape expected_shape / shape_id
+    //   mismatch is caught
+    void bump_jit_deopt_forced_on_reload(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_deopt_forced_on_reload_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_linear_violation_prevented(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_linear_violation_prevented_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_env_version_sync_hit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_env_version_sync_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_jit_guardshape_stale_reject(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->jit_guardshape_stale_reject_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx

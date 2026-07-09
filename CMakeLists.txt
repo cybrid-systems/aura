@@ -4370,6 +4370,19 @@ add_dependencies(all_test_issue_targets test_issue_791)
 aura_add_issue_test(test_issue_792)
 aura_issue_test_link_llvm_jit(test_issue_792)
 add_dependencies(all_test_issue_targets test_issue_792)
+# Issue #793: P0 JIT/AOT hot-swap + GuardShape +
+# linear + EnvFrame version_ consistency (Non-
+# duplicative consolidation/refinement of #785/
+# #787/#755). 4 NEW CompilerMetrics atomics + 4
+# NEW bump helpers + 1 NEW (query:jit-aot-hotswap-
+# fidelity-stats, schema 793) primitive. 5 ACs:
+# hash shape, fresh-zero, schema sentinel,
+# production-path bump helpers callable + activity
+# reflects in primitive, sibling #785/#792
+# regression.
+aura_add_issue_test(test_issue_793)
+aura_issue_test_link_llvm_jit(test_issue_793)
+add_dependencies(all_test_issue_targets test_issue_793)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
