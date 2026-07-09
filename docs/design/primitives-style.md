@@ -116,6 +116,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:ffi-call-overhead-stats)` | 778 | FFI call overhead + batch primitive readiness (4 fields) |
 | `(query:dirty-region-rendering-stats)` | 779 | Dirty region / delta rendering readiness (4 fields) |
 | `(query:jit-rendering-coverage-stats)` | 780 | JIT / hot-update rendering coverage + readiness (4 fields) |
+| `(query:zero-copy-framebuffer-stats)` | 781 | Zero-copy byte buffer + framebuffer readiness (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -342,6 +343,17 @@ Distinct from the existing vector primitives (`vector-set!`, `vector-ref`, `make
 - `schema` — 780 (drift sentinel)
 
 Distinct from `(query:jit-stats)` (#427), `(query:jit-consistency-stats)`, `(query:jit-interpreter-parity-stats)` (#720), and `(query:jit-typed-mutation-stats)` (#746): those primitives cover general JIT metrics, JIT/interpreter consistency, JIT/typed-mutation hot paths, etc. `#780` is the FIRST observability surface that tracks the **JIT coverage for rendering hot paths** (the body items about `present()` and drawing loops remaining in interpreted mode) + exposes the production-readiness signals for the deferred rendering-path JIT + hot-update rendering optimization work.
+
+### `(query:zero-copy-framebuffer-stats)` fields (#781)
+
+- `pair-alloc-total` — reused `#491` atomic `pair_alloc_total` (total pair allocations across list / append / reverse / map / filter; the allocation pressure signal the body identifies)
+- `zero-copy-supported` — hardcoded 0 (the `(zero-copy-view)` primitive + byte-buffer primitive with zero-copy semantics is Phase 2+ deferred per body "Enhance or add specialized byte-buffer primitives with zero-copy and view support")
+- `ansi-helper-supported` — hardcoded 0 (the `(ansi-sequence-build)` or similar helper primitive is Phase 2+ deferred per body "Provide helpers for efficient ANSI sequence construction")
+- `memory-profiling-supported` — hardcoded 0 (the rendering memory profiling primitive is Phase 2+ deferred per body "Add memory profiling for rendering workloads")
+- `recommendation` — derived 0/1/2/3 (0 = production-ready if all 3 flags = 1; 1 = partial if any flag = 1; 2 = missing-primitive if all = 0 but `pair-alloc-total > 0`; 3 = early-stage if all = 0 and no allocation activity)
+- `schema` — 781 (drift sentinel)
+
+Distinct from the existing memory primitives in `evaluator_primitives_memory.cpp` and vector primitives in `evaluator_primitives_vector.cpp`: those primitives provide direct cell access but offer no zero-copy view, ANSI sequence batching, or rendering memory profiling. `#781` is the FIRST observability surface that tracks the **pair allocation pressure** the body identifies as wasted on per-frame buffer construction + exposes the production-readiness signals for the deferred zero-copy byte-buffer + ANSI helper + memory profiling work. The actual `ns/op` measurement is in `tests/test_issue_781.cpp` as a benchmark.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

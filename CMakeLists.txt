@@ -4169,6 +4169,34 @@ add_dependencies(all_test_issue_targets test_issue_779)
 aura_add_issue_test(test_issue_780)
 aura_issue_test_link_llvm_jit(test_issue_780)
 add_dependencies(all_test_issue_targets test_issue_780)
+# Issue #781: High-performance byte buffer + zero-copy
+# primitives observability for framebuffer management
+# (P2 perf surface). 0 NEW CompilerMetrics atomics
+# (reuses existing #491 pair_alloc_total) + 0 NEW
+# bump helpers (production paths already wire the
+# counter) + (query:zero-copy-framebuffer-stats,
+# schema 781) primitive returning 4 body-specified
+# fields + schema sentinel (6-entry hash:
+# pair-alloc-total reused + 3 hardcoded \"not yet\"
+# flags + recommendation + schema). 5 ACs: hash shape,
+# fresh-service zero state (pair-alloc-total == 0
+# because no vector construction in setup; all 3
+# support flags == 0; recommendation == 3 early-stage
+# OR == 2 if pair-alloc-total > 0), schema sentinel,
+# production-path bump accessibility (call
+# (make-vector 64) in a loop to bump pair-alloc-total
+# — the body says vector construction is wasteful
+# for framebuffer; the zero-copy primitive would
+# replace this), pair allocation ns/op benchmark
+# ((make-vector 64) × 100 iters measured for baseline),
+# sibling observability regression of #779 + #780.
+# Non-duplicative with the existing memory + vector
+# primitives — parallel companion observability
+# surface for the deferred zero-copy byte-buffer +
+# ANSI helper + memory profiling work.
+aura_add_issue_test(test_issue_781)
+aura_issue_test_link_llvm_jit(test_issue_781)
+add_dependencies(all_test_issue_targets test_issue_781)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
