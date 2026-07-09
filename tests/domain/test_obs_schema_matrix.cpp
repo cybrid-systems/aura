@@ -2,17 +2,17 @@
 //
 // Replaces the "one test_issue_N.cpp per stats surface" pattern for
 // schema/bump gate ACs. Add new Close #N observability surfaces by
-// editing tests/suites/obs_schema_cases.hpp — do not add a new binary.
+// editing tests/domain/cases/obs_schema_cases.hpp — do not add a new binary.
 //
 // Coverage:
 //   - StandardTotalHits: total/hits/savings/active + schema + bump
 //   - FieldList: schema + required field keys present
 //   - Light primitives used by late surfaces (terminal:*, primitives:alias)
 //
-// See tests/suites/README.md for the testing policy.
+// See tests/domain/README.md for the testing policy.
 
 #include "test_harness.hpp"
-#include "suites/obs_schema_cases.hpp"
+#include "domain/cases/obs_schema_cases.hpp"
 
 #include <cstdint>
 #include <cstring>

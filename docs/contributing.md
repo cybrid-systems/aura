@@ -538,14 +538,16 @@ for the full audit table and migration phases.
 
 ### 默认路径
 
-1. **Observability / `query:*` schema** → 给 [`tests/suites/obs_schema_cases.hpp`](../tests/suites/obs_schema_cases.hpp) 加一行，跑 `test_obs_schema_matrix`
+1. **Observability / `query:*` schema** → 给 [`tests/domain/cases/obs_schema_cases.hpp`](../tests/domain/cases/obs_schema_cases.hpp) 加一行，跑 `test_obs_schema_matrix`
 2. **Exception / AuraResult** → 扩展 `test_aura_result_error_policy`
-3. **Fiber / steal / Guard / JIT exception** → 扩展 `test_domain_fiber_orchestration`
+3. **Fiber / steal / Guard / JIT exception** → 扩展 `tests/domain/test_domain_fiber_orchestration.cpp`
 4. **Macro/pattern hygiene / dirty-epoch / terminal render** → 扩展 `test_domain_hygiene_dirty`
 5. **Typed mutate / type-system / shape-SoA** → 扩展 `test_domain_typed_mutate`
-6. 无法归类时 → `tests/test_domain_<topic>.cpp` 或 `tests/test_<domain>_<topic>.cpp`（**不要**再叫 `test_issue_N`）
+6. 无法归类时 → `tests/domain/test_domain_<topic>.cpp`（**不要**再叫 `test_issue_N`）
 
-说明见 [`tests/suites/README.md`](../tests/suites/README.md)。
+说明见 [`tests/domain/README.md`](../tests/domain/README.md)、[`tests/README.md`](../tests/README.md)。
+
+CMake 注册：[`cmake/AuraDomainTests.cmake`](../cmake/AuraDomainTests.cmake)（勿在根 `CMakeLists.txt` 堆 AC 散文）。
 
 ### 构建
 

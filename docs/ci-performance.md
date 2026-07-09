@@ -52,13 +52,16 @@
 
 ### Phase 5 — Test layering ✅ (started)
 
-- [x] **Domain suite** `test_obs_schema_matrix` — table-driven `query:*` schemas (`tests/suites/`)
+- [x] **Domain suite** `test_obs_schema_matrix` — table-driven `query:*` schemas (`tests/domain/cases/`)
 - [x] **Domain suites** `test_domain_fiber_orchestration` / `hygiene_dirty` / `typed_mutate` — Phase 1 batch coverage without fat duals
+- [x] Physical layout: `tests/domain/` + `cmake/AuraDomainTests.cmake` (sources no longer flat at tests root)
 - [x] Contributing policy: issue id = label; add case rows, not new binaries
 - [x] PR fast fixture: domain suites first + profile bundles (`issues_fast.json`)
 - [x] Legacy `test_issues_809_817_batch` / `819_829_batch` EXCLUDE_FROM_ALL (superseded)
 - [ ] Migrate remaining historical `test_issue_*` AC bodies into domain suites, then delete files
 - [ ] Nightly: optional long-tail / chaos
+- [ ] Componentize `aura_test_objects` (Phase 3)
+- [ ] Split observability mega-TU (`evaluator_primitives_observability.cpp`)
 
 ## Local usage
 
