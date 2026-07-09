@@ -682,6 +682,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // propagation, or trust the fiber/Guard orchestration under
     // sustained AI concurrent multi-Agent verification load.
     "query:workspace-closedloop-fiber-eda-stats",
+    // Issue #774 — Verification feedback-driven closed-loop
+    // self-evolution convergence rate (derived pct from
+    // #802 convergence-hits / closed-loop-rounds × 10000)
+    // + closed-loop-rounds + convergence-hits + feedback-
+    // mutate-rounds composite. Non-duplicative with #726
+    // (closed-loop-reliability-stats, ref-drift/rollback/
+    // feedback-mutate-rounds) and #802 (sv-verification-
+    // self-evolution-stats, feedback-parse/structured-
+    // mutate/closed-loop-rounds/convergence-hits). #774
+    // adds the deployment-grade convergence_rate pct the
+    // body asks for as a parallel companion surface.
+    "query:closed-loop-convergence-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -7249,6 +7261,114 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("multi-agent-edit-fidelity", multi_agent_edit_fidelity);
         insert_kv("stale-ref-prevented-eda-loops", stale_ref_prevented);
         insert_kv("schema", 773);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #774: query:closed-loop-convergence-stats — Verification
+    // feedback-driven closed-loop self-evolution convergence rate +
+    // closed-loop-round count + convergence-hits + feedback mutate
+    // rounds (P0 EDA execution layer production closed-loop SLO surface;
+    // refines/consolidates #726/#748/#802/#695/#696; non-duplicative
+    // with #726 query:closed-loop-reliability-stats and #802
+    // query:sv-verification-self-evolution-stats). #774 is the FIRST
+    // observability surface that tracks the *convergence rate* (derived
+    // at primitive-call time as convergence-hits / closed-loop-rounds ×
+    // 10000 fixed-point percent) — the body "convergence_rate" field
+    // computed as a deployment-grade pct that the Agent reads to decide
+    // whether the SEVA-style self-evolution is converging.
+    //
+    // Fields (4 + sentinel):
+    //   - convergence-rate         derived from #802 atomics
+    //                              (sv_self_evo_convergence_hits_total /
+    //                               sv_self_evo_closed_loop_rounds_total
+    //                               * 10000 = 0-10000 fixed-point
+    //                               percent × 100; 10000 = 100.00%
+    //                               when rounds == 0)
+    //   - closed-loop-rounds       #802 atomic
+    //                              sv_self_evo_closed_loop_rounds_total
+    //                              (reused; total feedback parse ->
+    //                               mutate -> re-verify rounds)
+    //   - convergence-hits         #802 atomic
+    //                              sv_self_evo_convergence_hits_total
+    //                              (reused; successful convergence
+    //                               rounds)
+    //   - feedback-mutate-rounds   #726 atomic
+    //                              closed_loop_feedback_mutate_rounds_total
+    //                              (reused; #726 per-round counter)
+    //   - schema == 774
+    //
+    // Phase 1 ships the primitive + derived pct field. The actual
+    // ast.ixx verify_dirty early-exit cascade + MutationBoundaryGuard
+    // subtree StableNodeRef validation + fiber-safe checkpoint +
+    // backend re-emit tie-in + extended #695/#696 stress harness +
+    // SEVA self-evolution demo + Prometheus exposure are all follow-up
+    // work (each is a dedicated session in ast.ixx +
+    // MutationBoundaryGuard + evaluator_primitives_verify*.cpp +
+    // tests/test_sv_verification_self_evolution_closed_loop_*.cpp +
+    // SEVA demo + docs).
+    add("query:closed-loop-convergence-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = ev.compiler_metrics()
+                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                            : nullptr;
+        // Reused #802 atomics
+        const std::int64_t closed_loop_rounds =
+            m ? static_cast<std::int64_t>(
+                    m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t convergence_hits =
+            m ? static_cast<std::int64_t>(
+                    m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        // Reused #726 atomic
+        const std::int64_t feedback_mutate_rounds =
+            m ? static_cast<std::int64_t>(
+                    m->closed_loop_feedback_mutate_rounds_total.load(std::memory_order_relaxed))
+              : 0;
+        // Derived convergence_rate (0-10000 fixed-point percent × 100).
+        // When closed_loop_rounds == 0, return 10000 (100.00% baseline
+        // — the closed loop hasn't run yet, so no failed convergence
+        // can be reported). When rounds > 0, compute
+        //   (convergence_hits * 10000) / closed_loop_rounds
+        // using integer division to avoid float drift under parallel
+        // updates (the #766/#767/#772 fixed-point pattern).
+        std::int64_t convergence_rate_pct = 10000; // 100.00% default
+        if (closed_loop_rounds > 0) {
+            convergence_rate_pct = (convergence_hits * 10000) / closed_loop_rounds;
+        }
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("convergence-rate", convergence_rate_pct);
+        insert_kv("closed-loop-rounds", closed_loop_rounds);
+        insert_kv("convergence-hits", convergence_hits);
+        insert_kv("feedback-mutate-rounds", feedback_mutate_rounds);
+        insert_kv("schema", 774);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
