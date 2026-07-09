@@ -786,6 +786,104 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_soa_clean_block_hit_rate_pct{0};
     std::atomic<std::uint64_t> ir_soa_pmr_column_utilization_pct{0};
     std::atomic<std::uint64_t> ir_soa_jit_codegen_time_ns_total{0};
+    // Issue #767: Arena Auto-Compact Policy + Live Defrag + Fiber/GC
+    // Safepoint Yield observability (P0 high-perf C++26 Arena
+    // foundation; completes #300 P1 + #685 + #731; non-duplicative
+    // with #685 query:arena-auto-compact-stats and #642 query:
+    // arena-auto-compaction-stats). These are public so future
+    // arena.ixx allocate_raw auto-compact policy + compact/defrag
+    // paths + gc_hooks.h + fiber integration + on_compact_hook_
+    // Shape/Dirty integration can call them at each decision point
+    // (auto compact trigger / live defrag savings / fiber yield
+    // during compact / shape_inval on compact / defrag blocked fibers).
+    //
+    // Non-duplicative with #685 (query:arena-auto-compact-stats) and
+    // #642 (query:arena-auto-compaction-stats) which cover the
+    // existing auto-compact trigger / live-move-yield / guard
+    // request_defrag axes. #767 is the FIRST observability surface
+    // that tracks the *production auto-compact policy + live defrag
+    // + fiber yield during compact + defrag blocked fibers* —
+    // 2 truly new counters beyond what #685/#642 cover — as
+    // separate per-decision-point counters the Agent consumes to
+    // decide whether to tune the threshold, force defrag, or trust
+    // the auto-compact policy under sustained AI mutation load.
+    //
+    //   - arena_auto_compact_fiber_yield_during_compact_total:
+    //                                         # of actual fiber
+    //                                         yields during
+    //                                         compact/defrag
+    //                                         (proxy for "how
+    //                                         many fibers gave
+    //                                         up the scheduler
+    //                                         to let a long
+    //                                         compact/defrag
+    //                                         finish without
+    //                                         blocking the
+    //                                         worker" — high
+    //                                         count = the
+    //                                         compaction path
+    //                                         is fiber-friendly;
+    //                                         0 = everything
+    //                                         was stop-the-
+    //                                         world, latency
+    //                                         risk under fiber
+    //                                         load). Pairs
+    //                                         with the existing
+    //                                         #685 yield_checks
+    //                                         (which is
+    //                                         observability-only;
+    //                                         this counter is
+    //                                         the *actual* yield
+    //                                         event).
+    //   - arena_auto_compact_defrag_blocked_fibers_total:
+    //                                         # of fibers blocked
+    //                                         waiting for defrag
+    //                                         to complete
+    //                                         (proxy for "how
+    //                                         many fibers hit a
+    //                                         defrag safepoint
+    //                                         and waited" — high
+    //                                         count = the
+    //                                         defrag path is
+    //                                         too slow or
+    //                                         contention is
+    //                                         real; investigate
+    //                                         fiber yield
+    //                                         integration or
+    //                                         batch defrag).
+    //                                         No equivalent in
+    //                                         #685 or #642 —
+    //                                         #767 introduces
+    //                                         this metric to
+    //                                         surface the
+    //                                         hidden defrag-
+    //                                         fiber interaction
+    //                                         cost.
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual arena.ixx allocate_raw auto-compact policy (if
+    // (fragmentation_ratio() > kAutoCompactThreshold ||
+    // auto_alloc_trigger_count > N) request_defrag() or compact();
+    // integrate with safepoint check) + live defrag pass (Phase 3
+    // of #300: scan live objects via dtors_ or registered roots,
+    // relocate to packed region, update pointers (StableRef /
+    // children views + GC roots)) + gc_hooks.h + fiber
+    // integration (in compact()/defrag(), on yield-check actually
+    // yield via fiber scheduler or WorkerContext; coordinate with
+    // GC safepoint for stop-the-world or concurrent defrag) +
+    // on_compact_hook_ Shape/Dirty integration (invoke hook to
+    // invalidate ShapeProfiler versions + cascade dirty_ in
+    // affected IR/FlatAST blocks; wire to mutation_epoch_ bump) +
+    // tests/test_highperf_arena_auto_compact_defrag_fiber_yield.cpp
+    // harness (sustained mutate:rebind loop + fiber steal + GC
+    // pressure → assert auto compact triggers, frag reduced, live
+    // defrag succeeds, yields happen, no UAF/leak, metrics, TSan
+    // clean) + SEVA long-running demo + CI gate + docs are all
+    // follow-up work (each is a dedicated session in arena.ixx +
+    // gc_hooks.h + service.ixx + ShapeProfiler + new test + SEVA
+    // demo + docs).
+    std::atomic<std::uint64_t> arena_auto_compact_fiber_yield_during_compact_total{0};
+    std::atomic<std::uint64_t> arena_auto_compact_defrag_blocked_fibers_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

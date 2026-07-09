@@ -620,6 +620,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // DirtyAware short-circuit production-readiness under
     // incremental AI mutation flows.
     "query:ir-soa-migration-stats",
+    // Issue #767 — Arena Auto-Compact Policy + Live Defrag + Fiber/GC
+    // Safepoint Yield observability (P0 high-perf C++26 Arena
+    // foundation; completes #300 P1 + #685 + #731; non-duplicative
+    // with #685 query:arena-auto-compact-stats and #642 query:arena-
+    // auto-compaction-stats). #767 is the FIRST observability surface
+    // that tracks the *production auto-compact policy + live defrag
+    // + fiber yield during compact + defrag blocked fibers* — 2
+    // truly new counters beyond what #685/#642 cover — as separate
+    // per-decision-point counters the Agent consumes to decide whether
+    // to tune the threshold, force defrag, or trust the auto-compact
+    // policy under sustained AI mutation load.
+    "query:arena-auto-compact-defrag-fiber-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -6739,6 +6751,115 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("pmr-column-utilization", pmr_column_utilization);
         insert_kv("jit-soa-codegen-time-ns", jit_soa_codegen_time_ns);
         insert_kv("schema", 766);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #767: query:arena-auto-compact-defrag-fiber-stats —
+    // Arena Auto-Compact Policy + Live Defrag + Fiber/GC Safepoint
+    // Yield observability dashboard (P0 high-perf C++26 Arena
+    // foundation; completes #300 P1 + #685 + #731; non-duplicative
+    // with #685 query:arena-auto-compact-stats and #642 query:
+    // arena-auto-compaction-stats).
+    //
+    // The 6 fields map to the issue body AC4 exactly:
+    //   - auto-compact-triggers        existing arena_/arena_group_
+    //                                  stats (auto_alloc_trigger_count /
+    //                                  auto_triggers) — proxy for
+    //                                  "how often the auto-compact
+    //                                  policy fired" (high = memory
+    //                                  pressure real; 0 = threshold
+    //                                  too lax).
+    //   - frag-reduced-bp              existing arena stats (frag_reduced_bp;
+    //                                  basis points × 100 — 5000 = 50.00%)
+    //                                  — proxy for "how much fragmentation
+    //                                  the auto-compact path reduced".
+    //   - live-defrag-savings          existing arena stats (defrag_savings_alloc /
+    //                                  defrag_savings) — proxy for "how
+    //                                  much memory the live defrag recovered".
+    //   - fiber-yield-during-compact   arena_auto_compact_fiber_yield_during_
+    //                                  compact_total (NEW atomic, foundation
+    //                                  for AC2 — actual fiber yields during
+    //                                  compact/defrag).
+    //   - shape-inval-count            existing arena stats (shape_inval_on_compact;
+    //                                  mirror #685 shape-inval-on-compact).
+    //   - defrag-blocked-fibers        arena_auto_compact_defrag_blocked_
+    //                                  fibers_total (NEW atomic, foundation
+    //                                  for AC3 — fibers blocked waiting
+    //                                  for defrag to complete; a metric
+    //                                  #767 introduces to surface the
+    //                                  hidden defrag-fiber interaction
+    //                                  cost).
+    //   - schema == 767
+    add("query:arena-auto-compact-defrag-fiber-stats", [&ev](const auto&) -> EvalValue {
+        // Reuse the existing arena_/arena_group_ stats for the 4 fields
+        // that already have a source-of-truth — mirrors the pattern
+        // used by #685 (query:arena-auto-compact-stats).
+        std::uint64_t auto_triggers = 0;
+        std::uint64_t frag_reduced_bp = 0;
+        std::uint64_t shape_inval_count = 0;
+        std::uint64_t live_defrag_savings = 0;
+        if (ev.arena_) {
+            const auto s = ev.arena_->stats();
+            auto_triggers += s.auto_alloc_trigger_count;
+            frag_reduced_bp += s.frag_reduced_bp;
+            shape_inval_count += s.shape_inval_on_compact;
+            live_defrag_savings += s.defrag_savings_alloc;
+        }
+        if (ev.arena_group_) {
+            const auto ag = ev.arena_group_->auto_compact_policy_stats();
+            auto_triggers += ag.auto_triggers;
+            frag_reduced_bp += ag.frag_reduced;
+            shape_inval_count += ag.shape_inval_on_compact;
+            live_defrag_savings += ag.defrag_savings;
+        }
+        const auto* m = ev.compiler_metrics()
+                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                            : nullptr;
+        const std::int64_t fiber_yield_during_compact =
+            m ? static_cast<std::int64_t>(
+                    m->arena_auto_compact_fiber_yield_during_compact_total.load(
+                        std::memory_order_relaxed))
+              : 0;
+        const std::int64_t defrag_blocked_fibers =
+            m ? static_cast<std::int64_t>(m->arena_auto_compact_defrag_blocked_fibers_total.load(
+                    std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("auto-compact-triggers", static_cast<std::int64_t>(auto_triggers));
+        insert_kv("frag-reduced-bp", static_cast<std::int64_t>(frag_reduced_bp));
+        insert_kv("live-defrag-savings", static_cast<std::int64_t>(live_defrag_savings));
+        insert_kv("fiber-yield-during-compact", fiber_yield_during_compact);
+        insert_kv("shape-inval-count", static_cast<std::int64_t>(shape_inval_count));
+        insert_kv("defrag-blocked-fibers", defrag_blocked_fibers);
+        insert_kv("schema", 767);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

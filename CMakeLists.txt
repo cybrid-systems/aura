@@ -3871,6 +3871,21 @@ add_dependencies(all_test_issue_targets test_sv_verification_self_evolution_clos
 aura_add_issue_test(test_issue_766)
 aura_issue_test_link_llvm_jit(test_issue_766)
 add_dependencies(all_test_issue_targets test_issue_766)
+# Issue #767: Arena Auto-Compact Policy + Live Defrag + Fiber/GC
+# Safepoint Yield observability. 2 CompilerMetrics atomics
+# (arena_auto_compact_fiber_yield_during_compact_total +
+# arena_auto_compact_defrag_blocked_fibers_total) +
+# (query:arena-auto-compact-defrag-fiber-stats, schema 767) +
+# 2 bump helpers on Evaluator
+# (bump_arena_auto_compact_fiber_yield_during_compact /
+# bump_arena_auto_compact_defrag_blocked_fibers). 5 ACs: hash
+# shape, fresh-service zero state, schema sentinel, bump-helper
+# accessibility, regression of #685/#642/#766. Non-duplicative
+# with #685/#642/#731 (parallel companion primitive with 2
+# truly new counters + 4 reused arena stats).
+aura_add_issue_test(test_issue_767)
+aura_issue_test_link_llvm_jit(test_issue_767)
+add_dependencies(all_test_issue_targets test_issue_767)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
