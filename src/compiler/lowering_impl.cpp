@@ -1,4 +1,5 @@
 module;
+#include <bit>
 
 #include "jit_typed_mutation_stats.h"
 
@@ -130,8 +131,7 @@ static std::uint32_t lower_flat_expr(
     switch (v.tag) {
         case NodeTag::LiteralFloat: {
             auto slot = state.alloc_local();
-            std::uint64_t bits;
-            std::memcpy(&bits, &v.float_value, sizeof(bits));
+            std::uint64_t bits = std::bit_cast<std::uint64_t>(v.float_value);
             state.emit(IROpcode::ConstF64, slot, static_cast<std::uint32_t>(bits & 0xFFFFFFFF),
                        static_cast<std::uint32_t>(bits >> 32));
             return slot;

@@ -1,4 +1,5 @@
 // aura_jit.cpp — LLVM ORC JIT backend for Aura IR
+#include <bit>
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
 #include "jit_typed_mutation_stats.h"
@@ -869,7 +870,7 @@ struct LLVMBuilder {
                 std::uint64_t bits = static_cast<std::uint64_t>(inst.ops[1]) |
                                      (static_cast<std::uint64_t>(inst.ops[2]) << 32);
                 double d;
-                std::memcpy(&d, &bits, sizeof(d));
+                d = std::bit_cast<double>(bits);
                 auto fp = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx), d);
                 // Issue #199: aura_alloc_float intrinsic (3/4 of
                 // the #194 migration). Bumps intrinsic_count on

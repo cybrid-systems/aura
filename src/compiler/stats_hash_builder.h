@@ -19,6 +19,9 @@ namespace aura::compiler::stats {
 [[nodiscard]] inline std::uint64_t fnv1a_key(const char* k_str) noexcept {
     return hash::fnv1a_bytes(k_str);
 }
+[[nodiscard]] inline std::uint64_t fnv1a_key(std::string_view sv) noexcept {
+    return hash::fnv1a_bytes(sv);
+}
 
 [[nodiscard]] inline std::uint8_t fingerprint(std::uint64_t h) noexcept {
     return hash::fingerprint(h);

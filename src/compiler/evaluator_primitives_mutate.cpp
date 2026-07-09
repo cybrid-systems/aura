@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include <bit>
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
@@ -535,9 +536,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     // Pack double as uint64 for mutation log
                     double new_val = as_float(a[1]);
                     std::uint64_t new_bits;
-                    std::memcpy(&new_bits, &new_val, sizeof(new_bits));
+                    new_bits = std::bit_cast<std::uint64_t>(new_val);
                     std::uint64_t old_bits;
-                    std::memcpy(&old_bits, &nv.float_value, sizeof(old_bits));
+                    old_bits = std::bit_cast<std::uint64_t>(nv.float_value);
                     auto mid = flat.add_mutation_with_rollback(
                         node, "replace-value", "Float", "Float", ev.string_heap_[sum_idx],
                         aura::ast::MutationStatus::Committed,
