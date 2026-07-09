@@ -1,0 +1,121 @@
+; ── binary-trees (Aura, while-loop) — Computer Language Benchmarks Game ──
+;
+; Port of https://benchmarksgame-team.pages.debian.net/benchmarksgame/
+;         description/binarytrees.html
+;
+; Same algorithm and cons-cell node representation as binarytrees_cons.aura,
+; but the two count-loops use the `while` primitive instead of named-let.
+; `while` is implemented as a C++-level for(;;) that calls the body closure
+; via apply_closure — each iteration is ONE eval-depth frame, not a nested
+; recursive call. So this variant does NOT trip Aura's
+; "recursion depth exceeded (>2000)" guard and does NOT overflow the
+; default 8 MB thread stack, even at large N.
+;
+; Usage:
+;   B=12 ./build-gcc16/aura < tests/bench/binarytrees_while.aura
+;       B = max depth (default 10). Completes N=12 in ~50s, N=14 in ~4min.
+;
+; Output: tab-separated, byte-identical to the reference. N=12 →
+;   stretch tree of depth 13	 check: -1
+;   8192	 trees of depth 4	 check: -8192
+;   2048	 trees of depth 6	 check: -2048
+;   512	 trees of depth 8	 check: -512
+;   128	 trees of depth 10	 check: -128
+;   32	 trees of depth 12	 check: -32
+;   long lived tree of depth 12	 check: -1
+;
+; What still limits this variant (the REAL wall, not recursion):
+;   Aura has no mark-sweep GC running during evaluation, so cons cells in
+;   ev.pairs_ accumulate across the loop and are reclaimed only at exit.
+;   Peak RSS: ~57 MB at N=10, ~116 MB at N=12, grows ~2× per +2 depth.
+;   At some N (≈16-18) the pair heap will exhaust available memory and the
+;   process will be killed by the OOM. This is the same wall the cons variant
+;   hits, just reached honestly through iteration count rather than stack
+;   overflow. Compare binarytrees_array.aura (one vector per tree) for a
+;   tighter memory budget per tree.
+;
+; Why `while` and not named-let:
+;   named-let (let loop ...) has no tail-call optimization in this runtime —
+;   every iteration is a real recursive eval_flat call whose frame never
+;   releases. The default stack segfaults at ~450 iterations and the
+;   evaluator aborts at >2000. binarytrees_cons.aura and binarytrees_array.aura
+;   use named-let and so are capped at N≈7-8 on the stock binary; this
+;   while-variant is the one to run for larger N today.
+;
+; Naming note: the checksum function is `tree-check`, not `check` — `check`
+; shadows a built-in primitive and mis-resolves to a constant under
+; recursion. See binarytrees_cons.aura for the same note.
+;
+; `while` signature reminder: (while pred-closure body-closure) where each
+; closure takes zero args. Mutable state is carried via `set!` on variables
+; captured by the body closure.
+
+(begin
+  (define (pow2 k)
+    (let loop ((k k) (acc 1))
+      (if (<= k 0) acc (loop (- k 1) (* acc 2)))))
+
+  (define (make-node item left right) (cons item (cons left right)))
+  (define (node-left  n) (car (cdr n)))
+  (define (node-item  n) (car n))
+
+  (define (bottom-up item depth)
+    (if (<= depth 0)
+      (make-node item #f #f)
+      (make-node item
+        (bottom-up (- (* 2 item) 1) (- depth 1))
+        (bottom-up (* 2 item)     (- depth 1)))))
+
+  (define (tree-check n)
+    (if (not (node-left n))
+      (node-item n)
+      (+ (node-item n)
+         (tree-check (node-left n))
+         (- (tree-check (cdr (cdr n)))))))
+
+  (define min-depth 4)
+  (define (get-n)
+    (let ((s (getenv "B")))
+      (if (string? s) (string->number s) 10)))
+  (define n (get-n))
+  (define max-depth (if (< n (+ min-depth 2)) (+ min-depth 2) n))
+  (define stretch-depth (+ max-depth 1))
+
+  ; ── Stretch tree ──
+  (display "stretch tree of depth ")
+  (display stretch-depth)
+  (display "\t check: ")
+  (display (tree-check (bottom-up 0 stretch-depth)))
+  (newline)
+
+  ; ── Long-lived tree stays alive across the loop ──
+  (define long-lived (bottom-up 0 max-depth))
+
+  ; ── Main loop: depth = min, min+2, …, max (C++-level while, not named-let) ──
+  (define depth min-depth)
+  (while (lambda () (<= depth max-depth))
+    (lambda ()
+      (define iterations (pow2 (- (+ max-depth min-depth) depth)))
+      (define i 1)
+      (define chk 0)
+      (while (lambda () (<= i iterations))
+        (lambda ()
+          (set! chk
+            (+ chk
+               (tree-check (bottom-up i depth))
+               (tree-check (bottom-up (- i) depth))))
+          (set! i (+ i 1))))
+      (display (* iterations 2))
+      (display "\t trees of depth ")
+      (display depth)
+      (display "\t check: ")
+      (display chk)
+      (newline)
+      (set! depth (+ depth 2))))
+
+  ; ── Long-lived tree survived the loop ──
+  (display "long lived tree of depth ")
+  (display max-depth)
+  (display "\t check: ")
+  (display (tree-check long-lived))
+  (newline))
