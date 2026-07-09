@@ -911,6 +911,18 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // primitive exposure + snapshot capture + cross-
     // fiber re-stamp + mutation-impact batch flag).
     "query:mutate-batch-atomic-stats",
+
+    // Issue #791: exhaustive fiber yield-point
+    // instrumentation + automatic StableRef/dirty
+    // cross-boundary propagation observability
+    // (Refine/Consolidate #773/#762 non-duplicative).
+    // 3 NEW CompilerMetrics atomics + 3 NEW bump
+    // helpers on Evaluator + 1 NEW primitive that
+    // exposes the new fields + 2 hardcoded "not yet"
+    // flags for Phase 2+ deferred work (exhaustive
+    // yield instrumentation + auto-propagation
+    // active).
+    "query:workspace-closedloop-fiber-multi-agent-yield-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -15364,6 +15376,175 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // Issue #791: query:workspace-closedloop-fiber-multi-agent-
+    // yield-stats — P0 exhaustive fiber yield-point
+    // instrumentation + automatic StableRef/dirty
+    // cross-boundary propagation in all Workspace EDSL
+    // primitives (query/mutate/mark_dirty/children
+    // iteration) for production multi-Agent
+    // orchestration (Refine/Consolidate #773/#762
+    // non-duplicative).
+    //
+    // The existing #773 (query:workspace-closedloop-
+    // fiber-eda-stats) already surfaces the *pct-derived*
+    // layer: concurrent-query-mutate-success-pct +
+    // cross-cow-ref-validity-pct + yield-points-hit +
+    // shared-mutex-contention-ns + multi-agent-edit-
+    // fidelity + stale-ref-prevented-eda-loops (schema
+    // 773). #791 covers the *cross-boundary auto-
+    // propagation + missed-yield negative signal*
+    // specifically — were StableRefs auto-propagated
+    // across COW/clone/split? were dirty bits auto-
+    // propagated? were long walks catching all yield
+    // points? — as separate per-decision-point signals
+    // the Agent consumes to monitor Workspace
+    // closed-loop production safety under concurrent
+    // multi-Agent EDA verification loops.
+    //
+    // 3 NEW CompilerMetrics atomics + 3 NEW bump
+    // helpers on Evaluator + 1 NEW primitive (hybrid
+    // enforcement-side pattern, mirror #789/#790).
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - autoprop-refs-total
+    //       workspace_closedloop_autoprop_refs_total
+    //       (# of StableRefs auto-propagated/
+    //       snapshotted across workspace COW/clone/
+    //       split boundaries; bumped from
+    //       Evaluator::bump_workspace_closedloop_
+    //       autoprop_ref() at the planned Phase 2+
+    //       workspace tree + is_valid_in / WeakRef
+    //       registry paths wire-up per body "On
+    //       workspace COW/clone/split in primitives
+    //       or WorkspaceTree, auto-propagate/snapshot
+    //       active StableRef pins ... via epoch or
+    //       weak registry; extend is_valid_in /
+    //       mark_dirty_upward to notify cross-
+    //       boundary")
+    //   - autoprop-dirty-total
+    //       workspace_closedloop_autoprop_dirty_total
+    //       (# of dirty bits auto-propagated on
+    //       workspace COW/clone/split boundaries;
+    //       bumped from
+    //       Evaluator::bump_workspace_closedloop_
+    //       autoprop_dirty() at the planned Phase 2+
+    //       mark_dirty_upward cross-boundary
+    //       notification path wire-up)
+    //   - missed-yield-total
+    //       workspace_closedloop_missed_yield_total
+    //       (# of times a long walk — pattern matcher
+    //       / children_safe iteration /
+    //       mark_dirty_upward on verification
+    //       subtrees — missed a yield point; the
+    //       negative signal — high value = yield
+    //       starvation under concurrent fiber load;
+    //       bumped from
+    //       Evaluator::bump_workspace_closedloop_
+    //       missed_yield() at the planned Phase 2+
+    //       exhaustive yield instrumentation wire-up
+    //       per body "Instrument all long walks ...
+    //       with explicit fiber yield points or
+    //       safepoint checks")
+    //   - exhaustive-yield-instrumentation-active
+    //       hardcoded 0 (Phase 2+ to wire Fiber::yield
+    //       + check_gc_safepoint in
+    //       evaluator_primitives_query.cpp +
+    //       mutate.cpp + workspace paths long walks
+    //       per body "Instrument all long walks
+    //       (pattern matcher, children_safe iteration,
+    //       mark_dirty_upward on SV verification
+    //       nodes) with explicit fiber yield points
+    //       or safepoint checks (Fiber::yield or
+    //       check_gc_safepoint style)")
+    //   - autoprop-active
+    //       hardcoded 0 (Phase 2+ to wire
+    //       StableRef/dirty auto-propagation across
+    //       COW/clone/split boundaries per body
+    //       "auto-propagate/snapshot active StableRef
+    //       pins or dirty bits via epoch or weak
+    //       registry; extend is_valid_in /
+    //       mark_dirty_upward to notify cross-
+    //       boundary"; covers the StableRef +
+    //       dirty + cross-boundary validation
+    //       aggregation flag)
+    //   - recommendation
+    //       derived 0/1/2/3 from the 2 deferred
+    //       flags + activity signal
+    //   - schema == 791
+    add("query:workspace-closedloop-fiber-multi-agent-yield-stats",
+        [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t autoprop_refs =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_autoprop_refs_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t autoprop_dirty =
+                m ? static_cast<std::int64_t>(m->workspace_closedloop_autoprop_dirty_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t missed_yield =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_missed_yield_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 2 hardcoded "not yet" flags for Phase 2+
+            // deferred work.
+            const std::int64_t exhaustive_yield_instrumentation_active = 0;
+            const std::int64_t autoprop_active = 0;
+            // Recommendation: derived from the 2 deferred
+            // flags + activity signal. Phase 1 only (all
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (exhaustive_yield_instrumentation_active == 1 && autoprop_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (exhaustive_yield_instrumentation_active == 1 || autoprop_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (autoprop_refs > 0 || autoprop_dirty > 0 || missed_yield > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+            else
+                recommendation = 3; // early-stage (no Workspace activity yet)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("autoprop-refs-total", autoprop_refs);
+            insert_kv("autoprop-dirty-total", autoprop_dirty);
+            insert_kv("missed-yield-total", missed_yield);
+            insert_kv("exhaustive-yield-instrumentation-active",
+                      exhaustive_yield_instrumentation_active);
+            insert_kv("autoprop-active", autoprop_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 791);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

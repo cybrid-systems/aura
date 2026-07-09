@@ -4341,6 +4341,20 @@ add_dependencies(all_test_issue_targets test_issue_789)
 aura_add_issue_test(test_issue_790)
 aura_issue_test_link_llvm_jit(test_issue_790)
 add_dependencies(all_test_issue_targets test_issue_790)
+# Issue #791: P0 exhaustive fiber yield-point
+# instrumentation + automatic StableRef/dirty
+# cross-boundary propagation in all Workspace EDSL
+# primitives (Refine/Consolidate #773/#762
+# non-duplicative). 3 NEW CompilerMetrics atomics +
+# 3 NEW bump helpers on Evaluator + 1 NEW
+# (query:workspace-closedloop-fiber-multi-agent-yield-
+# stats, schema 791) primitive. 5 ACs: hash shape,
+# fresh-zero, schema sentinel, production-path bump
+# helpers callable + activity reflects in primitive,
+# sibling #773/#790 regression.
+aura_add_issue_test(test_issue_791)
+aura_issue_test_link_llvm_jit(test_issue_791)
+add_dependencies(all_test_issue_targets test_issue_791)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

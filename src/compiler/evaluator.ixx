@@ -4184,6 +4184,41 @@ public:
                 n, std::memory_order_relaxed);
         }
     }
+    // Issue #791: exhaustive fiber yield-point instrumentation
+    // + automatic StableRef/dirty cross-boundary
+    // propagation observability bump helpers (Refine
+    // #773/#762 non-duplicative). Called from the
+    // planned Phase 2+ wire-up sites:
+    // - bump_workspace_closedloop_autoprop_ref() in
+    //   workspace tree + is_valid_in / WeakRef registry
+    //   paths when StableRefs are auto-propagated
+    //   across COW/clone/split boundary
+    // - bump_workspace_closedloop_autoprop_dirty() in
+    //   mark_dirty_upward cross-boundary notification
+    //   path when dirty bits are auto-propagated on
+    //   COW/clone/split
+    // - bump_workspace_closedloop_missed_yield() when
+    //   a long walk missed a yield point (negative
+    //   signal — high value = yield starvation under
+    //   concurrent fiber load)
+    void bump_workspace_closedloop_autoprop_ref(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_autoprop_refs_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_workspace_closedloop_autoprop_dirty(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_autoprop_dirty_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_workspace_closedloop_missed_yield(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->workspace_closedloop_missed_yield_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #723: Pass pipeline DirtyAware + Value v2 + Shape
     // history observability counters backing the (query:value-dispatch-
     // stats) primitive. These are public so future pass_manager.ixx
