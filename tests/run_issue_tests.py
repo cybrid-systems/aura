@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
 from _aura_harness import AURA_BIN, BUILD, ROOT, B, G, N, R, Y
-from issue_tier import _member_to_bundle, issues_tier, resolve_issue_targets
+from issue_tier import _member_to_bundle, git_changed_issue_targets, issues_tier, resolve_issue_targets
 
 # Pre-existing test failures (NOT caused by recent PRs).
 PRE_EXISTING_FAILURES: set[str] = set()
@@ -256,15 +256,37 @@ def main():
     ap.add_argument("--jobs", type=int, default=None, help="parallel workers (default: min(8, cpu))")
     ap.add_argument("--timeout", type=int, default=60, help="per-test timeout (seconds)")
     ap.add_argument("--list", action="store_true", help="list available tests")
+    ap.add_argument(
+        "--changed",
+        action="store_true",
+        help="only run git-changed issue tests (Issue #871 diff-aware mode; force tier=fast)",
+    )
     args = ap.parse_args()
-
     tier = args.tier or issues_tier()
     jobs = args.jobs or int(os.environ.get("AURA_ISSUES_JOBS", str(min(8, os.cpu_count() or 4))))
+    changed_only = args.changed
+    if changed_only and tier == "full":
+        tier = "fast"
 
     bins = discover_test_issue_binaries()
     bins = filter_bins_for_tier(bins, tier)
     if args.filter:
         bins = [b for b in bins if args.filter in b]
+
+    if changed_only:
+        # Issue #871: 减法 close diff-aware filter. Restrict
+        # the discovered bins to only the ones whose source
+        # touched the git working tree (so PR simulation runs
+        # ONLY the issue tests that the PR actually affects,
+        # not the whole fast bundle).
+        changed_set = set(git_changed_issue_targets())
+        if changed_set:
+            bins = [b for b in bins if b in changed_set]
+        else:
+            # No git-changed sources — fall back to the fast
+            # subset so --changed has SOME useful output even
+            # when nothing in the working tree is touched.
+            bins = filter_bins_for_tier(discover_test_issue_binaries(), "fast")
 
     if args.list:
         print(f"Available test_issue_* binaries ({len(bins)}, tier={tier}):")
