@@ -4313,6 +4313,36 @@ public:
             m->aot_safe_boundary_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #785: AOT concurrent hot-update observability
+    // bump helpers. Called from the planned Phase 2+
+    // wire-up sites:
+    // - bump_aot_concurrent_steal_during_reload() in
+    //   WorkerThread::steal() when steal is deferred
+    //   due to active AOT reload on the victim
+    // - bump_aot_grace_period_hit() in
+    //   aura_reload_aot_module() before/after the
+    //   refcount swap
+    // - bump_aot_env_version_sync_on_reload() in
+    //   aura_reload_aot_module() after the swap when
+    //   EnvFrame version is bumped
+    void bump_aot_concurrent_steal_during_reload() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_concurrent_steal_during_reload_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_grace_period_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_grace_period_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_env_version_sync_on_reload() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_env_version_sync_on_reload_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #733: macro marker propagation + IR/JIT hygiene
     // enforcement counters backing the (query:ir-marker-hygiene-stats)
     // primitive. These are public so future lowering_impl.cpp +

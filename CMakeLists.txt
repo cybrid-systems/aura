@@ -4253,6 +4253,19 @@ add_dependencies(all_test_issue_targets test_issue_783)
 aura_add_issue_test(test_issue_784)
 aura_issue_test_link_llvm_jit(test_issue_784)
 add_dependencies(all_test_issue_targets test_issue_784)
+# Issue #785: P0 AOT hot-update maturity (concurrent
+# steal + grace period + EnvFrame version sync) for
+# multi-agent / multi-fiber concurrent orchestration
+# (Non-duplicative refinement of #732/#708/#590). 3 NEW
+# atomics + 3 NEW bump helpers + 1 NEW
+# (query:aot-concurrent-hotupdate-stats, schema 785)
+# primitive. 5 ACs: hash shape, fresh-zero, schema
+# sentinel, production-path bump helpers callable +
+# activity reflects in primitive, sibling #708/#784
+# regression.
+aura_add_issue_test(test_issue_785)
+aura_issue_test_link_llvm_jit(test_issue_785)
+add_dependencies(all_test_issue_targets test_issue_785)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
