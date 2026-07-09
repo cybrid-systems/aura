@@ -13,6 +13,7 @@
 #include <contracts>
 #include <cstdint>
 #include <unordered_set>
+#include "hash_meta.h" // FNV constants (#901)
 
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).
@@ -131,7 +132,7 @@ static ShapeID hash_int32(ShapeID h, std::int32_t v) {
 }
 
 ShapeID compute_shape_id(const Shape& shape) {
-    ShapeID h = 0xcbf29ce484222325ULL; // FNV offset
+    ShapeID h = ::aura::compiler::stats::kFnvOffsetBasis; // FNV offset
     h = hash_uint8(h, static_cast<std::uint8_t>(shape.tag));
     h = hash_int32(h, shape.type_id);
 

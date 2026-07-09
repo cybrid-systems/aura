@@ -1,9 +1,12 @@
 // stats_hash_builder.h — Issue #877: shared FNV-1a + linear-probe hash insert
 // for query:* stats primitives (dedup of copy-pasted insert_kv lambdas).
 //
+// FNV / fingerprint constants: hash_meta.h (#901 / #908).
 // Phase 1: header-only helpers. Call sites migrate incrementally.
 #ifndef AURA_COMPILER_STATS_HASH_BUILDER_H
 #define AURA_COMPILER_STATS_HASH_BUILDER_H
+
+#include "hash_meta.h"
 
 #include <cstdint>
 #include <string>
@@ -12,19 +15,13 @@
 
 namespace aura::compiler::stats {
 
-// FNV-1a 64-bit hash of a C string key (same constants as observability).
+// FNV-1a 64-bit hash of a C string key (canonical via hash_meta).
 [[nodiscard]] inline std::uint64_t fnv1a_key(const char* k_str) noexcept {
-    std::uint64_t h = 0xcbf29ce484222325ull;
-    for (const char* p = k_str; *p; ++p)
-        h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
-    return h;
+    return hash::fnv1a_bytes(k_str);
 }
 
 [[nodiscard]] inline std::uint8_t fingerprint(std::uint64_t h) noexcept {
-    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-    if (fp == 0xFF)
-        fp = 0xFE;
-    return fp;
+    return hash::fingerprint(h);
 }
 
 // Issue #878: load atomic or 0 when metrics pointer is null.

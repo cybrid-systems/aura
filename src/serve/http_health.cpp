@@ -1,6 +1,7 @@
 // http_health.cpp — Issue #677 minimal HTTP health/metrics server.
 
 #include "http_health.h"
+#include "compiler/runtime_paths.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -105,18 +106,9 @@ namespace {
 } // namespace
 
 bool runtime_c_resolved() {
-    auto readable = [](const std::string& path) { return ::access(path.c_str(), R_OK) == 0; };
-    if (const char* dir = std::getenv("AURA_RUNTIME_DIR")) {
-        const std::string base(dir);
-        if (readable(base + "/runtime.c") || readable(base + "/lib/runtime.c"))
-            return true;
-    }
-    for (const char* rel : {"lib/runtime.c", "../lib/runtime.c", "/usr/local/share/aura/runtime.c",
-                            "/usr/share/aura/runtime.c", "/opt/aura/share/runtime.c"}) {
-        if (readable(rel))
-            return true;
-    }
-    return false;
+    // Issue #906: canonical resolution (AURA_RUNTIME_DIR + relatives + install).
+    const std::string path = aura::compiler::paths::resolve_runtime_c();
+    return ::access(path.c_str(), R_OK) == 0;
 }
 
 int port_from_env() {

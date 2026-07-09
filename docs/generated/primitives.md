@@ -2,24 +2,17 @@
 
 # Primitives (generated)
 
-**925** registrations scanned from `src/**/*.cpp`.
+**921** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 127 primitives (14%)
+- **mutation-safety**: 123 primitives (13%)
 - **core**: 223 primitives (24%)
 - **internal-observable**: 428 primitives (46%)
 - **convenience**: 147 primitives (16%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
-
-## Workspace load / eval (4)
-
-- `current-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `eval-current` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
 ## Query: (428)
 
@@ -1070,7 +1063,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (127)
+### Mutation safety (must remain primitive) (123)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1163,9 +1156,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `current-source` — `src/compiler/evaluator_primitives_eval.cpp`
-- `eval-current` — `src/compiler/evaluator_primitives_eval.cpp`
-- `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -1174,7 +1164,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `panic-checkpoint` — `src/compiler/evaluator_primitives_observability.cpp`
 - `panic-restore` — `src/compiler/evaluator_primitives_observability.cpp`
 - `panic-safe-source` — `src/compiler/evaluator_primitives_observability.cpp`
-- `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`

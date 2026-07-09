@@ -10,6 +10,7 @@ module;
 // module), so we include it directly here in the module
 // preamble (avoids the import-only restriction on .h).
 #include "observability_metrics.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -244,9 +245,9 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
-                std::uint64_t h = 0xcbf29ce484222325ull;
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
                     fp = 0xFE;

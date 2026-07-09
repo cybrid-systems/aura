@@ -30,6 +30,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "hash_meta.h" // FNV constants (#901)
 
 // Issue #411 fu1 fu4: NodeId type alias (mirrors
 // `export using NodeId = std::uint32_t` in
@@ -169,9 +170,9 @@ namespace std {
 template <> struct hash<aura::compiler::per_defuse_index::DefUseIndex> {
     std::size_t
     operator()(const aura::compiler::per_defuse_index::DefUseIndex& idx) const noexcept {
-        std::size_t h = 0xcbf29ce484222325ull;
+        std::size_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (char c : idx.name) {
-            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
         }
         return h;
     }

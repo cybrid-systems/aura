@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -326,9 +327,10 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     auto ksid = types::as_string_idx(key_val);
                     if (ksid < string_heap.size()) {
                         auto& ks = string_heap[ksid];
-                        kh = 0xcbf29ce484222325ull;
+                        kh = ::aura::compiler::stats::kFnvOffsetBasis;
                         for (char c : ks)
-                            kh = (kh ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                            kh = (kh ^ static_cast<std::uint8_t>(c)) *
+                                 ::aura::compiler::stats::kFnvPrime;
                     }
                 } else if (types::is_int(key_val)) {
                     kh = static_cast<std::uint64_t>(types::as_int(key_val)) * 0x9e3779b97f4a7c15ull;

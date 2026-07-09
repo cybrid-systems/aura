@@ -35,7 +35,7 @@
 //     4=Hash, 5=Primitive, 6=String, 7=Module,
 //     8=Error, 9=Opaque, 10=Linear, 11=Keyword
 //
-//   Ref bit layout: (pool_index << 6) | (type << 2) | 1
+//   Ref bit layout: (pool_index << kRefPoolShift) | (type << kRefTypeShift) | kRefLowTag
 //
 //   Float: stored in runtime pool with FLOAT_BIAS encoding
 //   String: stored in runtime pool with STRING_BIAS encoding
@@ -49,6 +49,26 @@
 #include "core/cpp26_contract_stats.h"
 
 namespace aura::compiler::types {
+
+// ── Bit-layout constants (#907) ───────────────────────────────────
+// Ref: (pool_index << kRefPoolShift) | (type << kRefTypeShift) | kRefLowTag
+inline constexpr std::uint64_t kRefLowTag = 1ULL; // lowest bit set for Ref
+inline constexpr std::uint64_t kRefTypeShift = 2; // bits 2-5: RefType (4 bits)
+inline constexpr std::uint64_t kRefTypeMask = 0xFULL << kRefTypeShift;
+inline constexpr std::uint64_t kRefPoolShift = 6; // bits 6+: pool index
+static_assert(kRefTypeShift + 4 <= kRefPoolShift, "RefType must fit below pool index");
+
+// Fixnum: signed integer << kFixnumShift (low bit 0).
+inline constexpr std::uint64_t kFixnumShift = 1;
+
+// Closure id high bit (IR executor: id is not a pool index).
+inline constexpr std::uint64_t kClosureIdHighBit = 1ULL << 48;
+
+// ── Special sentinels (#902): low bits == 11 (tag Special) ────────
+//   #f = 3, #t = 7, void = 11  (must match lib/runtime.c)
+inline constexpr std::int64_t kSpecialFalse = 3;
+inline constexpr std::int64_t kSpecialTrue = 7;
+inline constexpr std::int64_t kSpecialVoid = 11;
 
 // Issue #571: unified tag classification for EvalValue v2 dispatch.
 enum class EvalValueTag : std::uint8_t {
@@ -185,23 +205,24 @@ static_assert(RefPair == 0 && RefClosure == 1 && RefCell == 2,
 // can use these directly. value.ixx itself uses the same expressions
 // inside its make_/is_/as_ helpers.
 inline constexpr bool is_fixnum(std::int64_t v) noexcept {
-    return (v & 1) == 0;
+    return (static_cast<std::uint64_t>(v) & ((1ULL << kFixnumShift) - 1)) == 0;
 }
 inline constexpr bool is_ref(std::int64_t v) noexcept {
-    return (v & 3) == 1;
+    return (v & 3) == static_cast<std::int64_t>(kRefLowTag);
 }
 inline constexpr bool is_special(std::int64_t v) noexcept {
     return (v & 3) == 3;
 }
 
 inline constexpr std::uint64_t ref_type(std::int64_t v) noexcept {
-    return (static_cast<std::uint64_t>(v) >> 2) & 0xF;
+    return (static_cast<std::uint64_t>(v) >> kRefTypeShift) & 0xF;
 }
 inline constexpr std::uint64_t ref_index(std::int64_t v) noexcept {
-    return static_cast<std::uint64_t>(v) >> 6;
+    return static_cast<std::uint64_t>(v) >> kRefPoolShift;
 }
 inline constexpr std::int64_t make_ref(std::uint64_t type, std::uint64_t index) noexcept {
-    return static_cast<std::int64_t>((index << 6) | (type << 2) | 1ULL);
+    return static_cast<std::int64_t>((index << kRefPoolShift) | (type << kRefTypeShift) |
+                                     kRefLowTag);
 }
 
 // String bias helpers — these are paired with lib/runtime.c.

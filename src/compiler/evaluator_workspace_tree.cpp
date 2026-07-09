@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -36,9 +37,9 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
     auto vals = ht->values();
     auto cap = ht->capacity;
     for (auto& [k, v] : kv) {
-        std::uint64_t h = 0xcbf29ce484222325ull;
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (char c : k)
-            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
         auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
         if (fp == 0xFF)
             fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
@@ -77,9 +78,9 @@ Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalV
     auto vals = ht->values();
     auto cap = ht->capacity;
     for (auto& [k, v] : kv) {
-        std::uint64_t h = 0xcbf29ce484222325ull;
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (char c : k)
-            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
         auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
         if (fp == 0xFF)
             fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision

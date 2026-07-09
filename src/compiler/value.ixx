@@ -95,32 +95,33 @@ double aura_float_ref(std::int64_t val);
 // All keep the same signature as before — this is a transparent refactor.
 
 export inline EvalValue make_int(std::int64_t v) noexcept {
-    return EvalValue(v << 1); // fixnum encoding
+    return EvalValue(v << kFixnumShift); // fixnum encoding (#907)
 }
 export inline bool is_int(const EvalValue& v) noexcept {
     return classify_eval_value_tag(v.val) == EvalValueTag::Fixnum;
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
     contract_assert(is_int(v));
-    return v.val >> 1;
+    return v.val >> kFixnumShift;
 }
 
 export inline EvalValue make_bool(bool v) noexcept {
-    return EvalValue(v ? 7 : 3); // #t=7, #f=3
+    return EvalValue(v ? kSpecialTrue : kSpecialFalse); // #902
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Special && (v.val == 3 || v.val == 7);
+    return classify_eval_value_tag(v.val) == EvalValueTag::Special &&
+           (v.val == kSpecialFalse || v.val == kSpecialTrue);
 }
 export inline bool as_bool(const EvalValue& v) noexcept {
     contract_assert(is_bool(v));
-    return v.val == 7;
+    return v.val == kSpecialTrue;
 }
 
 export inline EvalValue make_void() noexcept {
-    return EvalValue(11); // void sentinel = 11
+    return EvalValue(kSpecialVoid); // #902
 }
 export inline bool is_void(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Special && v.val == 11;
+    return classify_eval_value_tag(v.val) == EvalValueTag::Special && v.val == kSpecialVoid;
 }
 
 export inline EvalValue make_float(double d) {

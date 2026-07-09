@@ -14,6 +14,7 @@ module;
 #include "observability_metrics.h"
 #include "runtime_shared.h"
 #include "security_capabilities.h"
+#include "hash_meta.h" // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -351,9 +352,9 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
         auto vals = ht->values();
         auto hcap = ht->capacity;
         for (auto& [k, v] : kv) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;

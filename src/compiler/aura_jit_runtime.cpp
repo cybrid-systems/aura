@@ -63,6 +63,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <unwind.h>
 #include "runtime_shared.h"
 #include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
+#include "hash_meta.h"  // Issue #908: kEmptySlot
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 __thread TLarena g_tl_arena;
@@ -305,7 +306,8 @@ std::vector<FlatHashTable*> g_hash_tables;
 // linear scan; updating the JIT inlined version to match is
 // deferred to a follow-up issue (the inlined version is already
 // a constant-factor optimization for the hot path).
-static constexpr uint8_t HASH_EMPTY = 0xFF;
+// Issue #908: alias canonical empty-slot sentinel.
+static constexpr uint8_t HASH_EMPTY = aura::compiler::hash::kEmptySlot;
 static constexpr uint8_t HASH_OCCUPIED = 0x80;
 static constexpr uint8_t HASH_TOMBSTONE = 0x7F;
 
