@@ -42,3 +42,17 @@ extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state
     (void)linear_state;
     (void)opcode;
 }
+
+// Fiber/eval paths in aura_test_objects reference these AOT hooks
+// (defined in aura_jit_bridge.cpp). Light bundles link runtime heaps
+// but not the full bridge — provide no-op stubs so link succeeds.
+extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
+                                                  std::uint64_t bridge_epoch) {
+    (void)defuse_version;
+    (void)bridge_epoch;
+    return false; // no drift
+}
+
+extern "C" void aura_aot_record_deopt_on_steal(void) {
+    // Stub: production increments AOT deopt metrics.
+}
