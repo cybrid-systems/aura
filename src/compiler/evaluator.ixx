@@ -6278,6 +6278,42 @@ public:
     void bump_primitive_error_count() noexcept {
         primitive_error_count_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #804: per-unified-error-path bump helpers (P0
+    // stdlib reliability foundation; refines/consolidates
+    // #585 + #751 + #775 + #478). Called from the planned
+    // Phase 2+ wire-up sites:
+    // - bump_primitive_error_with_provenance() in
+    //   primitives_detail.h PRIM_ERROR / make_primitive_error
+    //   when the (kind, msg, provenance) schema is filled
+    //   in (the *good* path the body asks for — 100% of
+    //   primitives should hit this path; 0 silent fallbacks)
+    // - bump_primitive_error_silent_fallback() in the
+    //   Phase 2+ audit grep-step when ad-hoc returns
+    //   (make_int(0) / void / catch-all on bad args) are
+    //   detected in evaluator_primitives_*.cpp
+    // - bump_primitive_error_recovery_hook() in
+    //   evaluator_fiber_mutation.cpp Guard + retry path
+    //   when a recovery-hook firing happens in response to
+    //   a structured error
+    void bump_primitive_error_with_provenance(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitive_error_with_provenance_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_primitive_error_silent_fallback(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitive_error_silent_fallback_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_primitive_error_recovery_hook(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitive_error_recovery_hook_invocations_total.fetch_add(n,
+                                                                         std::memory_order_relaxed);
+        }
+    }
     [[nodiscard]] std::atomic<std::uint64_t>* primitive_error_counter_ptr() noexcept {
         return &primitive_error_count_;
     }

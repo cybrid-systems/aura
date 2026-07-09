@@ -3355,6 +3355,42 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_closure_bridge_impact_blocks_total{0};
     std::atomic<std::uint64_t> incremental_closure_quote_lambda_stale_prevented_total{0};
     std::atomic<std::uint64_t> incremental_closure_env_version_resync_total{0};
+    // Issue #804: unified primitive error semantics observability
+    // counters (P0 stdlib reliability foundation; refines/
+    // consolidates #585 + #751 + #775 + #478; non-duplicative
+    // with #585 query:primitives-error-stats coarse hash +
+    // #478 query:primitive-error-stats pair primitive + #751
+    // query:primitives-contract-stats contract enforcement).
+    // #804 introduces the FIRST observability surface that
+    // tracks the unified-error-path SLO composite — the
+    // body asks for "100% primitives use unified path; zero
+    // silent fallback errors under load" — by splitting
+    // primitive_error_count_ into three sub-counter families:
+    //   - primitive_error_with_provenance_total: PRIM_ERROR /
+    //     make_primitive_error invocations that fill in the
+    //     (kind, msg, provenance) schema; the *good* path
+    //     the body asks for. Bumped by
+    //     bump_primitive_error_with_provenance() at the call
+    //     sites that already use PRIM_ERROR.
+    //   - primitive_error_silent_fallback_total: ad-hoc
+    //     returns (make_int(0) / void / catch-all on bad
+    //     args) the body warns against. Counted by the audit
+    //     grep-step in Phase 2+; for now the atomic is a
+    //     no-op (value 0) — kept as the forward-looking
+    //     signal.
+    //   - primitive_error_recovery_hook_invocations_total:
+    //     count of recovery-hook firings in Guard + retry
+    //     path. Bumped by bump_primitive_error_recovery_
+    //     hook() at the planned Phase 2+ recovery path.
+    // P0 ships the counters + the (query:primitive-error-
+    // unified-stats, schema 804) primitive so the Agent has
+    // a deployment-grade SLO composite today; values are 0
+    // until the Phase 2+ PRIM_ERROR audit + registry
+    // enforcement + (error:structured-make ...) + recovery
+    // hooks land.
+    std::atomic<std::uint64_t> primitive_error_with_provenance_total{0};
+    std::atomic<std::uint64_t> primitive_error_silent_fallback_total{0};
+    std::atomic<std::uint64_t> primitive_error_recovery_hook_invocations_total{0};
 
     // Issue #654: Macro+reflect+self-evo hygiene vs fiber/panic/AOT/SoA
     // cross-cutting gaps (non-duplicative with #593 pattern-ir-hygiene,

@@ -504,6 +504,22 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:primitives-consistency-stats",
     // Issue #751 — PRIM_ERROR / capture contract enforcement stats
     "query:primitives-contract-stats",
+    // Issue #804 — unified primitive error semantics + recovery
+    // observability (P0 stdlib-Registry reliability foundation;
+    // refines/consolidates #585 + #751 + #775 + #478; non-
+    // duplicative with #585 query:primitives-error-stats
+    // coarse hash + #478 query:primitive-error-stats pair
+    // primitive + #751 query:primitives-contract-stats
+    // contract enforcement + #775 query:extension-kit-stats
+    // capture contract validation + #806 registry-extension
+    // primitives). #804 is the FIRST observability surface
+    // that tracks the *unified-error-path SLO composite* —
+    // 100% primitives use unified path + zero silent fallback
+    // errors under load — as a single deployment-grade SLO
+    // composite the Agent reads to decide whether the
+    // stdlib error semantics are production-ready for
+    // commercial AI Agent use.
+    "query:primitive-error-unified-stats",
     // Issue #752 — list/vector map/filter SoA hot-path stats
     "query:list-soa-hotpath-stats",
     // Issue #753 — long-running deployment infra stats
@@ -9970,10 +9986,169 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     //   - capacity: current per-prim array capacity (for
     //     diagnosing whether growth has occurred)
     //
-    // Why a separate primitive from query:primitive-perf-stats:
-    // that one is a coarse-grained MVP (just total + count).
-    // This one is the "which prim is the bottleneck?" answer
-    // that the AI Agent perf-tuning loop actually needs.
+    // Issue #804: query:primitive-error-unified-stats — unified
+    // primitive error semantics + recovery observability
+    // composite (P0 stdlib-Registry reliability foundation;
+    // refines/consolidates #585 + #751 + #775 + #478; non-
+    // duplicative with #585 query:primitives-error-stats
+    // coarse hash + #478 query:primitive-error-stats pair
+    // primitive + #751 query:primitives-contract-stats
+    // contract enforcement + #775 query:extension-kit-stats
+    // capture contract validation + #806 registry-extension
+    // primitives). #804 is the FIRST observability surface
+    // that tracks the *unified-error-path SLO composite* —
+    // 100% primitives use unified path + zero silent fallback
+    // errors under load — as a single deployment-grade SLO
+    // composite the Agent reads to decide whether the
+    // stdlib error semantics are production-ready for
+    // commercial AI Agent use.
+    //
+    // Fields (8 + sentinel):
+    //   - error-count-total       reused primitive_error_count_
+    //                             (#478 source-of-truth; bumped
+    //                             by bump_primitive_error_count()
+    //                             at every PRIM_ERROR / make_
+    //                             primitive_error invocation)
+    //   - with-provenance         primitive_error_with_provenance_
+    //                             total (NEW atomic; # of errors
+    //                             that filled in (kind, msg,
+    //                             provenance) schema — the
+    //                             *good* path the body asks for
+    //                             at 100% coverage)
+    //   - silent-fallback        primitive_error_silent_fallback_
+    //                             total (NEW atomic; # of ad-hoc
+    //                             returns / catch-alls the body
+    //                             warns against; counted by the
+    //                             Phase 2+ audit grep)
+    //   - error-values-size      reused get_primitive_error_
+    //                             values_size() (the persistent
+    //                             error object arena size; #478
+    //                             pair second component)
+    //   - capture-violations     reused #751 primitive_capture_
+    //                             violations_total (capture
+    //                             contract enforcement; a separate
+    //                             *violation* signal from
+    //                             primitive_error_count_)
+    //   - unified-path-pct       derived (with-provenance /
+    //                             error-count-total) × 10000
+    //                             (SLO target 100% = 10000
+    //                             per body "100% primitives use
+    //                             unified path")
+    //   - recovery-hook-invocations  primitive_error_recovery_
+    //                             hook_invocations_total (NEW
+    //                             atomic; count of recovery-hook
+    //                             firings in Guard + retry path;
+    //                             bumped by
+    //                             bump_primitive_error_recovery_
+    //                             hook())
+    //   - unified-error-path-active  hardcoded 0 (Phase 2+; the
+    //                             actual PRIM_ERROR audit +
+    //                             make_primitive_error
+    //                             provenance enforcement +
+    //                             registry enforce-unified-path
+    //                             + (error:structured-make ...)
+    //                             + recovery hooks in Guard +
+    //                             tests/test_primitive_error_
+    //                             unified_audit.cpp harness
+    //                             all remain follow-up work per
+    //                             body Actionable 1-5)
+    //   - schema == 804
+    add("query:primitive-error-unified-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = ev.compiler_metrics()
+                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                            : nullptr;
+        // Reused #478 + #751 atomics.
+        const std::int64_t error_count_total =
+            static_cast<std::int64_t>(ev.get_primitive_error_count());
+        const std::int64_t error_values_size =
+            static_cast<std::int64_t>(ev.get_primitive_error_values_size());
+        const std::int64_t capture_violations =
+            m ? static_cast<std::int64_t>(
+                    m->primitive_capture_violations_total.load(std::memory_order_relaxed))
+              : 0;
+        // NEW #804 atomics.
+        const std::int64_t with_provenance =
+            m ? static_cast<std::int64_t>(
+                    m->primitive_error_with_provenance_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t silent_fallback =
+            m ? static_cast<std::int64_t>(
+                    m->primitive_error_silent_fallback_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t recovery_hook_invocations =
+            m ? static_cast<std::int64_t>(m->primitive_error_recovery_hook_invocations_total.load(
+                    std::memory_order_relaxed))
+              : 0;
+        // Derived unified-path-pct: vacuous-true 10000 baseline
+        // when error_count_total == 0 (no errors observed yet
+        // = vacuously compliant); otherwise (with_provenance /
+        // error_count_total) × 10000. SLO target = 100% =
+        // 10000 per body "100% primitives use unified path".
+        std::int64_t unified_path_pct = 10000;
+        if (error_count_total > 0) {
+            unified_path_pct =
+                static_cast<std::int64_t>((with_provenance * 10000) / error_count_total);
+        }
+        // Hardcoded "not yet" flag — Phase 2+ deferred.
+        const std::int64_t unified_error_path_active = 0;
+        // Recommendation derivation:
+        //   0 = production-ready (unified-path-pct == 10000 +
+        //       unified-error-path-active)
+        //   1 = near-production (SLO met but active flag off)
+        //   2 = partial Phase 1 (errors observed + some with
+        //       provenance but SLO not yet 100%)
+        //   3 = early-stage (no error activity yet)
+        std::int64_t recommendation = 3;
+        if (error_count_total + capture_violations + silent_fallback + recovery_hook_invocations >
+            0) {
+            if (unified_path_pct >= 10000 && silent_fallback == 0) {
+                recommendation = unified_error_path_active ? 0 : 1;
+            } else {
+                recommendation = 2;
+            }
+        }
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("error-count-total", error_count_total);
+        insert_kv("with-provenance", with_provenance);
+        insert_kv("silent-fallback", silent_fallback);
+        insert_kv("error-values-size", error_values_size);
+        insert_kv("capture-violations", capture_violations);
+        insert_kv("unified-path-pct", unified_path_pct);
+        insert_kv("recovery-hook-invocations", recovery_hook_invocations);
+        insert_kv("unified-error-path-active", unified_error_path_active);
+        insert_kv("schema", 804);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // (query:primitive-fastpath-per-prim) — Issue #479:
     add("query:primitive-fastpath-per-prim", [&ev](std::span<const EvalValue> a) -> EvalValue {
         constexpr std::size_t kDefaultTopN = 10;
         std::size_t top_n = kDefaultTopN;

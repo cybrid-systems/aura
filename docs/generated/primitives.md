@@ -249,6 +249,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pattern-sv-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:per-fiber-stack-pool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitive-error-unified-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:primitive-fastpath-per-prim` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:primitive-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:primitive-metadata` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1550,6 +1551,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pattern-sv-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:per-fiber-stack-pool-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitive-error-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitive-error-unified-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:primitive-fastpath-per-prim` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:primitive-meta-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:primitive-metadata` — `src/compiler/evaluator_primitives_observability.cpp`
