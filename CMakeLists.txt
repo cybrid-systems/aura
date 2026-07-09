@@ -3984,6 +3984,23 @@ add_dependencies(all_test_issue_targets test_issue_771)
 aura_add_issue_test(test_issue_772)
 aura_issue_test_link_llvm_jit(test_issue_772)
 add_dependencies(all_test_issue_targets test_issue_772)
+# Issue #773: Workspace closed-loop fiber/multi-agent EDA
+# verification observability. 3 NEW CompilerMetrics atomics
+# (workspace_closedloop_shared_mutex_contention_ns_total +
+# workspace_closedloop_multi_agent_edit_fidelity_pct +
+# workspace_closedloop_stale_ref_prevented_eda_loops_total) +
+# (query:workspace-closedloop-fiber-eda-stats, schema 773) +
+# 3 bump helpers on Evaluator
+# (bump_workspace_closedloop_shared_mutex_contention_ns /
+# set_workspace_closedloop_multi_agent_edit_fidelity_pct /
+# bump_workspace_closedloop_stale_ref_prevented_eda_loops).
+# 5 ACs: hash shape, fresh-service zero state, schema sentinel,
+# bump-helper accessibility, sibling observability regression
+# of #762/#772/#798/#747. Non-duplicative with #762 (parallel
+# companion primitive with 3 NEW dimensions + 3 reused).
+aura_add_issue_test(test_issue_773)
+aura_issue_test_link_llvm_jit(test_issue_773)
+add_dependencies(all_test_issue_targets test_issue_773)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

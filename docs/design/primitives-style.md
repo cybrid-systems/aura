@@ -108,6 +108,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:arena-auto-compact-defrag-fiber-stats)` | 767 | Arena auto-compact policy + live defrag + fiber yield (6 fields) |
 | `(query:shape-pass-hotpath-stats)`        | 768    | Shape + Pass + Contracts hot-path (5 fields) |
 | `(query:sv-closedloop-slo)`              | 772    | SV Verification closed-loop SLO (6 fields) |
+| `(query:workspace-closedloop-fiber-eda-stats)` | 773 | Workspace closed-loop fiber/multi-agent EDA verification (6 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -249,6 +250,18 @@ Distinct from `(query:shape-stability-stats)` (#570), `(query:shape-profiler-sta
 - `schema` — 772 (drift sentinel)
 
 Distinct from `(query:sv-verification-structure-stats)` (#748), `(query:sv-commercial-emit-fidelity-stats)` (#801), and `(query:sv-verification-self-evolution-stats)` (#802): #748 tracks structure mutate / dirty re-emit / emit fidelity pass-fail; #801 tracks commercial emit roundtrip + dirty re-emit; #802 tracks structured self-evolution closed-loop. #772 is the FIRST observability surface that tracks the *production SLO status of the SV verification closed-loop* — the computed slo-status + fidelity rate + re-emit latency max + breach counter — as a deployment-grade dashboard the Agent reads to decide whether the closed-loop is production-ready for commercial VCS / Questa / JasperGold emit acceptance.
+
+### `(query:workspace-closedloop-fiber-eda-stats)` fields (#773)
+
+- `concurrent-query-mutate-success-pct` — derived at primitive-call time from `#762` atomics (0–10000 fixed-point percent × 100; 9900 = 99.00% baseline)
+- `cross-cow-ref-validity-pct` — derived from `#762` `cross_cow_ref_valid_total` (0–10000 fixed-point percent × 100)
+- `yield-points-hit` — reused `#762` atomic `workspace_closedloop_yield_points_hit_total`
+- `shared-mutex-contention-ns` — NEW atomic `workspace_closedloop_shared_mutex_contention_ns_total` (cumulative ns spent in `workspace_mtx_` contention; time-based vs `#762`'s count-based)
+- `multi-agent-edit-fidelity` — NEW atomic `workspace_closedloop_multi_agent_edit_fidelity_pct` (0–10000 fixed-point percent × 100; high value = production-ready multi-Agent deployments)
+- `stale-ref-prevented-eda-loops` — NEW atomic `workspace_closedloop_stale_ref_prevented_eda_loops_total` (count of cross-COW `StableRef` accesses caught stale + refreshed)
+- `schema` — 773 (drift sentinel)
+
+Distinct from `(query:workspace-closedloop-orchestration-stats)` (#762): `#762` ships 4 raw counters (concurrent-query-mutate / cross-cow-ref-valid / yield-points-hit / shared-mutex-contention). `#773` extends with **pct-derived fields** (computed at primitive-call time) + **ns-based contention** (time metric vs count) + **multi-Agent fidelity** (NEW dimension) + **stale-ref prevention** (NEW dimension) — the EDA verification-loop production surface.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 

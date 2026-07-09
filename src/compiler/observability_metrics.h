@@ -1109,6 +1109,65 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_slo_reemit_latency_max_us{0};
     std::atomic<std::uint64_t> sv_slo_reemit_hits_total{0};
     std::atomic<std::uint64_t> sv_slo_breach_total{0};
+    // Issue #773: Workspace closed-loop fiber/multi-agent EDA
+    // verification orchestration observability (P0 high-perf
+    // C++26 concurrent Workspace foundation; refines/consolidates
+    // #762/#749/#755/#760; non-duplicative with #762 query:
+    // workspace-closedloop-orchestration-stats). #773 is the
+    // FIRST observability surface that tracks the *production
+    // Workspace closed-loop orchestration under fiber + multi-
+    // Agent EDA verification loops* — concurrent_query_mutate_
+    // success_pct + cross_cow_ref_validity_pct (derived from
+    // #762 atomics) + yield_points_hit (reused) +
+    // shared_mutex_contention_ns (NEW atomic, time-based
+    // metric vs #762's count-based) + multi_agent_edit_fidelity
+    // (NEW atomic, fixed-point pct × 100) + stale_ref_prevented
+    // (NEW atomic, count of stale refs prevented in EDA loops).
+    //
+    // The 4 reused atomics from #762 are referenced (not duplicated)
+    // so the existing #762 schema sentinels stay intact. The 3 NEW
+    // atomics provide the additional dimensions:
+    //
+    //   - workspace_closedloop_shared_mutex_contention_ns_total:
+    //     cumulative nanoseconds spent in workspace_mtx_ contention
+    //     on shared/unique locks under heavy AI load (replaces #762's
+    //     count-based metric with a time-based metric — more useful
+    //     for SLO latency analysis).
+    //   - workspace_closedloop_multi_agent_edit_fidelity_pct:
+    //     0-10000 fixed-point percent (× 100 — 9900 = 99.00%) of
+    //     multi-Agent concurrent edits that completed cleanly under
+    //     fiber steal (proxy for "how well multi-Agent orchestration
+    //     maintains Workspace integrity" — high value = production-
+    //     ready multi-Agent deployments).
+    //   - workspace_closedloop_stale_ref_prevented_eda_loops_total:
+    //     count of cross-COW StableRef accesses that were caught
+    //     stale and refreshed/avoided (proxy for "how often the
+    //     auto cross-COW propagation saved a stale ref in long-
+    //     running SEVA verification loops" — high value = the
+    //     auto-propagation safety net is working).
+    //
+    // Phase 1 ships the counters + bump helpers + the primitive.
+    // The actual ast.ixx pin_for_cow() + cross-boundary is_valid_in
+    // + auto-capture pinning shared_ptr on Guard/query paths +
+    // Workspace COW/clone/split propagation/snapshot of active
+    // StableRef pins + EDSL primitives yield instrumentation
+    // (matcher / children iteration / mark_dirty_upward on SV
+    // verification nodes) + fiber/Guard steal/resume auto-refresh
+    // + tests/test_workspace_closedloop_fiber_multiagent_eda_
+    // verification.cpp harness (10+ fibers/agents with parallel
+    // query/mutate on shared+COW workspaces + steal/yield/panic
+    // during SEVA verification loop → assert auto refresh, dirty
+    // consistent, no contention deadlock or stale, metrics
+    // accurate, TSan clean) + SEVA long-running demo + Prometheus
+    // exposure with SLO thresholds (closedloop_fidelity >99.5%
+    // under 10+ fiber concurrent) + CI gate + docs are all
+    // follow-up work (each is a dedicated session in ast.ixx +
+    // evaluator_workspace_tree + evaluator_primitives_query.cpp +
+    // evaluator_primitives_mutate.cpp + evaluator_fiber_mutation.cpp
+    // + new test + SEVA demo + docs).
+    std::atomic<std::uint64_t> workspace_closedloop_shared_mutex_contention_ns_total{0};
+    std::atomic<std::uint64_t> workspace_closedloop_multi_agent_edit_fidelity_pct{0};
+    std::atomic<std::uint64_t> workspace_closedloop_stale_ref_prevented_eda_loops_total{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
