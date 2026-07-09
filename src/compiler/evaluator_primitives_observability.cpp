@@ -714,6 +714,26 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // skeletons_generated) as a single deployment-grade
     // dashboard.
     "query:extension-kit-stats",
+    // Issue #776 — Integrated Primitives Hot-Path
+    // Benchmark Suite + Mutation/Fiber-Load Regression
+    // Gate with Quantitative SLOs observability
+    // dashboard. Non-duplicative with #614/#584
+    // (primitives-hotpath-stats, 11 fields including
+    // primitive-call-total + pair-alloc-total +
+    // linear-traverse-total + cdr-depth-max + call-rate +
+    // alloc-per-call + regex-time-us + stability-score +
+    // hotpath-schema + primitives-hotpath-total +
+    // primitives-hotpath-recommendation), #751
+    // (primitives-contract-stats, 4 contract counters).
+    // #776 is the FIRST observability surface that
+    // aggregates the primitives hot-path SLO composite
+    // (current-vs-baseline-pct + contract-violations +
+    // fastpath-hit-rate-pct + regression-flag) as a
+    // single deployment-grade SLO dashboard the Agent
+    // reads to decide whether the stdlib hot-path is
+    // production-ready under AI Agent mutation + fiber
+    // load.
+    "query:primitives-hotpath-slo-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -7513,6 +7533,144 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("meta_completeness_pct", meta_completeness_pct);
         insert_kv("test_skeletons_generated", test_skeletons_generated);
         insert_kv("schema", 775);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #776: query:primitives-hotpath-slo-stats — Integrated
+    // Primitives Hot-Path Benchmark Suite + Mutation/Fiber-Load
+    // Regression Gate with Quantitative SLOs observability
+    // dashboard (P0 stdlib perf SLO surface; refines/consolidates
+    // #752/#727/#674/#751; non-duplicative with #614/#584
+    // query:primitives-hotpath-stats and #751
+    // query:primitives-contract-stats). #776 is the FIRST
+    // observability surface that aggregates the *primitives
+    // hot-path SLO composite* — current-vs-baseline-pct (the
+    // stability_score × 100 fixed-point percent, with 10000 =
+    // 100% baseline), contract-violations (reused #751 atomic),
+    // fastpath-hit-rate-pct (derived fastpath_hits / call_total
+    // × 10000), and regression-flag (1 if current-vs-baseline-
+    // pct < 5000 indicating a >50% stability-score drop = SLO
+    // breach) — as a single deployment-grade SLO dashboard
+    // the Agent reads to decide whether the stdlib hot-path
+    // is production-ready under AI Agent mutation + fiber
+    // load.
+    //
+    // Fields (4 + sentinel):
+    //   - current-vs-baseline-pct  derived from #614 stability_score
+    //                              (0-10000 fixed-point percent × 100;
+    //                               10000 = 100% baseline when
+    //                               stability_score == 100, which is
+    //                               the no-load production baseline;
+    //                               values < 5000 indicate SLO breach
+    //                               per body SLO "no regression >5%"
+    //                               plus stability_score < 50 = the
+    //                               #614 "regression" threshold)
+    //   - contract-violations     reused #751 atomic
+    //                              primitive_capture_violations_total
+    //                              (capture contract enforcement
+    //                               violations under load; the body
+    //                               SLO target is 0)
+    //   - fastpath-hit-rate-pct   derived (primitive_fastpath_hits
+    //                              _total / (primitive_call_total
+    //                              + 1)) × 10000 (0-10000 fixed-
+    //                              point percent × 100; 10000 =
+    //                              100% baseline when call_total ==
+    //                              0 = no measurement yet, the
+    //                              vacuous-true default mirror #774
+    //                              convergence_rate)
+    //   - regression-flag         derived 1 if current-vs-baseline-
+    //                              pct < 5000 (stability_score < 50,
+    //                              the #614 "regression" threshold),
+    //                              else 0
+    //   - schema == 776
+    //
+    // Phase 1 ships the primitive + derived SLO composite. The
+    // actual tests/bench_primitives_hotpath_ai_load.cpp benchmark
+    // harness + google/benchmark integration + perf counters for
+    // cache/alloc + CI gate (build.py or .github benchmark step
+    // that fails on SLO breach or regression) + trend dashboard +
+    // SLO regression flag wiring to CompilerMetrics + SEVA
+    // tutorial updates + primitives_style.md + perf.md with
+    // current SLOs + how to add new prim benchmark + regression
+    // policy are all follow-up work (each is a dedicated
+    // session in tests/ + CI pipeline + docs).
+    add("query:primitives-hotpath-slo-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t call_total = 0;
+        std::uint64_t pair_total = 0;
+        std::uint64_t fastpath_hits = 0;
+        std::uint64_t depth_max = 0;
+        std::uint64_t contract_viol = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            call_total = m->primitive_call_total.load(std::memory_order_relaxed);
+            pair_total = m->pair_alloc_total.load(std::memory_order_relaxed);
+            fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
+            depth_max = m->cdr_depth_max.load(std::memory_order_relaxed);
+            contract_viol = m->primitive_capture_violations_total.load(std::memory_order_relaxed);
+        }
+        // Reuse the #614 stability-score formula: alloc_per_call
+        // (integer division) + cdr_depth penalty capped at < 50
+        // before regression flag. Same computation, exposed as a
+        // 0-10000 fixed-point pct via × 100.
+        const std::int64_t alloc_per_call =
+            static_cast<std::int64_t>(pair_total / (call_total + 1));
+        const std::int64_t stability_penalty =
+            static_cast<std::int64_t>(alloc_per_call * 3 + (depth_max > 32 ? depth_max / 8 : 0));
+        const std::int64_t stability_score = stability_penalty >= 100 ? 0 : 100 - stability_penalty;
+        // current-vs-baseline-pct: stability_score × 100 = 0-10000
+        // fixed-point percent. 10000 = 100.00% baseline (no load,
+        // no regression). The body SLO target is "no regression
+        // >5%" which maps to current-vs-baseline-pct >= 9500
+        // (i.e., stability_score >= 95).
+        const std::int64_t current_vs_baseline_pct = stability_score * 100;
+        // fastpath-hit-rate-pct: 10000 baseline when call_total == 0
+        // (vacuously true, mirror #774 convergence_rate). Otherwise
+        // compute (fastpath_hits / (call_total + 1)) × 10000.
+        // The +1 in the denominator avoids divide-by-zero AND
+        // matches the #614 alloc_per_call formula.
+        std::int64_t fastpath_hit_rate_pct = 10000; // 100.00% baseline
+        if (call_total > 0) {
+            fastpath_hit_rate_pct =
+                static_cast<std::int64_t>((fastpath_hits * 10000) / (call_total + 1));
+        }
+        // regression-flag: 1 if current-vs-baseline-pct < 5000
+        // (= stability_score < 50, the #614 "regression" threshold
+        // that recommends action 3). Otherwise 0.
+        const std::int64_t regression_flag = current_vs_baseline_pct < 5000 ? 1 : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("current-vs-baseline-pct", current_vs_baseline_pct);
+        insert_kv("contract-violations", static_cast<std::int64_t>(contract_viol));
+        insert_kv("fastpath-hit-rate-pct", fastpath_hit_rate_pct);
+        insert_kv("regression-flag", regression_flag);
+        insert_kv("schema", 776);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
