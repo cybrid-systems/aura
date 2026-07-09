@@ -3886,6 +3886,18 @@ add_dependencies(all_test_issue_targets test_issue_766)
 aura_add_issue_test(test_issue_767)
 aura_issue_test_link_llvm_jit(test_issue_767)
 add_dependencies(all_test_issue_targets test_issue_767)
+# Issue #768: Shape + Pass + Contracts hot-path observability.
+# 5 CompilerMetrics atomics (shape_pass_*_total +
+# shape_stability_transitions_total + jit_epoch_sync_hits_total +
+# deopt_targeted_skips_total + concept_violations_caught_total)
+# + (query:shape-pass-hotpath-stats, schema 768) + 5 bump helpers
+# on Evaluator. 5 ACs: hash shape, fresh-service zero state,
+# schema sentinel, bump-helper accessibility, regression of
+# #570/#767/#766. Non-duplicative with #507/#570/#492/#494/#571
+# /#744 (parallel companion primitive with 5 truly new counters).
+aura_add_issue_test(test_issue_768)
+aura_issue_test_link_llvm_jit(test_issue_768)
+add_dependencies(all_test_issue_targets test_issue_768)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

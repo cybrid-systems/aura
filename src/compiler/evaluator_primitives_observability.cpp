@@ -632,6 +632,28 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // to tune the threshold, force defrag, or trust the auto-compact
     // policy under sustained AI mutation load.
     "query:arena-auto-compact-defrag-fiber-stats",
+    // Issue #768 — Shape + Pass + Contracts hot-path observability
+    // (P0 high-perf C++26 Contracts/Concepts adoption foundation;
+    // builds on #507 hot-path Contracts; non-duplicative with
+    // #570 query:shape-stability-stats, #492 query:shape-profiler-
+    // stats, #494 query:pass-pipeline-stats, #571 query:evalvalue-
+    // v2-dispatch-stats, #744 shape_jit_pass_closedloop_stats).
+    // #768 is the FIRST observability surface that tracks the
+    // *production hot-path Contracts coverage + ShapeProfiler
+    // epoch sync with JIT/Pass Pipeline + stronger Concept
+    // constraints for Dirty/JITFriendly composition* —
+    // contract_checks_hotpath (zero-overhead debug catches in
+    // SoA/dirty/shape dispatch), shape_stability_transitions
+    // (proxy for "how often the dominant shape flipped"),
+    // jit_epoch_sync_hits (ShapeProfiler version bumped in sync
+    // with mutation_epoch_ + JIT epoch hint), deopt_targeted_
+    // skips (DirtyAware or impact_scope targeted invalidation
+    // saved a full recompile), concept_violations_caught
+    // (static_assert in pipeline templates fired) — as separate
+    // per-decision-point counters the Agent consumes to monitor
+    // the speculative opt + debug layer production-readiness
+    // under AI mutation churn.
+    "query:shape-pass-hotpath-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -6860,6 +6882,83 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("shape-inval-count", static_cast<std::int64_t>(shape_inval_count));
         insert_kv("defrag-blocked-fibers", defrag_blocked_fibers);
         insert_kv("schema", 767);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #768: query:shape-pass-hotpath-stats — Shape + Pass +
+    // Contracts hot-path observability dashboard (P0 high-perf
+    // C++26 Contracts/Concepts adoption foundation; builds on #507
+    // hot-path Contracts; non-duplicative with #570 query:shape-
+    // stability-stats, #492 query:shape-profiler-stats, #494
+    // query:pass-pipeline-stats, #571 query:evalvalue-v2-dispatch-
+    // stats, #744 shape_jit_pass_closedloop_stats).
+    //
+    // Fields (5 + sentinel):
+    //   - contract-checks-hotpath  shape_pass_contract_checks_hotpath_total
+    //   - shape-stability-transitions  shape_stability_transitions_total
+    //   - jit-epoch-sync-hits      jit_epoch_sync_hits_total
+    //   - deopt-targeted-skips     deopt_targeted_skips_total
+    //   - concept-violations-caught concept_violations_caught_total
+    //   - schema == 768
+    add("query:shape-pass-hotpath-stats", [&ev](const auto&) -> EvalValue {
+        const auto* m = ev.compiler_metrics()
+                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                            : nullptr;
+        const std::int64_t contract_checks_hotpath =
+            m ? static_cast<std::int64_t>(
+                    m->shape_pass_contract_checks_hotpath_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t shape_stability_transitions =
+            m ? static_cast<std::int64_t>(
+                    m->shape_stability_transitions_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t jit_epoch_sync_hits =
+            m ? static_cast<std::int64_t>(
+                    m->jit_epoch_sync_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t deopt_targeted_skips =
+            m ? static_cast<std::int64_t>(
+                    m->deopt_targeted_skips_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t concept_violations_caught =
+            m ? static_cast<std::int64_t>(
+                    m->concept_violations_caught_total.load(std::memory_order_relaxed))
+              : 0;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("contract-checks-hotpath", contract_checks_hotpath);
+        insert_kv("shape-stability-transitions", shape_stability_transitions);
+        insert_kv("jit-epoch-sync-hits", jit_epoch_sync_hits);
+        insert_kv("deopt-targeted-skips", deopt_targeted_skips);
+        insert_kv("concept-violations-caught", concept_violations_caught);
+        insert_kv("schema", 768);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
