@@ -5836,6 +5836,18 @@ public:
     [[nodiscard]] std::size_t get_primitive_documented_meta_count() const noexcept {
         return primitives_.documented_meta_count();
     }
+    // Issue #778: FFI call count accessor — exposes the
+    // coverage_counters_[8] slot that all FFI primitives
+    // (c-load, c-func, c-opaque, c-alloc, c-struct-set!,
+    // c-struct-ref) increment. Used by the
+    // (query:ffi-call-overhead-stats, schema 778) primitive
+    // to surface FFI call volume to the observability
+    // surface. The FFI call closure is NOT counted here
+    // (it's applied through the regular apply_closure
+    // path, not through coverage_counters_).
+    [[nodiscard]] std::uint64_t get_ffi_call_count() const noexcept {
+        return coverage_counters_[8];
+    }
     void bump_primitive_describe_count() noexcept {
         primitive_describe_count_.fetch_add(1, std::memory_order_relaxed);
     }
