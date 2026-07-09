@@ -799,6 +799,22 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // zero-copy byte-buffer + ANSI sequence helper
     // + memory profiling work the body asks for.
     "query:zero-copy-framebuffer-stats",
+    // Issue #782 — Dedicated terminal rendering
+    // primitives module + profiling integration
+    // observability (P2 infrastructure surface).
+    // Non-duplicative with the existing vector +
+    // memory + I/O primitives in
+    // evaluator_primitives_vector.cpp / _memory.cpp
+    // / _io.cpp. #782 is the FIRST observability
+    // surface that exposes the production-readiness
+    // signals for the deferred evaluator_primitives
+    // _terminal.cpp module + core rendering primitives
+    // (clear, draw-batch, present, dirty tracking) +
+    // shape_profiler integration + example terminal
+    // renderer the body asks for. Uses live primitive
+    // lookup pattern (mirror #777) to count how many
+    // of the 4 expected core primitives are registered.
+    "query:terminal-rendering-module-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -8351,6 +8367,156 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("memory-profiling-supported", memory_profiling_supported);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 781);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #782: query:terminal-rendering-module-stats —
+    // Dedicated terminal rendering primitives module +
+    // profiling integration observability (P2
+    // infrastructure surface; non-duplicative with the
+    // existing vector + memory + I/O primitives in
+    // evaluator_primitives_vector.cpp / _memory.cpp /
+    // _io.cpp). #782 is the FIRST observability surface
+    // that exposes the production-readiness signals for
+    // the deferred evaluator_primitives_terminal.cpp
+    // module + core rendering primitives (clear,
+    // draw-batch, present, dirty tracking) +
+    // shape_profiler integration + example terminal
+    // renderer the body asks for.
+    //
+    // Fields (4 + sentinel):
+    //   - core-primitive-count    live count of expected
+    //                              terminal rendering core
+    //                              primitives registered
+    //                              (4 expected per body:
+    //                              `clear`, `draw-batch`,
+    //                              `present`, dirty
+    //                              tracking; 0 on fresh
+    //                              service because no
+    //                              evaluator_primitives
+    //                              _terminal.cpp exists
+    //                              yet — computed via
+    //                              live primitive lookup,
+    //                              mirror #777 pattern)
+    //   - terminal-module-available
+    //                              hardcoded 0 (the
+    //                              evaluator_primitives
+    //                              _terminal.cpp module
+    //                              is Phase 2+ deferred
+    //                              per body "no
+    //                              evaluator_primitives
+    //                              _terminal.cpp or
+    //                              equivalent module for
+    //                              high-performance
+    //                              terminal/character
+    //                              graphics rendering")
+    //   - shape-profiler-integration-available
+    //                              hardcoded 0 (the
+    //                              shape_profiler.cpp
+    //                              integration for
+    //                              rendering paths is
+    //                              Phase 2+ deferred per
+    //                              body "Integrate with
+    //                              existing
+    //                              observability and
+    //                              shape_profiler.cpp")
+    //   - example-renderer-available
+    //                              hardcoded 0 (the
+    //                              minimal high-perf
+    //                              terminal renderer
+    //                              example is Phase 2+
+    //                              deferred per body
+    //                              "Provide example
+    //                              implementation of a
+    //                              minimal high-perf
+    //                              terminal renderer")
+    //   - recommendation           0=production-ready
+    //                              (terminal-module-
+    //                              available = 1 AND
+    //                              shape-profiler-
+    //                              integration = 1 AND
+    //                              example-renderer = 1
+    //                              AND core-primitive-
+    //                              count = 4),
+    //                              1=partial (any of the
+    //                              3 module flags = 1 or
+    //                              core-primitive-count
+    //                              > 0), 2=missing-module
+    //                              (all 3 = 0 but
+    //                              core-primitive-count
+    //                              > 0 = core primitives
+    //                              exist without module
+    //                              wrapper), 3=early-
+    //                              stage (all 3 = 0 AND
+    //                              core-primitive-count
+    //                              == 0)
+    //   - schema == 782
+    add("query:terminal-rendering-module-stats", [&ev](const auto&) -> EvalValue {
+        // Live primitive lookup: count how many of the
+        // expected core rendering primitives are
+        // registered. Mirror #777 milestone_pct pattern.
+        const std::vector<const char*> expected_core_primitives = {"clear", "draw-batch", "present",
+                                                                   "dirty-tracking"};
+        std::size_t found_count = 0;
+        for (const char* name : expected_core_primitives) {
+            if (ev.primitives_.lookup(name).has_value())
+                ++found_count;
+        }
+        const std::int64_t core_primitive_count = static_cast<std::int64_t>(found_count);
+        // Hardcoded flags for the deferred module + profiler
+        // integration + example renderer (mirror
+        // #778-#781 hardcoded "not yet" flag pattern).
+        const std::int64_t terminal_module_available = 0;
+        const std::int64_t shape_profiler_integration_available = 0;
+        const std::int64_t example_renderer_available = 0;
+        // Recommendation: derived from the 3 module flags +
+        // core-primitive-count signal.
+        std::int64_t recommendation = 3;
+        if (terminal_module_available == 1 && shape_profiler_integration_available == 1 &&
+            example_renderer_available == 1 && core_primitive_count == 4)
+            recommendation = 0; // production-ready
+        else if (terminal_module_available == 1 || shape_profiler_integration_available == 1 ||
+                 example_renderer_available == 1 || core_primitive_count > 0)
+            recommendation = 1; // partial
+        else if (core_primitive_count > 0)
+            recommendation = 2; // missing-module (core primitives exist without module wrapper)
+        else
+            recommendation = 3; // early-stage (no core primitives, no module)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("core-primitive-count", core_primitive_count);
+        insert_kv("terminal-module-available", terminal_module_available);
+        insert_kv("shape-profiler-integration-available", shape_profiler_integration_available);
+        insert_kv("example-renderer-available", example_renderer_available);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 782);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

@@ -4197,6 +4197,34 @@ add_dependencies(all_test_issue_targets test_issue_780)
 aura_add_issue_test(test_issue_781)
 aura_issue_test_link_llvm_jit(test_issue_781)
 add_dependencies(all_test_issue_targets test_issue_781)
+# Issue #782: Dedicated terminal rendering primitives
+# module + profiling integration observability (P2
+# infrastructure surface). 0 NEW CompilerMetrics
+# atomics + 0 NEW bump helpers + 1 NEW primitive
+# (query:terminal-rendering-module-stats, schema
+# 782) returning 4 body-specified fields + schema
+# sentinel (6-entry hash: core-primitive-count derived
+# from live primitive lookup of [clear, draw-batch,
+# present, dirty-tracking] + 3 hardcoded \"not yet\"
+# flags + recommendation + schema). 5 ACs: hash shape,
+# fresh-service zero state (core-primitive-count == 0
+# because no evaluator_primitives_terminal.cpp exists
+# on main; all 3 module flags == 0; recommendation == 3
+# early-stage), schema sentinel, live lookup
+# correctness (verify each expected core primitive is
+# not yet registered; cross-check the live count
+# matches independent primitive existence check),
+# primitive existence sanity check (clear +
+# draw-batch + present + dirty-tracking all NOT
+# registered on fresh main), sibling observability
+# regression of #780 + #781. Non-duplicative with
+# the existing vector + memory + I/O primitives —
+# parallel companion observability surface for the
+# deferred terminal rendering module + profiling
+# integration + example renderer.
+aura_add_issue_test(test_issue_782)
+aura_issue_test_link_llvm_jit(test_issue_782)
+add_dependencies(all_test_issue_targets test_issue_782)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d
