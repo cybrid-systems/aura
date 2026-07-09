@@ -4099,6 +4099,54 @@ public:
             m->concept_violations_caught_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #795: deep hot-path Contracts + stronger
+    // SoAView/ShapeStablePass Concepts + ShapeProfiler
+    // JIT Epoch Sync + Dirty Propagation observability
+    // bump helpers (Non-duplicative refinement of
+    // #768/#507/#766/#767/#741). Called from the
+    // planned Phase 2+ wire-up sites:
+    // - bump_soa_view_violations_caught() in
+    //   pass_manager.ixx + lowering/JIT
+    //   run_incremental_dirty_pipeline when the
+    //   SoAView concept static_assert catches a
+    //   violation
+    // - bump_shape_stable_pass_violations() in
+    //   pass_manager.ixx + dominant_shape /
+    //   ShapePropagationPass when the
+    //   ShapeStablePass concept static_assert
+    //   catches a violation
+    // - bump_targeted_deopt_via_impact_scope() in
+    //   shape_profiler.cpp deopt hook when #741
+    //   impact_scope is consulted for targeted
+    //   invalidation
+    // - bump_on_compact_hook_invocation() in
+    //   arena.ixx + ir_soa.ixx on_compact_hook_
+    //   when Arena compact triggers shape_inval +
+    //   dirty cascade
+    void bump_soa_view_violations_caught(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->soa_view_violations_caught_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_shape_stable_pass_violations(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->shape_stable_pass_violations_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_targeted_deopt_via_impact_scope(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->targeted_deopt_via_impact_scope_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_on_compact_hook_invocation(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->on_compact_hook_invocations_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #772: SV Verification closed-loop SLO observability
     // counters backing the (query:sv-closedloop-slo) primitive.
     // These are public so future hardware_backend.ixx emit_sv_
