@@ -322,7 +322,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_735_detail
 
-int main() {
+int aura_issue_735_run() {
     using namespace aura_issue_735_detail;
     std::println(
         "=== Issue #735: macro provenance StableRef observability (scope-limited close) ===");
@@ -340,3 +340,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_735_run();
+}
+#endif

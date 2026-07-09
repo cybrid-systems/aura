@@ -286,7 +286,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_796_detail
 
-int main() {
+int aura_issue_796_run() {
     using namespace aura_issue_796_detail;
     std::println("=== Issue #796: P0 end-to-end IRModuleV2 SoA full migration + "
                  "DirtyAware short-circuit + DepGraph integration observability "
@@ -305,3 +305,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_796_run();
+}
+#endif

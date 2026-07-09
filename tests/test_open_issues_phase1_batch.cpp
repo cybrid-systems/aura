@@ -214,8 +214,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_open_issues_phase1
 
-int main() {
+int aura_issue_open_issues_phase1_batch_run() {
     aura::compiler::CompilerService cs;
     aura_open_issues_phase1::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_open_issues_phase1_batch_run();
+}
+#endif

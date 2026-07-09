@@ -250,7 +250,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_787_detail
 
-int main() {
+int aura_issue_787_run() {
     using namespace aura_issue_787_detail;
     std::println("=== Issue #787: P0 end-to-end hygiene + schema + linear ownership "
                  "fidelity under concurrent steal + AOT hot-reload + Guard rollback chaos "
@@ -269,3 +269,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_787_run();
+}
+#endif

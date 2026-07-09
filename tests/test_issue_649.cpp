@@ -87,7 +87,7 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 } // namespace aura_issue_649_detail
 
-int main() {
+int aura_issue_649_run() {
     using namespace aura_issue_649_detail;
     std::println("=== Issue #649: query:yield-checkpoint-panic-stats structured companion ===");
 
@@ -222,3 +222,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_649_run();
+}
+#endif

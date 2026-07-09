@@ -71,7 +71,7 @@ static void seed_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_695_detail
 
-int main() {
+int aura_issue_695_run() {
     using namespace aura_issue_695_detail;
     std::println("=== Issue #695: EDA-SV closed-loop stress harness ===");
 
@@ -164,3 +164,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_695_run();
+}
+#endif

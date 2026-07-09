@@ -33,7 +33,7 @@ static bool setup_gradual_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_508_detail
 
-int main() {
+int aura_issue_508_observability_run() {
     using namespace aura_issue_508_detail;
 
     std::println("=== Issue #508: dead-coercion-zerooverhead-stats hash ===");
@@ -114,3 +114,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_508_observability_run();
+}
+#endif

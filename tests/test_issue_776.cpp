@@ -323,7 +323,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_776_detail
 
-int main() {
+int aura_issue_776_run() {
     using namespace aura_issue_776_detail;
     std::println("=== Issue #776: Integrated Primitives Hot-Path Benchmark Suite + "
                  "Mutation/Fiber-Load Regression Gate with Quantitative SLOs observability "
@@ -342,3 +342,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_776_run();
+}
+#endif

@@ -38,7 +38,7 @@ static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_vi
 
 } // namespace aura_issue_686_detail
 
-int main() {
+int aura_issue_686_run() {
     using namespace aura_issue_686_detail;
     using aura::compiler::shape::make_fn_key;
     using aura::compiler::shape::SHAPE_INT;
@@ -136,3 +136,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_686_run();
+}
+#endif

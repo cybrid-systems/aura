@@ -260,7 +260,7 @@ bool test_atomic_max_depth() {
 
 } // namespace aura_issue_471_detail
 
-int main() {
+int aura_issue_471_dirty_sv_scale_run() {
     using namespace aura_issue_471_detail;
     std::println("═══ Issue #471 SV-scale dirty propagation tests ═══");
 
@@ -279,3 +279,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_471_dirty_sv_scale_run();
+}
+#endif

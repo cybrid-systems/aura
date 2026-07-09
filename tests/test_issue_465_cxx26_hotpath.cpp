@@ -266,7 +266,7 @@ bool test_contracts_header_compiles() {
 
 } // namespace aura_issue_465_detail
 
-int main() {
+int aura_issue_465_cxx26_hotpath_run() {
     using namespace aura_issue_465_detail;
     std::println("═══ Issue #465 C++26 hot-path tests ═══");
 
@@ -288,3 +288,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_465_cxx26_hotpath_run();
+}
+#endif

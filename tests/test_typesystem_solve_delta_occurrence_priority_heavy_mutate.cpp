@@ -192,7 +192,7 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_745_detail
 
-int main() {
+int aura_issue_typesystem_solve_delta_occurrence_priority_heavy_mutate_run() {
     using namespace aura_issue_745_detail;
     std::println("=== Issue #745: solve_delta occurrence priority + heavy mutate ===");
     run_unit_ac2();
@@ -200,3 +200,9 @@ int main() {
     run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_typesystem_solve_delta_occurrence_priority_heavy_mutate_run();
+}
+#endif

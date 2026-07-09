@@ -237,7 +237,7 @@ static void run_ac6_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_718_detail
 
-int main() {
+int aura_issue_718_run() {
     using namespace aura_issue_718_detail;
     std::println("=== Issue #718: incremental re-lower stats + helper (scope-limited close) ===");
 
@@ -255,3 +255,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_718_run();
+}
+#endif

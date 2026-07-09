@@ -33,7 +33,7 @@ static bool setup_closure_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_505_detail
 
-int main() {
+int aura_issue_505_run() {
     using namespace aura_issue_505_detail;
 
     std::println("=== Issue #505: closure-env-safety-stats hash + post-invalidate ===");
@@ -132,3 +132,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_505_run();
+}
+#endif

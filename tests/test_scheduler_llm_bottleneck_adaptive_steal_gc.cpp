@@ -134,8 +134,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_754_detail
 
-int main() {
+int aura_issue_scheduler_llm_bottleneck_adaptive_steal_gc_run() {
     aura::compiler::CompilerService cs;
     aura_issue_754_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_scheduler_llm_bottleneck_adaptive_steal_gc_run();
+}
+#endif

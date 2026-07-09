@@ -195,7 +195,7 @@ bool test_concepts_compile_time() {
 
 } // namespace aura_issue_431_detail
 
-int main() {
+int aura_issue_431_cxx26_run() {
     using namespace aura_issue_431_detail;
     std::println("═══ Issue #431 C++26 Contracts/Concepts/consteval tests ═══");
 
@@ -208,3 +208,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_431_cxx26_run();
+}
+#endif

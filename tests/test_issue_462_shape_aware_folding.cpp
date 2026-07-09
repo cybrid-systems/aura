@@ -311,7 +311,7 @@ bool test_pass_concept_satisfied() {
 
 } // namespace aura_issue_462_detail
 
-int main() {
+int aura_issue_462_shape_aware_folding_run() {
     using namespace aura_issue_462_detail;
     std::println("═══ Issue #462 ShapeAwareFoldingPass tests ═══");
 
@@ -330,3 +330,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_462_shape_aware_folding_run();
+}
+#endif

@@ -237,7 +237,7 @@ bool test_long_session_signal() {
 
 } // namespace aura_issue_464_detail
 
-int main() {
+int aura_issue_464_arena_auto_compaction_run() {
     using namespace aura_issue_464_detail;
     std::println("═══ Issue #464 Arena auto-compaction tests ═══");
 
@@ -256,3 +256,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_464_arena_auto_compaction_run();
+}
+#endif

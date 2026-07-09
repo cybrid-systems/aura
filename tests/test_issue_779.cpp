@@ -221,7 +221,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_779_detail
 
-int main() {
+int aura_issue_779_run() {
     using namespace aura_issue_779_detail;
     std::println("=== Issue #779: Dirty region / delta rendering observability for "
                  "terminal rendering engine (scope-limited close) ===");
@@ -239,3 +239,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_779_run();
+}
+#endif

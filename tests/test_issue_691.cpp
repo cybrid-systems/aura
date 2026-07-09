@@ -44,7 +44,7 @@ static constexpr const char* k_prog = R"(
 
 } // namespace aura_issue_691_detail
 
-int main() {
+int aura_issue_691_run() {
     using namespace aura_issue_691_detail;
     std::println("=== Issue #691: coercion + narrowing provenance ===");
 
@@ -155,3 +155,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_691_run();
+}
+#endif

@@ -367,7 +367,7 @@ static bool ac_auth_token_in_process() {
     return g_failed == 0;
 }
 
-int main() {
+int aura_issue_473_run() {
     std::println("=== Issue #473 Tier 1: serve-async security hardening ===");
     ac_cap_constant();
     ac_escape_basic();
@@ -382,3 +382,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_473_run();
+}
+#endif

@@ -119,7 +119,7 @@ static void run_ac6_redefine(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_660_detail
 
-int main() {
+int aura_issue_660_cache_define_bundle_run() {
     using namespace aura_issue_660_detail;
 
     // Each AC uses a fresh CompilerService to keep cache_define cleanly
@@ -153,3 +153,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_660_cache_define_bundle_run();
+}
+#endif

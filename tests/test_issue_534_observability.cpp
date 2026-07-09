@@ -40,7 +40,7 @@ static bool setup_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_534_detail
 
-int main() {
+int aura_issue_534_observability_run() {
     using namespace aura_issue_534_detail;
 
     std::println("=== Issue #534: arena-production-compaction-stats hash ===");
@@ -132,3 +132,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_534_observability_run();
+}
+#endif

@@ -122,8 +122,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_744_detail
 
-int main() {
+int aura_issue_shape_jit_pass_deopt_incremental_closedloop_ai_mutate_run() {
     aura::compiler::CompilerService cs;
     aura_issue_744_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_shape_jit_pass_deopt_incremental_closedloop_ai_mutate_run();
+}
+#endif

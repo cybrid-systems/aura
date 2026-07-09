@@ -139,7 +139,7 @@ BenchResult run_bench_for_n(aura::compiler::CompilerService& cs, std::size_t n) 
 
 } // namespace
 
-int main() {
+int aura_issue_159_bench_run() {
     using clock = std::chrono::steady_clock;
     auto t_start = clock::now();
 
@@ -221,3 +221,9 @@ int main() {
 
     return 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_159_bench_run();
+}
+#endif

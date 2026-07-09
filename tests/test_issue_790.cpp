@@ -239,7 +239,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_790_detail
 
-int main() {
+int aura_issue_790_run() {
     using namespace aura_issue_790_detail;
     std::println("=== Issue #790: P0 first-class (mutate:atomic-batch) primitive + pinned "
                  "StableNodeRef snapshot + per-boundary observability + cross-fiber safety "
@@ -258,3 +258,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_790_run();
+}
+#endif

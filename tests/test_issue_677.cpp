@@ -76,7 +76,7 @@ static std::string http_get(const std::string& host, int port, const std::string
 
 } // namespace aura_issue_677_detail
 
-int main() {
+int aura_issue_677_run() {
     using namespace aura_issue_677_detail;
     std::println("=== Issue #677: deployment health + stats ===");
 
@@ -130,3 +130,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_677_run();
+}
+#endif

@@ -242,7 +242,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_789_detail
 
-int main() {
+int aura_issue_789_run() {
     using namespace aura_issue_789_detail;
     std::println("=== Issue #789: P0 mandate SafePCVSpan + tag_arity_index_ hot-path + deep "
                  "hygiene predicate observability (scope-limited close) ===");
@@ -260,3 +260,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_789_run();
+}
+#endif

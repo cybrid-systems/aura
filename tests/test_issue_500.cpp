@@ -45,7 +45,7 @@ static std::int64_t snap_stat(aura::compiler::CompilerService& cs, std::string_v
 
 } // namespace aura_issue_500_detail
 
-int main() {
+int aura_issue_500_run() {
     using namespace aura_issue_500_detail;
     using aura::serve::Fiber;
     using aura::serve::Scheduler;
@@ -175,3 +175,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_500_run();
+}
+#endif

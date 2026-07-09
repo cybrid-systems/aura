@@ -45,7 +45,7 @@ static constexpr const char* k_linear_prog = R"(
 
 } // namespace aura_issue_688_detail
 
-int main() {
+int aura_issue_688_run() {
     using namespace aura_issue_688_detail;
     std::println("=== Issue #688: linear ownership typed-mutate ===");
 
@@ -140,3 +140,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_688_run();
+}
+#endif

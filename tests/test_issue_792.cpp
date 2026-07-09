@@ -284,7 +284,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_792_detail
 
-int main() {
+int aura_issue_792_run() {
     using namespace aura_issue_792_detail;
     std::println("=== Issue #792: P0 compiler invalidate_function + mutation_epoch_ "
                  "synchronization with outermost MutationBoundaryGuard depth + live "
@@ -304,3 +304,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_792_run();
+}
+#endif

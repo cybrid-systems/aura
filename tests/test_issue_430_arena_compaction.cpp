@@ -299,7 +299,7 @@ bool test_force_bumps_trigger() {
 
 } // namespace aura_issue_430_detail
 
-int main() {
+int aura_issue_430_arena_compaction_run() {
     using namespace aura_issue_430_detail;
     std::println("═══ Issue #430 arena compaction policy + observability tests ═══");
 
@@ -320,3 +320,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_430_arena_compaction_run();
+}
+#endif

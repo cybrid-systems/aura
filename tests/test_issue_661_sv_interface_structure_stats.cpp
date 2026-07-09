@@ -181,7 +181,7 @@ static void run_ac7_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_661_detail
 
-int main() {
+int aura_issue_661_sv_interface_structure_stats_run() {
     using namespace aura_issue_661_detail;
 
     // Each AC uses a fresh CompilerService to keep the modport-parse
@@ -219,3 +219,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_661_sv_interface_structure_stats_run();
+}
+#endif
