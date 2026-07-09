@@ -139,8 +139,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_755_detail
 
-int main() {
+int aura_issue_runtime_concurrent_full_cycle_chaos_run() {
     aura::compiler::CompilerService cs;
     aura_issue_755_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_runtime_concurrent_full_cycle_chaos_run();
+}
+#endif

@@ -43,7 +43,7 @@ static bool setup_macro_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_503_detail
 
-int main() {
+int aura_issue_503_run() {
     using namespace aura_issue_503_detail;
 
     std::println("=== Issue #503: query:pattern hygiene + pattern-marker-stats ===");
@@ -139,3 +139,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_503_run();
+}
+#endif

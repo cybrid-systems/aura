@@ -122,7 +122,7 @@ bool test_stats_count() {
 
 } // namespace aura_issue_507_detail
 
-int main() {
+int aura_issue_507_run() {
     using namespace aura_issue_507_detail;
     std::println("=== Issue #507: Task4 hot-path Contracts + consteval ===");
     test_primitive_returns_hash();
@@ -137,3 +137,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_507_run();
+}
+#endif

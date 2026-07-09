@@ -65,7 +65,7 @@ static int g_failed = 0;
 
 } // namespace aura_issue_623_detail
 
-int main() {
+int aura_issue_623_run() {
     using namespace aura_issue_623_detail;
     std::println("=== Issue #623: arena auto-compact threshold setter/getter ===");
 
@@ -198,3 +198,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_623_run();
+}
+#endif

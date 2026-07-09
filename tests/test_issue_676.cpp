@@ -68,7 +68,7 @@ static bool is_error_val(const aura::compiler::types::EvalValue& v) {
 
 } // namespace aura_issue_676_detail
 
-int main() {
+int aura_issue_676_run() {
     using namespace aura_issue_676_detail;
 
     std::println("=== Issue #676: sandbox + mutation audit ===");
@@ -160,3 +160,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_676_run();
+}
+#endif

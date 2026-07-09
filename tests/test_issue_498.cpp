@@ -47,7 +47,7 @@ static std::string hash_str(aura::compiler::CompilerService& cs, const char* has
 
 } // namespace aura_issue_498_detail
 
-int main() {
+int aura_issue_498_run() {
     using namespace aura_issue_498_detail;
 
     std::println("=== Issue #498: AI-native primitive metadata ===");
@@ -123,3 +123,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_498_run();
+}
+#endif

@@ -188,7 +188,7 @@ static void run_ac8_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_672_detail
 
-int main() {
+int aura_issue_672_run() {
     using namespace aura_issue_672_detail;
 
     {
@@ -228,3 +228,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_672_run();
+}
+#endif

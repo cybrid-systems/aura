@@ -292,7 +292,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_731_detail
 
-int main() {
+int aura_issue_731_run() {
     using namespace aura_issue_731_detail;
     std::println(
         "=== Issue #731: arena concurrent-compact observability (scope-limited close) ===");
@@ -310,3 +310,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_731_run();
+}
+#endif

@@ -52,7 +52,7 @@ static bool setup_parent(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_738_detail
 
-int main() {
+int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run() {
     using namespace aura_issue_738_detail;
 
     std::println("=== Issue #738: StableRef COW + sub-workspace pinning ===");
@@ -148,3 +148,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run();
+}
+#endif

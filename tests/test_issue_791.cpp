@@ -257,7 +257,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_791_detail
 
-int main() {
+int aura_issue_791_run() {
     using namespace aura_issue_791_detail;
     std::println("=== Issue #791: P0 exhaustive fiber yield-point instrumentation + "
                  "automatic StableRef/dirty cross-boundary propagation observability "
@@ -276,3 +276,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_791_run();
+}
+#endif

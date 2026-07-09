@@ -61,7 +61,7 @@ static bool setup_sv_hygiene_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_541_detail
 
-int main() {
+int aura_issue_541_observability_run() {
     using namespace aura_issue_541_detail;
 
     std::println("=== Issue #541: pattern-sv-verification-stats hash ===");
@@ -165,3 +165,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_541_observability_run();
+}
+#endif

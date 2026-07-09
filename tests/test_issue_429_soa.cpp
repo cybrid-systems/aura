@@ -273,7 +273,7 @@ bool test_stats_count() {
 
 } // namespace aura_issue_429_detail
 
-int main() {
+int aura_issue_429_soa_run() {
     using namespace aura_issue_429_detail;
     std::println("═══ Issue #429 SoA live dirty state tests ═══");
 
@@ -293,3 +293,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_429_soa_run();
+}
+#endif

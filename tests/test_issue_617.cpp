@@ -60,7 +60,7 @@ static std::string hash_string(aura::compiler::CompilerService& cs, std::string_
 
 } // namespace aura_issue_617_detail
 
-int main() {
+int aura_issue_617_run() {
     using namespace aura_issue_617_detail;
     std::println("=== Issue #617: AI-Native primitive introspection (by-category / "
                  "schema-of-primitive / meta-catalog) ===");
@@ -228,3 +228,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_617_run();
+}
+#endif

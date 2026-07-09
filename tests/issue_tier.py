@@ -14,7 +14,20 @@ FAST_FIXTURE = _SCRIPT_DIR / "fixtures" / "issues_fast.json"
 PROFILES_FIXTURE = _SCRIPT_DIR / "fixtures" / "issue_link_profiles.json"
 ISSUE_CPP_RE = re.compile(r"^tests/(test_[\w]+)\.cpp$")
 
-BUNDLE_PROFILES = ("light", "jit", "jit_minimal", "jit_contract", "jit_tests", "fiber")
+BUNDLE_PROFILES = (
+    "light",
+    "jit",
+    "jit_minimal",
+    "jit_contract",
+    "jit_tests",
+    "fiber",
+    "jit_late1",
+    "jit_late2",
+    "jit_late3",
+    "jit_late4",
+    "jit_late5",
+    "light_late",
+)
 
 
 def issues_tier() -> str:

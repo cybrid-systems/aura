@@ -71,7 +71,7 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 
 } // namespace aura_issue_637_detail
 
-int main() {
+int aura_issue_637_run() {
     using namespace aura_issue_637_detail;
     std::println("=== Issue #637: query:closure-bridge-safety-stats-hash structured companion ===");
 
@@ -193,3 +193,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_637_run();
+}
+#endif

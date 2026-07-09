@@ -205,7 +205,7 @@ bool test_fresh_service_reinit() {
 
 } // namespace aura_issue_452_detail
 
-int main() {
+int aura_issue_452_aot_hot_update_run() {
     using namespace aura_issue_452_detail;
     std::println("═══ Issue #452 AOT hot-update + region stats tests ═══");
 
@@ -221,3 +221,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_452_aot_hot_update_run();
+}
+#endif

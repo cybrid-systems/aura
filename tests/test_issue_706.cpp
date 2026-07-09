@@ -45,7 +45,7 @@ static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_vi
 
 } // namespace aura_issue_706_detail
 
-int main() {
+int aura_issue_706_run() {
     using namespace aura_issue_706_detail;
     using aura::serve::Fiber;
     using aura::serve::fiber_steal_priority;
@@ -216,3 +216,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_706_run();
+}
+#endif

@@ -120,8 +120,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_655_detail
 
-int main() {
+int aura_issue_edsl_core_stability_cow_atomic_query_mutate_run() {
     aura::compiler::CompilerService cs;
     aura_655_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_edsl_core_stability_cow_atomic_query_mutate_run();
+}
+#endif

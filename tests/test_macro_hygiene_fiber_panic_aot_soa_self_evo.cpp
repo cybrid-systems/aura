@@ -147,8 +147,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_654_detail
 
-int main() {
+int aura_issue_macro_hygiene_fiber_panic_aot_soa_self_evo_run() {
     aura::compiler::CompilerService cs;
     aura_654_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_macro_hygiene_fiber_panic_aot_soa_self_evo_run();
+}
+#endif

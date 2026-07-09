@@ -26,7 +26,9 @@
 | **Link job pool** | `AURA_LINK_JOBS=4` (CMake, default 4) | Avoids RAM thrash from N parallel LLVM links |
 | **Phase timings** | always printed by `build.py build` | `⏱ cmake configure / build aura / …` for profiling |
 | **ccache (local auto)** | on PATH + unset `CCACHE_DISABLE`; CI keeps `CCACHE_DISABLE=1` | Local recompiles faster; CI stays clean |
-| **Bundle-only issue build** | `AURA_ISSUE_BUILD=bundles` | Full tier smoke: 6 `test_issues_*` only |
+| **Late issue bundles** | `jit_late1..5` + `light_late` (~240 members) | Fold post-#400 standalones into ~5 link units instead of ~240 × 200MB exes |
+| **EXCLUDE_FROM_ALL duals** | automatic for bundle members | `all_test_issue_targets` ~25 deps (was 260+); on-demand `ninja test_issue_N` still works |
+| **Bundle-only issue build** | `AURA_ISSUE_BUILD=bundles` | Full tier smoke: profile `test_issues_*` only |
 | **Shared `aura_jit_test_objects`** | (landed with #818) | One compile of JIT TUs vs 100+ |
 
 ### Phase 2 — Workflow + cache (next)
@@ -68,8 +70,15 @@ AURA_USE_MOLD=1 ./build.py build
 # ccache: automatic when installed and CCACHE_DISABLE is unset
 # CI keeps CCACHE_DISABLE=1
 
-# Bundle-only issue smoke (full tier, much less link work)
+# Default full build: profile bundles + true standalones only
+# (~12 fat links, not 200+ × 200MB)
+AURA_ISSUES_TIER=full ./build.py build
+
+# Bundle-only smoke (even fewer targets)
 AURA_ISSUES_TIER=full AURA_ISSUE_BUILD=bundles ./build.py build
+
+# Debug a single issue that lives in a late bundle (still available):
+ninja -C build test_issue_804
 
 # Cap parallel links
 AURA_LINK_JOBS=2 ./build.py build

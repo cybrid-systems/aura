@@ -192,7 +192,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_773_detail
 
-int main() {
+int aura_issue_773_run() {
     using namespace aura_issue_773_detail;
     std::println("=== Issue #773: Workspace closed-loop fiber/multi-agent EDA "
                  "verification observability (scope-limited close) ===");
@@ -210,3 +210,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_773_run();
+}
+#endif

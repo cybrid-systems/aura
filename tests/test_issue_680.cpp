@@ -44,7 +44,7 @@ static const char* k_fact_code = R"(
 
 } // namespace aura_issue_680_detail
 
-int main() {
+int aura_issue_680_run() {
     using namespace aura_issue_680_detail;
     std::println("=== Issue #680: Define mutate IR invalidation ===");
 
@@ -182,3 +182,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_680_run();
+}
+#endif

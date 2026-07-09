@@ -42,7 +42,7 @@ static bool setup_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_530_detail
 
-int main() {
+int aura_issue_530_observability_run() {
     using namespace aura_issue_530_detail;
 
     std::println("=== Issue #530: incremental-production-relower-stats hash ===");
@@ -131,3 +131,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_530_observability_run();
+}
+#endif

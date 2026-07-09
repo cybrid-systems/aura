@@ -84,7 +84,7 @@ static void seed_workspace(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_eda_sv_stress_detail
 
-int main() {
+int aura_issue_eda_sv_verification_closedloop_stress_run() {
     using namespace aura_eda_sv_stress_detail;
     const int k_cycles = stress_cycles();
     std::println("=== Issue #696: EDA-SV verification closed-loop stress ===");
@@ -189,3 +189,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_eda_sv_verification_closedloop_stress_run();
+}
+#endif

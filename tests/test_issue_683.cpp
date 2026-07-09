@@ -36,7 +36,7 @@ static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_vi
 
 } // namespace aura_issue_683_detail
 
-int main() {
+int aura_issue_683_run() {
     using namespace aura_issue_683_detail;
     std::println("=== Issue #683: linear ownership GC safepoint / steal ===");
 
@@ -136,3 +136,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_683_run();
+}
+#endif

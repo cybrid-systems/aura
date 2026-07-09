@@ -243,7 +243,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_784_detail
 
-int main() {
+int aura_issue_784_run() {
     using namespace aura_issue_784_detail;
     std::println("=== Issue #784: P0 mandatory dual-path consistency enforcement + desync "
                  "panic policy + GCEnvWalkFn stale integration observability (scope-limited "
@@ -262,3 +262,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_784_run();
+}
+#endif

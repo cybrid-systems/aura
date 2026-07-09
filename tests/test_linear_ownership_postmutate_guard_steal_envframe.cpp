@@ -111,8 +111,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_800_detail
 
-int main() {
+int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run() {
     aura::compiler::CompilerService cs;
     aura_issue_800_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
+}
+#endif

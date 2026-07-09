@@ -130,7 +130,7 @@ static std::int64_t count_for(const std::vector<Entry>& entries, std::string_vie
 
 } // namespace aura_issue_479_detail
 
-int main() {
+int aura_issue_479_run() {
     using namespace aura_issue_479_detail;
 
     std::println("=== Issue #479: per-prim fast-path hit tracking ===");
@@ -286,3 +286,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_479_run();
+}
+#endif

@@ -442,11 +442,11 @@ def cmd_build():
             fail(f"build {target} failed")
             return r
 
-    # Build test_issue_* targets. Full tier uses the aggregate;
-    # fast tier builds a representative subset plus any issue
-    # tests touched in the current branch (see issue_tier.py).
-    # Issue #873/#874: AURA_ISSUE_BUILD=bundles builds only the 6
-    # profile bundles (much faster smoke); default remains full aggregate.
+    # Build test_issue_* targets. Full tier uses the aggregate
+    # (profile bundles + true standalones; dual standalones that
+    # live in bundles are EXCLUDE_FROM_ALL — see #871/#873).
+    # fast tier: fixture subset + git-changed (issue_tier.py).
+    # AURA_ISSUE_BUILD=bundles → only the profile bundle exes.
     tier = issues_tier()
     issue_mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
     t0 = time.time()
@@ -466,7 +466,7 @@ def cmd_build():
             f"-j{nproc}",
             "all_test_issue_targets",
         ]
-        info("issue tests: tier=full (all targets)")
+        info("issue tests: tier=full (bundles + standalones; duals excluded)")
     else:
         targets = resolve_issue_targets("fast")
         issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]

@@ -240,7 +240,7 @@ bool test_stats_list_includes() {
 
 } // namespace aura_issue_463_detail
 
-int main() {
+int aura_issue_463_soa_phase2_wiring_run() {
     using namespace aura_issue_463_detail;
     std::println("═══ Issue #463 SoA Phase 2 wiring tests ═══");
 
@@ -259,3 +259,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_463_soa_phase2_wiring_run();
+}
+#endif

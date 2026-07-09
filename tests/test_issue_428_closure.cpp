@@ -255,7 +255,7 @@ bool test_idempotent_observable() {
 
 } // namespace aura_issue_428_detail
 
-int main() {
+int aura_issue_428_closure_run() {
     using namespace aura_issue_428_detail;
     std::println("═══ Issue #428 closure bridge + bridge_epoch drift tests ═══");
 
@@ -272,3 +272,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_428_closure_run();
+}
+#endif

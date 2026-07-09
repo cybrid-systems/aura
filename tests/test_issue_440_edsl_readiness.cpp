@@ -200,7 +200,7 @@ bool test_stats_count() {
 
 } // namespace aura_issue_440_detail
 
-int main() {
+int aura_issue_440_edsl_readiness_run() {
     using namespace aura_issue_440_detail;
     std::println("═══ Issue #440 EDSL production-readiness aggregator tests ═══");
 
@@ -216,3 +216,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_440_edsl_readiness_run();
+}
+#endif

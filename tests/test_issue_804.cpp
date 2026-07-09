@@ -291,7 +291,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_804_detail
 
-int main() {
+int aura_issue_804_run() {
     using namespace aura_issue_804_detail;
     aura::compiler::CompilerService cs;
     std::println("=== Issue #804 — P0 Stdlib-Registry unified primitive error "
@@ -305,3 +305,9 @@ int main() {
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_804_run();
+}
+#endif

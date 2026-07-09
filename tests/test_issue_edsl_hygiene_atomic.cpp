@@ -302,7 +302,7 @@ bool test_size_mismatch_counter_no_normal_bump() {
 
 } // namespace aura_edsl_hygiene_atomic_detail
 
-int main() {
+int aura_issue_edsl_hygiene_atomic_run() {
     using namespace aura_edsl_hygiene_atomic_detail;
     std::println("═══ Issue #425 EDSL hygiene + atomic batch tests ═══");
 
@@ -323,3 +323,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_edsl_hygiene_atomic_run();
+}
+#endif

@@ -40,7 +40,7 @@ static std::int64_t snap_stat(aura::compiler::CompilerService& cs, std::string_v
 
 } // namespace aura_issue_601_detail
 
-int main() {
+int aura_issue_601_run() {
     using namespace aura_issue_601_detail;
 
     std::println("=== Issue #601: JIT hot-swap live-closure refresh + forced-deopt ===");
@@ -142,3 +142,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_601_run();
+}
+#endif

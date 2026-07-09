@@ -43,7 +43,7 @@ static std::int64_t ext_stat(aura::compiler::CompilerService& cs, std::string_vi
 
 } // namespace aura_issue_709_detail
 
-int main() {
+int aura_issue_709_run() {
     using namespace aura_issue_709_detail;
 
     std::println("=== Issue #709: Primitives registry fastpath + capture discipline ===");
@@ -149,3 +149,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_709_run();
+}
+#endif

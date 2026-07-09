@@ -65,7 +65,7 @@ static std::int64_t hw_stat(aura::compiler::CompilerService& cs, std::string_vie
 
 } // namespace aura_issue_616_detail
 
-int main() {
+int aura_issue_616_run() {
     using namespace aura_issue_616_detail;
     std::println("=== Issue #616: EDA hardware-co-design primitives (load-sv + "
                  "parse-verification-result + query:eda-hw-stats) ===");
@@ -245,3 +245,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_616_run();
+}
+#endif

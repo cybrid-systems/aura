@@ -54,7 +54,7 @@ static void seed_sva_workspace(aura::compiler::CompilerService& cs, aura::ast::N
 
 } // namespace aura_issue_694_detail
 
-int main() {
+int aura_issue_694_run() {
     using namespace aura_issue_694_detail;
     std::println("=== Issue #694: SVA structured NodeTags ===");
 
@@ -160,3 +160,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_694_run();
+}
+#endif

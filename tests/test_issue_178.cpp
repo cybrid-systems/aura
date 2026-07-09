@@ -32,7 +32,7 @@ using aura::ast::NodeView;
 using aura::ast::SymId;
 using aura::ast::SyntaxMarker;
 
-int main() {
+int aura_issue_178_run() {
     issue178_reset_counters();
     issue178_run_reflect_member_tests();
     issue178_run_ir_roundtrip_tests();
@@ -84,3 +84,9 @@ int main() {
 
     return issue178_failed_count() > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_178_run();
+}
+#endif

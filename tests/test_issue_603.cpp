@@ -54,7 +54,7 @@ static std::int64_t snap_stat(aura::compiler::CompilerService& cs, std::string_v
 
 } // namespace aura_issue_603_detail
 
-int main() {
+int aura_issue_603_run() {
     using namespace aura_issue_603_detail;
 
     std::println("=== Issue #603: IR SoA full consumer adoption + minimal re-lower ===");
@@ -182,3 +182,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_603_run();
+}
+#endif

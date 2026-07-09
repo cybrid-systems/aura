@@ -240,7 +240,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_783_detail
 
-int main() {
+int aura_issue_783_run() {
     using namespace aura_issue_783_detail;
     std::println("=== Issue #783: P0 strict outermost MutationBoundary depth check + "
                  "defer logic observability (scope-limited close) ===");
@@ -258,3 +258,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_783_run();
+}
+#endif

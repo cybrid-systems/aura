@@ -95,8 +95,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_805_detail
 
-int main() {
+int aura_issue_primitives_hotpath_registry_slo_run() {
     aura::compiler::CompilerService cs;
     aura_issue_805_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_primitives_hotpath_registry_slo_run();
+}
+#endif

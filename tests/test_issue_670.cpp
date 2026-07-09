@@ -225,7 +225,7 @@ static void run_ac7_regression_parse_coverage(aura::compiler::CompilerService& c
 
 } // namespace aura_issue_670_detail
 
-int main() {
+int aura_issue_670_run() {
     using namespace aura_issue_670_detail;
 
     {
@@ -261,3 +261,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_670_run();
+}
+#endif

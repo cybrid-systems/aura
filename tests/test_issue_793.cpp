@@ -277,7 +277,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_793_detail
 
-int main() {
+int aura_issue_793_run() {
     using namespace aura_issue_793_detail;
     std::println("=== Issue #793: P0 JIT/AOT hot-swap + GuardShape + linear + EnvFrame "
                  "version_ consistency observability (scope-limited close) ===");
@@ -295,3 +295,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_793_run();
+}
+#endif

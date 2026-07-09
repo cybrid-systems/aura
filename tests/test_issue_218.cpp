@@ -164,6 +164,12 @@ int run_tests() {
 
 } // namespace aura_issue_218_detail
 
-int main() {
+int aura_issue_218_run() {
     return aura_issue_218_detail::run_tests();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_218_run();
+}
+#endif

@@ -302,7 +302,7 @@ bool test_emit_binary_handles_errors() {
     return true;
 }
 
-int main() {
+int aura_issue_237_run() {
     std::fprintf(stdout, "═══ Issue #237 — AOT end-to-end test ═══\n");
     std::fprintf(stdout, "  Verifies aura --emit-binary produces working ELF executables.\n\n");
 
@@ -314,3 +314,9 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_237_run();
+}
+#endif

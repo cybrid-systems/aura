@@ -158,8 +158,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_750_detail
 
-int main() {
+int aura_issue_reflection_runtime_validate_macro_edsl_mutate_run() {
     aura::compiler::CompilerService cs;
     aura_issue_750_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_reflection_runtime_validate_macro_edsl_mutate_run();
+}
+#endif

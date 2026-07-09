@@ -255,7 +255,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_775_detail
 
-int main() {
+int aura_issue_775_run() {
     using namespace aura_issue_775_detail;
     std::println("=== Issue #775: Formal Primitives Extension Kit for AI Agent safe "
                  "generation, registration, contract enforcement + auto-meta + test template "
@@ -274,3 +274,9 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_775_run();
+}
+#endif

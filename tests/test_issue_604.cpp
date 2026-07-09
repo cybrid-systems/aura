@@ -47,7 +47,7 @@ static double stat_float(aura::compiler::CompilerService& cs, std::string_view k
 
 } // namespace aura_issue_604_detail
 
-int main() {
+int aura_issue_604_run() {
     using namespace aura_issue_604_detail;
     std::println("=== Issue #604: arena auto-compact + defrag + fiber safepoint ===");
 
@@ -177,3 +177,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_604_run();
+}
+#endif

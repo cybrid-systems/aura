@@ -364,7 +364,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
 
 } // namespace aura_issue_797_detail
 
-int main() {
+int aura_issue_797_run() {
     using namespace aura_issue_797_detail;
     aura::compiler::CompilerService cs;
     std::println("=== Issue #797 verification — P0 Arena live-object defrag + "
@@ -379,3 +379,9 @@ int main() {
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_797_run();
+}
+#endif

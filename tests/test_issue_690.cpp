@@ -55,7 +55,7 @@ static constexpr const char* k_prog = R"(
 
 } // namespace aura_issue_690_detail
 
-int main() {
+int aura_issue_690_run() {
     using namespace aura_issue_690_detail;
     std::println("=== Issue #690: constraint typed-mutation reverify + blame ===");
 
@@ -176,3 +176,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_690_run();
+}
+#endif

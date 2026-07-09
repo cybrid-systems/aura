@@ -132,8 +132,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_741_detail
 
-int main() {
+int aura_issue_prompt2_6_impact_scope_quote_lambda_bridge_env_run() {
     aura::compiler::CompilerService cs;
     aura_issue_741_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_prompt2_6_impact_scope_quote_lambda_bridge_env_run();
+}
+#endif

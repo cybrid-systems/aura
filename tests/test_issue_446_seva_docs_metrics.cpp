@@ -272,7 +272,7 @@ bool test_synthetic_cycle() {
 
 } // namespace aura_issue_446_detail
 
-int main() {
+int aura_issue_446_seva_docs_metrics_run() {
     using namespace aura_issue_446_detail;
     std::println("═══ Issue #446 SEVA docs + metrics tests ═══");
 
@@ -291,3 +291,9 @@ int main() {
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_446_seva_docs_metrics_run();
+}
+#endif

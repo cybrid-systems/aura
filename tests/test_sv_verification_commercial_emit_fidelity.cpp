@@ -153,8 +153,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_issue_801_detail
 
-int main() {
+int aura_issue_sv_verification_commercial_emit_fidelity_run() {
     aura::compiler::CompilerService cs;
     aura_issue_801_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_sv_verification_commercial_emit_fidelity_run();
+}
+#endif

@@ -118,8 +118,14 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_659_detail
 
-int main() {
+int aura_issue_typesystem_typed_mutate_incremental_gaps_run() {
     aura::compiler::CompilerService cs;
     aura_659_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    return aura_issue_typesystem_typed_mutate_incremental_gaps_run();
+}
+#endif
