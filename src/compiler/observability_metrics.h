@@ -4527,6 +4527,30 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_stale_reject_count_{0};
     std::atomic<std::uint64_t> aot_region_mismatch_{0};
     std::atomic<std::uint64_t> aot_hot_update_success_{0};
+
+    // Issue #785: AOT concurrent hot-update observability
+    // (concurrent steal + grace period + EnvFrame version
+    // sync). 3 NEW atomics for the
+    // (query:aot-concurrent-hotupdate-stats) primitive.
+    // - aot_concurrent_steal_during_reload_total: # of
+    //   work-steal attempts deferred because the victim
+    //   fiber was in AOT apply or the reload refcount
+    //   swap was in progress (Phase 2+ to wire into
+    //   is_stealable + WorkerThread::steal).
+    // - aot_grace_period_hits_total: # of times the
+    //   grace period was triggered to allow in-flight
+    //   apply_closure / JIT GuardShape to see consistent
+    //   func_table (Phase 2+ to wire into
+    //   aura_reload_aot_module before/after swap).
+    // - aot_env_version_sync_on_reload_total: # of
+    //   times EnvFrame::version_ was bumped on reload
+    //   to coordinate with cross-fiber mutation (Phase
+    //   2+ to wire into reload decision + EnvFrame
+    //   sync). Bumped from
+    //   Evaluator::bump_aot_env_version_sync_on_reload().
+    std::atomic<std::uint64_t> aot_concurrent_steal_during_reload_total{0};
+    std::atomic<std::uint64_t> aot_grace_period_hits_total{0};
+    std::atomic<std::uint64_t> aot_env_version_sync_on_reload_total{0};
     // Issue #708: AOT hot-reload refcount swap + checkpoint version drift.
     std::atomic<std::uint64_t> aot_reload_attempts_{0};
     std::atomic<std::uint64_t> aot_refcount_swaps_{0};

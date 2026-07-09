@@ -847,6 +847,16 @@ static const std::vector<std::string> kObservabilityStatsPrimitives = {
     // (configurable policy mode + mandatory call site
     // wiring + panic-on-detected-desync enforcement).
     "query:envframe-dualpath-mandatory-enforce-stats",
+
+    // Issue #785: AOT concurrent hot-update
+    // observability. Surfaces 3 NEW atomics for the
+    // concurrent steal + grace period + EnvFrame
+    // version sync under multi-agent multi-fiber
+    // concurrent reload. 3 hardcoded "not yet" flags
+    // for Phase 2+ deferred work (region mask
+    // enforcement + grace period implementation +
+    // steal-defer coordination).
+    "query:aot-concurrent-hotupdate-stats",
 };
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -14349,6 +14359,143 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         insert_kv("mandatory-call-sites-enabled", mandatory_call_sites_enabled);
         insert_kv("recommendation", recommendation);
         insert_kv("schema", 784);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #785: query:aot-concurrent-hotupdate-stats —
+    // P0 AOT hot-update maturity observability for
+    // concurrent multi-agent / multi-fiber orchestration.
+    // Non-duplicative refinement of #732 aot-bridge-stats
+    // (region + defuse + bridge_epoch tracking) +
+    // #708 aot-reload-stats + aot-checkpoint-version-
+    // stats + #590 aot-hotupdate-stats. #785 covers
+    // the *concurrent steal / grace period / EnvFrame
+    // version sync* under hot-reload specifically —
+    // are steals safely deferred during reload? is the
+    // grace period actually triggered? is the EnvFrame
+    // version synced on reload to coordinate with
+    // cross-fiber mutation? — as separate per-decision-
+    // point signals the Agent consumes to monitor AOT
+    // hot-update production safety under concurrency.
+    //
+    // Fields (7 + sentinel, 8-entry hash):
+    //   - concurrent-steal-during-reload
+    //       aot_concurrent_steal_during_reload_total
+    //       (# of work-steal attempts deferred because
+    //       the victim fiber was in AOT apply or reload
+    //       refcount swap was in progress; bumped from
+    //       Evaluator::bump_aot_concurrent_steal_during_
+    //       reload() at the planned Phase 2+
+    //       WorkerThread::steal() integration)
+    //   - grace-period-hits
+    //       aot_grace_period_hits_total (# of times the
+    //       grace period was triggered during reload to
+    //       allow in-flight apply_closure / JIT
+    //       GuardShape to see consistent func_table;
+    //       bumped from
+    //       Evaluator::bump_aot_grace_period_hit() at
+    //       the planned Phase 2+ aura_reload_aot_module
+    //       before/after swap integration)
+    //   - env-version-sync-on-reload
+    //       aot_env_version_sync_on_reload_total (# of
+    //       times EnvFrame::version_ was bumped on
+    //       reload to coordinate with cross-fiber
+    //       mutation; bumped from
+    //       Evaluator::bump_aot_env_version_sync_on_
+    //       reload() at the planned Phase 2+ reload
+    //       decision + EnvFrame sync integration)
+    //   - region-mask-enforced
+    //       hardcoded 0 (Phase 2+ to wire region_mask
+    //       check in aura_reload_aot_module reload
+    //       decision per body "region mask enforced:
+    //       reload only if (region_mask & host_mask)
+    //       != 0; reject with region_mismatch metric")
+    //   - grace-period-implemented
+    //       hardcoded 0 (Phase 2+ to add grace period
+    //       (atomic or fiber-yield safe delay) before/
+    //       after swap per body "grace period for
+    //       refcount swap during concurrent steal/
+    //       resume")
+    //   - steal-defer-active
+    //       hardcoded 0 (Phase 2+ to wire AOT-specific
+    //       defer in is_stealable or steal loop per
+    //       body "multi-fiber steal safety during
+    //       reload")
+    //   - recommendation
+    //       derived 0/1/2/3 from the 3 deferred flags +
+    //       activity signal
+    //   - schema == 785
+    add("query:aot-concurrent-hotupdate-stats", [&ev](const auto&) -> EvalValue {
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t concurrent_steal =
+            m ? static_cast<std::int64_t>(
+                    m->aot_concurrent_steal_during_reload_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t grace_hits =
+            m ? static_cast<std::int64_t>(
+                    m->aot_grace_period_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t env_sync =
+            m ? static_cast<std::int64_t>(
+                    m->aot_env_version_sync_on_reload_total.load(std::memory_order_relaxed))
+              : 0;
+        // 3 hardcoded "not yet" flags for Phase 2+
+        // deferred work.
+        const std::int64_t region_mask_enforced = 0;
+        const std::int64_t grace_period_implemented = 0;
+        const std::int64_t steal_defer_active = 0;
+        // Recommendation: derived from the 3 deferred
+        // flags + activity signal. Phase 1 only (all
+        // deferred flags == 0) but with activity
+        // signals from the new atomics.
+        std::int64_t recommendation = 3;
+        if (region_mask_enforced == 1 && grace_period_implemented == 1 && steal_defer_active == 1)
+            recommendation = 0; // production-ready with all Phase 2+
+        else if (region_mask_enforced == 1 || grace_period_implemented == 1 ||
+                 steal_defer_active == 1)
+            recommendation = 1; // partial Phase 2+
+        else if (concurrent_steal > 0 || grace_hits > 0 || env_sync > 0)
+            recommendation = 2; // Phase 1 only (atomics wired, call sites deferred)
+        else
+            recommendation = 3; // early-stage (no concurrent hot-update activity)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("concurrent-steal-during-reload", concurrent_steal);
+        insert_kv("grace-period-hits", grace_hits);
+        insert_kv("env-version-sync-on-reload", env_sync);
+        insert_kv("region-mask-enforced", region_mask_enforced);
+        insert_kv("grace-period-implemented", grace_period_implemented);
+        insert_kv("steal-defer-active", steal_defer_active);
+        insert_kv("recommendation", recommendation);
+        insert_kv("schema", 785);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
