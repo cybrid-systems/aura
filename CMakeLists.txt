@@ -4145,6 +4145,30 @@ add_dependencies(all_test_issue_targets test_issue_778)
 aura_add_issue_test(test_issue_779)
 aura_issue_test_link_llvm_jit(test_issue_779)
 add_dependencies(all_test_issue_targets test_issue_779)
+# Issue #780: JIT / hot-update coverage observability
+# for rendering hot paths (present/draw) (P2 perf
+# surface). 0 NEW CompilerMetrics atomics (reuses
+# existing #441 hotpath_eval_flat_calls +
+# hotpath_lowering_calls) + 0 NEW bump helpers +
+# (query:jit-rendering-coverage-stats, schema 780)
+# primitive returning 4 body-specified fields + schema
+# sentinel (6-entry hash: hotpath-eval-flat-calls +
+# hotpath-lowering-calls + 2 hardcoded \"not yet\"
+# flags + recommendation + schema). 5 ACs: hash shape,
+# fresh-service zero state (both hotpath counters ==
+# 0, both optimization flags == 0, recommendation ==
+# 3 early-stage), schema sentinel, JIT path bump
+# accessibility (call eval-flat / lowering to verify
+# the hotpath counters grow; rendering-like hot path
+# benchmark via vector primitives in a loop to give
+# the Agent a baseline ns/op), sibling observability
+# regression of #778 + #779. Non-duplicative with the
+# existing JIT primitives (#427 + #720 + #746) —
+# parallel companion observability surface for the
+# deferred rendering-path JIT + hot-update work.
+aura_add_issue_test(test_issue_780)
+aura_issue_test_link_llvm_jit(test_issue_780)
+add_dependencies(all_test_issue_targets test_issue_780)
 add_dependencies(all_test_issue_targets test_issue_760)
 # Issue #660: cache_define bundle ordering (multi-define pre-existing bug).
 # Regression net for the bundle[0] fix shipped across fe30663b + 476ce10d

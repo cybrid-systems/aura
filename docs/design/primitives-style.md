@@ -115,6 +115,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:eda-production-readiness)` | 777 | Consolidated EDA Stdlib Production Readiness Roadmap (6 fields) |
 | `(query:ffi-call-overhead-stats)` | 778 | FFI call overhead + batch primitive readiness (4 fields) |
 | `(query:dirty-region-rendering-stats)` | 779 | Dirty region / delta rendering readiness (4 fields) |
+| `(query:jit-rendering-coverage-stats)` | 780 | JIT / hot-update rendering coverage + readiness (4 fields) |
 | `(query:primitives-meta-stats)`          | 669    | meta-introspection axis (5 fields) |
 
 ### `(query:longrunning-infra-stats)` fields (#753)
@@ -330,6 +331,17 @@ Distinct from `(query:ffi-calls-stats)` (#699) and the `#131` FFI primitive extr
 - `schema` — 779 (drift sentinel)
 
 Distinct from the existing vector primitives (`vector-set!`, `vector-ref`, `make-vector`, `vector-length`, `vector->list` in `evaluator_primitives_vector.cpp`): the vector primitives provide direct access to contiguous cells but offer no dirty region tracking or delta rendering optimization. `#779` is the FIRST observability surface that exposes the production-readiness signals for the deferred dirty region + `present-delta` work the body asks for. The actual `ns/op` measurement on the vector primitives is in `tests/test_issue_779.cpp` as a benchmark.
+
+### `(query:jit-rendering-coverage-stats)` fields (#780)
+
+- `hotpath-eval-flat-calls` — reused `#441` atomic `hotpath_eval_flat_calls` (total JIT path eval-flat invocations)
+- `hotpath-lowering-calls` — reused `#441` atomic `hotpath_lowering_calls` (total JIT lowering invocations)
+- `rendering-path-jit-supported` — hardcoded 0 (rendering path JIT is Phase 2+ deferred per body "`present()` and drawing loops remain in interpreted mode or have high overhead")
+- `hot-update-rendering-optimized` — hardcoded 0 (hot-update rendering optimization is Phase 2+ deferred per body "Hot-update works for general code but lacks special handling for performance-critical rendering functions")
+- `recommendation` — derived 0/1/2/3 (0 = production-ready if both flags = 1; 1 = partial if one flag = 1; 2 = missing-optimization if both = 0 but JIT activity > 0; 3 = early-stage if both = 0 and no JIT activity)
+- `schema` — 780 (drift sentinel)
+
+Distinct from `(query:jit-stats)` (#427), `(query:jit-consistency-stats)`, `(query:jit-interpreter-parity-stats)` (#720), and `(query:jit-typed-mutation-stats)` (#746): those primitives cover general JIT metrics, JIT/interpreter consistency, JIT/typed-mutation hot paths, etc. `#780` is the FIRST observability surface that tracks the **JIT coverage for rendering hot paths** (the body items about `present()` and drawing loops remaining in interpreted mode) + exposes the production-readiness signals for the deferred rendering-path JIT + hot-update rendering optimization work.
 
 ### `(query:list-soa-hotpath-stats)` fields (#752)
 
