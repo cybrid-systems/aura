@@ -1595,19 +1595,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
 
-        // ── Auto-rollback: if typecheck/ownership failed, signal Guard to restore ────
-        // Issue #241: panic_checkpoint 的 restore 由 Guard dtor 处理，我们只需要设置 ok=false
-        // 当 ev.panic_auto_rollback_ 开启且 mutation 失败。Guard dtor 会调
-        // ev.restore_panic_checkpoint()。
-        if (!ev.last_mutate_error_.empty() && ev.panic_auto_rollback_) {
-            ok = false; // signal Guard's dtor to restore the source
+        // ── Validation failure must not report success (#1019) ────
+        // Issue #241: when panic_auto_rollback_ is on, Guard dtor restores.
+        // Issue #1019: even without auto-rollback, never return #t when
+        // last_mutate_error_ is set — callers treat #t as "committed ok".
+        if (!ev.last_mutate_error_.empty()) {
+            ok = false; // Guard dtor: restore if panic_auto_rollback_, else clear
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->rebind_validation_fail_returns_total.fetch_add(1, std::memory_order_relaxed);
             return mev("mutation-failed",
-                       std::string(typeid(ev).name()) +
-                           ": mutation rejected — auto-rolled back: " + ev.last_mutate_error_);
+                       ev.panic_auto_rollback_
+                           ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
+                           : ("mutation rejected: " + ev.last_mutate_error_));
         }
-        // 失败但 !ev.panic_auto_rollback_：保持 ok=true（保留 pre-#241 行为 — silently return
-        // true） Guard dtor 会 ev.commit_panic_checkpoint()（行为变化：以前 leave alone，现在
-        // clear）。 这是 #241 scope-limited close 的已知小变化 — 详见 commit message。
 
         return make_bool(true);
     });

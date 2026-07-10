@@ -266,21 +266,73 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(aura_jit_fallback_count_v_read()));
     });
 
-    // Issue #455: query:ir-marker-stats
-    // Returns a 3-tuple (user-instructions, macro-introduced-instructions,
-    // bool-literal-instructions) reflecting the SyntaxMarker distribution
-    // in the current IR cache. The counts are computed on demand from
-    // the active IRModule (if any) — the bridge has no per-instruction
-    // global counter yet (that's a follow-up). For the P0 ship we
-    // return a placeholder that documents the expected shape; the
-    // follow-up wires the real per-instruction walker.
+    // Issue #455 / #1039: query:ir-marker-stats
+    // Hash of SyntaxMarker counts from the active workspace AST
+    // (IR per-instruction markers are a follow-up when IRModule is
+    // always reachable). Never returns a bare hardcoded 0.
     add("query:ir-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        // P0 placeholder: real implementation needs a global
-        // IRModule pointer. Returning (0 0 0) lets callers
-        // exercise the primitive path without lying about
-        // real numbers; the follow-up wires the real counts.
-        return make_int(0); // 0 = unpopulated; follow-up returns a list
+        auto* ev = Evaluator::get_query_evaluator();
+        if (ev) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                m->ir_marker_stats_queries_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        std::int64_t user = 0, macro_intro = 0, bool_lit = 0;
+        if (ev) {
+            Evaluator::WorkspaceSharedLock lock(*ev);
+            if (auto* ws = ev->workspace_flat()) {
+                const auto& markers = ws->marker_column();
+                for (auto m : markers) {
+                    using SM = aura::ast::SyntaxMarker;
+                    if (m == SM::MacroIntroduced)
+                        ++macro_intro;
+                    else if (m == SM::BoolLiteral)
+                        ++bool_lit;
+                    else
+                        ++user;
+                }
+            }
+        }
+        // Return packed triple as list-like pair chain is heavy;
+        // expose three-field hash via FlatHashTable (Agent-friendly).
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_int(user + macro_intro + bool_lit);
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev ? ev->push_string_heap(k_str) : 0;
+            EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        if (!ev) {
+            FlatHashTable::destroy(ht);
+            return make_int(0);
+        }
+        insert_kv("user", user);
+        insert_kv("macro-introduced", macro_intro);
+        insert_kv("bool-literal", bool_lit);
+        insert_kv("total", user + macro_intro + bool_lit);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #458: query:hygiene-stats. Returns an integer
@@ -299,16 +351,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
     });
 
-    // Issue #456: query:dirty-subtree root-node-id
-    // [reason-mask]. Walks the dirty-subtree rooted at
-    // root-node-id and returns the number of dirty
-    // nodes found. The optional 2nd arg is a dirty-reason
-    // bitmask to AND against each node's dirty_ byte (0
-    // = count all dirty nodes).
-    //
-    // P0: returns an integer (= count of dirty nodes in
-    // the ancestor chain up to root). The follow-up
-    // returns a list of (NodeId . dirty-bit) pairs.
+    // Issue #456 / #1036: query:dirty-subtree root-node-id
+    // [reason-mask]. Walks the **subtree** rooted at root-node-id
+    // (BFS over children) and returns the number of dirty nodes.
+    // Optional 2nd arg: dirty-reason bitmask (default 0xFF = all).
     add("query:dirty-subtree", [](std::span<const EvalValue> a) -> EvalValue {
         auto* ev = Evaluator::get_query_evaluator();
         if (!ev)
@@ -322,22 +368,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
                                              ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
                                              : 0xFF; // 0xFF = all reasons
-        if (root >= ws->size())
+        if (root == aura::ast::NULL_NODE || root >= ws->size())
             return make_int(0);
-        // Walk the parent chain from root upward; count nodes
-        // that have at least one dirty bit intersecting
-        // reason_mask. (P0: this is the ancestor chain, not
-        // the full BFS over children — the impact is
-        // recorded by mark_dirty_upward, which already walks
-        // ancestors. The follow-up will do a real subtree
-        // BFS once we have a per-child lookup.)
+        // Issue #1036: BFS descendants (include root), not ancestor walk.
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
         std::uint64_t count = 0;
-        auto cur = root;
-        while (cur != aura::ast::NULL_NODE && cur < ws->size()) {
-            const auto dirty_bits = ws->dirty(cur);
-            if ((dirty_bits & reason_mask) != 0)
+        std::vector<aura::ast::NodeId> stack;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const auto cur = stack.back();
+            stack.pop_back();
+            if (cur == aura::ast::NULL_NODE || cur >= ws->size())
+                continue;
+            if ((ws->dirty(cur) & reason_mask) != 0)
                 ++count;
-            cur = ws->parent_of(cur);
+            for (auto child : ws->children(cur))
+                stack.push_back(static_cast<aura::ast::NodeId>(child));
         }
         return make_int(static_cast<std::int64_t>(count));
     });
