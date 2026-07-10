@@ -98,9 +98,8 @@
       (list "Time helpers"
             "(time:now)"))
     ; ── Helpers ──
-    (list "hash"
-      (list "Hash map operations"
-            "(hash:set key value)"))
+    ; Issue #981: removed duplicate "hash" entry (first entry under
+    ; Collection + data is canonical: "(hash:set 'k 'v)").
     (list "INDEX"
       (list "This discoverability index"
             "(stdlib:list)"))))

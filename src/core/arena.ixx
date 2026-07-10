@@ -164,6 +164,23 @@ public:
         allocated_from_small_ = 0;
     }
 
+    // Issue #974: re-bind tier start/end after parent buffer reallocation
+    // or shrink. SmallObjectPool owns its own buffer_ (not the ASTArena
+    // main buffer), so this is a no-op for layout unless buffer_ itself
+    // was moved. Kept as a public refresh for ASTArena::shrink_to_fit.
+    void rebind_tiers() noexcept {
+        if (buffer_.empty())
+            return;
+        for (std::size_t i = 0; i < kNumTiers; ++i) {
+            auto* start = buffer_.data() + i * kPerTierSize;
+            const auto used = static_cast<std::size_t>(classes_[i].bump - classes_[i].start);
+            classes_[i].start = start;
+            classes_[i].end = start + kPerTierSize;
+            classes_[i].bump = start + std::min(used, kPerTierSize);
+            classes_[i].obj_sz = kTierSizes[i];
+        }
+    }
+
     // Total bytes consumed from the small pool
     [[nodiscard]] std::size_t allocated() const { return allocated_from_small_; }
 
@@ -518,6 +535,10 @@ public:
             std::size_t before = buffer_.size();
             buffer_.resize(initial_size_);
             rebuild_resource_();
+            // Issue #974: SmallObjectPool has its own buffer — rebind tier
+            // pointers in case vector reallocation invalidated them
+            // (defensive; pool buffer is independent of main buffer_).
+            small_pool_.rebind_tiers();
             std::size_t saved = before - initial_size_;
             stats_.compaction_count++;
             stats_.last_compaction_saved = saved;

@@ -2187,6 +2187,10 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
                     .with_suggestion("check for type mismatches in function arguments, return "
                                      "values, or recursive bindings; "
                                      "add explicit type annotations to constrain the inference"));
+            // Issue #973: CONFLICT path must also degrade to Dyn (like TIMEOUT)
+            // so unresolved TYPE_VARs are not cached and re-inferred forever.
+            // Strict mode still reports TypeError; Dyn keeps incremental cache sane.
+            result = reg_.dynamic_type();
         } else {
             // Non-strict + permissive + TIMEOUT: emit a warning
             // with the constraint list, then fall through to the
@@ -2313,6 +2317,30 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             break;
         case Tag::DefineModule:
             result = synthesize_flat_define_module(flat, pool, v);
+            break;
+        // Issue #976: structural / SV / EDSL tags that previously fell to Dyn
+        // without explicit cases (11 tags). Pair/Export are scheme structure;
+        // Interface…Class are SV/SVA containers — type as Void/Dyn until
+        // specialized synthesize peels land.
+        case Tag::Pair:
+            // Cons cell: synthesize car if present, else Dyn list-ish.
+            if (!v.children.empty())
+                result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+            else
+                result = reg_.dynamic_type();
+            break;
+        case Tag::Export:
+        case Tag::Interface:
+        case Tag::Modport:
+        case Tag::Property:
+        case Tag::Sequence:
+        case Tag::Assert:
+        case Tag::Covergroup:
+        case Tag::Coverpoint:
+        case Tag::Constraint:
+        case Tag::Class:
+            // Declarative forms: no runtime value; Void is the safe type.
+            result = reg_.void_type();
             break;
         default:
             result = reg_.dynamic_type();
@@ -2795,14 +2823,21 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     // Instantiate Forall types before extracting function signature.
     // This is needed for Let-Polymorphism: (let ((f (lambda (x) ...))) (f 42))
     // where f's type is generalized to ∀t. (t -> ret)
-    auto instantiate_all_direct = [&](this const auto& self, TypeId tid) -> TypeId {
+    // Issue #977: depth-limit recursive ∀ unwrapping (circular Forall
+    // would otherwise stack-overflow). Cap is well above realistic
+    // polymorphic nesting.
+    auto instantiate_all_direct = [&](this const auto& self, TypeId tid, int depth) -> TypeId {
+        if (depth <= 0)
+            return reg_.dynamic_type();
         auto* ft = reg_.forall_of(tid);
         if (!ft)
             return tid;
         auto inst = reg_.instantiate(tid, [this]() { return cs_.fresh_var(); });
-        return self(inst);
+        if (inst.index == tid.index)
+            return reg_.dynamic_type(); // circular self-instantiation
+        return self(inst, depth - 1);
     };
-    func_type = instantiate_all_direct(func_type);
+    func_type = instantiate_all_direct(func_type, 32);
 
     // COPY func type before processing args — synthesize_flat may call
     // register_func which can reallocate entries_, invalidating func_of* pointers.

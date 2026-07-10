@@ -36,6 +36,11 @@ aura_add_issue_test(test_selfevo_bugfix_941_967)
 aura_issue_test_link_llvm_jit(test_selfevo_bugfix_941_967)
 add_dependencies(all_test_issue_targets test_selfevo_bugfix_941_967)
 
+# Issues #968–#984: observability / JIT / typechecker / FFI / arena bugfixes
+aura_add_issue_test(test_bugfix_968_984)
+aura_issue_test_link_llvm_jit(test_bugfix_968_984)
+add_dependencies(all_test_issue_targets test_bugfix_968_984)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

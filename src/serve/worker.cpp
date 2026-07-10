@@ -390,8 +390,13 @@ void WorkerThread::run() {
                                 std::memory_order_relaxed) > 10
                                 ? 5
                                 : 3;
+                        // Issue #970: thread_local RNG — std::rand() is not
+                        // thread-safe and serializes multi-worker steal paths.
+                        thread_local std::mt19937 rng{std::random_device{}() ^
+                                                      (static_cast<unsigned>(id_) * 0x9e3779b9u)};
+                        std::uniform_int_distribution<int> dist(0, n_workers - 1);
                         for (int attempt = 0; attempt < steal_tries; ++attempt) {
-                            int victim_id = std::rand() % n_workers;
+                            int victim_id = dist(rng);
                             if (victim_id == id_)
                                 continue;
                             auto* victim = scheduler_->worker(victim_id);

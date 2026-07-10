@@ -9481,17 +9481,18 @@ inline bool WorkspaceTree::ensure_local_flat(std::uint32_t idx) {
             ++n.cow_refused_count;
             return false;
         }
-        auto* new_flat = new ast::FlatAST();
-        auto* new_pool = new ast::StringPool();
+        // Issue #975: unique_ptr RAII — if copy throws bad_alloc, no leak.
+        auto new_flat = std::make_unique<ast::FlatAST>();
+        auto new_pool = std::make_unique<ast::StringPool>();
         *new_flat = *n.parent_flat_;
         *new_pool = *n.parent_pool_;
-        n.flat = new_flat;
-        n.pool = new_pool;
+        n.flat = new_flat.release();
+        n.pool = new_pool.release();
         n.has_own_flat = true;
         n.cow_epoch = ++cow_epoch_;
-        n.generation = new_flat->generation();
+        n.generation = n.flat->generation();
         n.memory_used = parent_bytes;
-        n.remap.reset_identity(n.parent_layer_idx, n.cow_epoch, new_flat->size());
+        n.remap.reset_identity(n.parent_layer_idx, n.cow_epoch, n.flat->size());
         return true;
     }
     return false;

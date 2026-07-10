@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
+#include <cstdio>
 
 module aura.compiler.evaluator;
 
@@ -198,6 +199,18 @@ bool Evaluator::trigger_lazy_cow(void* wt) {
             node.flat->reset_boundary_observability_counters();
         }
         propagate_cow_pins_after_clone(idx, node.cow_epoch);
+    } else if (!cloned) {
+        // Issue #978: budget-exceeded / refuse path — surface a diagnostic
+        // so the mutation is not silently dropped (cow_refused_count alone
+        // was invisible to --serve / agent callers).
+        auto& refused = tree->nodes_[idx];
+        if (refused.cow_refused_count > 0) {
+            // Prefer stderr with fixed prefix (no logger in this TU).
+            std::fprintf(stderr,
+                         "[aura:cow] trigger_lazy_cow refused workspace idx=%u "
+                         "(budget exceeded or read-only; cow_refused_count=%llu)\n",
+                         idx, static_cast<unsigned long long>(refused.cow_refused_count));
+        }
     }
     return cloned;
 }
