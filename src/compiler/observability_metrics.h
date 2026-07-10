@@ -5536,6 +5536,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_cache_v2_lru_evictions_total{0};      // #1042
     std::atomic<std::uint64_t> serve_health_slo_active{1};              // #1015
     std::atomic<std::uint64_t> panic_guard_lifecycle_active{1};         // #1014
+
+    // ── Issues #1047–#1071: hygiene / type / mutate safety batch ──
+    std::atomic<std::uint64_t> production_safety_1047_1071_active{1};
+    std::atomic<std::uint64_t> hw_coercion_empty_str_fixed{1};  // #1050
+    std::atomic<std::uint64_t> mutation_history_void_fixed{1};  // #1054
+    std::atomic<std::uint64_t> query_where_dedup_fixed{1};      // #1070
+    std::atomic<std::uint64_t> eval_string_bounds_fixed{1};     // #1071
+    std::atomic<std::uint64_t> hygiene_marker_phase1_active{1}; // #1047/#1049
+    std::atomic<std::uint64_t> guard_fiber_phase1_active{1};    // #1061–#1063
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

@@ -142,6 +142,11 @@ void CompilePrims::register_compile_p56(PrimRegistrar add, Evaluator& ev) {
 void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
 
     add("compile:hw-coercion-warning", [&ev](const auto& a) -> EvalValue {
+        // Issue #1050: empty-string sentinel must be a real heap entry,
+        // never make_string(heap.size()) which is OOB.
+        auto empty_str = [&ev]() -> EvalValue {
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
+        };
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return ev.make_merr("bad-arg",
                                 "usage: (compile:hw-coercion-warning from-name to-name)");
@@ -153,18 +158,18 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
         if (to_sx < ev.string_heap_.size())
             to_name = ev.string_heap_[to_sx];
         if (!ev.type_registry_)
-            return make_string(ev.string_heap_.size()); // empty string
+            return empty_str();
         auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         auto from_tid = reg.lookup_type(from_name);
         auto to_tid = reg.lookup_type(to_name);
         if (!from_tid.valid() || !to_tid.valid())
-            return make_string(ev.string_heap_.size());
+            return empty_str();
         auto* from_bv = reg.hw_bitvec_of(from_tid);
         auto* to_bv = reg.hw_bitvec_of(to_tid);
         if (!from_bv || !to_bv)
-            return make_string(ev.string_heap_.size());
+            return empty_str();
         if (from_bv->width <= to_bv->width)
-            return make_string(ev.string_heap_.size()); // lossless — no warning
+            return empty_str(); // lossless — no warning
         const std::uint32_t dropped = from_bv->width - to_bv->width;
         const std::string from_str = from_bv->is_signed ? "signed" : "unsigned";
         const std::string to_str = to_bv->is_signed ? "signed" : "unsigned";
@@ -172,9 +177,7 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
                                 std::to_string(from_bv->width) + " " + from_str + ") -> " +
                                 to_name + " (W" + std::to_string(to_bv->width) + " " + to_str +
                                 ") drops " + std::to_string(dropped) + " bits";
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(msg);
-        return make_string(sidx);
+        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(msg)));
     });
 
     // ── Issue #373: MacroIntroduced hygiene guard primitives ──

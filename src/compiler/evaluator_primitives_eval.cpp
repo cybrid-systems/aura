@@ -250,10 +250,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // (current-source) — Return the current workspace AST as source code string
     // Implemented inline to avoid circular dependency with lowering module.
     // (eval code) — Parse and evaluate a string of Aura code
+    // Issue #1071: bounds-check string_heap_ before indexing (same
+    // OOB family as #1040). is_string only checks the tag.
     add("eval", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
-        auto code = ev.string_heap_[types::as_string_idx(a[0])];
+        const auto sidx = types::as_string_idx(a[0]);
+        if (sidx >= ev.string_heap_.size())
+            return make_void();
+        auto code = ev.string_heap_[sidx];
         aura::ast::StringPool pool;
         aura::ast::FlatAST flat;
         auto pr = aura::parser::parse_to_flat(code, flat, pool);
