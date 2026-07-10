@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
 
 module aura.compiler.evaluator;
@@ -320,25 +321,11 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
         return nullptr;
 
     std::lock_guard<std::mutex> lock(heap_mutex());
-    // The result is allocated on the heap (via new) so its
-    // lifetime extends past the function return. The caller
-    // (serve_async.cpp) reads the fields and deletes.
-    //
-    // The struct here is layout-compatible with
-    // `aura::messaging::GCSweepResultMsg` in messaging_bridge.h.
-    // We use a local struct because messaging_bridge.h is a
-    // non-module .h included via the global fragment, and the
-    // C++20 module rules make it awkward to refer to its
-    // types directly here. The static_assert below catches
-    // any drift between the two definitions.
-    struct SweepResult {
-        std::size_t strings_freed = 0;
-        std::size_t pairs_freed = 0;
-        std::size_t closures_freed = 0;
-        std::size_t fiber_results_freed = 0;
-    };
+    // Issue #963: allocate the shared GCSweepResultMsg layout from
+    // messaging_bridge.h (single definition; serve_async deletes it).
+    using SweepResult = aura::messaging::GCSweepResultMsg;
     static_assert(sizeof(SweepResult) == 4 * sizeof(std::size_t),
-                  "SweepResult layout must match GCSweepResultMsg");
+                  "GCSweepResultMsg must be 4×size_t");
     auto* result = new SweepResult();
 
     // 1. closures_ — erase unmarked entries.

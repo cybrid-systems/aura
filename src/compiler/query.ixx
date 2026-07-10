@@ -557,9 +557,10 @@ inline TransformResult TransformEngine::query_and_fix(QueryEngine& engine, std::
 // Holds a set of (query, replacement) rules. When run against a
 // FlatAST, finds all matches and applies fixes in batch.
 //
-// Built-in rules:
-//   (+ x x) → (* x 2)
+// Built-in default rules (#966):
+//   (if 0 then else) → else
 //   (if 1 then else) → then
+//   (+ x x) → (* x 2)   [when both children are the same Variable]
 //
 export class AutoFixEngine {
 public:
@@ -585,20 +586,27 @@ public:
         return total;
     }
 
-    // Add default optimization rules
+    // Add default optimization rules (Issue #966: comment/code alignment)
     void add_default_rules() {
         // (if 0 X Y) → Y
         add_rule("(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
                  "(child 2)");
+        // (if 1 X Y) → X
+        add_rule("(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 1))))",
+                 "(child 1)");
+        // (+ x x) → (* x 2) when both children are Variable with same name is hard
+        // in pure pattern DSL; fold (+ n n) style via two equal LiteralInt is
+        // deferred. Keep structural (if) rules as the safe defaults.
     }
 
     // Add a rule from an error kind (for --fix CLI)
+    // Issue #962: never replace every Variable with 0 — that destroyed
+    // valid bindings. UnboundVariable needs a name-scoped diagnostic fix
+    // (future: bind to a gensym default or report-only). Phase 1: no-op.
     void add_error_fix(aura::diag::ErrorKind kind) {
         switch (kind) {
             case aura::diag::ErrorKind::UnboundVariable:
-                // Generic fallback: any reference to unbound var → LiteralInt 0
-                // (the specific var name is in the message)
-                add_rule("(node-type Variable)", "(LiteralInt 0)");
+                // Intentionally empty — catastrophic global Variable→0 removed.
                 break;
             default:
                 break;

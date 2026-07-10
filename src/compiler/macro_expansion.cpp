@@ -18,8 +18,14 @@ namespace aura::compiler::macro_exp {
 
 namespace detail {
 
+    // Issue #965: keep special forms + high-frequency primitives that
+    // macros must not gensym. Expanded beyond the original 56-name set
+    // so new stdlib-facing builtins (length, vector, make-hash, …) are
+    // preserved. Full registry-driven sync is Phase 2 (needs Evaluator
+    // at expand time); this set is the offline source of truth.
     const std::unordered_set<std::string>& hygiene_builtins() {
         static const std::unordered_set<std::string> builtins = {
+            // Special forms / control
             "if",
             "cond",
             "let",
@@ -35,18 +41,38 @@ namespace detail {
             "case",
             "when",
             "unless",
+            "do",
+            "delay",
+            "force",
+            "import",
+            "export",
+            "module",
+            // Pair / list
             "car",
             "cdr",
             "cons",
             "list",
+            "list-sort",
             "pair?",
             "null?",
+            "list?",
+            "length",
+            "append",
+            "reverse",
+            "member",
+            "member?",
+            "assoc",
             "eq?",
             "equal?",
+            "eqv?",
+            // Arithmetic / compare
             "+",
             "-",
             "*",
             "/",
+            "quotient",
+            "remainder",
+            "modulo",
             "=",
             "<",
             ">",
@@ -56,25 +82,62 @@ namespace detail {
             "and",
             "or",
             "void",
+            "max",
+            "min",
+            "abs",
+            // IO
             "display",
             "write",
             "newline",
+            "read",
+            "write-file",
+            "read-file",
+            // Type predicates
             "number?",
             "integer?",
             "float?",
             "boolean?",
             "string?",
             "symbol?",
+            "char?",
+            "vector?",
+            "hash?",
+            "procedure?",
+            "error?",
+            // String
             "string-append",
             "string-length",
             "string-ref",
             "substring",
             "number->string",
             "string->number",
+            "string=?",
+            "symbol->string",
+            "string->symbol",
+            // Higher-order / collections
             "apply",
             "map",
             "filter",
             "foldl",
+            "foldr",
+            "for-each",
+            "vector",
+            "make-vector",
+            "vector-ref",
+            "vector-set!",
+            "vector-length",
+            "make-hash",
+            "hash-ref",
+            "hash-set!",
+            "hash-count",
+            // Errors / assert / gensym
+            "error",
+            "assert",
+            "gensym",
+            "raise",
+            // Eval / meta commonly used in macros
+            "eval",
+            "current-time",
         };
         return builtins;
     }

@@ -31,6 +31,11 @@ aura_add_issue_test(test_stdlib_production_review_923_940)
 aura_issue_test_link_llvm_jit(test_stdlib_production_review_923_940)
 add_dependencies(all_test_issue_targets test_stdlib_production_review_923_940)
 
+# Issues #941–#967: self-evo pipeline + bugfix Phase 1
+aura_add_issue_test(test_selfevo_bugfix_941_967)
+aura_issue_test_link_llvm_jit(test_selfevo_bugfix_941_967)
+add_dependencies(all_test_issue_targets test_selfevo_bugfix_941_967)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

@@ -3,6 +3,7 @@
 
 module;
 
+#include <cstdlib>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "runtime_shared.h"
@@ -55,15 +56,20 @@ using types::make_vector;
 using types::make_void;
 
 // ── Module path resolution ──────────────────────────────────
+// Issue #967: heap realpath/getcwd (no 4096 stack cap); skip empty AURA_PATH.
 std::string Evaluator::resolve_module_path(const std::string& path) const {
     auto try_load = [](const std::string& full) -> std::optional<std::string> {
         for (auto candidate : {full, full + ".aura"}) {
             struct stat st;
             if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
                 continue;
-            char real[4096];
-            if (::realpath(candidate.c_str(), real))
-                return std::string(real);
+            // realpath(NULL) allocates; free after copy. Long paths no longer
+            // silently fall back to non-canonical form due to 4096 stack limit.
+            if (char* real = ::realpath(candidate.c_str(), nullptr)) {
+                std::string out(real);
+                ::free(real);
+                return out;
+            }
             return candidate;
         }
         return std::nullopt;
@@ -78,15 +84,15 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
 
     // Search CWD first
     {
-        char cwd_buf[4096];
-        if (::getcwd(cwd_buf, sizeof(cwd_buf))) {
-            auto hit = try_load(std::string(cwd_buf) + "/" + path);
+        if (char* cwd = ::getcwd(nullptr, 0)) {
+            auto hit = try_load(std::string(cwd) + "/" + path);
+            ::free(cwd);
             if (hit)
                 return *hit;
         }
     }
 
-    // Search AURA_PATH
+    // Search AURA_PATH (skip empty entries from "::" or leading/trailing ':')
     auto* env = ::getenv("AURA_PATH");
     if (env) {
         std::string aura_path(env);

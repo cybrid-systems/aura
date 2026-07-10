@@ -81,7 +81,12 @@ Token Lexer::read_string() {
                 case '\\':
                     string_buf_ += '\\';
                     break;
+                // Issue #964: \0 → NUL (not literal '0')
+                case '0':
+                    string_buf_ += '\0';
+                    break;
                 default:
+                    // Unknown escape: keep the escaped char (legacy)
                     string_buf_ += next;
                     break;
             }

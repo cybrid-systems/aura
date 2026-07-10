@@ -451,24 +451,12 @@ void run_serve_async(int num_workers) {
             // as GCSweepBuffers so we can pass it through the
             // void* API without exposing the gc_coordinator.h
             // type across module boundaries.
-            struct PassThru {
-                const aura::serve::MarkBitVector* s;
-                const aura::serve::MarkBitVector* p;
-                const aura::serve::MarkBitVector* c;
-            } holder{bufs.string_marks, bufs.pair_marks, bufs.closure_marks};
-            // compact_sweep returns void*; cast to the local
-            // GCSweepResultMsg layout (defined in messaging_bridge.h).
-            // The Evaluator's impl file uses a layout-compatible
-            // local struct (with a static_assert) for the same
-            // reason — to keep messaging_bridge.h from leaking
-            // into the module interface.
-            struct SweepResultMsg {
-                std::size_t strings_freed = 0;
-                std::size_t pairs_freed = 0;
-                std::size_t closures_freed = 0;
-                std::size_t fiber_results_freed = 0;
-            };
-            auto* msg_ptr = static_cast<SweepResultMsg*>(svc->evaluator().compact_sweep(&holder));
+            // Issue #963: shared GCSweepPassThru / GCSweepResultMsg
+            // layouts from messaging_bridge.h (no local duplicates).
+            aura::messaging::GCSweepPassThru holder{bufs.string_marks, bufs.pair_marks,
+                                                    bufs.closure_marks};
+            auto* msg_ptr = static_cast<aura::messaging::GCSweepResultMsg*>(
+                svc->evaluator().compact_sweep(&holder));
             if (!msg_ptr)
                 return {};
             aura::serve::GCSweepResult r{msg_ptr->strings_freed, msg_ptr->pairs_freed,
@@ -1016,7 +1004,8 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
         aura::serve::Fiber::yield();
     };
 
-    // Register async HTTP handler (same as run_serve_async)
+    // Issue #956: same in-process libcurl path as run_serve_async
+    // (no fork/exec curl; auth never on cmdline; shared_ptr result).
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                             const std::string& auth) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
@@ -1026,86 +1015,17 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
         if (evfd < 0)
             return {};
 
-        std::string result;
-        std::thread t([evfd, url, body, auth, &result]() {
-            int in[2], out[2];
-            if (::pipe(in) < 0 || ::pipe(out) < 0) {
-                uint64_t v = 1;
-                ::write(evfd, &v, sizeof(v));
-                return;
-            }
-            pid_t pid = ::fork();
-            if (pid < 0) {
-                ::close(in[0]);
-                ::close(in[1]);
-                ::close(out[0]);
-                ::close(out[1]);
-                uint64_t v = 1;
-                ::write(evfd, &v, sizeof(v));
-                return;
-            }
-            if (pid == 0) {
-                ::close(in[1]);
-                ::close(out[0]);
-                ::dup2(in[0], STDIN_FILENO);
-                ::dup2(out[1], STDOUT_FILENO);
-                ::close(in[0]);
-                ::close(out[1]);
-                std::vector<const char*> argv;
-                argv.push_back("curl");
-                argv.push_back("-s");
-                argv.push_back("-X");
-                argv.push_back("POST");
-                argv.push_back("--data-binary");
-                argv.push_back("@-");
-                argv.push_back("-H");
-                argv.push_back("Content-Type: application/json");
-                if (!auth.empty()) {
-                    auto auth_hdr = "Authorization: Bearer " + auth;
-                    argv.push_back("-H");
-                    argv.push_back(auth_hdr.c_str());
-                }
-                argv.push_back("--max-time");
-                argv.push_back("30");
-                argv.push_back("--connect-timeout");
-                argv.push_back("10");
-                argv.push_back(url.c_str());
-                argv.push_back(nullptr);
-                ::execvp("curl", const_cast<char* const*>(argv.data()));
-                ::_exit(1);
-            }
-            ::close(in[0]);
-            ::close(out[1]);
-            ::write(in[1], body.data(), body.size());
-            ::close(in[1]);
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(35);
-            std::array<char, 65536> fbuf;
-            struct pollfd pfd = {out[0], POLLIN, 0};
-            ssize_t nr;
-            while (true) {
-                auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     deadline - std::chrono::steady_clock::now())
-                                     .count();
-                if (remaining <= 0)
-                    break;
-                int pr = ::poll(&pfd, 1, static_cast<int>(remaining));
-                if (pr <= 0)
-                    break;
-                nr = ::read(out[0], fbuf.data(), fbuf.size());
-                if (nr <= 0)
-                    break;
-                result.append(fbuf.data(), static_cast<std::size_t>(nr));
-            }
-            ::close(out[0]);
-            int cstat;
-            ::waitpid(pid, &cstat, 0);
+        auto result = std::make_shared<std::string>();
+        std::thread t([evfd, url, body, auth, result]() {
+            *result = http_post_in_process(url, body, auth);
             uint64_t v = 1;
             ::write(evfd, &v, sizeof(v));
         });
         t.detach();
+
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
-        return result;
+        return std::move(*result);
     };
 
     // 3. Create default session

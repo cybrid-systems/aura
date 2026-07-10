@@ -2322,14 +2322,14 @@ private:
     std::atomic<std::uint64_t> defuse_version_{0};
 
 public:
-    // Test-only accessor for defuse_version_. Production code
-    // reads via member access from inside the class; tests need
-    // a public way to read it (and the companion setter below
-    // to bump it without going through MutationBoundaryGuard,
-    // which would also acquire the lock + mutate the stack).
-    std::uint64_t defuse_version_for_test() const {
+    // Issue #957: production-facing defuse_version accessor (AOT emit,
+    // serve metrics, Agent probes). Acquire load — synchronizes with
+    // MutationBoundaryGuard release stores.
+    [[nodiscard]] std::uint64_t defuse_version() const noexcept {
         return defuse_version_.load(std::memory_order_acquire);
     }
+    // Test-only aliases (stable name for existing tests).
+    std::uint64_t defuse_version_for_test() const { return defuse_version(); }
     void bump_defuse_version_for_test() { defuse_version_.fetch_add(1, std::memory_order_acq_rel); }
 
     // Issue #266: stats from the most recent boundary exit(false).

@@ -1164,6 +1164,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issues #923–#940: stdlib production review
     "query:stdlib-production-review-stats",
     "query:primitive-tier-stats",
+    // Issues #941–#967: self-evo + bugfix dashboards
+    "query:self-evo-pipeline-stats",
+    "query:bugfix-941-967-stats",
 };
 
 
