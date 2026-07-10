@@ -1169,6 +1169,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:bugfix-941-967-stats",
     // Issues #985–#1013: production hardening
     "query:production-hardening-985-1013-stats",
+    // Issues #1014–#1046: production stability + bugfix
+    "query:production-stability-1014-1046-stats",
+    "query:serve-health",
 };
 
 

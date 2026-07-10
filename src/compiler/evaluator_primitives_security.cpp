@@ -65,21 +65,47 @@ using types::make_void;
 
 void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    // Issue #1020: capability-gated sandbox admin surface.
+    // - Enabling sandbox from open mode is always allowed.
+    // - Changing mode while already sandboxed requires kCapWildcard
+    //   (prevents untrusted code from disabling the sandbox).
     add("security:set-sandbox-mode!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         const bool old = ev.sandbox_mode();
-        if (!a.empty() && is_bool(a[0]))
-            ev.set_sandbox_mode(as_bool(a[0]));
+        if (a.empty() || !is_bool(a[0]))
+            return make_bool(old);
+        const bool want = as_bool(a[0]);
+        if (old && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "security:set-sandbox-mode!: wildcard capability required while sandboxed",
+                ev.primitive_error_counter_ptr());
+        }
+        ev.set_sandbox_mode(want);
         return make_bool(old);
     });
 
     add("security:sandbox-mode?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.sandbox_mode()); });
 
+    // Issue #1020: granting capabilities while sandboxed requires wildcard
+    // (otherwise any code can self-elevate).
     add("security:grant-capability!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "security:grant-capability!: requires capability name",
                                         ev.primitive_error_counter_ptr());
+        }
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "security:grant-capability!: wildcard capability required in sandbox mode",
+                ev.primitive_error_counter_ptr());
         }
         const auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())

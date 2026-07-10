@@ -5526,6 +5526,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> resource_quota_max_fibers{256};       // #1013
     std::atomic<std::uint64_t> resource_quota_max_mutations{100000}; // #1013
     std::atomic<std::uint64_t> production_hardening_985_1013_active{1};
+
+    // ── Issues #1014–#1046: production stability + bugfix batch ──
+    std::atomic<std::uint64_t> production_stability_1014_1046_active{1};
+    std::atomic<std::uint64_t> rebind_validation_fail_returns_total{0}; // #1019
+    std::atomic<std::uint64_t> sandbox_admin_denials_total{0};          // #1020
+    std::atomic<std::uint64_t> dirty_subtree_bfs_walks_total{0};        // #1036
+    std::atomic<std::uint64_t> ir_marker_stats_queries_total{0};        // #1039
+    std::atomic<std::uint64_t> ir_cache_v2_lru_evictions_total{0};      // #1042
+    std::atomic<std::uint64_t> serve_health_slo_active{1};              // #1015
+    std::atomic<std::uint64_t> panic_guard_lifecycle_active{1};         // #1014
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

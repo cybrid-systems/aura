@@ -3578,6 +3578,8 @@ public:
         // stale?" check that complements the per-function
         // invalidate_function BFS in dep_graph_.
         std::uint64_t last_seen_epoch_ = 0;
+        // Issue #1042: access stamp for LRU eviction under long-running serve.
+        std::uint64_t last_used = 0;
         // Issue #196: per-block dirty bitmask. One inner
         // vector per IRFunction; each inner vector has 1 byte
         // per basic block (1=dirty, 0=clean). Indexed by
@@ -3883,9 +3885,10 @@ public:
         }
     };
     std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
-    // Issue #959: hard cap for long-running --serve (unbounded growth).
-    // Evicts dirty-first, then arbitrary oldest-ish (unordered_map walk).
+    // Issue #959 / #1042: hard cap for long-running --serve.
+    // Evicts dirty-first, then oldest last_used (LRU).
     static constexpr std::size_t kIRCacheV2MaxEntries = 2048;
+    std::uint64_t ir_cache_v2_access_clock_ = 0;
 
     void maybe_evict_ir_cache_v2() {
         if (ir_cache_v2_.size() <= kIRCacheV2MaxEntries)
@@ -3900,12 +3903,20 @@ public:
                 ++it;
             }
         }
-        // Still over: drop until under half water-mark headroom.
+        // Issue #1042: still over → LRU by last_used (oldest first).
         const std::size_t target = kIRCacheV2MaxEntries * 3 / 4;
-        for (auto it = ir_cache_v2_.begin();
-             it != ir_cache_v2_.end() && ir_cache_v2_.size() > target;) {
-            it = ir_cache_v2_.erase(it);
+        while (ir_cache_v2_.size() > target && !ir_cache_v2_.empty()) {
+            auto victim = ir_cache_v2_.begin();
+            std::uint64_t oldest = victim->second.last_used;
+            for (auto it = ir_cache_v2_.begin(); it != ir_cache_v2_.end(); ++it) {
+                if (it->second.last_used < oldest) {
+                    oldest = it->second.last_used;
+                    victim = it;
+                }
+            }
+            ir_cache_v2_.erase(victim);
             metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.ir_cache_v2_lru_evictions_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -3923,6 +3934,8 @@ public:
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return 2;
+        // Issue #1042: touch LRU stamp on every lookup.
+        it->second.last_used = ++ir_cache_v2_access_clock_;
         // Issue #126: delegate the re-lower decision to the pure
         // helper should_relower(). The function takes the relevant
         // fields as values (no this->) so the same logic can be
@@ -3957,6 +3970,7 @@ public:
         entry.bridges = std::move(bridges);
         entry.strings = std::move(strings);
         entry.dirty = false;
+        entry.last_used = ++ir_cache_v2_access_clock_; // #1042
         entry.mutation_count = 0;
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.

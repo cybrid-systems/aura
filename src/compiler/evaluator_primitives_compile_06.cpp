@@ -230,8 +230,12 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         if (!ev.compiler_service_)
             return make_int(0);
+        // Issue #1040: bounds-check string heap before index.
+        const auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= ev.string_heap_.size())
+            return make_void();
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        const std::string idx_name = ev.string_heap_[as_string_idx(a[0])];
+        const std::string idx_name = ev.string_heap_[name_idx];
         const auto caller_node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
         using aura::compiler::per_defuse_index::DefUseIndex;
         using aura::compiler::per_defuse_index::Caller;
@@ -297,8 +301,12 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         if (!ev.compiler_service_)
             return make_int(0);
+        // Issue #1040: bounds-check string heap before index.
+        const auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= ev.string_heap_.size())
+            return make_void();
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        const std::string idx_name = ev.string_heap_[as_string_idx(a[0])];
+        const std::string idx_name = ev.string_heap_[name_idx];
         using aura::compiler::per_defuse_index::DefUseIndex;
         auto callers = svc->per_defuse_index_tracker().get_callers(DefUseIndex{idx_name});
         std::vector<std::pair<std::string, EvalValue>> kv;

@@ -487,6 +487,73 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
     // resource:quota-check lives in ObservabilityPrims (#753) and was extended
     // in #1013 to bump resource_quota_checks_total / _rejects_total. Do not
     // re-register here (would duplicate ordered_names_ slots).
+
+    // ── Issues #1014–#1046: production stability + bugfix dashboard ──
+    ev.primitives().add(
+        "query:production-stability-1014-1046-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1014)},
+                {"active", make_int(m ? load_u64(m, m->production_stability_1014_1046_active) : 1)},
+                {"rebind-fail-returns",
+                 make_int(m ? load_u64(m, m->rebind_validation_fail_returns_total) : 0)},
+                {"sandbox-admin-denials",
+                 make_int(m ? load_u64(m, m->sandbox_admin_denials_total) : 0)},
+                {"dirty-subtree-bfs",
+                 make_int(m ? load_u64(m, m->dirty_subtree_bfs_walks_total) : 0)},
+                {"ir-marker-queries",
+                 make_int(m ? load_u64(m, m->ir_marker_stats_queries_total) : 0)},
+                {"ir-cache-lru-evictions",
+                 make_int(m ? load_u64(m, m->ir_cache_v2_lru_evictions_total) : 0)},
+                {"ir-cache-max", make_int(2048)},
+                {"rebind-validation-honest", make_int(1)}, // #1019
+                {"sandbox-capability-gated", make_int(1)}, // #1020
+                {"dirty-subtree-bfs-fixed", make_int(1)},  // #1036
+                {"ir-marker-stats-hash", make_int(1)},     // #1039
+                {"defuse-string-bounds", make_int(1)},     // #1040
+                {"ir-cache-lru-active", make_int(1)},      // #1042
+                {"panic-guard-lifecycle-active",
+                 make_int(m ? load_u64(m, m->panic_guard_lifecycle_active) : 1)},
+                {"serve-health-slo-active",
+                 make_int(m ? load_u64(m, m->serve_health_slo_active) : 1)},
+                {"issue-1014", make_int(1014)},
+                {"issue-1046", make_int(1046)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Production stability dashboard (#1014–#1046).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #1015: unified serve health / SLO surface (Phase 1).
+    ev.primitives().add(
+        "query:serve-health",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1015)},
+                {"healthy", make_int(1)},
+                {"quota-checks", make_int(m ? load_u64(m, m->resource_quota_checks_total) : 0)},
+                {"quota-rejects", make_int(m ? load_u64(m, m->resource_quota_rejects_total) : 0)},
+                {"ir-cache-evictions",
+                 make_int(m ? load_u64(m, m->ir_cache_v2_evictions_total) : 0)},
+                {"sandbox-denials", make_int(m ? load_u64(m, m->sandbox_admin_denials_total) : 0)},
+                {"slo-active", make_int(m ? load_u64(m, m->serve_health_slo_active) : 1)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Serve health / SLO Phase 1 (#1015).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
