@@ -177,12 +177,19 @@ Primitives::Primitives() {
         (void)a;
         return make_int(static_cast<std::int64_t>(std::time(nullptr)));
     };
-    // Populate ordered_names_ + fn_slots_ + default meta_ for ctor builtins.
+    // Populate ordered_names_ + fn_slots_ + name_to_slot_ + default meta_
+    // for ctor builtins (registered via table_[] not add()).
+    // Issue: name_to_slot_ must be filled here — Env::lookup falls back
+    // to slot_for_name for first-class primitives like (foldl + 0 …).
+    // Without the reverse index, +/*/- etc. are unbound as values while
+    // still working in call position (lookup uses table_ directly).
     for (auto& [name, fn] : table_) {
         if (std::find(ordered_names_.begin(), ordered_names_.end(), name) == ordered_names_.end()) {
+            const std::size_t slot = ordered_names_.size();
             ordered_names_.push_back(name);
             fn_slots_.push_back(fn);
             meta_.push_back(PrimMeta{});
+            name_to_slot_[ordered_names_.back()] = slot;
         }
     }
     auto set_meta = [this](const char* name, PrimMeta meta) {
