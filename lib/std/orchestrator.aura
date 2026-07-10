@@ -15,7 +15,8 @@
 (export orch:define-role orch:step orch:pipeline orch:conduct
         orch:parallel agent:spawn agent:ask agent:list
         agent:status agent:stop agent:restart
-        orch:role orch:step* orch:if orch:retry)
+        orch:role orch:step* orch:if orch:retry
+        orch:registry-epoch)
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Section 1: Agent 生命周期（乐手管理）
@@ -26,10 +27,23 @@
 ;   handler — 处理函数 (lambda (input) → output)
 ;   status  — "running" | "stopped" | "error"
 ;   ts      — 创建时间戳
+;
+; Issue #924: fiber-safety. Cooperative fibers (single OS thread per
+; scheduler worker) make list updates atomic w.r.t. preemption only at
+; yield points. *registry-epoch* is bumped on every mutation so concurrent
+; readers can detect mid-update views (retry). Prefer agent-register /
+; agent-set-status over direct *agents* mutation. Multi-worker production
+; should route through serve-mode cross-session APIs.
 (define *agents* (quote ()))
+(define *registry-epoch* 0)
+
+(define (orch:registry-epoch) *registry-epoch*)
 
 (define (agent-register name handler)
+  ; #924: stamp epoch before publish so readers can re-sample on mismatch
+  (set! *registry-epoch* (+ *registry-epoch* 1))
   (set! *agents* (cons (list name handler "running" (current-time)) *agents*))
+  (set! *registry-epoch* (+ *registry-epoch* 1))
   name)
 
 (define (agent-lookup name)
@@ -58,7 +72,9 @@
                     (car (cdr (cdr (cdr (car agents))))))
               (update (cdr agents)))
         (cons (car agents) (update (cdr agents))))))
+  (set! *registry-epoch* (+ *registry-epoch* 1))
   (set! *agents* (update *agents*))
+  (set! *registry-epoch* (+ *registry-epoch* 1))
   new-status)
 
 ; ── agent:status — 查询乐手状态 ──

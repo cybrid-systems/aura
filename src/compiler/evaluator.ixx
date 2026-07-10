@@ -117,6 +117,11 @@ export struct PrimMeta {
     std::uint8_t arity = 255; // 255 = variadic
     bool pure = true;
     std::uint8_t safety_flags = 0; // 0x01=mutates, 0x02=io, 0x04=fiber
+    // Issue #926: Agent-visible performance / security tiers.
+    // perf_tier: 0=unknown, 1=hot-path/native, 2=normal, 3=cold/recursive
+    // security_level: 0=unknown, 1=safe, 2=sandboxed, 3=privileged/network
+    std::uint8_t perf_tier = 0;
+    std::uint8_t security_level = 0;
     std::string doc;
     std::string category; // eda | sva | verification | general
     std::string schema;   // e.g. "(int string) -> bool"
@@ -722,6 +727,9 @@ namespace primitives_detail {
     void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
                                                 Evaluator& ev);
+    // Issues #923–#940: stdlib production-review dashboard primitives.
+    void register_stdlib_review_primitives(std::function<void(std::string, PrimFn)> add,
+                                           Evaluator& ev);
     void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
@@ -835,6 +843,8 @@ export class Evaluator {
     primitives_detail::register_compile_primitives(std::function<void(std::string, PrimFn)> add,
                                                    Evaluator& ev);
     friend void primitives_detail::register_eval_observability_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_stdlib_review_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     // Issue #909: peeled register structs access private Evaluator state.
     friend struct primitives_detail::ObservabilityPrims;

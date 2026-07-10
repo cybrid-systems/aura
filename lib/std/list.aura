@@ -1,90 +1,136 @@
 ; Aura standard list library
 ; Import with: (import "std/list")
+;
+; Issues #923 / #928: prefer iterative / native hot paths (foldl, list-sort)
+; over deep recursion for production Agent scalability.
 
-(export foldr map for-each member? zip zip3 take skip take-while drop-while partition sort range sum product last flatten intersperse)
+(export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
+        partition sort range sum product last flatten intersperse any all)
 
+; foldr: right fold (recursive — use foldl for large lists)
 (define (foldr f init lst)
   (if (null? lst)
     init
     (f (car lst) (foldr f init (cdr lst)))))
 
+; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
+(define (foldl f init lst)
+  (let loop ((acc init) (xs lst))
+    (if (null? xs)
+      acc
+      (loop (f acc (car xs)) (cdr xs)))))
+
 (define (for-each f lst)
-  (if (null? lst) #t
-    (begin (f (car lst)) (for-each f (cdr lst)))))
+  (let loop ((xs lst))
+    (if (null? xs) #t
+      (begin (f (car xs)) (loop (cdr xs))))))
 
 (define (member? elem lst)
-  (if (null? lst) #f
-    (if (equal? (car lst) elem) #t
-      (member? elem (cdr lst)))))
+  (let loop ((xs lst))
+    (if (null? xs) #f
+      (if (equal? (car xs) elem) #t
+        (loop (cdr xs))))))
 
 (define (zip a b)
-  (if (or (null? a) (null? b))
-    (list)
-    (cons (list (car a) (car b)) (zip (cdr a) (cdr b)))))
+  (let loop ((xs a) (ys b) (acc (list)))
+    (if (or (null? xs) (null? ys))
+      (reverse acc)
+      (loop (cdr xs) (cdr ys) (cons (list (car xs) (car ys)) acc)))))
 
 (define (zip3 a b c)
-  (if (or (null? a) (null? b) (null? c))
-    (list)
-    (cons (list (car a) (car b) (car c))
-          (zip3 (cdr a) (cdr b) (cdr c)))))
+  (let loop ((xs a) (ys b) (zs c) (acc (list)))
+    (if (or (null? xs) (null? ys) (null? zs))
+      (reverse acc)
+      (loop (cdr xs) (cdr ys) (cdr zs)
+            (cons (list (car xs) (car ys) (car zs)) acc)))))
 
 (define (take-while pred lst)
-  (if (or (null? lst) (not (pred (car lst))))
-    (list)
-    (cons (car lst) (take-while pred (cdr lst)))))
+  (let loop ((xs lst) (acc (list)))
+    (if (or (null? xs) (not (pred (car xs))))
+      (reverse acc)
+      (loop (cdr xs) (cons (car xs) acc)))))
 
 (define (drop-while pred lst)
-  (if (or (null? lst) (not (pred (car lst))))
-    lst
-    (drop-while pred (cdr lst))))
+  (let loop ((xs lst))
+    (if (or (null? xs) (not (pred (car xs))))
+      xs
+      (loop (cdr xs)))))
 
 (define (partition pred lst)
   (list (filter pred lst) (filter (lambda (x) (not (pred x))) lst)))
 
+; sort: prefer native list-sort (#923 C++ iterative); fall back to merge-sort
 (define (sort lst)
-  (if (< (length lst) 2)
+  (if (null? lst)
     lst
-    (let* ((pivot (car lst))
-           (rest (cdr lst))
-           (less (filter (lambda (x) (< x pivot)) rest))
-           (greater (filter (lambda (x) (>= x pivot)) rest)))
-      (append (sort less) (cons pivot (sort greater))))))
+    (let ((r (list-sort lst)))
+      (if (list? r) r (sort-merge lst)))))
 
+(define (sort-merge lst)
+  (if (or (null? lst) (null? (cdr lst)))
+    lst
+    (let* ((n (length lst))
+           (mid (quotient n 2))
+           (left (take mid lst))
+           (right (skip mid lst)))
+      (merge (sort-merge left) (sort-merge right)))))
+
+(define (merge a b)
+  (let loop ((xs a) (ys b) (acc (list)))
+    (cond
+      ((null? xs) (append (reverse acc) ys))
+      ((null? ys) (append (reverse acc) xs))
+      ((<= (car xs) (car ys))
+       (loop (cdr xs) ys (cons (car xs) acc)))
+      (else
+       (loop xs (cdr ys) (cons (car ys) acc))))))
+
+; range: iterative construction (constant stack for large spans)
 (define (range start end)
-  (if (>= start end)
-    (list)
-    (cons start (range (+ start 1) end))))
+  (let loop ((i start) (acc (list)))
+    (if (>= i end)
+      (reverse acc)
+      (loop (+ i 1) (cons i acc)))))
 
-;; take: first n elements
 (define (take n lst)
-  (if (or (= n 0) (null? lst)) (list)
-      (cons (car lst) (take (- n 1) (cdr lst)))))
+  (let loop ((k n) (xs lst) (acc (list)))
+    (if (or (= k 0) (null? xs))
+      (reverse acc)
+      (loop (- k 1) (cdr xs) (cons (car xs) acc)))))
 
-;; drop: skip first n elements
 (define (skip n lst)
-  (if (or (= n 0) (null? lst)) lst
-      (skip (- n 1) (cdr lst))))
+  (let loop ((k n) (xs lst))
+    (if (or (= k 0) (null? xs)) xs
+      (loop (- k 1) (cdr xs)))))
 
-(define (sum lst)
-  (if (null? lst) 0
-    (+ (car lst) (sum (cdr lst)))))
-
-(define (product lst)
-  (if (null? lst) 1
-    (* (car lst) (product (cdr lst)))))
+(define (sum lst) (foldl + 0 lst))
+(define (product lst) (foldl * 1 lst))
 
 (define (last lst)
   (if (null? lst) (list)
-    (if (null? (cdr lst)) (car lst)
-      (last (cdr lst)))))
+    (let loop ((xs lst))
+      (if (null? (cdr xs)) (car xs)
+        (loop (cdr xs))))))
 
 (define (flatten lst)
-  (if (null? lst) (list)
-    (if (pair? (car lst))
-      (append (flatten (car lst)) (flatten (cdr lst)))
-      (cons (car lst) (flatten (cdr lst))))))
+  (foldl (lambda (acc x)
+           (if (pair? x)
+             (append acc (flatten x))
+             (append acc (list x))))
+         (list) lst))
 
 (define (intersperse sep lst)
   (if (or (null? lst) (null? (cdr lst)))
     lst
     (cons (car lst) (cons sep (intersperse sep (cdr lst))))))
+
+; any / all: iterative (Issue #928 TCO-friendly)
+(define (any pred lst)
+  (let loop ((xs lst))
+    (if (null? xs) #f
+      (if (pred (car xs)) #t (loop (cdr xs))))))
+
+(define (all pred lst)
+  (let loop ((xs lst))
+    (if (null? xs) #t
+      (if (pred (car xs)) (loop (cdr xs)) #f))))

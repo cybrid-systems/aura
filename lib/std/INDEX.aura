@@ -73,8 +73,8 @@
             "(orchestrator:spawn)"))
     ; ── Collection + data ──
     (list "list"
-      (list "List utilities (map, filter, fold, zip)"
-            "(map (lambda (x) (* x 2)) (list 1 2 3))"))
+      (list "List utilities (map, filter, foldl, list-sort) [perf-tier:hot #923/#928]"
+            "(sort (list 3 1 2))"))
     (list "vector"
       (list "Vector utilities"
             "(vector:make 1 2 3)"))

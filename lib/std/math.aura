@@ -9,6 +9,7 @@
   ; Basic
   square cube abs clamp signum min max
   avg mean median mode
+  safe-div safe-div?
 
   ; Rounding
   floor ceil round trunc
@@ -47,6 +48,18 @@
   (min (max x lo) hi))
 
 (define (avg a b) (/ (+ a b) 2))
+
+; Issue #925: structured division with validation (no uncaught /0)
+; Returns (ok . value) or (err . reason)
+(define (safe-div a b)
+  (cond
+    ((not (number? a)) (list 'err "safe-div: numerator not number"))
+    ((not (number? b)) (list 'err "safe-div: denominator not number"))
+    ((= b 0) (list 'err "safe-div: division by zero"))
+    (else (list 'ok (/ a b)))))
+
+(define (safe-div? r)
+  (and (pair? r) (eq? (car r) 'ok)))
 
 ; ═══════════════════════════════════════════════════════════
 ; Rounding (wrappers around C++ primitives)

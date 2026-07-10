@@ -4,6 +4,7 @@
 module;
 
 #include "primitives_detail.h"
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -478,6 +479,55 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         ev.bump_linear_traverse_count(steps, steps);
         return acc;
     });
+
+    // Issue #923 / #928: native iterative list-sort (no Aura recursion depth).
+    // Sorts a proper list of numbers ascending via std::sort on a temp buffer.
+    ev.primitives_.add(
+        "list-sort",
+        [&pairs, &ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return make_void();
+            std::vector<std::int64_t> buf;
+            buf.reserve(64);
+            auto v = a[0];
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v))
+                    return make_void(); // improper list
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    return make_void();
+                auto car = pairs[idx].car;
+                if (!is_int(car) && !is_float(car))
+                    return make_void(); // non-numeric
+                if (is_int(car))
+                    buf.push_back(as_int(car));
+                else
+                    buf.push_back(static_cast<std::int64_t>(as_float(car)));
+                v = pairs[idx].cdr;
+                ev.bump_list_chain_traversals();
+            }
+            std::sort(buf.begin(), buf.end());
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                m->stdlib_list_iterative_sorts_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            EvalValue result = make_void();
+            for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
+                auto new_id = pairs.size();
+                pairs.push_back({make_int(*it), result});
+                ev.bump_pair_alloc_count();
+                result = make_pair(new_id);
+            }
+            return result;
+        },
+        PrimMeta{.arity = 1,
+                 .pure = true,
+                 .safety_flags = 0,
+                 .perf_tier = 1,
+                 .security_level = 1,
+                 .doc = "Iterative sort of a numeric list (Issue #923).",
+                 .category = "general",
+                 .schema = "(list) -> list"});
 }
 
 } // namespace aura::compiler::primitives_detail
