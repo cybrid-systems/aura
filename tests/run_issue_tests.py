@@ -158,6 +158,8 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
     # Per-binary timeout scaling. Bench / stress / large late bundles
     # need more than the default 60s (test_issue_159_bench alone can
     # exceed a minute; multi-member late* bundles are longer).
+    # late1 alone can exceed 6 min under parallel load on aarch64 CI
+    # (was timing out at 60*4=240s with rc=124).
     is_heavy = (
         "bench" in bin_name
         or bin_name == "test_issues_jit"
@@ -165,7 +167,17 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
         or bin_name.startswith("test_issues_jit_late")
         or bin_name.startswith("test_issues_fiber")
     )
-    eff_timeout = timeout * 4 if is_heavy else timeout
+    is_very_heavy = bin_name in (
+        "test_issues_jit_late1",
+        "test_issues_jit_late3",
+        "test_issues_jit_late4",
+    )
+    if is_very_heavy:
+        eff_timeout = timeout * 10  # 600s default
+    elif is_heavy:
+        eff_timeout = timeout * 4
+    else:
+        eff_timeout = timeout
     # Issue #226 follow-up: pass AURA_BIN + AURA_SRC_ROOT to
     # subprocesses so tests that shell out to the aura binary
     # (test_issue_294, test_issue_295) can resolve relative
