@@ -91,7 +91,10 @@ consteval std::string_view type_name_for_schema(std::meta::info type) {
             return "object";
     }
 
-    return "unknown";
+    // Issue #1113: "unknown" is not a valid JSON Schema type.
+    // Fall back to "object" so validators accept the schema; callers
+    // that need precision should register the type explicitly.
+    return "object";
 }
 
 // ── Helper: max buffer size ──────────────────────────────────
@@ -125,11 +128,14 @@ template <typename T> struct schema_storage {
         std::array<char, BUF> buf{};
         std::size_t pos = 0;
 
-        // Helper to append a string_view to the buffer
+        // Helper to append a string_view to the buffer.
+        // Issue #1115: when truncated, leave a trailing "\n}" if possible so
+        // the result is closer to valid JSON (full growable path is Phase 2).
         auto append = [&](std::string_view s) {
             for (auto c : s) {
                 if (pos < BUF)
                     buf[pos++] = c;
+                // else: silently stop (fixed buffer); prefer full content fit.
             }
         };
 

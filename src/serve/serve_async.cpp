@@ -237,16 +237,18 @@ void run_serve_async(int num_workers) {
             aura::messaging::g_current_compiler_service);
         if (!svc)
             return "";
-        std::string result;
+        // Issue #1097: heap-allocate result — do NOT capture fiber-stack
+        // locals by reference (UAF if scheduler reaps the fiber).
+        auto result = std::make_shared<std::string>();
         s_thread_pool.enqueue(
-            [svc, code, &result]() {
+            [svc, code, result]() {
                 auto r = svc->exec_with_cache(code);
                 if (r) {
-                    result = aura::compiler::format_value(
+                    *result = aura::compiler::format_value(
                         *r, svc->evaluator().primitives().string_heap(), svc->evaluator().pairs(),
                         0, &svc->evaluator().primitives(), svc->evaluator().keyword_table());
                 } else {
-                    result = "[error] " + r.error().format();
+                    *result = "[error] " + r.error().format();
                 }
             },
             evfd);
@@ -256,7 +258,7 @@ void run_serve_async(int num_workers) {
         // Drain eventfd
         uint64_t val;
         ::read(evfd, &val, sizeof(val));
-        return result;
+        return *result;
     };
 
     // 2. Create scheduler with worker threads

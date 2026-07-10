@@ -56,6 +56,22 @@ int cache_validate_header(const void* h) {
     // Validate offsets
     if (ch->node_offset < 64 || ch->node_offset > 100000000ULL)
         return -4; // bad offset
-    return 0;      // valid
+    // Issue #1104: validate remaining header fields (reject wild values).
+    if (ch->num_strings > 10000000)
+        return -5;
+    if (ch->num_functions > 1000000)
+        return -6;
+    if (ch->string_offset > 0 && ch->string_offset < 64)
+        return -7;
+    if (ch->string_offset > 100000000ULL)
+        return -7;
+    if (ch->ir_offset > 100000000ULL)
+        return -8;
+    // sig_offset 0 = absent; otherwise must be past header.
+    if (ch->sig_offset != 0 && ch->sig_offset < 64)
+        return -9;
+    if (ch->sig_size > 100000000U)
+        return -10;
+    return 0; // valid
 }
 } // extern "C"

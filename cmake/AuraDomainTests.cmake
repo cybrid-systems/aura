@@ -61,6 +61,11 @@ aura_add_issue_test(test_production_hardening_1072_1096)
 aura_issue_test_link_llvm_jit(test_production_hardening_1072_1096)
 add_dependencies(all_test_issue_targets test_production_hardening_1072_1096)
 
+# Issues #1097–#1122: serialize / fold / serve safety Phase 1
+aura_add_issue_test(test_production_safety_1097_1122)
+aura_issue_test_link_llvm_jit(test_production_safety_1097_1122)
+add_dependencies(all_test_issue_targets test_production_safety_1097_1122)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
