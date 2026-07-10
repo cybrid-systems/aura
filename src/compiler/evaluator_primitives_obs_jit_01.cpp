@@ -168,7 +168,8 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
         // are the live counts at the time of writing.
         // The AI Agent detects drift by re-reading the
         // file and comparing the count delta.
-        constexpr std::int64_t kConstevalInvariants = 22;
+        constexpr std::int64_t kConstevalInvariants =
+            24; // Issue #1143: match static_assert count in cxx26_invariants.ixx
         constexpr std::int64_t kConceptCount = 13;
         constexpr std::int64_t kContractHotPaths = 26;
         constexpr std::int64_t kConceptSelfChecks = 1;
@@ -187,37 +188,18 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 9 (orig lines 12481-12583)
 void ObservabilityPrims::register_jit_p9(PrimRegistrar add, Evaluator& ev) {
 
-    // (query:edsl-readiness) — Issue #440: a single
-    // hash that aggregates the top 8 EDSL production
-    // readiness signals from across the existing
-    // query:*-stats primitives. The intent is for the
-    // AI Agent to ask "is the EDSL production-ready?"
-    // in a single query (vs. 8 separate (query:*) calls).
+    // (query:edsl-readiness) — Issue #440 / #1142: a single
+    // hash that aggregates the curated EDSL production readiness
+    // signals. Field list must match the kv vector below (6 fields):
+    //   - closure-stale-refresh:       closure_bridge refreshes (#531)
+    //   - linear-check-pass:           linear ownership fast-path (#149)
+    //   - atomic-batch-commits:        MutationBoundaryGuard commits (#241)
+    //   - stable-ref-invalidations:    StableNodeRef is_valid misses (#417)
+    //   - occurrence-stale-refreshes:  occurrence stale refreshes
+    //   - dirty-block-rate:            live per-block dirty % (#429, 0..100)
     //
-    // Field list (6 total):
-    //   - closure-stale-refresh:    closure_bridge refreshes (#531)
-    //   - linear-check-pass:        linear ownership fast-path checks (#149)
-    //   - mutation-rollbacks:       MutationBoundaryGuard rollbacks (#241)
-    //   - mutation-commits:        MutationBoundaryGuard commits (#241)
-    //   - stable-ref-invalidates:   StableNodeRef is_valid misses (#417)
-    //   - generation-bumps:         mutation_epoch_ lifetime total (#401)
-    //   - pattern-macro-filtered:   MacroIntroduced skipped in patterns (#421)
-    //   - dirty-block-rate:         live per-block dirty % from #429
-    //                                (capped 0..100)
-    //
-    // All fields are non-negative integers; the AI Agent
-    // reads each as a signal:
-    //   - High closure-stale-refresh + low stale-refresh → bridge healthy
-    //   - Linear-check-pass dominance → linear ownership fast path active
-    //   - Mutation-commits > mutation-rollbacks → mutations stick
-    //   - Generation-bumps > 0 → mutating (cache eviction expected)
-    //   - Pattern-macro-filtered > 0 → hygiene gate active
-    //   - Dirty-block-rate > 20% → cache is falling behind
-    //
-    // The 8 fields are a curated subset of the 30+
-    // existing (query:*-stats) primitives; the issue
-    // body enumerates which. Adding more later is a
-    // 1-line code change (add to the kv vector).
+    // Comment/code name alignment fixed in #1142 (was mismatched
+    // "6 total" header listing 8 differently-named fields).
     add("query:edsl-readiness", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(32);
@@ -368,7 +350,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
         // Build a small Swiss-table hash. Inline copy of the (hash ...) primitive
         // pattern. Capacity 8 is enough for the 5-field hashes below.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

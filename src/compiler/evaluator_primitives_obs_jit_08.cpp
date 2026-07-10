@@ -97,7 +97,7 @@ void ObservabilityPrims::register_jit_p64(PrimRegistrar add, Evaluator& ev) {
                     m->typed_mutate_coercion_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -152,7 +152,7 @@ void ObservabilityPrims::register_jit_p65(PrimRegistrar add, Evaluator& ev) {
                     m->fiber_epoch_type_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -208,7 +208,7 @@ void ObservabilityPrims::register_jit_p66(PrimRegistrar add, Evaluator& ev) {
                     m->sv_feedback_mutate_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -263,7 +263,7 @@ void ObservabilityPrims::register_jit_p67(PrimRegistrar add, Evaluator& ev) {
                     m->seva_harness_v2_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -318,7 +318,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                     m->typed_mut_audit_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -374,7 +374,7 @@ void ObservabilityPrims::register_jit_p69(PrimRegistrar add, Evaluator& ev) {
                     m->stable_ref_full_v2_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -429,7 +429,7 @@ void ObservabilityPrims::register_jit_p70(PrimRegistrar add, Evaluator& ev) {
                     m->longrun_ai_infra_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -484,7 +484,7 @@ void ObservabilityPrims::register_jit_p71(PrimRegistrar add, Evaluator& ev) {
                     m->ai_native_meta_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();

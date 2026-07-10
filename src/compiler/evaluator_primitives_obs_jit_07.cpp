@@ -97,7 +97,7 @@ void ObservabilityPrims::register_jit_p56(PrimRegistrar add, Evaluator& ev) {
                     m->sv_stability_transitions_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_contracts_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -158,7 +158,7 @@ void ObservabilityPrims::register_jit_p57(PrimRegistrar add, Evaluator& ev) {
                     m->irsoa_enforce_relower_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_enforcement_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -224,7 +224,7 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
                     m->arena_ldefrag_pointer_fixup_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_live_defrag_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -300,10 +300,11 @@ void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(true);
     });
+    // Issue #1135: present-delta only bumps its own delta counter —
+    // term_render_present_total is owned solely by terminal:present.
     add("terminal:present-delta", [&ev](const auto&) -> EvalValue {
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_render_present_total.fetch_add(1, std::memory_order_relaxed);
             m->render_hp_present_delta_total.fetch_add(1, std::memory_order_relaxed);
         }
         return make_bool(true);
@@ -323,7 +324,7 @@ void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
                     m->pass_shape_epoch_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -379,7 +380,7 @@ void ObservabilityPrims::register_jit_p60(PrimRegistrar add, Evaluator& ev) {
                     m->edsl_hotpath_real_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -435,7 +436,7 @@ void ObservabilityPrims::register_jit_p61(PrimRegistrar add, Evaluator& ev) {
                     m->dead_coercion_elim_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -491,7 +492,7 @@ void ObservabilityPrims::register_jit_p62(PrimRegistrar add, Evaluator& ev) {
                     m->occurrence_renarrow_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -547,7 +548,7 @@ void ObservabilityPrims::register_jit_p63(PrimRegistrar add, Evaluator& ev) {
                     m->linear_escape_mutate_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();

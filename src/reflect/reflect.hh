@@ -35,6 +35,7 @@
 #include <cstring>
 #include <concepts>
 #include <type_traits>
+#include <stdexcept>
 
 namespace aura::reflect {
 
@@ -634,12 +635,17 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                 // so the vector's contiguous data is just the string
                 // objects' internal memory, not the string contents).
                 // Detect by elem_size == sizeof(std::string).
+                // Issue #1123: cap count/len to uint32 max; refuse silent wrap.
                 if (m.elem_size == sizeof(std::string)) {
                     auto& vec = *reinterpret_cast<const std::vector<std::string>*>(field);
+                    if (vec.size() > 0xFFFFFFFFull)
+                        break; // refuse oversized vector
                     uint32_t count = static_cast<uint32_t>(vec.size());
                     buf.insert(buf.end(), reinterpret_cast<char*>(&count),
                                reinterpret_cast<char*>(&count) + 4);
                     for (const auto& s : vec) {
+                        if (s.size() > 0xFFFFFFFFull)
+                            break;
                         uint32_t len = static_cast<uint32_t>(s.size());
                         buf.insert(buf.end(), reinterpret_cast<char*>(&len),
                                    reinterpret_cast<char*>(&len) + 4);
@@ -650,6 +656,8 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                     // POD-vector path: reinterpret as vector<char>
                     // so vec.size() gives the byte count.
                     auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
+                    if (vec.size() > 0xFFFFFFFFull)
+                        break;
                     uint32_t sz = static_cast<uint32_t>(vec.size());
                     buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
                                reinterpret_cast<char*>(&sz) + 4);
@@ -659,6 +667,10 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                 break;
             }
             case MemberKind::Struct:
+                // Issue #1124: nested structs need MemberInfo type_info for
+                // recursive serialize. Refuse silent drop — surface the gap.
+                throw std::runtime_error(
+                    "auto_serialize: nested MemberKind::Struct not yet supported");
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;
@@ -903,34 +915,22 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
             }
             case MemberKind::Span: {
-                // Issue #217 Cycle 6/7/8: deserialize a
-                // std::span by constructing it to point
-                // into the buf. The span is non-owning,
-                // so the caller must keep the buf alive
-                // for the lifetime of the deserialized
-                // span.
-                //
-                // Cycle 7 fix: read byte count (not
-                // element count) since the serialize
-                // side writes the byte count.
-                //
-                // Cycle 8 fix: divide byte_count by
-                // elem_size before storing it in the
-                // span's size field. This is required
-                // because std::span's size field stores
-                // the ELEMENT count, not the byte count.
-                // For std::span<const char> the two are
-                // the same, but for std::span<const
-                // uint32_t> the byte count is 4x the
-                // element count.
-                //
-                // Note: this works because std::span's
-                // internal layout is {ptr, size} for any
-                // element type — only the size field needs
-                // the byte-to-element conversion.
-                uint32_t byte_count;
-                std::memcpy(&byte_count, &buf[pos], 4);
+                // Issue #1126: bounds-check payload. Span remains
+                // non-owning into buf (caller must keep buf alive);
+                // empty span on short/corrupt input (no dangling).
+                if (!reflect_ensure(buf, pos, 4)) {
+                    const std::span<const char> empty{};
+                    std::memcpy(field, &empty, sizeof(empty));
+                    break;
+                }
+                uint32_t byte_count = 0;
+                std::memcpy(&byte_count, buf.data() + pos, 4);
                 pos += 4;
+                if (!reflect_ensure(buf, pos, byte_count)) {
+                    const std::span<const char> empty{};
+                    std::memcpy(field, &empty, sizeof(empty));
+                    break;
+                }
                 const std::size_t elem_count =
                     m.elem_size > 0 ? byte_count / m.elem_size : byte_count;
                 const std::span<const char> sp(buf.data() + pos, elem_count);
@@ -944,43 +944,48 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 // types, the data is contiguous raw bytes. For
                 // vector<string>, each string is length-prefixed
                 // and the count precedes the list.
+                // Issue #1123: bounds-check count/len payloads.
                 if (m.elem_size == sizeof(std::string)) {
-                    uint32_t count;
-                    std::memcpy(&count, &buf[pos], 4);
+                    if (!reflect_ensure(buf, pos, 4))
+                        break;
+                    uint32_t count = 0;
+                    std::memcpy(&count, buf.data() + pos, 4);
                     pos += 4;
                     auto& vec = *reinterpret_cast<std::vector<std::string>*>(field);
                     vec.clear();
+                    if (count > 50'000'000u)
+                        break;
                     vec.reserve(count);
                     for (uint32_t i = 0; i < count; ++i) {
-                        uint32_t len;
-                        std::memcpy(&len, &buf[pos], 4);
+                        if (!reflect_ensure(buf, pos, 4))
+                            break;
+                        uint32_t len = 0;
+                        std::memcpy(&len, buf.data() + pos, 4);
                         pos += 4;
-                        // Issue #217 Cycle 11 fix: use
-                        // buf.data() + offset for the
-                        // one-past-the-end iterator instead
-                        // of &buf[pos + len]. &buf[N] calls
-                        // operator[] which asserts when N >=
-                        // buf.size(). For string fields
-                        // that end exactly at the buf
-                        // boundary (e.g. the LAST member of
-                        // a struct), this asserts even
-                        // though we want a valid
-                        // one-past-the-end iterator.
+                        if (!reflect_ensure(buf, pos, len))
+                            break;
                         std::string s(buf.data() + pos, len);
                         pos += len;
                         vec.push_back(std::move(s));
                     }
                 } else {
-                    uint32_t sz;
-                    std::memcpy(&sz, &buf[pos], 4);
+                    if (!reflect_ensure(buf, pos, 4))
+                        break;
+                    uint32_t sz = 0;
+                    std::memcpy(&sz, buf.data() + pos, 4);
                     pos += 4;
+                    if (!reflect_ensure(buf, pos, sz))
+                        break;
                     auto& vec = *reinterpret_cast<std::vector<char>*>(field);
-                    vec.assign(&buf[pos], &buf[pos + sz]);
+                    vec.assign(buf.data() + pos, buf.data() + pos + sz);
                     pos += sz;
                 }
                 break;
             }
             case MemberKind::Struct:
+                // Issue #1125: symmetric to #1124 — do not silently skip.
+                throw std::runtime_error(
+                    "auto_deserialize_struct: nested MemberKind::Struct not yet supported");
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;

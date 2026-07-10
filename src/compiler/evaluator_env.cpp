@@ -216,11 +216,11 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
             return it->second;
         }
     }
-    // P0: prefer SoA index walk (no parent_ pointer chase) if this
-    // legacy Env frame was wired with owner_ + parent_id_ (as done
-    // in materialize_call_env for SoA captures).
+    // Issue #1128: try SoA owner chain first, then fall through to
+    // legacy parent_ so mixed SoA/legacy graphs still resolve.
     if (owner_ && parent_id_ != NULL_ENV_ID) {
-        return owner_->lookup_by_symid_chain(parent_id_, s);
+        if (auto r = owner_->lookup_by_symid_chain(parent_id_, s))
+            return r;
     }
     return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
 }
@@ -854,9 +854,14 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
         if (v.has_value()) {
             auto val = *v;
             if (is_cell(val)) {
+                // Issue #1130: snapshot cell after acquire fence so a
+                // concurrent cell store is visible; re-check size so we
+                // never index past a concurrent shrink (push-only today).
                 auto idx = as_cell_id(val);
-                if (idx < cells_.size())
-                    result = cells_[idx];
+                std::atomic_thread_fence(std::memory_order_acquire);
+                const auto n = cells_.size();
+                if (idx < n)
+                    result = cells_[idx]; // EvalValue is int64 POD copy
                 else
                     result = val; // defensive
             } else {

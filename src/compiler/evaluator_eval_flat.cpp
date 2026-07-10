@@ -3609,6 +3609,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 case aura::ast::NodeTag::Quote: {
                     if (v.children.empty())
                         return EvalResult(make_void());
+                    // Issue #1137: quoted empty list is often LiteralInt(0) in the AST
+                    // (parser uses 0 as the empty-list sentinel). Map that to void so
+                    // (equal? 0 '()) / (eq? 0 '()) can distinguish fixnum 0 from nil.
+                    {
+                        auto qv = f->get(v.child(0));
+                        if (qv.tag == aura::ast::NodeTag::LiteralInt && qv.int_value == 0 &&
+                            qv.marker != aura::ast::SyntaxMarker::BoolLiteral)
+                            return EvalResult(make_void());
+                    }
                     return EvalResult(ast_to_data(*f, *p, v.child(0)));
                 }
                 case aura::ast::NodeTag::TypeAnnotation: {

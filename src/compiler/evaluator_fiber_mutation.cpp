@@ -463,7 +463,11 @@ void Evaluator::set_query_evaluator(Evaluator* ev) noexcept {
     g_scheduler_stats_evaluator.store(ev, std::memory_order_release);
 }
 Evaluator* Evaluator::get_query_evaluator() noexcept {
-    return g_query_evaluator;
+    // Issue #1133: thread_local may be null on worker threads spawned
+    // mid-session; fall back to process-wide scheduler stats pointer.
+    if (g_query_evaluator)
+        return g_query_evaluator;
+    return g_scheduler_stats_evaluator.load(std::memory_order_acquire);
 }
 
 // Issue #63723: clear all per-thread/process-wide Evaluator
@@ -617,8 +621,12 @@ namespace {
             auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
             fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
         }
-        if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
-                                              ev->current_bridge_epoch())) {
+        // Issue #1127: snapshot both counters under one acquire fence so
+        // probe sees a consistent side of concurrent AOT/mutate updates.
+        std::atomic_thread_fence(std::memory_order_acquire);
+        const auto defuse_v = ev->defuse_version_snapshot();
+        const auto bridge_e = ev->current_bridge_epoch();
+        if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
             aura_aot_record_deopt_on_steal();
             ev->bump_concurrent_safety_aot_reload_at_guard();
         }
@@ -811,8 +819,11 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     ev->probe_linear_ownership_on_fiber_steal();
     ev->bump_steal_linear_probe_on_success();
     ev->bump_concurrent_safety_steal_boundary_success();
-    if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
-                                          ev->current_bridge_epoch())) {
+    // Issue #1127: paired snapshot under acquire fence.
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const auto defuse_v = ev->defuse_version_snapshot();
+    const auto bridge_e = ev->current_bridge_epoch();
+    if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
         aura_aot_record_deopt_on_steal();
         ev->bump_concurrent_safety_aot_reload_at_guard();
     }

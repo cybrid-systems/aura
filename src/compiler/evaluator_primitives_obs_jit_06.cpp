@@ -81,15 +81,17 @@ using types::make_void;
 // Issue #909 part 48 (orig lines 17881-17987)
 void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #814: runtime:self-heal-on-drift — Agent-callable self-heal hook.
+    // Issue #814 / #1139: runtime:self-heal-on-drift — return #t only when
+    // metrics are attached (heal path actually recorded); else #f.
     add("runtime:self-heal-on-drift", [&ev](const auto&) -> EvalValue {
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->runtime_self_heal_invocations_total.fetch_add(1, std::memory_order_relaxed);
             // Healing also clears one unit of "unpaid" drift for the score.
             // (Does not reset the counter; health-score uses heal vs drift.)
+            return make_bool(true);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
 
     // Issue #816: edsl:define-struct name doc schema — Phase 1 registry
@@ -149,7 +151,7 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
                     m->pattern_hygiene_index_enforced_hits_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_enforcement_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -220,7 +222,7 @@ void ObservabilityPrims::register_jit_p49(PrimRegistrar add, Evaluator& ev) {
                     m->mutate_batch_e2e_panic_recoveries_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_e2e_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -280,7 +282,7 @@ void ObservabilityPrims::register_jit_p50(PrimRegistrar add, Evaluator& ev) {
                     m->jit_fiber_ex_deopt_interpreter_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_fiber_local_policy_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -341,7 +343,7 @@ void ObservabilityPrims::register_jit_p51(PrimRegistrar add, Evaluator& ev) {
                     m->l2_spec_linear_probe_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_l2_maturity_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -398,7 +400,7 @@ void ObservabilityPrims::register_jit_p52(PrimRegistrar add, Evaluator& ev) {
                     m->opcode_cov_per_fn_deopt_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_zero_fallback_policy = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -463,7 +465,7 @@ void ObservabilityPrims::register_jit_p53(PrimRegistrar add, Evaluator& ev) {
                     m->term_render_present_ns_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_module_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -526,7 +528,7 @@ void ObservabilityPrims::register_jit_p54(PrimRegistrar add, Evaluator& ev) {
                     m->render_ffi_allocs_frame_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_buffer_path_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -588,7 +590,7 @@ void ObservabilityPrims::register_jit_p55(PrimRegistrar add, Evaluator& ev) {
                     m->render_hp_mutation_impact_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t f_hotpath_active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();

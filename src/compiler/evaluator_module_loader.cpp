@@ -63,14 +63,14 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
             struct stat st;
             if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
                 continue;
-            // realpath(NULL) allocates; free after copy. Long paths no longer
-            // silently fall back to non-canonical form due to 4096 stack limit.
+            // Issue #1131: realpath fail-closed — never fall back to a
+            // non-canonical path (path traversal / symlink bypass risk).
             if (char* real = ::realpath(candidate.c_str(), nullptr)) {
                 std::string out(real);
                 ::free(real);
                 return out;
             }
-            return candidate;
+            // realpath failed (dangling, permission, etc.) — skip candidate.
         }
         return std::nullopt;
     };
@@ -148,34 +148,50 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         return types::make_module(cache_it->second);
     }
 
-    // 3. Circular dependency detection
-    if (loading_stack_.count(resolved)) {
-        auto eidx = string_heap_.size();
-        string_heap_.push_back("circular dependency: " + resolved);
-        return types::make_void();
+    // 3. Circular dependency detection (Issue #1132: under workspace_mtx_
+    // so concurrent load_module_file calls cannot race the set).
+    {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        if (loading_stack_.count(resolved)) {
+            auto eidx = string_heap_.size();
+            string_heap_.push_back("circular dependency: " + resolved);
+            return types::make_void();
+        }
+        loading_stack_.insert(resolved);
     }
-    loading_stack_.insert(resolved);
 
     // 4. Read file
     struct stat st;
     if (::stat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
-        loading_stack_.erase(resolved);
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            loading_stack_.erase(resolved);
+        }
         return types::make_void();
     }
     std::ifstream f(resolved);
     if (!f) {
-        loading_stack_.erase(resolved);
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            loading_stack_.erase(resolved);
+        }
         return types::make_void();
     }
     std::string content((std::istreambuf_iterator<char>(f)), {});
     if (content.empty()) {
-        loading_stack_.erase(resolved);
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            loading_stack_.erase(resolved);
+        }
         return types::make_void();
     }
 
     // 5. Parse
     if (!arena_) {
-        loading_stack_.erase(resolved);
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            loading_stack_.erase(resolved);
+        }
         std::println(std::cerr, "load_module_file: no arena");
         return types::make_void();
     }
@@ -189,7 +205,10 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
     auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-        loading_stack_.erase(resolved);
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            loading_stack_.erase(resolved);
+        }
         std::println(std::cerr, "load_module_file: parse error for {}", resolved);
         if (!pr.error.empty())
             std::println(std::cerr, "  {}", pr.error);
@@ -328,7 +347,10 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         }
     }
 
-    loading_stack_.erase(resolved);
+    {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        loading_stack_.erase(resolved);
+    }
     return types::make_module(mod_idx);
 }
 

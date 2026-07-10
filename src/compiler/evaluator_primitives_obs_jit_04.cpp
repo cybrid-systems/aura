@@ -194,7 +194,7 @@ void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
         else
             recommendation = 3; // early-stage (no batch activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -367,7 +367,7 @@ void ObservabilityPrims::register_jit_p33(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
             else
                 recommendation = 3; // early-stage (no Workspace activity yet)
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -538,7 +538,7 @@ void ObservabilityPrims::register_jit_p34(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
         else
             recommendation = 3; // early-stage (no compiler-runtime sync activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -701,7 +701,7 @@ void ObservabilityPrims::register_jit_p35(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
         else
             recommendation = 3; // early-stage (no JIT/AOT fidelity activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -877,7 +877,7 @@ void ObservabilityPrims::register_jit_p36(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, harness deferred)
         else
             recommendation = 3; // early-stage (no closed-loop fidelity activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1045,7 +1045,7 @@ void ObservabilityPrims::register_jit_p37(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, concepts deferred)
         else
             recommendation = 3; // early-stage (no hot-path contracts activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1291,7 +1291,7 @@ void ObservabilityPrims::register_jit_p39(PrimRegistrar add, Evaluator& ev) {
               : 0;
         const std::int64_t f_policy_doc_active = 1;
         const std::int64_t f_hot_path_uses_result = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();

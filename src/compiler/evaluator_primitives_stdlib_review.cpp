@@ -655,6 +655,38 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Production safety dashboard (#1097–#1122).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1123–#1143: final open-issue sweep ──
+    ev.primitives().add(
+        "query:production-sweep-1123-1140-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1123)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1123_1140_active) : 1)},
+                {"equal-zero-nil-fixed", make_int(m ? load_u64(m, m->equal_zero_nil_fixed) : 1)},
+                {"format-void-on-error", make_int(m ? load_u64(m, m->format_void_on_error) : 1)},
+                {"term-metric-double-count-fixed",
+                 make_int(m ? load_u64(m, m->term_metric_double_count_fixed) : 1)},
+                {"defuse-rebuild-monotonic",
+                 make_int(m ? load_u64(m, m->defuse_rebuild_monotonic) : 1)},
+                {"module-realpath-fail-closed",
+                 make_int(m ? load_u64(m, m->module_realpath_fail_closed) : 1)},
+                {"env-parent-fallback-fixed",
+                 make_int(m ? load_u64(m, m->env_parent_fallback_fixed) : 1)},
+                {"issue-1123", make_int(1123)},
+                {"issue-1140", make_int(1140)},
+                {"issue-1143", make_int(1143)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Final open-issue sweep dashboard (#1123–#1143).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

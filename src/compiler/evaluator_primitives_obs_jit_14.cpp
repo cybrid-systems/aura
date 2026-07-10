@@ -96,7 +96,7 @@ void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
                     m->gcc16_modules_env_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -137,12 +137,13 @@ void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 113 (orig lines 21395-21426)
 void ObservabilityPrims::register_jit_p113(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #856: terminal:create-buffer / terminal:diff (Phase 1 stubs)
+    // Issue #856 / #1136 / #1140: create-buffer counts creations only;
+    // term_buf_diff_hits_total is owned solely by terminal:diff.
     add("terminal:create-buffer", [&ev](const auto& a) -> EvalValue {
+        (void)a;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_buf_diff_total.fetch_add(1, std::memory_order_relaxed);
-            m->term_buf_diff_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         return make_bool(true);
     });

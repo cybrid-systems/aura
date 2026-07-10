@@ -420,11 +420,23 @@ static std::uint32_t lower_flat_expr(
                 // Issue #893: fixed table + string_view compare (no std::string temp /
                 // unordered_map).
                 static constexpr std::pair<std::string_view, IROpcode> kPrimOps[] = {
-                    {"+", IROpcode::Add},         {"-", IROpcode::Sub},   {"*", IROpcode::Mul},
-                    {"/", IROpcode::Div},         {"=", IROpcode::Eq},    {"<", IROpcode::Lt},
-                    {">", IROpcode::Gt},          {"<=", IROpcode::Le},   {">=", IROpcode::Ge},
-                    {"eq?", IROpcode::Eq},        {"eqv?", IROpcode::Eq}, {"equal?", IROpcode::Eq},
-                    {"cons", IROpcode::MakePair}, {"car", IROpcode::Car}, {"cdr", IROpcode::Cdr},
+                    {"+", IROpcode::Add},
+                    {"-", IROpcode::Sub},
+                    {"*", IROpcode::Mul},
+                    {"/", IROpcode::Div},
+                    {"=", IROpcode::Eq},
+                    {"<", IROpcode::Lt},
+                    {">", IROpcode::Gt},
+                    {"<=", IROpcode::Le},
+                    {">=", IROpcode::Ge},
+                    // Issue #1137: do NOT lower equal? to Eq — Eq is fixnum/pointer
+                    // equality and historically conflated int 0 with empty-list void.
+                    // equal? stays a call to the deep-equality primitive.
+                    {"eq?", IROpcode::Eq},
+                    {"eqv?", IROpcode::Eq},
+                    {"cons", IROpcode::MakePair},
+                    {"car", IROpcode::Car},
+                    {"cdr", IROpcode::Cdr},
                 };
                 const IROpcode* found_op = nullptr;
                 for (const auto& e : kPrimOps) {

@@ -290,7 +290,7 @@ void ObservabilityPrims::register_jit_p2(PrimRegistrar add, Evaluator& ev) {
                 m->jit_hotswap_epoch_mismatch_prevented_total.load(std::memory_order_relaxed);
             hotswap_invalidate = m->jit_hotswap_invalidate_total.load(std::memory_order_relaxed);
         }
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();

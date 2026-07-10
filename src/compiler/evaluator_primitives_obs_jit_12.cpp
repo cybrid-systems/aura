@@ -95,7 +95,7 @@ void ObservabilityPrims::register_jit_p96(PrimRegistrar add, Evaluator& ev) {
                     m->sv_eda_prims_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -150,7 +150,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     m->prim_quota_fiber_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -205,7 +205,7 @@ void ObservabilityPrims::register_jit_p98(PrimRegistrar add, Evaluator& ev) {
                     m->decl_prim_reg_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -260,7 +260,7 @@ void ObservabilityPrims::register_jit_p99(PrimRegistrar add, Evaluator& ev) {
                     m->prim_ns_alias_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -316,7 +316,7 @@ void ObservabilityPrims::register_jit_p100(PrimRegistrar add, Evaluator& ev) {
                     m->guard_steal_gc_v2_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -372,7 +372,7 @@ void ObservabilityPrims::register_jit_p101(PrimRegistrar add, Evaluator& ev) {
                     m->dirty_ircache_cons_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -428,7 +428,7 @@ void ObservabilityPrims::register_jit_p102(PrimRegistrar add, Evaluator& ev) {
                     m->stats_builder_ref_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -484,7 +484,7 @@ void ObservabilityPrims::register_jit_p103(PrimRegistrar add, Evaluator& ev) {
                     m->load_or_zero_help_savings_total.load(std::memory_order_relaxed))
               : 0;
         const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
