@@ -4071,8 +4071,13 @@ public:
             scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size();
         evaluator_.bump_impact_scope_calls(blocks);
         evaluator_.bump_edsl_mutate_invalidate_precision();
-        if (flat->is_macro_introduced(root))
+        if (flat->is_macro_introduced(root)) {
             evaluator_.bump_macro_hygiene_dirty_impact();
+            // Issue #1145: wire selfevo hygiene dirty-epoch hit path.
+            evaluator_.bump_selfevo_hyg_dirty();
+            evaluator_.bump_selfevo_hyg_dirty_hit();
+            evaluator_.bump_selfevo_hyg_dirty_savings();
+        }
 
         // Issue #741: quote/lambda defines — selective bridge refresh +
         // live EnvFrame version re-stamp for captured closures.

@@ -553,11 +553,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // steal_attempts, steal_successes, per-worker breakdown.
     // Returns empty string when not in serve-async mode.
     add("orch:metrics", [&ev](const auto&) -> EvalValue {
+        // Issue #1147: wire orch_telemetry counters on the real orch path.
+        ev.bump_orch_telemetry();
         if (!aura::messaging::g_get_scheduler_metrics) {
             // Not in serve-async mode — return empty list
             return types::make_void();
         }
         auto json = aura::messaging::g_get_scheduler_metrics();
+        ev.bump_orch_telemetry_hit();
+        if (!json.empty())
+            ev.bump_orch_telemetry_savings();
         auto idx = ev.string_heap_.size();
         ev.string_heap_.push_back(json);
         return types::make_string(idx);

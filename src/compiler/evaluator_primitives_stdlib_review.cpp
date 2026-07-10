@@ -687,6 +687,34 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Final open-issue sweep dashboard (#1123–#1143).",
                  .category = "general",
                  .schema = "() -> hash"});
+    // ── Issues #1144–#1148: observability wire-up sweep ──
+    ev.primitives().add(
+        "query:production-sweep-1144-1148-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1144)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1144_1148_active) : 1)},
+                {"flat-hash-insert-helper",
+                 make_int(m ? load_u64(m, m->flat_hash_insert_helper) : 1)},
+                {"selfevo-hyg-dirty-wired",
+                 make_int(m ? load_u64(m, m->selfevo_hyg_dirty_wired) : 1)},
+                {"per-fiber-ex-state-wired",
+                 make_int(m ? load_u64(m, m->per_fiber_ex_state_wired) : 1)},
+                {"orch-telemetry-wired", make_int(m ? load_u64(m, m->orch_telemetry_wired) : 1)},
+                {"dead-bump-audit-script",
+                 make_int(m ? load_u64(m, m->dead_bump_audit_script) : 1)},
+                {"issue-1148", make_int(1148)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Observability wire-up sweep (#1144–#1148).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
