@@ -944,10 +944,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::uint64_t call_denom = mutations + queries + errors + 1;
         const std::int64_t error_rate = static_cast<std::int64_t>((errors * 100) / call_denom);
         const std::uint64_t recovery_events = panic_restore + panic_commit + rollbacks;
-        const std::int64_t recovery_success =
-            errors == 0 && recovery_events == 0
-                ? 100
-                : static_cast<std::int64_t>((recovery_events * 100) / (errors + 1));
+        // Issue #1079: recovery-success is a 0–100 percentage.
+        // Vacuous (no errors, no recovery) → 100. When errors==0 but
+        // recovery_events>0, treat as full recovery (100), never events*100.
+        // When errors>0, clamp recovered/errors*100 to [0,100].
+        const std::int64_t recovery_success = [&]() -> std::int64_t {
+            if (errors == 0)
+                return 100;
+            const auto pct = (recovery_events * 100) / errors;
+            return static_cast<std::int64_t>(pct > 100 ? 100 : pct);
+        }();
         const std::uint64_t total = errors + stored + recovery_events + contract_violations;
         std::int64_t recommendation = 0;
         if (errors > (mutations + queries) / 10 && errors > 0)
@@ -1787,10 +1793,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::uint64_t sv_rollbacks =
             m ? m->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+        // Issue #1078: when rollbacks dominate, net success is 0 (not raw commits).
+        const std::uint64_t atomic_batch_sv_gross = ws_commits + ev_commits + sv_success;
+        const std::uint64_t atomic_batch_sv_fail = rollbacks + sv_rollbacks;
         const std::uint64_t atomic_batch_sv_success =
-            ws_commits + ev_commits + sv_success > rollbacks + sv_rollbacks
-                ? ws_commits + ev_commits + sv_success - rollbacks - sv_rollbacks
-                : ws_commits + ev_commits;
+            atomic_batch_sv_gross > atomic_batch_sv_fail
+                ? atomic_batch_sv_gross - atomic_batch_sv_fail
+                : 0;
         const std::uint64_t feedback_hits =
             m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t steal_deferred = aura_adaptive_steal_global_deferred_total();

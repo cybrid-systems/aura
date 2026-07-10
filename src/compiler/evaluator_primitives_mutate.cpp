@@ -313,6 +313,16 @@ namespace {
 void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
                                 std::function<void()> destroy_defuse_index) {
 
+    // Issue #1082: safe string_heap_ load (friend context can access private heap).
+    auto safe_str = [&ev](const EvalValue& v, std::string fallback = {}) -> std::string {
+        if (!is_string(v))
+            return fallback;
+        const auto i = as_string_idx(v);
+        if (i >= ev.string_heap_.size())
+            return fallback;
+        return ev.string_heap_[i];
+    };
+
     auto add_mutate = [&](std::string name, auto fn) {
         add(std::move(name), [&ev, mev, fn](std::span<const EvalValue> a) -> EvalValue {
             if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate) &&
@@ -324,9 +334,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         });
     };
 
+
     // Issue #489: unified StableNodeRef / raw NodeId resolution for mutate hot paths.
     // Defined inside register_mutate_primitives (Evaluator friend) for private access.
-    auto unpack_stable_ref_arg = [&ev](const EvalValue& arg) -> std::optional<StableNodeRef> {
+    auto unpack_stable_ref_arg = [&ev,
+                                  safe_str](const EvalValue& arg) -> std::optional<StableNodeRef> {
         if (!is_pair(arg))
             return std::nullopt;
         const auto outer = as_pair_idx(arg);
@@ -345,10 +357,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return ref;
     };
 
-    auto resolve_mutate_node_arg =
-        [&ev, mev, unpack_stable_ref_arg](aura::ast::FlatAST& flat, const EvalValue& arg,
-                                          const char* op, bool* ok,
-                                          aura::ast::NodeId& out_node) -> EvalValue {
+    auto resolve_mutate_node_arg = [&ev, mev, unpack_stable_ref_arg,
+                                    safe_str](aura::ast::FlatAST& flat, const EvalValue& arg,
+                                              const char* op, bool* ok,
+                                              aura::ast::NodeId& out_node) -> EvalValue {
         if (auto packed = unpack_stable_ref_arg(arg)) {
             ev.bump_stable_ref_validated_in_primitives_count();
             // Issue #818: full provenance enforcement on mutate hot paths.
@@ -431,7 +443,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // migrating via the guard adds the lock that should have
     // been there.
     add_mutate("mutate:replace-type",
-               [resolve_mutate_node_arg, &ev](std::span<const EvalValue> a) -> EvalValue {
+               [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
                    bool ok = true;
                    aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
                    // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
@@ -506,7 +518,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // value on exit(success=false).
     add_mutate(
         "mutate:replace-value",
-        [resolve_mutate_node_arg, &ev](std::span<const EvalValue> a) -> EvalValue {
+        [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
             aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
             // (Step 0.2/0.3) local merr removed; using centralized make_merr
@@ -629,7 +641,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // change), so the rollback path is just "mark the
     // record as RolledBack + bump version" — no data
     // restoration needed.
-    add_mutate("mutate:record-patch", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:record-patch", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // (Step 0.3 continuation) local merr removed; use centralized make_merr
@@ -667,7 +679,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // captures StableNodeRef; apply phase uses is_valid_in() + parent-slot
     // checks inside an atomic batch so multiple set_child calls share one bump.
     add("mutate:query-and-replace",
-        [&ev, mev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
             std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
             if (ev.workspace_read_only_)
                 return mev("read-only", "workspace is read-only");
@@ -1055,7 +1067,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // node-id still has the same generation, #f otherwise.
     // Useful for agents that want to do an early validity check
     // before invoking a more expensive mutation.
-    add_mutate("mutate:check-stable-ref", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:check-stable-ref", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!is_pair(a[0]))
             return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
@@ -1106,7 +1118,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // P0: 3 policies. Disabled = no checks; Warn =
     // observe but don't block; Strict = block (return
     // tagged stale-ref error) on stale detection.
-    add_mutate("mutate:set-stale-ref-policy", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:set-stale-ref-policy", [&ev, safe_str](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -1132,7 +1144,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // current StaleRefPolicy as a string ("disabled" /
     // "warn" / "strict"). Used by the AI Agent to
     // verify the policy before a long mutating run.
-    add("query:stale-ref-policy", [&ev](const auto& a) -> EvalValue {
+    add("query:stale-ref-policy", [&ev, safe_str](const auto& a) -> EvalValue {
         (void)a;
         const char* name = "warn";
         switch (ev.get_stale_ref_policy()) {
@@ -1157,14 +1169,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // return a 2-tuple (blocked warned) so the AI Agent
     // can distinguish Strict-mode blocks from
     // Warn-mode observations.
-    add("query:stale-ref-stats", [&ev](const auto& a) -> EvalValue {
+    add("query:stale-ref-stats", [&ev, safe_str](const auto& a) -> EvalValue {
         (void)a;
         return make_int(static_cast<std::int64_t>(ev.get_stale_ref_blocked_count() +
                                                   ev.get_stale_ref_warned_count()));
     });
 
     // Issue #490: (mutate:set-pattern-index-policy "lazy"|"eager-after-mutate"|"eager-after-cow")
-    add_mutate("mutate:set-pattern-index-policy", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:set-pattern-index-policy", [&ev, safe_str](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -1187,7 +1199,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     });
 
     // Issue #490: (query:pattern-index-policy) — current rebuild policy string.
-    add("query:pattern-index-policy", [&ev](const auto& a) -> EvalValue {
+    add("query:pattern-index-policy", [&ev, safe_str](const auto& a) -> EvalValue {
         (void)a;
         const char* name = "lazy";
         switch (ev.get_pattern_index_policy()) {
@@ -1208,7 +1220,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     });
 
     // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
-    add("query:as-stable-ref", [&ev](const auto& a) -> EvalValue {
+    add("query:as-stable-ref", [&ev, safe_str](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
             return make_void();
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -1232,7 +1244,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // timeout is recorded (bump wait counter + bump
     // wait_total_ns) but the actual wait is a no-op
     // (the follow-up wires the real implementation).
-    add_mutate("mutate:request-gc-safepoint", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:request-gc-safepoint", [&ev, safe_str](const auto& a) -> EvalValue {
         const int result = ev.request_gc_safepoint();
         if (a.size() >= 1 && is_int(a[0])) {
             const auto timeout_ms = static_cast<std::uint64_t>(as_int(a[0]));
@@ -1273,7 +1285,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Both can fire on the same call site (e.g. typecheck
     // failure: guard rolls back the MutationRecord log +
     // panic_checkpoint restores the source).
-    add_mutate("mutate:rebind", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:rebind", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (ev.workspace_read_only_) {
@@ -1303,7 +1315,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
             if (validate_fn) {
                 auto ci = ev.string_heap_.size();
-                ev.string_heap_.push_back(ev.string_heap_[as_string_idx(a[1])]);
+                ev.string_heap_.push_back(safe_str(a[1]));
                 auto ti = ev.string_heap_.size();
                 ev.string_heap_.push_back(validate_type);
                 auto vresult = (*validate_fn)({make_string(ci), make_string(ti)});
@@ -1423,9 +1435,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
                 new_value = root_v.child(0);
             }
-            std::string summary = (a.size() > 2 && is_string(a[2]))
-                                      ? ev.string_heap_[as_string_idx(a[2])]
-                                      : "add " + name;
+            std::string summary =
+                (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "add " + name;
             auto new_define = flat.add_define(sym, new_value);
             flat.add_mutation(new_define, "add", name, summary, summary);
             // Mark all defines dirty so cached IR for siblings gets invalidated.
@@ -1471,9 +1482,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         // Record mutation on the old define node
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? ev.string_heap_[as_string_idx(a[2])]
-                                  : "rebind " + name;
+        std::string summary = (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "rebind " + name;
         flat.add_mutation(old_define, "rebind", name, summary, summary);
 
         // Redirect old Define's value child to the new nodes
@@ -1621,7 +1630,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // save_panic_checkpoint / restore_panic_checkpoint handle
     // panic recovery (separately). The two mechanisms are
     // complementary, not redundant.
-    add_mutate("mutate:set-body", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:set-body", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (ev.workspace_read_only_) {
@@ -1825,7 +1834,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   - the manual `ev.defuse_version_.fetch_add(1)` for the
     //     second bump is removed (the guard does it on rollback
     //     only; on success the version advance from enter stays)
-    add_mutate("mutate:remove-node", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:remove-node", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -1900,7 +1909,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // insert_child + mark_dirty_upward to the strategy. Error
     // propagation flows through AuraResult<NodeId> for uniform
     // handling.
-    add_mutate("mutate:insert-child", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:insert-child", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -1964,7 +1973,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         // Log to workspace mutation log (Aura-specific, stays in wrapper).
         std::string summary = (a.size() > 3 && is_string(a[3]))
-                                  ? ev.string_heap_[as_string_idx(a[3])]
+                                  ? safe_str(a[3])
                                   : "insert child at " + std::to_string(pos);
         flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE, pr.root,
                                                "insert-child");
@@ -1985,7 +1994,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // defuse index, which is enough to surface "the workspace
     // state changed" to readers.
     add_mutate(
-        "mutate:tweak-literal", [resolve_mutate_node_arg, &ev, mev](const auto& a) -> EvalValue {
+        "mutate:tweak-literal",
+        [resolve_mutate_node_arg, &ev, mev, safe_str](const auto& a) -> EvalValue {
             bool ok = true;
             aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
             aura::messaging::g_fiber_yield_mutation_boundary
@@ -2029,7 +2039,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto old_val = v.int_value;
             std::string summary =
                 (a.size() > 2 && is_string(a[2]))
-                    ? ev.string_heap_[as_string_idx(a[2])]
+                    ? safe_str(a[2])
                     : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
             flat.add_mutation_with_rollback(
                 node, "tweak-literal", "Int", "Int", summary, aura::ast::MutationStatus::Committed,
@@ -2064,7 +2074,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // original children (the SoA column isn't in the rollback
     // switch), but it does bump the version + invalidate the
     // defuse index, so readers know the workspace state changed.
-    add_mutate("mutate:replace-pattern", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:replace-pattern", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         using namespace aura::ast;
@@ -2122,7 +2132,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                std::string("unknown mutate:replace-pattern keyword: ") + kw);
                 }
             } else if (is_string(a[ai])) {
-                summary = ev.string_heap_[as_string_idx(a[ai])];
+                summary = safe_str(a[ai]);
             } else {
                 ok = false;
                 return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
@@ -2410,7 +2420,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // uses add_mutation_subtree (with has_subtree_rollback=true)
     // — so the rollback path can re-parse the old_subtree_source
     // and re-attach it at (parent_id, child_idx).
-    add_mutate("mutate:replace-subtree", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:replace-subtree", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (ev.workspace_read_only_) {
@@ -2457,9 +2467,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         auto new_code = ev.string_heap_[code_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? ev.string_heap_[as_string_idx(a[2])]
-                                  : "replace-subtree";
+        std::string summary =
+            (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "replace-subtree";
 
         // ── Locate parent + child_idx (the slot we're replacing) ──
         auto parent_id = flat.parent_of(target);
@@ -2739,7 +2748,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //     sub-primitive fails) triggers rollback_since(
     //     initial_log_size) which actually undoes the
     //     per-op mutations recorded in the log.
-    add_mutate("mutate:atomic-batch", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:atomic-batch", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         // Issue #737: parse args + optional pre-guard snapshot
         // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
         // also takes workspace_mtx_; nested acquire deadlocks).
@@ -2800,7 +2809,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         std::uint64_t initial_log_size = ev.workspace_flat_->all_mutations().size();
         bool ok = true;
         std::size_t op_count = 0;
-        auto list_to_vec = [&ev](EvalValue list) -> std::vector<EvalValue> {
+        auto list_to_vec = [&ev, safe_str](EvalValue list) -> std::vector<EvalValue> {
             std::vector<EvalValue> out;
             while (is_pair(list)) {
                 auto pidx = as_pair_idx(list);
@@ -2811,8 +2820,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             return out;
         };
-        auto pair_car = [&ev](EvalValue v) -> EvalValue { return ev.pairs_[as_pair_idx(v)].car; };
-        auto pair_cdr = [&ev](EvalValue v) -> EvalValue { return ev.pairs_[as_pair_idx(v)].cdr; };
+        auto pair_car = [&ev, safe_str](EvalValue v) -> EvalValue {
+            return ev.pairs_[as_pair_idx(v)].car;
+        };
+        auto pair_cdr = [&ev, safe_str](EvalValue v) -> EvalValue {
+            return ev.pairs_[as_pair_idx(v)].cdr;
+        };
         // Issue #250: begin the atomic batch. This sets
         // bump_generation_suppressed_ on the FlatAST, so all
         // per-op structural mutations (via the lockless helpers
@@ -2833,7 +2846,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 break;
             }
             std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
-            std::string op_name = ev.string_heap_[as_string_idx(op_name_ev)];
+            std::string op_name = safe_str(op_name_ev);
             // Issue #236: route through the lockless helpers
             // instead of ev.primitives_.lookup. The old code
             // re-entered the full primitive (which acquires its
@@ -2940,7 +2953,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // MutationBoundaryGuard. The primitive mutates children_
     // (SoA column not in rollback switch), so the rollback
     // path is "bump version + invalidate ev.defuse_index_".
-    add_mutate("mutate:splice", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:splice", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // (Step 0.3) local merr removed; centralized make_merr
@@ -3042,7 +3055,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // MutationBoundaryGuard. Mutates children_ (SoA column
     // not in rollback switch), so the rollback path is
     // "bump version + invalidate ev.defuse_index_".
-    add_mutate("mutate:wrap", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:wrap", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // local merr removed; now centralized make_merr (phase complete)
@@ -3070,7 +3083,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? ev.string_heap_[as_string_idx(a[2])]
+                                  ? safe_str(a[2])
                                   : "wrap node " + std::to_string(node);
 
         auto tmpl = ev.string_heap_[tmpl_idx];
@@ -3175,139 +3188,140 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // a new define + replaces original with a call), but
     // rollback doesn't reverse the AST changes — it just
     // bumps the version + invalidates the defuse index.
-    add_mutate("mutate:refactor/extract", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
-        // local merr removed; now centralized make_merr (phase complete)
-        if (ev.workspace_read_only_) {
-            ok = false;
-            return ev.make_merr("read-only", "workspace is read-only");
-        }
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
-            !ev.workspace_pool_) {
-            ok = false;
-            return ev.make_merr("bad-arg",
-                                "usage: (mutate:refactor/extract node-id new-name [summary])");
-        }
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto name_idx = as_string_idx(a[1]);
-        if (name_idx >= ev.string_heap_.size()) {
-            ok = false;
-            return ev.make_merr("bad-arg", "name string index out of range");
-        }
-        auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
-            ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
-                                                    " >= flat size " + std::to_string(flat.size()));
-        }
+    add_mutate(
+        "mutate:refactor/extract", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
+            bool ok = true;
+            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // local merr removed; now centralized make_merr (phase complete)
+            if (ev.workspace_read_only_) {
+                ok = false;
+                return ev.make_merr("read-only", "workspace is read-only");
+            }
+            if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
+                !ev.workspace_pool_) {
+                ok = false;
+                return ev.make_merr("bad-arg",
+                                    "usage: (mutate:refactor/extract node-id new-name [summary])");
+            }
+            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto name_idx = as_string_idx(a[1]);
+            if (name_idx >= ev.string_heap_.size()) {
+                ok = false;
+                return ev.make_merr("bad-arg", "name string index out of range");
+            }
+            auto& flat = *ev.workspace_flat_;
+            if (node >= flat.size()) {
+                ok = false;
+                return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                        " >= flat size " +
+                                                        std::to_string(flat.size()));
+            }
 
-        auto new_name = ev.string_heap_[name_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? ev.string_heap_[as_string_idx(a[2])]
-                                  : "extract " + new_name;
+            auto new_name = ev.string_heap_[name_idx];
+            std::string summary =
+                (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
 
-        // Get the source code of the target node (for parsing)
-        auto src_fn = ev.primitives_.lookup("current-source");
-        if (!src_fn)
-            return ev.make_merr("internal", "current-source primitive not found");
+            // Get the source code of the target node (for parsing)
+            auto src_fn = ev.primitives_.lookup("current-source");
+            if (!src_fn)
+                return ev.make_merr("internal", "current-source primitive not found");
 
-        // Build (define (new-name) <extracted-expr>)
-        // First find the lambda params by analyzing free variables...
-        // Simplified: extract as (define new-name (lambda () <expr>))
-        // then let an Agent fix the parameters later.
+            // Build (define (new-name) <extracted-expr>)
+            // First find the lambda params by analyzing free variables...
+            // Simplified: extract as (define new-name (lambda () <expr>))
+            // then let an Agent fix the parameters later.
 
-        // For now, a minimal implementation:
-        // 1. Save the current workspace
-        // 2. Get the source of the target subtree
-        // 3. Create a new define wrapping the source
-        // 4. Parse and insert
+            // For now, a minimal implementation:
+            // 1. Save the current workspace
+            // 2. Get the source of the target subtree
+            // 3. Create a new define wrapping the source
+            // 4. Parse and insert
 
-        // Actually, simpler: just create the define form as a string
-        // and parse it, then replace the original node with a call.
-        // But we don't have the source of just the subtree easily.
-        //
-        // Simplest P0: wrap the expression in a lambda with no args,
-        // define it, and replace the original with (new-name).
+            // Actually, simpler: just create the define form as a string
+            // and parse it, then replace the original node with a call.
+            // But we don't have the source of just the subtree easily.
+            //
+            // Simplest P0: wrap the expression in a lambda with no args,
+            // define it, and replace the original with (new-name).
 
-        // For P0, use the existing mutate:rebind + mutate:wrap pattern
-        // 1. Record the original node's parent
-        // 2. Create a new define with a dummy body
-        // 3. Replace the body with the original expression
-        // 4. Replace the original expression with a call to the new function
+            // For P0, use the existing mutate:rebind + mutate:wrap pattern
+            // 1. Record the original node's parent
+            // 2. Create a new define with a dummy body
+            // 3. Replace the body with the original expression
+            // 4. Replace the original expression with a call to the new function
 
-        // Get the parent of the target
-        aura::ast::NodeId parent_of_target = aura::ast::NULL_NODE;
-        int child_idx_in_parent = -1;
-        for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-            auto pv = flat.get(pid);
-            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                if (pv.child(ci) == node) {
-                    parent_of_target = pid;
-                    child_idx_in_parent = static_cast<int>(ci);
+            // Get the parent of the target
+            aura::ast::NodeId parent_of_target = aura::ast::NULL_NODE;
+            int child_idx_in_parent = -1;
+            for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
+                auto pv = flat.get(pid);
+                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                    if (pv.child(ci) == node) {
+                        parent_of_target = pid;
+                        child_idx_in_parent = static_cast<int>(ci);
+                        break;
+                    }
+                }
+                if (parent_of_target != aura::ast::NULL_NODE)
                     break;
-                }
             }
-            if (parent_of_target != aura::ast::NULL_NODE)
-                break;
-        }
 
-        if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
-            ok = false;
-            return ev.make_merr("no-parent",
-                                "node " + std::to_string(node) + " has no parent in the AST");
-        }
-
-        // Create the new function definition string
-        std::string define_str = "(define (" + new_name + " x) x)";
-        auto define_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(define_str);
-
-        // Parse the define into workspace
-        auto pr = aura::parser::parse_to_flat(define_str, flat, *ev.workspace_pool_);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            std::string parse_err;
-            if (!pr.errors.empty()) {
-                for (auto& e : pr.errors) {
-                    if (!parse_err.empty())
-                        parse_err += "; ";
-                    parse_err += e.format();
-                }
-            } else if (!pr.error.empty()) {
-                parse_err = pr.error;
-            } else {
-                parse_err = "extract function definition could not be parsed";
+            if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
+                ok = false;
+                return ev.make_merr("no-parent",
+                                    "node " + std::to_string(node) + " has no parent in the AST");
             }
-            ok = false;
-            return ev.make_merr("parse-error", parse_err);
-        }
 
-        // The define's body (the lambda body "x") should be at pr.root's child 0's child 0
-        auto define_v = flat.get(pr.root);
-        if (define_v.tag != aura::ast::NodeTag::Define || define_v.children.empty())
-            return ev.make_merr("internal", "parsed define form has unexpected structure");
+            // Create the new function definition string
+            std::string define_str = "(define (" + new_name + " x) x)";
+            auto define_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(define_str);
 
-        // For simplicity, replace the define body's variable with the extracted node
-        auto lambda_id = define_v.child(0);
-        auto lambda_v = flat.get(lambda_id);
-        if (!lambda_v.children.empty()) {
-            auto dummy_body = lambda_v.child(0);
-            // Replace dummy body (Variable "x") with the extracted expression
-            flat.set_child(lambda_id, 0, node);
-            // Remove the extracted node from its original parent
-            flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
-                           pr.root); // replace with the define's call: (new-name x)
-        }
+            // Parse the define into workspace
+            auto pr = aura::parser::parse_to_flat(define_str, flat, *ev.workspace_pool_);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                std::string parse_err;
+                if (!pr.errors.empty()) {
+                    for (auto& e : pr.errors) {
+                        if (!parse_err.empty())
+                            parse_err += "; ";
+                        parse_err += e.format();
+                    }
+                } else if (!pr.error.empty()) {
+                    parse_err = pr.error;
+                } else {
+                    parse_err = "extract function definition could not be parsed";
+                }
+                ok = false;
+                return ev.make_merr("parse-error", parse_err);
+            }
 
-        auto new_fn_sym = ev.workspace_pool_->intern(new_name);
-        flat.add_mutation(pr.root, "extract-function", new_name, summary, summary);
+            // The define's body (the lambda body "x") should be at pr.root's child 0's child 0
+            auto define_v = flat.get(pr.root);
+            if (define_v.tag != aura::ast::NodeTag::Define || define_v.children.empty())
+                return ev.make_merr("internal", "parsed define form has unexpected structure");
 
-        // Return (define-node-id . call-to-restore)
-        auto result_pid = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)),
-                             make_int(static_cast<std::int64_t>(parent_of_target))});
-        return make_pair(result_pid);
-    });
+            // For simplicity, replace the define body's variable with the extracted node
+            auto lambda_id = define_v.child(0);
+            auto lambda_v = flat.get(lambda_id);
+            if (!lambda_v.children.empty()) {
+                auto dummy_body = lambda_v.child(0);
+                // Replace dummy body (Variable "x") with the extracted expression
+                flat.set_child(lambda_id, 0, node);
+                // Remove the extracted node from its original parent
+                flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
+                               pr.root); // replace with the define's call: (new-name x)
+            }
+
+            auto new_fn_sym = ev.workspace_pool_->intern(new_name);
+            flat.add_mutation(pr.root, "extract-function", new_name, summary, summary);
+
+            // Return (define-node-id . call-to-restore)
+            auto result_pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)),
+                                 make_int(static_cast<std::int64_t>(parent_of_target))});
+            return make_pair(result_pid);
+        });
 
     // ═══════════════════════════════════════════════════════════════
     // P11: 结构化变异 API — rename / inline / move / fix extract
@@ -3436,7 +3450,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // the summary record. The rollback path is "bump version
     // + invalidate ev.defuse_index_" (no per-node data restoration
     // because there are too many).
-    add_mutate("mutate:rename-symbol", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:rename-symbol", [&ev, safe_str](const auto& a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
@@ -3461,7 +3475,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto new_sym = ev.workspace_pool_->intern(new_name);
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? ev.string_heap_[as_string_idx(a[2])]
+                                  ? safe_str(a[2])
                                   : "rename " + old_name + " → " + new_name;
 
         // Scan entire AST for nodes with this sym_id (defs + uses)
@@ -3511,7 +3525,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // switch), so the rollback path is "bump version +
     // invalidate ev.defuse_index_" — the actual move is not
     // reversed, but readers know the workspace state changed.
-    add_mutate("mutate:move-node", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:move-node", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
@@ -3576,7 +3590,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         std::string summary = (a.size() > 3 && is_string(a[3]))
-                                  ? ev.string_heap_[as_string_idx(a[3])]
+                                  ? safe_str(a[3])
                                   : "move node " + std::to_string(node);
 
         // Remove from current parent (set to NULL_NODE).
@@ -3597,7 +3611,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   Extracts a subtree into a new top-level function definition.
     //   Analyzes free variables in the subtree and makes them parameters.
     //   Replaces the original node with a call to the new function.
-    add("mutate:extract-function", [&ev, collect_free_vars](const auto& a) -> EvalValue {
+    add("mutate:extract-function", [&ev, collect_free_vars, safe_str](const auto& a) -> EvalValue {
         using namespace aura::ast;
         // last local merr definition removed; all calls use centralized make_merr
         ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
@@ -3617,9 +3631,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                     std::to_string(flat.size()));
 
         auto new_name = ev.string_heap_[name_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? ev.string_heap_[as_string_idx(a[2])]
-                                  : "extract " + new_name;
+        std::string summary =
+            (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
 
         // Find parent of target node using parent_ vector
         auto parent_of_target = flat.parent_of(node);
@@ -3716,7 +3729,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   with the body of the called function, substituting arguments for
     //   formal parameters. Only works for directly defined named functions
     //   and inline lambdas with matching arity.
-    add_mutate("mutate:inline-call", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:inline-call", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         using aura::ast::NodeId;
         using aura::ast::NodeTag;
         using aura::ast::SymId;
@@ -3739,7 +3752,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 "node " + std::to_string(call_id) + " is not a call node");
 
         std::string summary = (a.size() > 1 && is_string(a[1]))
-                                  ? ev.string_heap_[as_string_idx(a[1])]
+                                  ? safe_str(a[1])
                                   : "inline call " + std::to_string(call_id);
 
         // Get the function node and actual arguments
@@ -3981,7 +3994,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //     records into the workspace AST so the
     //     primitive can mutate the actual record.
     //   - Returns #t on success, #f on bad args.
-    add_mutate("mutate:sv-add-coverpoint", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
@@ -4016,7 +4029,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // P0 scope-limited ship: mirrors
     // (mutate:sv-add-coverpoint) — increments counters,
     // adds a mutation record, returns #t / #f.
-    add_mutate("mutate:sv-weaken-property", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:sv-weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
@@ -4042,7 +4055,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
     // Issue #694: (eda:weaken-property property-id disable-clause-string)
     // — Guard + StableNodeRef-safe weaken on Property AST nodes.
-    add_mutate("eda:weaken-property", [&ev](const auto& a) -> EvalValue {
+    add_mutate("eda:weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
@@ -4090,7 +4103,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     });
 
     // Issue #694: (eda:add-coverpoint-bin coverpoint-id bin-name-string)
-    add_mutate("eda:add-coverpoint-bin", [&ev](const auto& a) -> EvalValue {
+    add_mutate("eda:add-coverpoint-bin", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
@@ -4131,7 +4144,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
     // Issue #496: (eda:update-constraint constraint-id expr-string)
     // — append a constraint expression on native Constraint nodes.
-    add_mutate("eda:update-constraint", [&ev](const auto& a) -> EvalValue {
+    add_mutate("eda:update-constraint", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))

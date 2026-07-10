@@ -929,59 +929,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         auto opt = ev.workspace_flat_->get_safe(aura::ast::FlatAST::StableNodeRef{id, gen});
         if (!opt)
             return make_void();
-        // Return the tag name as a string for observability
-        std::string tag_name = "?";
-        switch (opt->tag) {
-            case aura::ast::NodeTag::LiteralInt:
-                tag_name = "LiteralInt";
-                break;
-            case aura::ast::NodeTag::LiteralFloat:
-                tag_name = "LiteralFloat";
-                break;
-            case aura::ast::NodeTag::LiteralString:
-                tag_name = "LiteralString";
-                break;
-            case aura::ast::NodeTag::Variable:
-                tag_name = "Variable";
-                break;
-            case aura::ast::NodeTag::Call:
-                tag_name = "Call";
-                break;
-            case aura::ast::NodeTag::IfExpr:
-                tag_name = "IfExpr";
-                break;
-            case aura::ast::NodeTag::Lambda:
-                tag_name = "Lambda";
-                break;
-            case aura::ast::NodeTag::Let:
-                tag_name = "Let";
-                break;
-            case aura::ast::NodeTag::LetRec:
-                tag_name = "LetRec";
-                break;
-            case aura::ast::NodeTag::Define:
-                tag_name = "Define";
-                break;
-            case aura::ast::NodeTag::Begin:
-                tag_name = "Begin";
-                break;
-            case aura::ast::NodeTag::Set:
-                tag_name = "Set";
-                break;
-            case aura::ast::NodeTag::Quote:
-                tag_name = "Quote";
-                break;
-            case aura::ast::NodeTag::MacroDef:
-                tag_name = "MacroDef";
-                break;
-            default:
-                tag_name = "Node";
-                break;
-        }
-        std::string s = std::string("<node:") + tag_name + " id=" + std::to_string(id) + ">";
-        std::size_t sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(s);
-        return types::make_string(sidx);
+        // Issue #1076: use canonical kNodeMeta name (covers SV/linear/etc).
+        std::string_view tag_sv = aura::ast::meta(opt->tag).name;
+        if (tag_sv.empty() || tag_sv == "<gap>")
+            tag_sv = "Node";
+        std::string s =
+            std::string("<node:") + std::string(tag_sv) + " id=" + std::to_string(id) + ">";
+        return types::make_string(static_cast<std::uint64_t>(ev.push_string_heap(s)));
     });
 
     // Issue #291: (ast:ref-mutation-id id gen [mutation_id workspace_id])

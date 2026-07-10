@@ -88,22 +88,18 @@ static std::uint32_t type_tag_for_coercion(aura::core::TypeId tid,
 // Each MakeClosure instruction's func_id is offset by base_fid, because the new
 // module has functions added after its own __top__ function at a different base.
 static void remap_func_ids(aura::ir::IRFunction& func, std::uint32_t base_fid) {
-    // Issue #660: when base_fid is 0 (no functions added before the bundle),
-    // the remap formula `original + base_fid - 1` underflows uint32.
-    // In that case, the bundle'''s functions keep their original fids
-    // (they'''re already in the new module at fids 0..N-1 since the
-    // module was empty before the bundle was added). So no remap needed.
-    if (base_fid == 0)
-        return;
+    // Issue #1089 / #660: cache-bundle functions have original fids
+    // starting at 1 (entry at 0 excluded). When loaded into a new
+    // module they land at base_fid + (original_fid - 1).
+    // new_ref = original_ref + base_fid - 1.
+    // When base_fid==0 this is original_ref-1 (empty module case) —
+    // still required. Guard only on original_ref>=1 to avoid uint32 wrap.
     for (auto& block : func.blocks) {
         for (auto& inst : block.instructions) {
             if (inst.opcode == aura::ir::IROpcode::MakeClosure) {
-                // operands[1] = func_id to reference
-                // The functions in the cache bundle have original fids starting at 1
-                // (entry function at 0 is excluded). When loaded into a new module,
-                // they get new fids = base_fid + (original_fid - 1).
-                // So the remap is: new_ref = original_ref + base_fid - 1.
-                inst.operands[1] += base_fid - 1;
+                const auto orig = inst.operands[1];
+                if (orig >= 1)
+                    inst.operands[1] = orig + base_fid - 1;
             }
         }
     }

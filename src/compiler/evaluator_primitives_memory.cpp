@@ -489,17 +489,11 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_pair(ev.pairs_.size()); // empty pair
         const auto trig = ev.arena_group_->auto_compact_trigger_count();
         const auto skip = ev.arena_group_->auto_compact_skip_count();
-        // Pair (trigger-count . skip-count)
-        auto idx_t = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::to_string(trig));
-        auto idx_s = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::to_string(skip));
-        // Build (a . b) = pair(make_int(t), make_int(s))
+        // Issue #1072: return (trigger . skip) as ints only — do NOT
+        // push_string_heap for discarded intermediates (heap pollution).
         auto car_idx = ev.pairs_.size();
         ev.pairs_.push_back(
             {make_int(static_cast<std::int64_t>(trig)), make_int(static_cast<std::int64_t>(skip))});
-        (void)idx_t;
-        (void)idx_s;
         return make_pair(car_idx);
     });
     add("arena:shrink-to-fit", [&ev, destroy_defuse_index](const auto&) -> EvalValue {

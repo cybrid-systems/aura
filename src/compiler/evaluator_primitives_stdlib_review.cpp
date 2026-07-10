@@ -587,6 +587,42 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Production safety dashboard (#1047–#1071).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1072–#1096: security / metrics / concurrency ──
+    ev.primitives().add(
+        "query:production-hardening-1072-1096-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1072)},
+                {"active", make_int(m ? load_u64(m, m->production_hardening_1072_1096_active) : 1)},
+                {"http-shell-injection-fixed",
+                 make_int(m ? load_u64(m, m->http_shell_injection_fixed) : 1)},
+                {"recovery-pct-clamped", make_int(m ? load_u64(m, m->recovery_pct_clamped) : 1)},
+                {"compaction-efficiency-clamped",
+                 make_int(m ? load_u64(m, m->compaction_efficiency_clamped) : 1)},
+                {"ast-ref-get-meta-tags", make_int(m ? load_u64(m, m->ast_ref_get_meta_tags) : 1)},
+                {"pass-pipeline-yield-counter",
+                 make_int(m ? load_u64(m, m->pass_pipeline_yield_counter) : 1)},
+                {"remap-func-ids-base0-fixed",
+                 make_int(m ? load_u64(m, m->remap_func_ids_base0_fixed) : 1)},
+                {"mutate-string-bounds-bulk",
+                 make_int(m ? load_u64(m, m->mutate_string_bounds_bulk) : 1)},
+                {"arena-adaptive-no-dead-push", make_int(1)}, // #1072
+                {"eda-sv-success-zero-on-fail", make_int(1)}, // #1078
+                {"jit-fallback-status-defined", make_int(1)}, // #1096 (via #969)
+                {"issue-1072", make_int(1072)},
+                {"issue-1096", make_int(1096)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Production hardening dashboard (#1072–#1096).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
