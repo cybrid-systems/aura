@@ -34,6 +34,7 @@ constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
 constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
 constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
 constexpr CURLoption CURLOPT_USERAGENT = 10018;
+constexpr CURLoption CURLOPT_FOLLOWLOCATION = 52;
 constexpr CURLcode CURLE_OK = 0;
 #endif
 #include "messaging_bridge.h"
@@ -419,14 +420,58 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return types::make_string(sidx);
     });
 
-    // ── HTTP primitives (via curl CLI) ─────────────────────
-    add("http-get", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    // Issue #1077: shell-safe quoting for popen fallback (single-quote +
+    // escape embedded quotes). Prefer native libcurl when available.
+    auto shell_single_quote = [](std::string_view s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 2);
+        out.push_back('\'');
+        for (char c : s) {
+            if (c == '\'')
+                out += "'\\''";
+            else
+                out.push_back(c);
+        }
+        out.push_back('\'');
+        return out;
+    };
+
+    // ── HTTP primitives (libcurl preferred; shell fallback is quoted) ─
+    add("http-get", [&ev, shell_single_quote](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
-        auto url = ev.string_heap_[types::as_string_idx(a[0])];
-        std::string cmd = "curl -s -f \"" + url + "\" 2>/dev/null";
-        std::array<char, 4096> buf;
+        const auto uidx = types::as_string_idx(a[0]);
+        if (uidx >= ev.string_heap_.size())
+            return make_void();
+        const auto& url = ev.string_heap_[uidx];
+
         std::string result;
+        // Prefer libcurl (no shell) when available.
+        if (get_curl().load()) {
+            CURL* curl = get_curl().easy_init();
+            if (curl) {
+                get_curl().easy_setopt(curl, CURLOPT_URL, url.c_str());
+                get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_fn);
+                get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+                get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+                get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+                get_curl().easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+                CURLcode res = get_curl().easy_perform(curl);
+                get_curl().easy_cleanup(curl);
+                if (res != CURLE_OK && result.empty())
+                    return make_void();
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(result));
+                return types::make_string(sidx);
+            }
+        }
+
+        // Fallback: popen with single-quoted URL (no double-quote injection).
+        std::string cmd = "curl -s -f -- " + shell_single_quote(url) + " 2>/dev/null";
+        std::array<char, 4096> buf;
         auto fp = ::popen(cmd.c_str(), "r");
         if (!fp)
             return make_void();
@@ -443,12 +488,20 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     add("http-post", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
+        // Issue #1077: bounds-check before string_heap_ index.
+        const auto uidx = types::as_string_idx(a[0]);
+        const auto bidx = types::as_string_idx(a[1]);
+        if (uidx >= ev.string_heap_.size() || bidx >= ev.string_heap_.size())
+            return make_void();
 
-        auto& curl_url = ev.string_heap_[types::as_string_idx(a[0])];
-        auto& curl_body = ev.string_heap_[types::as_string_idx(a[1])];
+        auto& curl_url = ev.string_heap_[uidx];
+        auto& curl_body = ev.string_heap_[bidx];
         std::string auth;
-        if (a.size() >= 3 && types::is_string(a[2]))
-            auth = ev.string_heap_[types::as_string_idx(a[2])];
+        if (a.size() >= 3 && types::is_string(a[2])) {
+            const auto aidx = types::as_string_idx(a[2]);
+            if (aidx < ev.string_heap_.size())
+                auth = ev.string_heap_[aidx];
+        }
 
         // Async HTTP via thread (fiber-friendly, serve mode only)
         if (aura::messaging::g_http_post_async) {

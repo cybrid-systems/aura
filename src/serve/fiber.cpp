@@ -419,7 +419,8 @@ void Fiber::yield(YieldReason reason) {
             fb->bump_yield_operation_boundary();
             break;
         case YieldReason::PassPipeline:
-            fb->bump_yield_explicit();
+            // Issue #1085: dedicated counter (was incorrectly bumping Explicit).
+            fb->bump_yield_pass_pipeline();
             break;
     }
 

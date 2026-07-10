@@ -2919,8 +2919,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t dirty = ev.get_dirty_propagation_count();
             const std::int64_t frag_pct =
                 static_cast<std::int64_t>(stats.fragmentation_ratio() * 100.0);
+            // Issue #1080: efficiency is meaningful only when compacts>0;
+            // never report saved*100 when compacts==0 (would exceed 100%).
             const std::int64_t efficiency_pct =
-                static_cast<std::int64_t>((saved * 100) / (compacts + 1));
+                compacts == 0 ? 0
+                              : static_cast<std::int64_t>(
+                                    std::min<std::uint64_t>(100, (saved * 100) / compacts));
             const std::uint64_t total = triggers + skips + guard_calls + compacts + saved +
                                         defrag_attempted + defrag_saved + safepoint_coord +
                                         mutations + dirty + stats.peak_used;

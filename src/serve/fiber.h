@@ -261,6 +261,13 @@ public:
     void bump_yield_operation_boundary() noexcept {
         yield_operation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1085: PassPipeline has its own counter (not Explicit).
+    void bump_yield_pass_pipeline() noexcept {
+        yield_pass_pipeline_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t yield_pass_pipeline_count() const noexcept {
+        return yield_pass_pipeline_count_.load(std::memory_order_relaxed);
+    }
     void bump_steal_success() noexcept {
         steal_success_count_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -347,6 +354,7 @@ private:
     // (query:orchestration-metrics).
     std::atomic<std::uint64_t> yield_mutation_boundary_count_{0};
     std::atomic<std::uint64_t> yield_explicit_count_{0};
+    std::atomic<std::uint64_t> yield_pass_pipeline_count_{0}; // Issue #1085
     std::atomic<std::uint64_t> yield_scheduler_steal_count_{0};
     std::atomic<std::uint64_t> yield_blocking_io_count_{0};
     std::atomic<std::uint64_t> yield_operation_boundary_count_{0};

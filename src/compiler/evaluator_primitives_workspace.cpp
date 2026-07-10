@@ -184,8 +184,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // workspaces are shared across sessions.
         ev.update_shared_tree_root();
         std::string name;
-        if (a.size() >= 1 && is_string(a[0]))
-            name = ev.string_heap_[as_string_idx(a[0])];
+        // Issue #1081: bounds-check string_heap_ before index.
+        if (a.size() >= 1 && is_string(a[0])) {
+            const auto sidx = as_string_idx(a[0]);
+            if (sidx < ev.string_heap_.size())
+                name = ev.string_heap_[sidx];
+        }
         if (name.empty())
             name = "ws-" + std::to_string(wt->size());
         auto parent_idx = wt->active_idx();

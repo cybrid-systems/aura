@@ -5545,6 +5545,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eval_string_bounds_fixed{1};     // #1071
     std::atomic<std::uint64_t> hygiene_marker_phase1_active{1}; // #1047/#1049
     std::atomic<std::uint64_t> guard_fiber_phase1_active{1};    // #1061–#1063
+
+    // ── Issues #1072–#1096: security / metrics / concurrency batch ──
+    std::atomic<std::uint64_t> production_hardening_1072_1096_active{1};
+    std::atomic<std::uint64_t> http_shell_injection_fixed{1};    // #1077
+    std::atomic<std::uint64_t> recovery_pct_clamped{1};          // #1079
+    std::atomic<std::uint64_t> compaction_efficiency_clamped{1}; // #1080
+    std::atomic<std::uint64_t> ast_ref_get_meta_tags{1};         // #1076
+    std::atomic<std::uint64_t> pass_pipeline_yield_counter{1};   // #1085
+    std::atomic<std::uint64_t> remap_func_ids_base0_fixed{1};    // #1089
+    std::atomic<std::uint64_t> mutate_string_bounds_bulk{1};     // #1082
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
