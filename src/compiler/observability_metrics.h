@@ -5555,6 +5555,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pass_pipeline_yield_counter{1};   // #1085
     std::atomic<std::uint64_t> remap_func_ids_base0_fixed{1};    // #1089
     std::atomic<std::uint64_t> mutate_string_bounds_bulk{1};     // #1082
+
+    // ── Issues #1097–#1122: serialize / fold / serve safety ──
+    std::atomic<std::uint64_t> production_safety_1097_1122_active{1};
+    std::atomic<std::uint64_t> eval_async_heap_result{1};    // #1097
+    std::atomic<std::uint64_t> const_fold_bool_tag_fixed{1}; // #1098
+    std::atomic<std::uint64_t> const_fold_block_clear{1};    // #1099
+    std::atomic<std::uint64_t> reflect_bounds_checks{1};     // #1101+
+    std::atomic<std::uint64_t> cache_header_validate_ext{1}; // #1104
+    std::atomic<std::uint64_t> open_cache_ir_bounds{1};      // #1102
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

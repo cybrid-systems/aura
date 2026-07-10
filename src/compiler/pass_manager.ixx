@@ -581,6 +581,9 @@ public:
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
             if (!is_block_dirty(static_cast<std::uint32_t>(bi)))
                 continue;
+            // Issue #1099: fold each dirty block independently — clear
+            // known_ so constants do not leak across blocks.
+            known_.clear();
             folded_ += aura::compiler::constant_fold_block(func.blocks[bi], known_);
         }
         return folded_ - before;

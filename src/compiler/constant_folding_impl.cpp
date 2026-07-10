@@ -30,17 +30,28 @@ using namespace aura::ir;
 
 // ── Internal helpers (file-local) ─────────────────────────────
 
-// IS_TRUTHY: tagged-bool-aware truthiness test.
-//   - 3 (#f)        → falsy
-//   - 0 (int 0)     → falsy
-//   - everything else → truthy
-//
-// Mirrors the legacy macro from pass_manager.ixx exactly. The
-// match is intentional: a test that exercises the same IR
-// through the pure function must produce the same outcome.
+// Issue #1098: tagged bools in the known map MUST NOT collide with
+// ordinary integers 3 and 7 (which are valid ConstI64 results).
+// Encoding: high bit (1<<62) set marks a bool; low bit is the value.
+//   #f → (1<<62)|0 ,  #t → (1<<62)|1
 namespace {
+    constexpr ConstantValue kKnownBoolTag = static_cast<ConstantValue>(1LL << 62);
+
+    constexpr bool is_tagged_bool(ConstantValue v) noexcept {
+        return (v & kKnownBoolTag) != 0;
+    }
+    constexpr bool tagged_bool_value(ConstantValue v) noexcept {
+        return (v & 1) != 0;
+    }
+    constexpr ConstantValue make_tagged_bool(bool b) noexcept {
+        return kKnownBoolTag | (b ? static_cast<ConstantValue>(1) : static_cast<ConstantValue>(0));
+    }
+
+    // IS_TRUTHY: tagged-bool-aware truthiness test.
     constexpr bool is_truthy_val(ConstantValue v) noexcept {
-        return v != 3 && v != 0;
+        if (is_tagged_bool(v))
+            return tagged_bool_value(v);
+        return v != 0;
     }
 } // namespace
 
@@ -73,14 +84,13 @@ static void replace(aura::ir::IRInstruction& instr, std::uint32_t slot, std::int
 
 // ── replace_bool — mutate an instruction to a ConstBool and update known ───
 //
-// Tagged encoding: 7 = #t, 3 = #f. The 4-operand layout uses
-// {slot, val(0/1), 0, 0} for the instruction, and 7/3 for the
-// known map entry (so the same map can carry tagged bools).
+// Instruction operands still use {slot, 0/1, 0, 0}; known map uses
+// high-bit tagged bools (#1098) so ints 3/7 stay pure integers.
 static void replace_bool(aura::ir::IRInstruction& instr, std::uint32_t slot, bool val,
                          ConstantKnownMap& known) {
     instr.opcode = aura::ir::IROpcode::ConstBool;
     instr.operands = {slot, val ? 1u : 0u, 0, 0};
-    known[slot] = val ? 7 : 3;
+    known[slot] = make_tagged_bool(val);
 }
 
 // ── constant_fold_block — pure per-block folder ──────────────
@@ -102,16 +112,17 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             case aura::ir::IROpcode::ConstI64:
                 known[ops[0]] = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
                 break;
+            case aura::ir::IROpcode::ConstBool:
+                // Issue #1098: high-bit tag so ints 3/7 stay pure integers.
+                known[ops[0]] = make_tagged_bool(ops[1] != 0);
+                break;
             case aura::ir::IROpcode::ConstF64:
                 break;
             case aura::ir::IROpcode::Local: {
                 auto it = known.find(ops[1]);
                 if (it != known.end()) {
-                    // Don't propagate tagged bool values (7=#t, 3=#f) as
-                    // ConstI64 — the AOT/JIT emitter treats ConstI64 as
-                    // fixnum-encoded. Tagged bools are only safe in
-                    // ConstBool form.
-                    if (it->second != 3 && it->second != 7) {
+                    // Don't propagate tagged bools as ConstI64 (#1098).
+                    if (!is_tagged_bool(it->second)) {
                         replace(instr, ops[0], it->second, known);
                         ++folded;
                     }
@@ -120,7 +131,9 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Add: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                // Issue #1098: never arithmetically fold tagged bools.
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace(instr, ops[0], it_a->second + it_b->second, known);
                     ++folded;
                 }
@@ -128,7 +141,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Sub: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace(instr, ops[0], it_a->second - it_b->second, known);
                     ++folded;
                 }
@@ -136,7 +150,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Mul: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     replace(instr, ops[0], it_a->second * it_b->second, known);
                     ++folded;
                 }
@@ -144,7 +159,8 @@ std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& k
             }
             case aura::ir::IROpcode::Div: {
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
-                if (it_a != known.end() && it_b != known.end()) {
+                if (it_a != known.end() && it_b != known.end() && !is_tagged_bool(it_a->second) &&
+                    !is_tagged_bool(it_b->second)) {
                     // Don't fold division by zero — the runtime needs
                     // to trap. Leave the IR as-is so the interpreter
                     // hits the actual Div opcode.

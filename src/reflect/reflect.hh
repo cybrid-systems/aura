@@ -688,21 +688,39 @@ template <typename T> T auto_deserialize_inner(const std::vector<char>& buf, std
 
 template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos);
 
+// Issue #1101 family: bounds-checked buffer reads for deserialize.
+inline bool reflect_ensure(const std::vector<char>& buf, std::size_t pos, std::size_t n) noexcept {
+    return n <= buf.size() && pos <= buf.size() - n;
+}
+
 // std::vector<T> overload — reads size + elements (recursive)
 template <typename T>
 std::vector<T> auto_deserialize_vec(const std::vector<char>& buf, std::size_t& pos) {
-    std::uint32_t sz;
-    std::memcpy(&sz, &buf[pos], 4);
-    pos += 4;
     std::vector<T> result;
+    if (!reflect_ensure(buf, pos, 4))
+        return result;
+    std::uint32_t sz = 0;
+    std::memcpy(&sz, buf.data() + pos, 4);
+    pos += 4;
+    // Cap element count to mitigate OOM on malicious sizes.
+    constexpr std::uint32_t kMaxVecElems = 50'000'000u;
+    if (sz > kMaxVecElems)
+        return result;
     if constexpr (std::is_trivially_copyable_v<T>) {
+        const std::size_t bytes = static_cast<std::size_t>(sz) * sizeof(T);
+        if (sz != 0 && bytes / sizeof(T) != sz) // overflow
+            return result;
+        if (!reflect_ensure(buf, pos, bytes))
+            return result;
         result.resize(sz);
         if (sz > 0)
-            std::memcpy(result.data(), &buf[pos], sz * sizeof(T));
-        pos += sz * sizeof(T);
+            std::memcpy(result.data(), buf.data() + pos, bytes);
+        pos += bytes;
     } else {
         result.reserve(sz);
         for (std::uint32_t i = 0; i < sz; ++i) {
+            if (pos >= buf.size())
+                break;
             result.push_back(auto_deserialize_inner<T>(buf, pos));
         }
     }
@@ -712,13 +730,18 @@ std::vector<T> auto_deserialize_vec(const std::vector<char>& buf, std::size_t& p
 // std::array<T, N> overload
 template <typename T, std::size_t N>
 std::array<T, N> auto_deserialize_arr(const std::vector<char>& buf, std::size_t& pos) {
-    std::array<T, N> result;
+    std::array<T, N> result{};
     if constexpr (std::is_trivially_copyable_v<T>) {
+        const std::size_t bytes = N * sizeof(T);
+        if (N > 0 && !reflect_ensure(buf, pos, bytes))
+            return result;
         if (N > 0)
-            std::memcpy(result.data(), &buf[pos], N * sizeof(T));
-        pos += N * sizeof(T);
+            std::memcpy(result.data(), buf.data() + pos, bytes);
+        pos += bytes;
     } else {
         for (std::size_t i = 0; i < N; ++i) {
+            if (pos >= buf.size())
+                break;
             result[i] = auto_deserialize_inner<T>(buf, pos);
         }
     }
@@ -728,12 +751,16 @@ std::array<T, N> auto_deserialize_arr(const std::vector<char>& buf, std::size_t&
 // std::optional<T> overload
 template <typename T>
 std::optional<T> auto_deserialize_opt(const std::vector<char>& buf, std::size_t& pos) {
+    if (!reflect_ensure(buf, pos, 1))
+        return std::nullopt;
     char has_value = buf[pos++];
     if (!has_value)
         return std::nullopt;
     if constexpr (std::is_trivially_copyable_v<T> && !is_std_string_v<T>) {
-        T val;
-        std::memcpy(&val, &buf[pos], sizeof(T));
+        if (!reflect_ensure(buf, pos, sizeof(T)))
+            return std::nullopt;
+        T val{};
+        std::memcpy(&val, buf.data() + pos, sizeof(T));
         pos += sizeof(T);
         return val;
     } else {
@@ -765,9 +792,14 @@ std::variant<Ts...> auto_deserialize_variant_at(const std::vector<char>& buf, st
 }
 template <typename... Ts>
 std::variant<Ts...> auto_deserialize_var(const std::vector<char>& buf, std::size_t& pos) {
-    std::uint32_t idx;
-    std::memcpy(&idx, &buf[pos], 4);
+    // Issue #1109: bounds-check index; out-of-range → default-construct alt 0.
+    if (!reflect_ensure(buf, pos, 4))
+        return std::variant<Ts...>{};
+    std::uint32_t idx = 0;
+    std::memcpy(&idx, buf.data() + pos, 4);
     pos += 4;
+    if (idx >= sizeof...(Ts))
+        return std::variant<Ts...>{};
     return auto_deserialize_variant_at<0, Ts...>(buf, pos, idx);
 }
 
@@ -778,18 +810,23 @@ std::variant<Ts...> auto_deserialize_var(const std::vector<char>& buf, std::size
 // the element types.
 template <typename T> T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos) {
     if constexpr (is_std_string_v<T>) {
-        std::uint32_t len;
-        std::memcpy(&len, &buf[pos], 4);
+        // Issue #1107: bounds-check string len + payload.
+        if (!reflect_ensure(buf, pos, 4))
+            return T{};
+        std::uint32_t len = 0;
+        std::memcpy(&len, buf.data() + pos, 4);
         pos += 4;
+        if (!reflect_ensure(buf, pos, len))
+            return T{};
         T val;
-        // Use buf.data() + offset instead of &buf[pos+len]
-        // — the latter triggers operator[] bounds check
         val.assign(buf.data() + pos, len);
         pos += len;
         return val;
     } else if constexpr (std::is_trivially_copyable_v<T>) {
+        if (!reflect_ensure(buf, pos, sizeof(T)))
+            return T{};
         T val{};
-        std::memcpy(&val, &buf[pos], sizeof(T));
+        std::memcpy(&val, buf.data() + pos, sizeof(T));
         pos += sizeof(T);
         return val;
     } else {
@@ -1153,7 +1190,18 @@ public:
         , size_(size)
         , pos_(0) {}
 
+    // Issue #1117: bounds-checked reads (no OOB memcpy).
     void read(void* out, std::size_t n) {
+        if (n > remaining()) {
+            // Truncate / zero-fill on short buffer.
+            const auto avail = remaining();
+            if (avail > 0)
+                std::memcpy(out, data_ + pos_, avail);
+            if (n > avail)
+                std::memset(static_cast<char*>(out) + avail, 0, n - avail);
+            pos_ = size_;
+            return;
+        }
         std::memcpy(out, data_ + pos_, n);
         pos_ += n;
     }
@@ -1166,10 +1214,15 @@ public:
 
     const char* data() const { return data_; }
     std::size_t position() const { return pos_; }
-    std::size_t remaining() const { return size_ - pos_; }
+    std::size_t remaining() const { return pos_ <= size_ ? size_ - pos_ : 0; }
 
     // Advance position (after string data read)
-    void seek(std::size_t n) { pos_ += n; }
+    void seek(std::size_t n) {
+        if (n > remaining())
+            pos_ = size_;
+        else
+            pos_ += n;
+    }
 
     bool valid() const { return data_ != nullptr && pos_ <= size_; }
     void reset(const char* d, std::size_t sz) {

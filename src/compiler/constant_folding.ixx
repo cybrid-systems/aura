@@ -47,13 +47,14 @@ namespace aura::compiler {
 //     halves (operands[1] = low, operands[2] = high), which
 //     the folder reassembles into the int64.
 //
-//   - Boolean values: 7 = #t, 3 = #f. Encoded this way so
+//   - Boolean values (Issue #1098): high-bit tag (1<<62)|0 = #f,
+//     (1<<62)|1 = #t. Avoids collision with ConstI64 3 and 7.
+//   - Legacy note: previously 7=#t, 3=#f. Encoded this way so
 //     the same int64 map can carry both fixnums and tagged
 //     bools without ambiguity.
 //
-// `IS_TRUTHY` (in the .cpp) treats 0 (int 0) and 3 (#f) as
-// falsy; everything else is truthy. This matches the legacy
-// `is_truthy` semantics in evaluator_pure.ixx.
+// `IS_TRUTHY` (in the .cpp) treats tagged #f and int 0 as
+// falsy; tagged #t and non-zero ints are truthy.
 //
 // The map type lives here (not in the .cpp) because the
 // per-block pure function `constant_fold_block` needs the

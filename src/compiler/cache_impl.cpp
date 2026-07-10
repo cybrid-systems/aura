@@ -279,13 +279,29 @@ void setup_pointers(MappedCache& cache) {
     // legacy child_begins_ + child_counts_ (2 columns). The
     // per-node starting offset is computed in cum_begins_ below
     // (O(1) lookup at get() time).
-    cache.child_count_per_node_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
+    // Issue #1103: ensure child-count column is within mapped file.
+    const std::uint64_t node_region =
+        cache.file_size_ > cache.header_->node_offset
+            ? static_cast<std::uint64_t>(cache.file_size_ - cache.header_->node_offset)
+            : 0;
+    const auto child_count_off = next_pad(n * 4);
+    if (child_count_off + n * 4 > node_region) {
+        // Truncated node table — leave child pointers null.
+        return;
+    }
+    cache.child_count_per_node_ = reinterpret_cast<const std::uint32_t*>(nd + child_count_off);
 
     std::uint32_t total_children = 0;
     cache.cum_begins_.resize(n);
     for (std::size_t i = 0; i < n; ++i) {
         cache.cum_begins_[i] = total_children;
-        total_children += cache.child_count_per_node_[i];
+        // Saturate to avoid wrap-induced huge allocations.
+        const auto c = cache.child_count_per_node_[i];
+        if (total_children > 100000000u - c) {
+            total_children = 100000000u;
+            break;
+        }
+        total_children += c;
     }
     cache.child_data_ = reinterpret_cast<const NodeId*>(nd + next_pad(total_children * 4));
 
@@ -445,22 +461,25 @@ MappedCache open_cache(const std::string& path) {
     // Version 5+ IR blobs include IRInstruction::source_marker (#455).
     // v4 blobs were serialized with a smaller mirror layout — skip them.
     if (hdr->ir_offset > 0 && hdr->num_functions > 0 && hdr->version >= 5) {
-        auto* ir_data = static_cast<const char*>(data) + hdr->ir_offset;
-
-        // Read size prefix
-        std::uint32_t ir_size = 0;
-        std::memcpy(&ir_size, ir_data, 4);
-        ir_data += 4;
-
-        // Deserialize via reflection
-        aura::ir::IRModule ir_mod;
-        aura_ir_deserialize(ir_data, ir_size, &ir_mod);
-
-        // Populate MappedCache fields
-        cache.ir_functions_ = std::move(ir_mod.functions);
-        cache.ir_string_pool_ = std::move(ir_mod.string_pool);
-        cache.ir_entry_function_id_ = ir_mod.entry_function_id;
-        cache.has_ir_cache_ = true;
+        // Issue #1102: bounds-check ir_offset + size prefix + blob.
+        if (hdr->ir_offset + 4 > cache.file_size_) {
+            // Truncated IR section — skip IR (rebuilt on miss).
+        } else {
+            auto* ir_data = static_cast<const char*>(data) + hdr->ir_offset;
+            std::uint32_t ir_size = 0;
+            std::memcpy(&ir_size, ir_data, 4);
+            ir_data += 4;
+            if (static_cast<std::uint64_t>(hdr->ir_offset) + 4u + ir_size > cache.file_size_) {
+                // ir_size extends past file — skip.
+            } else {
+                aura::ir::IRModule ir_mod;
+                aura_ir_deserialize(ir_data, ir_size, &ir_mod);
+                cache.ir_functions_ = std::move(ir_mod.functions);
+                cache.ir_string_pool_ = std::move(ir_mod.string_pool);
+                cache.ir_entry_function_id_ = ir_mod.entry_function_id;
+                cache.has_ir_cache_ = true;
+            }
+        }
     }
 
     return cache;

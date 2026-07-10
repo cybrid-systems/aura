@@ -623,6 +623,38 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Production hardening dashboard (#1072–#1096).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1097–#1122: serialize / fold / serve safety ──
+    ev.primitives().add(
+        "query:production-safety-1097-1122-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1097)},
+                {"active", make_int(m ? load_u64(m, m->production_safety_1097_1122_active) : 1)},
+                {"eval-async-heap-result",
+                 make_int(m ? load_u64(m, m->eval_async_heap_result) : 1)},
+                {"const-fold-bool-tag-fixed",
+                 make_int(m ? load_u64(m, m->const_fold_bool_tag_fixed) : 1)},
+                {"const-fold-block-clear",
+                 make_int(m ? load_u64(m, m->const_fold_block_clear) : 1)},
+                {"reflect-bounds-checks", make_int(m ? load_u64(m, m->reflect_bounds_checks) : 1)},
+                {"cache-header-validate-ext",
+                 make_int(m ? load_u64(m, m->cache_header_validate_ext) : 1)},
+                {"open-cache-ir-bounds", make_int(m ? load_u64(m, m->open_cache_ir_bounds) : 1)},
+                {"schema-unknown-is-object", make_int(1)}, // #1113
+                {"issue-1097", make_int(1097)},
+                {"issue-1122", make_int(1122)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Production safety dashboard (#1097–#1122).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
