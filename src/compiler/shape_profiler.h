@@ -77,6 +77,12 @@ public:
     [[nodiscard]] std::uint32_t window_size() const noexcept { return window_size_; }
     [[nodiscard]] double stability_ratio() const noexcept { return stability_ratio_; }
 
+    // Issue #992: hard cap on tracked profiles (long-running serve).
+    void set_max_profiles(std::size_t n) { max_profiles_ = n ? n : 1; }
+    [[nodiscard]] std::size_t max_profiles() const noexcept { return max_profiles_; }
+    [[nodiscard]] std::size_t profile_count() const noexcept { return profiles_.size(); }
+    [[nodiscard]] std::uint64_t profile_evictions() const noexcept { return profile_evictions_; }
+
     // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
     void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
         dirty_hook_ = std::move(hook);
@@ -132,10 +138,13 @@ private:
         bool is_stable = false;
         ShapeID stable_shape = SHAPE_UNKNOWN;
         std::uint64_t last_metric_time = 0;
+        std::uint64_t last_used = 0; // Issue #992
 
         // Dominant shape in the window
         ShapeID compute_dominant() const;
     };
+
+    void maybe_evict_profiles_();
 
     // Issue #337: std::flat_map (C++23) for the
     // profiles_ container. The flat_map's sorted
@@ -148,6 +157,8 @@ private:
     std::uint32_t window_size_ = kDefaultWindowSize;
     double stability_ratio_ = kDefaultStabilityRatio;
     std::uint64_t global_time_ = 0;
+    std::size_t max_profiles_ = 4096; // Issue #992
+    std::uint64_t profile_evictions_ = 0;
     std::function<void(FnKey fn, std::uint32_t dirty_scope)> dirty_hook_;
 };
 

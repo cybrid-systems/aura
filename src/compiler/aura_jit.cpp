@@ -2852,6 +2852,9 @@ void AuraJIT::invalidate(const char* name) {
             llvm::consumeError(std::move(err));
         impl_->fn_trackers_.erase(it);
     }
+    // Issue #993: also drop unhandled-opcode counters so hot-swap
+    // / multi-agent sessions do not accumulate dead keys forever.
+    impl_->fn_unhandled_counts_.erase(n);
     std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
     impl_->compile_fns_.erase(n);
 }
@@ -2876,6 +2879,13 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
         } else {
             ++it;
         }
+    }
+    // Issue #993: erase matching unhandled counters.
+    for (auto it = impl_->fn_unhandled_counts_.begin(); it != impl_->fn_unhandled_counts_.end();) {
+        if (it->first == p || it->first.rfind(p_hash, 0) == 0)
+            it = impl_->fn_unhandled_counts_.erase(it);
+        else
+            ++it;
     }
     std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
     for (auto it = impl_->compile_fns_.begin(); it != impl_->compile_fns_.end();) {

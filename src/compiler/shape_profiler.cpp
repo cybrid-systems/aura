@@ -299,9 +299,13 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     // in shape_profiler.h.
     aura::core::cpp26::record_hotpath_invariant_hit();
     contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
+    // Issue #992: cap profiles before insert.
+    if (profiles_.find(fn) == profiles_.end() && profiles_.size() >= max_profiles_)
+        maybe_evict_profiles_();
     auto& profile = profiles_[fn];
     auto& history = profile.history;
     std::uint64_t now = ++global_time_;
+    profile.last_used = now;
 
     history.push({shape_id, now}, window_size_);
 
@@ -444,6 +448,23 @@ ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
 void ShapeProfiler::reset() {
     profiles_.clear();
     global_time_ = 0;
+    profile_evictions_ = 0;
+}
+
+void ShapeProfiler::maybe_evict_profiles_() {
+    // Issue #992: drop oldest last_used profile until under cap.
+    while (profiles_.size() >= max_profiles_ && !profiles_.empty()) {
+        auto victim = profiles_.begin();
+        std::uint64_t oldest = victim->second.last_used;
+        for (auto it = profiles_.begin(); it != profiles_.end(); ++it) {
+            if (it->second.last_used < oldest) {
+                oldest = it->second.last_used;
+                victim = it;
+            }
+        }
+        profiles_.erase(victim);
+        ++profile_evictions_;
+    }
 }
 
 std::vector<FnKey> ShapeProfiler::tracked_fns() const {

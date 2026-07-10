@@ -70,6 +70,17 @@ public:
     // Accessors for tests / debug.
     std::size_t ctor_count() const { return ctors_.size(); }
 
+    // Issue #994: drop dynamic ctor maps (hot-update / self-evo churn).
+    void clear_dynamic_ctors() {
+        ctors_.clear();
+        ctor_slots_.clear();
+    }
+    // Soft cap: if over max, clear all (dynamic ctors are rebuildable).
+    void maybe_cap_dynamic_ctors(std::size_t max_entries = 4096) {
+        if (ctors_.size() > max_entries)
+            clear_dynamic_ctors();
+    }
+
 private:
     std::unordered_map<std::string, AdtCtorEntry> ctors_;
     std::unordered_map<std::string, std::size_t> ctor_slots_;

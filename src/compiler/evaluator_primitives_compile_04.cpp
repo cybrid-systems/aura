@@ -310,13 +310,15 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_bool(false);
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        ev.bump_verify_tool_guard_capture();
+        // Issue #1001: validate string indices BEFORE Guard + metric bump so
+        // early returns do not leave inflated guard-capture counters.
         const auto kind_idx = as_string_idx(a[0]);
         const auto text_idx = as_string_idx(a[1]);
         if (kind_idx >= ev.string_heap_.size() || text_idx >= ev.string_heap_.size())
             return make_bool(false);
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        ev.bump_verify_tool_guard_capture();
         const std::string& kind = ev.string_heap_[kind_idx];
         const std::string& text = ev.string_heap_[text_idx];
         aura::ast::NodeId target = aura::ast::NULL_NODE;

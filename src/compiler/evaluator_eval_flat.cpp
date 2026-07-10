@@ -1731,8 +1731,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         // Every sample_every_ calls to eval_flat, recompute pressure
         // and (if policy allows) auto-trigger gc-module for the top arena.
         // Outside the hot path for typical evals (default 1-in-1000).
-        if (++sample_counter_ >= memory_policy_.sample_every) {
-            sample_counter_ = 0;
+        // Issue #991: thread_local counters (shared Evaluator, multi-worker).
+        thread_local std::size_t t_sample_counter = 0;
+        thread_local std::size_t t_last_auto_gc_eval_depth = 0;
+        thread_local std::string t_last_warn_level;
+        if (++t_sample_counter >= memory_policy_.sample_every) {
+            t_sample_counter = 0;
+            sample_counter_ = t_sample_counter; // mirror for policy reset observers
             // Snapshot arena state. Inline rather than refactoring into
             // a shared helper to avoid std::function capture-lifetime issues.
             struct Snap {
@@ -1775,19 +1780,21 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
             // Log warning on level transitions (avoid spam — only log when
             // the level string changes from the last warned one).
-            if (level != last_warn_level_ && (level == "high" || level == "critical")) {
+            if (level != t_last_warn_level && (level == "high" || level == "critical")) {
                 std::println(
                     std::cerr,
                     "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB", level,
                     overall, total_used);
+                t_last_warn_level = level;
                 last_warn_level_ = level;
             } else if (level == "low" || level == "medium") {
+                t_last_warn_level = level;
                 last_warn_level_ = level;
             }
 
             // Auto-gc: only at critical AND policy enabled AND cooldown elapsed.
             if (memory_policy_.auto_gc && level == "critical" &&
-                eval_depth_ - last_auto_gc_eval_depth_ > memory_policy_.cooldown_evals) {
+                eval_depth_ - t_last_auto_gc_eval_depth > memory_policy_.cooldown_evals) {
                 // Find top arena (highest used-pct, then largest used, then name asc).
                 std::string top_name;
                 int top_pct = 0;
@@ -1805,6 +1812,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                  "[memory-pressure] AUTO-GC: freeing arena '{}' ({}% full)",
                                  top_name, top_pct);
                     gc_module(top_name);
+                    t_last_auto_gc_eval_depth = eval_depth_;
                     last_auto_gc_eval_depth_ = eval_depth_;
                 }
             }

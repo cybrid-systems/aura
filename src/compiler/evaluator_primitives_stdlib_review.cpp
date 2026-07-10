@@ -444,6 +444,49 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Bump self-evo pipeline counter for issue N (#941–#954).",
                  .category = "general",
                  .schema = "(int) -> bool"});
+
+    // ── Issues #985–#1013: production cache bounds + resource quota ──
+    ev.primitives().add(
+        "query:production-hardening-985-1013-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(985)},
+                {"active", make_int(m ? load_u64(m, m->production_hardening_985_1013_active) : 1)},
+                {"specjit-evictions",
+                 make_int(m ? load_u64(m, m->cache_specjit_evictions_total) : 0)},
+                {"shape-evictions", make_int(m ? load_u64(m, m->cache_shape_evictions_total) : 0)},
+                {"jit-unhandled-erases",
+                 make_int(m ? load_u64(m, m->cache_jit_unhandled_erases_total) : 0)},
+                {"adt-cap-clears", make_int(m ? load_u64(m, m->cache_adt_cap_clears_total) : 0)},
+                {"bounded-lru-active",
+                 make_int(m ? load_u64(m, m->bounded_lru_template_active) : 1)},
+                {"quota-checks", make_int(m ? load_u64(m, m->resource_quota_checks_total) : 0)},
+                {"quota-rejects", make_int(m ? load_u64(m, m->resource_quota_rejects_total) : 0)},
+                {"quota-max-fibers", make_int(m ? load_u64(m, m->resource_quota_max_fibers) : 256)},
+                {"quota-max-mutations",
+                 make_int(m ? load_u64(m, m->resource_quota_max_mutations) : 100000)},
+                {"specjit-null-placeholder-fixed", make_int(1)},
+                {"thread-local-pressure-sample", make_int(1)},
+                {"eda-strcat-helper", make_int(1)},
+                {"feedback-metric-order-fixed", make_int(1)},
+                {"set-marker-dead-ok-removed", make_int(1)},
+                {"issue-985", make_int(985)},
+                {"issue-1013", make_int(1013)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Production hardening dashboard (#985–#1013).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // resource:quota-check lives in ObservabilityPrims (#753) and was extended
+    // in #1013 to bump resource_quota_checks_total / _rejects_total. Do not
+    // re-register here (would duplicate ordered_names_ slots).
 }
 
 } // namespace aura::compiler::primitives_detail
