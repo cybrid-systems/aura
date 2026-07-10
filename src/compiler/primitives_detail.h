@@ -21,6 +21,10 @@
 
 #include "observability_metrics.h"
 #include "primitives_meta.h"
+#include "runtime_shared.h"
+#include "hash_meta.h"
+#include <string>
+#include <vector>
 
 #include <atomic>
 #include <cstdint>
@@ -166,6 +170,42 @@ namespace primitives_detail {
                   "Issue #671 PRIM_CAPTURE_CONTRACT violated: mutate path must wrap work in "      \
                   "MutationBoundaryGuard for provenance. See primitives_detail.h header for "      \
                   "the required capture discipline.")
+
+
+    // Issue #1144: shared FlatHashTable C-string→i64 insert used by query:*-stats
+    // builders. Replaces the ~50-line duplicated insert_kv lambda.
+    // Returns false if the table is full (probe exhausted).
+    // StringHeap is typically std::pmr::vector<std::string> (Evaluator::string_heap_).
+    template <typename StringHeap, typename MakeString, typename MakeInt>
+    inline bool flat_hash_insert_cstr_i64(FlatHashTable* ht, StringHeap& string_heap,
+                                          const char* k_str, std::int64_t v, MakeString make_string,
+                                          MakeInt make_int) {
+        if (!ht || !k_str)
+            return false;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (const char* p = k_str; *p; ++p)
+            h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE;
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                auto kidx = string_heap.size();
+                string_heap.push_back(k_str);
+                keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                vals[idx] = make_int(v).val;
+                ht->size++;
+                return true;
+            }
+        }
+        return false;
+    }
 
 } // namespace primitives_detail
 

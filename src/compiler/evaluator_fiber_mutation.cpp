@@ -508,8 +508,13 @@ Evaluator* Evaluator::yield_hook_evaluator() noexcept {
 }
 
 void Evaluator::yield_mutation_boundary() {
-    if (aura::messaging::g_fiber_yield_mutation_boundary)
+    // Issue #1146: per-fiber exception-state telemetry on yield/mutation boundary.
+    bump_per_fiber_ex_state();
+    if (aura::messaging::g_fiber_yield_mutation_boundary) {
         aura::messaging::g_fiber_yield_mutation_boundary();
+        bump_per_fiber_ex_state_hit();
+        bump_per_fiber_ex_state_savings();
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -5573,6 +5573,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> defuse_rebuild_monotonic{1};       // #1129
     std::atomic<std::uint64_t> module_realpath_fail_closed{1};    // #1131
     std::atomic<std::uint64_t> env_parent_fallback_fixed{1};      // #1128
+
+    // ── Issues #1144–#1148: observability wire-up / dead-bump audit ──
+    std::atomic<std::uint64_t> production_sweep_1144_1148_active{1};
+    std::atomic<std::uint64_t> flat_hash_insert_helper{1};  // #1144
+    std::atomic<std::uint64_t> selfevo_hyg_dirty_wired{1};  // #1145
+    std::atomic<std::uint64_t> per_fiber_ex_state_wired{1}; // #1146
+    std::atomic<std::uint64_t> orch_telemetry_wired{1};     // #1147
+    std::atomic<std::uint64_t> dead_bump_audit_script{1};   // #1148
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
