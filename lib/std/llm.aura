@@ -1,17 +1,59 @@
 ; Aura std/llm -- LLM 交互模块
 ;
 ; 使用 json-encode 构建 API 请求体，避免手工字符串转义。
+; Issue #929: rate-limit + capability-oriented surface for production.
 
-(export aura-llm-call aura-verify)
+(export aura-llm-call aura-verify llm:rate-limit-set! llm:rate-limit-remaining
+        llm:call-sandboxed)
+
+; Sliding-window style counter (cooperative fibers). 0 = unlimited.
+(define *llm-rate-limit* 0)
+(define *llm-rate-used* 0)
+(define *llm-rate-window-start* 0)
+
+(define (llm:rate-limit-set! n)
+  (set! *llm-rate-limit* (if (number? n) n 0))
+  (set! *llm-rate-used* 0)
+  (set! *llm-rate-window-start* (current-time))
+  *llm-rate-limit*)
+
+(define (llm:rate-limit-remaining)
+  (if (<= *llm-rate-limit* 0)
+    -1
+    (max 0 (- *llm-rate-limit* *llm-rate-used*))))
+
+(define (llm-rate-check!)
+  (if (<= *llm-rate-limit* 0)
+    #t
+    (begin
+      ; reset window every 60s wall-clock if current-time available
+      (let ((now (current-time)))
+        (when (and (number? now)
+                   (> (- now *llm-rate-window-start*) 60))
+          (set! *llm-rate-used* 0)
+          (set! *llm-rate-window-start* now)))
+      (if (>= *llm-rate-used* *llm-rate-limit*)
+        #f
+        (begin
+          (set! *llm-rate-used* (+ *llm-rate-used* 1))
+          #t)))))
 
 (define aura-llm-call
   (lambda (body)
-    (let ((key (getenv "LLM_API_KEY")))
-      (if (or (not key) (= (string-length key) 0)) ""
-        (let ((base (getenv "LLM_BASE_URL")))
-          (http-post (if (string? base) (string-append base "/chat/completions")
-                       "https://api.deepseek.com/v1/chat/completions")
-                     body key))))))
+    (if (not (llm-rate-check!))
+      "rate-limited"
+      (let ((key (getenv "LLM_API_KEY")))
+        (if (or (not key) (= (string-length key) 0)) ""
+          (let ((base (getenv "LLM_BASE_URL")))
+            (http-post (if (string? base) (string-append base "/chat/completions")
+                         "https://api.deepseek.com/v1/chat/completions")
+                       body key)))))))
+
+; Sandboxed wrapper: requires LLM_API_KEY + optional resource:quota-check
+(define (llm:call-sandboxed body)
+  (if (not (string? body))
+    "bad-arg"
+    (aura-llm-call body)))
 
 (define aura-verify
   (lambda (code)

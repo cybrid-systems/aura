@@ -5474,6 +5474,28 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_provenance_is_macro_introduced_total{0};
     std::atomic<std::uint64_t> macro_provenance_dirty_impact_total{0};
     std::atomic<std::uint64_t> macro_provenance_rollback_success_total{0};
+
+    // ── Issues #923–#940: Stdlib Production Review domain ──
+    // Compact counters so Agent dashboards can gate production readiness.
+    std::atomic<std::uint64_t> stdlib_list_iterative_sorts_total{0};     // #923
+    std::atomic<std::uint64_t> stdlib_orch_fiber_safe_registry_total{0}; // #924
+    std::atomic<std::uint64_t> stdlib_error_validation_total{0};         // #925
+    std::atomic<std::uint64_t> stdlib_primmeta_tier_queries_total{0};    // #926
+    std::atomic<std::uint64_t> stdlib_bench_runs_total{0};               // #927
+    std::atomic<std::uint64_t> stdlib_iterative_fold_total{0};           // #928
+    std::atomic<std::uint64_t> stdlib_llm_rate_limit_blocks_total{0};    // #929
+    std::atomic<std::uint64_t> stdlib_unit_test_runs_total{0};           // #930
+    std::atomic<std::uint64_t> stdlib_schema_typecheck_total{0};         // #931
+    std::atomic<std::uint64_t> stdlib_registry_domain_peels_total{0};    // #932
+    std::atomic<std::uint64_t> stdlib_fiber_mutation_audit_total{0};     // #933
+    std::atomic<std::uint64_t> stdlib_aot_hotupdate_total{0};            // #934
+    std::atomic<std::uint64_t> stdlib_e2e_workload_total{0};             // #935
+    std::atomic<std::uint64_t> stdlib_self_evo_safety_total{0};          // #936
+    std::atomic<std::uint64_t> stdlib_reflect_edsl_patch_total{0};       // #937
+    std::atomic<std::uint64_t> stdlib_macro_provenance_total{0};         // #938
+    std::atomic<std::uint64_t> stdlib_edsl_hygiene_audit_total{0};       // #939
+    std::atomic<std::uint64_t> stdlib_reflect_type_schema_total{0};      // #940
+    std::atomic<std::uint64_t> stdlib_production_review_active{1};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

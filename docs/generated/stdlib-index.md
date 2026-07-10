@@ -13,7 +13,7 @@
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `colony:search` | lib/std/ant.aura -- ant colony pheromone system + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
 | `std/ast` | `ast:summary-formatted` `ast:diff-formatted` `ast:validate-summary` `ast:version-summary` `ast:ref-stats` `ast:memory-pressure` | lib/std/ast.aura — High-level AST helpers (Issue #563) |
-| `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` | — |
+| `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/capability` | `capability-stack` `capability?` `check-capability` | std/capability.aura — Capability 标准库 |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
@@ -30,13 +30,13 @@
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-parse` `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- delegates to built-in json-parse / json-encode |
-| `std/list` | `foldr` `map` `for-each` `member?` `zip` `zip3` `take` `skip` … (+10) | Aura standard list library |
-| `std/llm` | `aura-llm-call` `aura-verify` | Aura std/llm -- LLM 交互模块 |
-| `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+50) | Aura standard math library |
+| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+13) | Aura standard list library |
+| `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` | Aura std/llm -- LLM 交互模块 |
+| `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+52) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` | — |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
-| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `agent:spawn` `agent:ask` `agent:list` … (+7) | — |
+| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `agent:spawn` `agent:ask` `agent:list` … (+8) | — |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |

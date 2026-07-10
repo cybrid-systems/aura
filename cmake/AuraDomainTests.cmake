@@ -26,6 +26,11 @@ aura_add_issue_test(test_obs_schema_matrix)
 aura_issue_test_link_llvm_jit(test_obs_schema_matrix)
 add_dependencies(all_test_issue_targets test_obs_schema_matrix)
 
+# Issues #923–#940: stdlib production review Phase 1
+aura_add_issue_test(test_stdlib_production_review_923_940)
+aura_issue_test_link_llvm_jit(test_stdlib_production_review_923_940)
+add_dependencies(all_test_issue_targets test_stdlib_production_review_923_940)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

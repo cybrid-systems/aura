@@ -1161,11 +1161,15 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // migration active + clean-block-hit-rate +
     // pmr utilization).
     "query:ir-soa-full-migration-stats",
+    // Issues #923–#940: stdlib production review
+    "query:stdlib-production-review-stats",
+    "query:primitive-tier-stats",
 };
 
 
 // Issue #909: shared helper (was local lambda in register_eval; used across peels).
 EvalValue ObservabilityPrims::meta_to_pair(Evaluator& ev, const PrimMeta& m) {
+    // Issue #926: include perf_tier + security_level for Agent discovery.
     auto schema_idx = ev.string_heap_.size();
     ev.string_heap_.push_back(m.schema);
     auto cat_idx = ev.string_heap_.size();
@@ -1177,12 +1181,16 @@ EvalValue ObservabilityPrims::meta_to_pair(Evaluator& ev, const PrimMeta& m) {
     auto pid1 = ev.pairs_.size();
     ev.pairs_.push_back({make_string(doc_idx), make_pair(pid0)});
     auto pid2 = ev.pairs_.size();
-    ev.pairs_.push_back({make_int(m.safety_flags), make_pair(pid1)});
+    ev.pairs_.push_back({make_int(m.security_level), make_pair(pid1)});
     auto pid3 = ev.pairs_.size();
-    ev.pairs_.push_back({make_bool(m.pure), make_pair(pid2)});
+    ev.pairs_.push_back({make_int(m.perf_tier), make_pair(pid2)});
     auto pid4 = ev.pairs_.size();
-    ev.pairs_.push_back({make_int(m.arity), make_pair(pid3)});
-    return make_pair(pid4);
+    ev.pairs_.push_back({make_int(m.safety_flags), make_pair(pid3)});
+    auto pid5 = ev.pairs_.size();
+    ev.pairs_.push_back({make_bool(m.pure), make_pair(pid4)});
+    auto pid6 = ev.pairs_.size();
+    ev.pairs_.push_back({make_int(m.arity), make_pair(pid5)});
+    return make_pair(pid6);
 }
 
 // ── Issue #909: thin observability registration dispatchers ──

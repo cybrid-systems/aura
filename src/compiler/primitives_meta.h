@@ -17,6 +17,16 @@ inline constexpr std::uint8_t kPrimSafetyMutates = 0x01;
 inline constexpr std::uint8_t kPrimSafetyIo = 0x02;
 inline constexpr std::uint8_t kPrimSafetyFiber = 0x04;
 
+// Issue #926: PrimMeta.perf_tier / security_level constants.
+inline constexpr std::uint8_t kPrimPerfUnknown = 0;
+inline constexpr std::uint8_t kPrimPerfHot = 1;    // native / iterative hot path
+inline constexpr std::uint8_t kPrimPerfNormal = 2; // typical stdlib
+inline constexpr std::uint8_t kPrimPerfCold = 3;   // recursive / rare
+inline constexpr std::uint8_t kPrimSecUnknown = 0;
+inline constexpr std::uint8_t kPrimSecSafe = 1;       // pure / no I/O
+inline constexpr std::uint8_t kPrimSecSandboxed = 2;  // quota / capability gated
+inline constexpr std::uint8_t kPrimSecPrivileged = 3; // network / LLM / FS
+
 // Domain categories for AI Agent primitive discovery.
 inline constexpr std::string_view kPrimCategoryEda = "eda";
 inline constexpr std::string_view kPrimCategorySva = "sva";
