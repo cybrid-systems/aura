@@ -57,9 +57,12 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             (*coverage_counters)[8]++;
         // (c-func lib-id "name" sig-string)
         // lib-id -1 uses RTLD_DEFAULT
+        // Issue #979: diagnostics to stderr — bare println defaults to
+        // stdout and pollutes --serve JSON protocol stream.
         if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
-            std::println("c-func: expected (c-func lib-id \"name\" signature");
-            std::println("  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"");
+            std::println(std::cerr, "c-func: expected (c-func lib-id \"name\" signature");
+            std::println(std::cerr,
+                         "  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"");
             return make_int(0);
         }
         auto raw_lib_id = types::as_int(a[0]);
@@ -67,7 +70,8 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (raw_lib_id >= 0) {
             auto lib_idx = static_cast<std::size_t>(raw_lib_id);
             if (lib_idx >= libs_.size()) {
-                std::println("c-func: invalid library handle {} (use -1 for RTLD_DEFAULT)",
+                std::println(std::cerr,
+                             "c-func: invalid library handle {} (use -1 for RTLD_DEFAULT)",
                              lib_idx);
                 return make_int(0);
             }
@@ -80,10 +84,10 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             auto sig = (*sh)[types::as_string_idx(a[2])];
             std::string sig_err;
             if (!parse_ffi_sig(sig, ret_type, arg_types, &sig_err)) {
-                std::println("c-func: invalid signature '{}'", sig);
-                std::println("  reason: {}", sig_err);
-                std::println("  expected: \"(ArgType) -> RetType\"");
-                std::println("  valid types: Int, Float, String, Opaque, Void");
+                std::println(std::cerr, "c-func: invalid signature '{}'", sig);
+                std::println(std::cerr, "  reason: {}", sig_err);
+                std::println(std::cerr, "  expected: \"(ArgType) -> RetType\"");
+                std::println(std::cerr, "  valid types: Int, Float, String, Opaque, Void");
                 return make_int(0);
             }
         } else if (types::is_int(a[2])) {
@@ -92,16 +96,18 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
                 if (types::is_int(a[i]))
                     arg_types.push_back(static_cast<int>(types::as_int(a[i])));
         } else {
-            std::println("c-func: third arg must be signature string like \"(String) -> Int\"");
+            std::println(std::cerr,
+                         "c-func: third arg must be signature string like \"(String) -> Int\"");
             return make_int(0);
         }
         auto* fn_ptr = ::dlsym(lib, name.c_str());
         if (!fn_ptr) {
             auto* err = ::dlerror();
-            std::println("c-func: symbol '{}' not found in library", name);
+            std::println(std::cerr, "c-func: symbol '{}' not found in library", name);
             if (err)
-                std::println("  dlerror: {}", err);
-            std::println("  tip: use (c-func -1 \"{}\" \"(String) -> Int\") with RTLD_DEFAULT",
+                std::println(std::cerr, "  dlerror: {}", err);
+            std::println(std::cerr,
+                         "  tip: use (c-func -1 \"{}\" \"(String) -> Int\") with RTLD_DEFAULT",
                          name);
             return make_int(0);
         }
@@ -146,6 +152,8 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         auto* ptr = std::calloc(1, size);
         auto idx = oh->size();
         oh->push_back(ptr);
+        // Issue #980: track allocation size for bounds checks.
+        opaque_sizes_[ptr] = size;
         return types::make_opaque(idx);
     });
 
@@ -155,6 +163,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         auto idx = types::as_opaque_idx(a[0]);
         if (idx >= oh->size())
             return make_void();
+        opaque_sizes_.erase((*oh)[idx]);
         std::free((*oh)[idx]);
         (*oh)[idx] = nullptr;
         return make_void();
@@ -177,18 +186,33 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         auto oi = types::as_opaque_idx(a[0]);
         if (oi >= oh->size() || !(*oh)[oi])
             return make_void();
+        if (types::as_int(a[1]) < 0)
+            return make_void();
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto* base = static_cast<char*>((*oh)[oi]);
         auto& val = a[2];
+        // Issue #980: bounds check against c-alloc tracked size.
+        auto need = [&](std::size_t nbytes) -> bool {
+            auto it = opaque_sizes_.find(base);
+            if (it == opaque_sizes_.end())
+                return true; // unknown size (raw c-opaque) — legacy allow
+            return offset <= it->second && nbytes <= it->second - offset;
+        };
         if (types::is_int(val)) {
             auto v = types::as_int(val);
+            if (!need(sizeof(v)))
+                return make_void();
             std::memcpy(base + offset, &v, sizeof(v));
         } else if (types::is_float(val)) {
             auto v = types::as_float(val);
+            if (!need(sizeof(v)))
+                return make_void();
             std::memcpy(base + offset, &v, sizeof(v));
         } else if (types::is_opaque(val)) {
             auto vi = types::as_opaque_idx(val);
             auto* ptr = vi < oh->size() ? (*oh)[vi] : nullptr;
+            if (!need(sizeof(ptr)))
+                return make_void();
             std::memcpy(base + offset, &ptr, sizeof(ptr));
         }
         return make_void();
@@ -202,19 +226,33 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         auto oi = types::as_opaque_idx(a[0]);
         if (oi >= oh->size() || !(*oh)[oi])
             return make_int(0);
+        if (types::as_int(a[1]) < 0)
+            return make_int(0);
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto type = static_cast<int>(types::as_int(a[2]));
         auto* base = static_cast<const char*>((*oh)[oi]);
+        auto need = [&](std::size_t nbytes) -> bool {
+            auto it = opaque_sizes_.find(const_cast<char*>(base));
+            if (it == opaque_sizes_.end())
+                return true;
+            return offset <= it->second && nbytes <= it->second - offset;
+        };
         if (type == 0) {
             std::int64_t v = 0;
+            if (!need(sizeof(v)))
+                return make_int(0);
             std::memcpy(&v, base + offset, sizeof(v));
             return make_int(v);
         } else if (type == 1) {
             double v = 0;
+            if (!need(sizeof(v)))
+                return make_int(0);
             std::memcpy(&v, base + offset, sizeof(v));
             return types::make_float(v);
         } else if (type == 2) {
             void* ptr = nullptr;
+            if (!need(sizeof(ptr)))
+                return make_int(0);
             std::memcpy(&ptr, base + offset, sizeof(ptr));
             auto ni = oh->size();
             oh->push_back(ptr);

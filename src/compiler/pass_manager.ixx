@@ -144,9 +144,11 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
 // "no error → return true" invariant. The post is informational
 // (the return value is observable, so callers can already
 // verify it); the pre is the load-bearing guard.
+// Issue #983: post-condition was vacuous (`|| true`). Real contract:
+// return value equals !pass.has_error() after run.
 export template <Pass P>
 bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
-    post(!pass.has_error() || true) {
+    post(r : r == !pass.has_error()) {
     if (pass_pipeline_detail::g_pipeline_yield_hook &&
         pass_pipeline_detail::g_pipeline_yield_hook()) {
         pipeline_yield_count.fetch_add(1, std::memory_order_relaxed);

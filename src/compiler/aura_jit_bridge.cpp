@@ -6,6 +6,8 @@
 #include "aot_mangle.h"            // mangle_aot_name (Issue #136)
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 
+#include <cstdarg>
+#include <cstdio>
 #include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
@@ -253,6 +255,8 @@ struct AotFuncSlot {
 
 AotFuncSlot g_aot_func_slots[kMaxAotFuncs];
 std::atomic<std::uint64_t> g_aot_table_epoch{1};
+// Issue #971: count silent drops when func_id >= kMaxAotFuncs.
+std::atomic<std::uint64_t> g_aot_register_dropped{0};
 
 void bump_reload_attempt() {
     if (g_aot_metrics)
@@ -277,8 +281,18 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
     if (func_id < 0)
         return;
     const auto idx = static_cast<unsigned>(func_id);
-    if (idx >= kMaxAotFuncs)
+    if (idx >= kMaxAotFuncs) {
+        // Issue #971: was silent; now count + one-shot stderr so .reg.c
+        // truncation is diagnosable (AOT emit path has no return channel).
+        const auto n = g_aot_register_dropped.fetch_add(1, std::memory_order_relaxed);
+        if (n == 0) {
+            std::fprintf(stderr,
+                         "aura_register_fn_tracked: func_id %lld >= kMaxAotFuncs (%u); "
+                         "registration dropped (raise table limit or split AOT module)\n",
+                         static_cast<long long>(func_id), kMaxAotFuncs);
+        }
         return;
+    }
     auto& slot = g_aot_func_slots[idx];
     const std::uintptr_t new_ptr = static_cast<std::uintptr_t>(fn_ptr);
     const std::uintptr_t old_ptr = slot.fn_ptr.exchange(new_ptr, std::memory_order_acq_rel);
@@ -286,6 +300,10 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
         slot.grace_refcount.fetch_add(1, std::memory_order_relaxed);
     slot.table_generation.store(g_aot_table_epoch.load(std::memory_order_acquire),
                                 std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_aot_register_dropped_count(void) {
+    return g_aot_register_dropped.load(std::memory_order_relaxed);
 }
 
 extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
@@ -353,16 +371,25 @@ extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state
     }
 }
 
+// Issue #972: prefer stderr with fixed prefix so --serve / agent log
+// scrapers can filter (structured logger not available in this TU).
+static void aot_log(const char* fmt, ...) {
+    std::fputs("[aura:aot] ", stderr);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
     bump_reload_attempt();
     if (!path) {
-        std::fprintf(stderr, "aura_reload_aot_module: null path\n");
+        aot_log("aura_reload_aot_module: null path\n");
         return false;
     }
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
-        std::fprintf(stderr, "aura_reload_aot_module: dlopen failed for %s: %s\n", path,
-                     ::dlerror());
+        aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
         return false;
     }
     // Staleness check: compare the new binary's aot_emit_version
@@ -372,30 +399,27 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
     if (binary_version) {
         if (version != 0 && *binary_version != version) {
-            std::fprintf(stderr,
-                         "aura_reload_aot_module: version mismatch "
-                         "(binary=%llu, host=%llu) for %s\n",
-                         static_cast<unsigned long long>(*binary_version),
-                         static_cast<unsigned long long>(version), path);
+            aot_log("aura_reload_aot_module: version mismatch "
+                    "(binary=%llu, host=%llu) for %s\n",
+                    static_cast<unsigned long long>(*binary_version),
+                    static_cast<unsigned long long>(version), path);
             ::dlclose(handle);
             // Issue #452: bump stale-reject counter.
             if (g_aot_metrics)
                 g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
-        std::fprintf(stderr,
-                     "aura_reload_aot_module: loaded %s (aot_emit_version=%llu, "
-                     "module_version=%llu)\n",
-                     path, static_cast<unsigned long long>(*binary_version),
-                     static_cast<unsigned long long>(g_aot_module_version));
+        aot_log("aura_reload_aot_module: loaded %s (aot_emit_version=%llu, "
+                "module_version=%llu)\n",
+                path, static_cast<unsigned long long>(*binary_version),
+                static_cast<unsigned long long>(g_aot_module_version));
     } else {
         // No aot_emit_version symbol: pre-#243 binary, treat as
         // version 0 (unversioned baseline).
         if (version != 0) {
-            std::fprintf(stderr,
-                         "aura_reload_aot_module: no aot_emit_version in %s, "
-                         "but host specified version=%llu; refusing\n",
-                         path, static_cast<unsigned long long>(version));
+            aot_log("aura_reload_aot_module: no aot_emit_version in %s, "
+                    "but host specified version=%llu; refusing\n",
+                    path, static_cast<unsigned long long>(version));
             ::dlclose(handle);
             // Issue #452: pre-#243 binary with explicit version
             // requested counts as stale.
@@ -410,11 +434,10 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     if (host_region != 0) {
         auto* binary_region = static_cast<std::uint64_t*>(::dlsym(handle, "aot_region_mask"));
         if (binary_region && *binary_region != host_region) {
-            std::fprintf(stderr,
-                         "aura_reload_aot_module: region mismatch "
-                         "(binary=%llu, host=%llu) for %s\n",
-                         static_cast<unsigned long long>(*binary_region),
-                         static_cast<unsigned long long>(host_region), path);
+            aot_log("aura_reload_aot_module: region mismatch "
+                    "(binary=%llu, host=%llu) for %s\n",
+                    static_cast<unsigned long long>(*binary_region),
+                    static_cast<unsigned long long>(host_region), path);
             ::dlclose(handle);
             if (g_aot_metrics)
                 g_aot_metrics->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
@@ -476,6 +499,9 @@ extern "C" int64_t aura_jit_test() {
 // follow-up that requires the JIT to pass the closure_id
 // (currently a separate channel — not yet wired).
 std::atomic<std::uint64_t> aura_jit_fallback_count_v_{0};
+// Issue #969: status of last fallback (0=ok/stub, 1=sentinel-returned).
+// Documented in earlier design notes but never defined — now real.
+std::atomic<std::uint32_t> aura_jit_fallback_last_status{0};
 // Issue #461: accessor for the counter so other modules can
 // read it without needing to re-include <atomic> in their
 // global module fragment. Returns a copy of the current
@@ -483,6 +509,9 @@ std::atomic<std::uint64_t> aura_jit_fallback_count_v_{0};
 // which breaks the GMF of modules that import <atomic>).
 extern "C" std::uint64_t aura_jit_fallback_count_v_read() {
     return aura_jit_fallback_count_v_.load(std::memory_order_relaxed);
+}
+extern "C" std::uint32_t aura_jit_fallback_last_status_read() {
+    return aura_jit_fallback_last_status.load(std::memory_order_relaxed);
 }
 
 // Issue #657: JIT unhandled-opcode invalidate/deopt hook.
@@ -499,17 +528,20 @@ extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
 
 extern "C" std::uint64_t aura_jit_fallback_to_interpreter(int64_t* args, uint32_t n_args) {
     aura_jit_fallback_count_v_.fetch_add(1, std::memory_order_relaxed);
-    // #461 P0: return a tagged sentinel (different from the
-    // pre-#461 VOID-sentinel which was 11). The new sentinel
-    // is 0xDEAD_BEEF_BEEF_DEAD (a clearly-invalid EvalValue
-    // bit pattern) — callers can detect the fallback path
-    // via the bit pattern OR via the `aura_jit_fallback_count_v_`
-    // counter. The follow-up replaces the sentinel with the
-    // real interpreter return value once the closure_id
-    // channel is wired.
+    // Issue #969: do NOT return 0xDEADBEEFBEEFDEAD into the EvalValue
+    // pipe — that bit pattern is a raw int64 that poisons arithmetic
+    // when the caller continues. Return tagged VOID (Aura convention
+    // for "no value") and set aura_jit_fallback_last_status = 1 so
+    // callers can detect fallback without corrupting subsequent ops.
+    // Real interpreter dispatch remains Phase 2 (closure_id channel).
     (void)args;
     (void)n_args;
-    return 0xDEAD'BEEF'BEEF'DEADull;
+    aura_jit_fallback_last_status.store(1, std::memory_order_relaxed);
+    // Tagged void / nil: low tag bits used by value system (0 = int 0
+    // is unsafe; use the void tag used elsewhere as make_void() = 0
+    // with type bit). The pre-#461 path returned 11 (void tag).
+    constexpr std::uint64_t kVoidSentinel = 11ull;
+    return kVoidSentinel;
 }
 
 // ── aura_emit_native: AOT compile a set of FlatFunctions to native binary ──

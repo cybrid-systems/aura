@@ -1086,6 +1086,9 @@ public:
     }
 
     void reset() {
+        // Issue #984: clear thread_local lowering hooks on reset so a
+        // subsequent session cannot see this service's trampolines.
+        clear_lowering_compiler_core_hooks();
         arena_.reset();
         // IR cache references arena-allocated FlatAST data;
         // must be cleared after arena reset to avoid dangling pointers.
@@ -1111,6 +1114,9 @@ public:
         // dangling (the arena was reset). The bridge falls back
         // to re-parse from body_source (or invalidates the closure).
         mutation_epoch_.fetch_add(1, std::memory_order_release);
+        // Re-install lowering hooks after reset so the live service
+        // continues to observe bridge epoch / linear metadata.
+        install_lowering_compiler_core_hooks();
     }
 
     // ---- Strict mode (type errors → rejected) ------------------------
@@ -6152,13 +6158,49 @@ public:
             // else: contended — the caller already holds unique_lock
             // (e.g. set-code, restore-ast, mutate:*). Skip marker read.
         }
-        // Populate per-function metrics from the JIT cache
+        // Populate per-function metrics from the JIT cache.
+        // Issue #968: fill total_calls / deopt / hit / miss / hit_rate /
+        // specialized_for from ShapeProfiler + global specialization counters
+        // (previously left at zero → --metrics / evo-explain always zeros).
         {
             std::shared_lock cache_read(jit_cache_mtx_);
+            const auto hits = metrics_.specialization_hits.load(std::memory_order_relaxed);
+            const auto misses = metrics_.specialization_misses.load(std::memory_order_relaxed);
             for (auto& [name, entry] : jit_cache_) {
                 FnMetrics fm;
                 fm.name = name;
                 fm.has_shape_map = entry.has_shape_map;
+                auto fn_key = shape::make_fn_key(session_id_, name);
+                auto sm = shape_profiler_.metrics(fn_key);
+                fm.total_calls = sm.total_calls;
+                fm.deopt_count = sm.deopt_count;
+                // Distribute global specialization hit/miss proportionally is
+                // hard without per-fn counters; surface profile stability as
+                // hit when shape-stable, miss otherwise when profiled.
+                if (sm.total_calls > 0) {
+                    if (shape_profiler_.is_stable(fn_key)) {
+                        fm.hit_count =
+                            sm.total_calls > sm.deopt_count ? sm.total_calls - sm.deopt_count : 0;
+                        fm.miss_count = sm.deopt_count;
+                    } else {
+                        fm.hit_count = 0;
+                        fm.miss_count = sm.total_calls;
+                    }
+                    const auto denom = fm.hit_count + fm.miss_count;
+                    fm.hit_rate =
+                        denom > 0 ? static_cast<double>(fm.hit_count) / static_cast<double>(denom)
+                                  : 0.0;
+                    fm.specialized_for =
+                        static_cast<std::uint32_t>(shape_profiler_.dominant_shape(fn_key));
+                } else if (entry.has_shape_map) {
+                    // Compiled with shape map but not yet profiled: still mark
+                    // specialized path available using global hit/miss ratio.
+                    fm.hit_count = hits;
+                    fm.miss_count = misses;
+                    const auto denom = hits + misses;
+                    fm.hit_rate =
+                        denom > 0 ? static_cast<double>(hits) / static_cast<double>(denom) : 0.0;
+                }
                 s.functions.push_back(std::move(fm));
             }
         }
@@ -7945,6 +7987,8 @@ public:
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
     ~CompilerService() {
+        // Issue #984: clear thread_local lowering hooks on teardown.
+        clear_lowering_compiler_core_hooks();
         Evaluator::clear_main_thread_mutation_stack();
         if (auto* wf = evaluator_.workspace_flat())
             wf->release_children_for_teardown();
@@ -8877,7 +8921,9 @@ public:
         return true;
     }
 
-    // Issue #657: lowering + JIT compiler-core incremental hooks.
+    // Issue #657 / #984: lowering + JIT compiler-core incremental hooks.
+    // install sets thread_local hooks; clear must be called on session
+    // teardown / reset so cross-session routing cannot see stale hooks.
     void install_lowering_compiler_core_hooks() noexcept {
         LoweringObservabilityHooks hooks;
         hooks.bridge_epoch_capture = bridge_epoch();
@@ -8890,6 +8936,7 @@ public:
             pending_impact_func_indices_.empty() ? nullptr : &pending_impact_func_indices_;
         set_lowering_observability_hooks(hooks);
     }
+    void clear_lowering_compiler_core_hooks() noexcept { clear_lowering_observability_hooks(); }
 
     static void lowering_bridge_sync_trampoline() noexcept {
         auto* raw = aura::messaging::g_current_compiler_service;

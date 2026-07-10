@@ -21,6 +21,7 @@ module;
 #include <memory_resource>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 export module aura.compiler.ffi_primitives;
@@ -79,7 +80,15 @@ public:
                 *err_type = "signature must start with '('";
             return false;
         }
-        auto arg_part = sig.substr(1, arrow - 1);
+        // Issue #982: require ')' closing the arg list before '->'.
+        // Malformed e.g. "(Int -> Int" (missing ')') is rejected.
+        auto close_paren = sig.find(')');
+        if (close_paren == std::string::npos || close_paren > arrow) {
+            if (err_type)
+                *err_type = "missing ')' before '->' in signature";
+            return false;
+        }
+        auto arg_part = sig.substr(1, close_paren - 1);
         auto ret_part = sig.substr(arrow + 2);
         auto type_to_int = [](const std::string& tn, std::string* err = nullptr) -> int {
             auto t = tn;
@@ -147,6 +156,9 @@ public:
 private:
     std::vector<void*> libs_;
     std::vector<FFIFunc> funcs_;
+    // Issue #980: allocation sizes for c-alloc'd opaques (keyed by pointer).
+    // 0 / missing = unknown size (raw c-opaque) — bounds checks skipped.
+    std::unordered_map<void*, std::size_t> opaque_sizes_;
 };
 
 } // namespace aura::compiler
