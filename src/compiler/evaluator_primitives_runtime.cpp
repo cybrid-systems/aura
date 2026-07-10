@@ -243,11 +243,19 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.size() < 2)
             return make_bool(true);
 
+        // Issue #1137: int vs empty-list (void) are never equal — including 0 vs '().
+        // Must check before any deep walk; also equal? is not lowered to IR Eq.
+        // Quote of () is void (kSpecialVoid); bare 0 is fixnum — see eval Quote path.
+        if ((is_int(a[0]) && is_void(a[1])) || (is_void(a[0]) && is_int(a[1])))
+            return make_bool(false);
+
         struct EqCheck {
             Evaluator& e;
             bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
                 if (depth > 64)
                     return true;
+                if ((is_int(x) && is_void(y)) || (is_void(x) && is_int(y)))
+                    return false;
                 if (x == y)
                     return true;
                 if (is_int(x) && is_int(y))
@@ -283,9 +291,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                     }
                     return false;
                 }
-                // Empty list sentinel: void or int 0
-                if ((is_void(x) || (is_int(x) && as_int(x) == 0)) &&
-                    (is_void(y) || (is_int(y) && as_int(y) == 0)))
+                if (is_void(x) && is_void(y))
                     return true;
                 return false;
             }
@@ -293,6 +299,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
 
         return make_bool(EqCheck{ev}(a[0], a[1], 0));
     });
+
 
     add("gensym", [&ev](std::span<const EvalValue> a) -> EvalValue {
         static std::atomic<std::int64_t> gs_counter_{0};
@@ -383,12 +390,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 
+    // Issue #1138: bad args return void (format contract is string|void), not #f.
     add("format", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
+            return make_void();
         auto tidx = as_string_idx(a[0]);
         if (tidx >= ev.string_heap_.size())
-            return make_bool(false);
+            return make_void();
         auto& tmpl = ev.string_heap_[tidx];
         std::string result;
         std::size_t arg_idx = 1; // first arg in a[1..]

@@ -874,13 +874,15 @@ void Evaluator::install_defuse_subsystem() {
             pairs_.push_back({def_list, make_pair(c2)});
             return make_pair(c3);
         },
+        // Issue #1129: rebuild must MONOTONICALLY bump defuse_version_
+        // (never reset to hardcoded 1) so snapshots stay comparable.
         [this](void* idx) -> EvalValue {
             auto* du_idx = static_cast<DefUseIndex*>(idx);
             du_idx->build(*workspace_flat_, *workspace_pool_);
-            defuse_version_.store(1, std::memory_order_relaxed);
+            const auto ver = defuse_version_.fetch_add(1, std::memory_order_acq_rel) + 1;
             defuse_rebuild_count_++;
             defuse_affected_syms_.clear();
-            return make_int(1);
+            return make_int(static_cast<std::int64_t>(ver));
         },
         [this](void* idx) -> EvalValue {
             auto* du_idx = static_cast<DefUseIndex*>(idx);

@@ -5564,6 +5564,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> reflect_bounds_checks{1};     // #1101+
     std::atomic<std::uint64_t> cache_header_validate_ext{1}; // #1104
     std::atomic<std::uint64_t> open_cache_ir_bounds{1};      // #1102
+
+    // ── Issues #1123–#1140: final open-issue sweep ──
+    std::atomic<std::uint64_t> production_sweep_1123_1140_active{1};
+    std::atomic<std::uint64_t> equal_zero_nil_fixed{1};           // #1137
+    std::atomic<std::uint64_t> format_void_on_error{1};           // #1138
+    std::atomic<std::uint64_t> term_metric_double_count_fixed{1}; // #1135/#1136
+    std::atomic<std::uint64_t> defuse_rebuild_monotonic{1};       // #1129
+    std::atomic<std::uint64_t> module_realpath_fail_closed{1};    // #1131
+    std::atomic<std::uint64_t> env_parent_fallback_fixed{1};      // #1128
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

@@ -1178,6 +1178,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:production-hardening-1072-1096-stats",
     // Issues #1097–#1122: serialize / fold / serve safety
     "query:production-safety-1097-1122-stats",
+    // Issues #1123–#1140: final open-issue sweep
+    "query:production-sweep-1123-1140-stats",
 };
 
 

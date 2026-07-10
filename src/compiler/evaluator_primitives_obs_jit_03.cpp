@@ -577,7 +577,7 @@ void ObservabilityPrims::register_jit_p26(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 (atomics wired, call sites + policy deferred)
         else
             recommendation = 3; // early-stage (no mandatory enforcement activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -718,7 +718,7 @@ void ObservabilityPrims::register_jit_p27(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, call sites deferred)
         else
             recommendation = 3; // early-stage (no concurrent hot-update activity)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -885,7 +885,7 @@ void ObservabilityPrims::register_jit_p28(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // early-stage
         else
             recommendation = 3; // not-started
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1073,7 +1073,7 @@ void ObservabilityPrims::register_jit_p29(PrimRegistrar add, Evaluator& ev) {
             composite_fidelity_status = 2; // early-stage
         else
             composite_fidelity_status = 3; // not-started
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1243,7 +1243,7 @@ void ObservabilityPrims::register_jit_p30(PrimRegistrar add, Evaluator& ev) {
             composite_ai_extension_status = 2; // early-stage
         else
             composite_ai_extension_status = 3; // not-started
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -1394,7 +1394,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
             recommendation = 2; // Phase 1 only (atomics wired, mandate deferred)
         else
             recommendation = 3; // early-stage (no pattern matcher activity yet)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(16) /* #1141 */;
         if (!ht)
             return make_void();
         auto meta = ht->metadata();

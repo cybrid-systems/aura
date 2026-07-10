@@ -1040,21 +1040,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t sv_nodes = 0;
         if (ws) {
             for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
-                switch (ws->get(id).tag) {
-                    case aura::ast::NodeTag::Interface:
-                    case aura::ast::NodeTag::Modport:
-                    case aura::ast::NodeTag::Property:
-                    case aura::ast::NodeTag::Sequence:
-                    case aura::ast::NodeTag::Assert:
-                    case aura::ast::NodeTag::Covergroup:
-                    case aura::ast::NodeTag::Coverpoint:
-                    case aura::ast::NodeTag::Constraint:
-                    case aura::ast::NodeTag::Class:
-                        ++sv_nodes;
-                        break;
-                    default:
-                        break;
-                }
+                // Issue #1134: meta-name based SV/EDA tag coverage.
+                const auto nm = aura::ast::meta(ws->get(id).tag).name;
+                if (nm == "Interface" || nm == "Modport" || nm == "Property" || nm == "Sequence" ||
+                    nm == "Assert" || nm == "Covergroup" || nm == "Coverpoint" ||
+                    nm == "Constraint" || nm == "Class")
+                    ++sv_nodes;
                 if (ws->verification_dirty(id) != 0)
                     ++verification_dirty_nodes;
             }
@@ -1810,21 +1801,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t sv_nodes = 0;
         if (ws) {
             for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
-                switch (ws->get(id).tag) {
-                    case aura::ast::NodeTag::Interface:
-                    case aura::ast::NodeTag::Modport:
-                    case aura::ast::NodeTag::Property:
-                    case aura::ast::NodeTag::Sequence:
-                    case aura::ast::NodeTag::Assert:
-                    case aura::ast::NodeTag::Covergroup:
-                    case aura::ast::NodeTag::Coverpoint:
-                    case aura::ast::NodeTag::Constraint:
-                    case aura::ast::NodeTag::Class:
-                        ++sv_nodes;
-                        break;
-                    default:
-                        break;
-                }
+                // Issue #1134: meta-name based SV/EDA tag coverage.
+                const auto nm = aura::ast::meta(ws->get(id).tag).name;
+                if (nm == "Interface" || nm == "Modport" || nm == "Property" || nm == "Sequence" ||
+                    nm == "Assert" || nm == "Covergroup" || nm == "Coverpoint" ||
+                    nm == "Constraint" || nm == "Class")
+                    ++sv_nodes;
             }
         }
         const std::uint64_t boundary_violation_on_sv = sv_nodes > 0 ? boundary_violations : 0;
@@ -1910,21 +1892,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t sv_nodes = 0;
         if (ws) {
             for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
-                switch (ws->get(id).tag) {
-                    case aura::ast::NodeTag::Interface:
-                    case aura::ast::NodeTag::Modport:
-                    case aura::ast::NodeTag::Property:
-                    case aura::ast::NodeTag::Sequence:
-                    case aura::ast::NodeTag::Assert:
-                    case aura::ast::NodeTag::Covergroup:
-                    case aura::ast::NodeTag::Coverpoint:
-                    case aura::ast::NodeTag::Constraint:
-                    case aura::ast::NodeTag::Class:
-                        ++sv_nodes;
-                        break;
-                    default:
-                        break;
-                }
+                // Issue #1134: meta-name based SV/EDA tag coverage.
+                const auto nm = aura::ast::meta(ws->get(id).tag).name;
+                if (nm == "Interface" || nm == "Modport" || nm == "Property" || nm == "Sequence" ||
+                    nm == "Assert" || nm == "Covergroup" || nm == "Coverpoint" ||
+                    nm == "Constraint" || nm == "Class")
+                    ++sv_nodes;
             }
         }
         const std::uint64_t compact_trigger_count =
