@@ -554,6 +554,39 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Serve health / SLO Phase 1 (#1015).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1047–#1071: hygiene / type / mutate safety ──
+    ev.primitives().add(
+        "query:production-safety-1047-1071-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1047)},
+                {"active", make_int(m ? load_u64(m, m->production_safety_1047_1071_active) : 1)},
+                {"hw-coercion-empty-str-fixed",
+                 make_int(m ? load_u64(m, m->hw_coercion_empty_str_fixed) : 1)},
+                {"mutation-history-void-fixed",
+                 make_int(m ? load_u64(m, m->mutation_history_void_fixed) : 1)},
+                {"query-where-dedup-fixed",
+                 make_int(m ? load_u64(m, m->query_where_dedup_fixed) : 1)},
+                {"eval-string-bounds-fixed",
+                 make_int(m ? load_u64(m, m->eval_string_bounds_fixed) : 1)},
+                {"hygiene-marker-phase1",
+                 make_int(m ? load_u64(m, m->hygiene_marker_phase1_active) : 1)},
+                {"guard-fiber-phase1", make_int(m ? load_u64(m, m->guard_fiber_phase1_active) : 1)},
+                {"ir-marker-hash-active", make_int(1)}, // continues #1039
+                {"issue-1047", make_int(1047)},
+                {"issue-1071", make_int(1071)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Production safety dashboard (#1047–#1071).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

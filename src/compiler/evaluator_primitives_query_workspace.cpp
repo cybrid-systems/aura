@@ -538,25 +538,19 @@ void register_workspace_query_primitives(
         auto field_idx = as_keyword_idx(a[0]);
         if (field_idx >= ws.keyword_table.size())
             return mev("bad-arg", "unknown keyword");
-        auto field_name = ws.keyword_table[field_idx];
         auto val_idx = as_string_idx(a[1]);
         if (val_idx >= ws.string_heap.size())
             return mev("bad-arg", "value string index out of range");
         auto value = ws.string_heap[val_idx];
-        auto& flat = *ws.workspace_flat;
-        auto& pool = *ws.workspace_pool;
 
-        // Store the predicate as a pair: (field-name value-sym)
-        auto field_keyword_idx = ws.keyword_table.size();
-        ws.keyword_table.push_back(field_name);
-        auto val_sym = pool.intern(value);
+        // Issue #1070: reuse the existing keyword index (no duplicate
+        // keyword_table push). Predicate is (field-keyword . value-string);
+        // drop dead val_sym intern that was never consumed.
         auto val_string_idx = ws.string_heap.size();
         ws.string_heap.push_back(value);
 
-        // Encode as (key:pair key:pair) where car=field keyword, cdr=value string ref
-        // This tagged structure is opaque to users but query:filter knows how to apply it.
         auto val_pair = ws.pairs.size();
-        ws.pairs.push_back({make_keyword(field_keyword_idx), make_string(val_string_idx)});
+        ws.pairs.push_back({make_keyword(field_idx), make_string(val_string_idx)});
         return make_pair(val_pair);
     });
 

@@ -51,6 +51,11 @@ aura_add_issue_test(test_production_stability_1014_1046)
 aura_issue_test_link_llvm_jit(test_production_stability_1014_1046)
 add_dependencies(all_test_issue_targets test_production_stability_1014_1046)
 
+# Issues #1047–#1071: hygiene / type / mutate safety Phase 1
+aura_add_issue_test(test_production_safety_1047_1071)
+aura_issue_test_link_llvm_jit(test_production_safety_1047_1071)
+add_dependencies(all_test_issue_targets test_production_safety_1047_1071)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
