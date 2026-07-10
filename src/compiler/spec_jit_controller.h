@@ -48,6 +48,14 @@ public:
     // Clear all cached specializations.
     void clear();
 
+    // Issue #985: hard cap for long-running serve (default 2048 fn entries).
+    void set_max_specializations(std::size_t n) { max_specializations_ = n ? n : 1; }
+    [[nodiscard]] std::size_t max_specializations() const noexcept { return max_specializations_; }
+    [[nodiscard]] std::size_t specialization_count() const noexcept {
+        return specializations_.size();
+    }
+    [[nodiscard]] std::uint64_t eviction_count() const noexcept { return evictions_; }
+
     // Issue #170 Phase 2 / item #1: deopt signal.
     //
     // Returns true if the underlying AuraJIT has reported any
@@ -107,11 +115,17 @@ private:
         ShapeID shape;
         aura::jit::ScalarFn fn_ptr;
         uint32_t version;
+        std::uint64_t last_used = 0; // Issue #985
     };
+
+    void maybe_evict_();
 
     aura::jit::AuraJIT& jit_;
     std::unordered_map<std::string, std::vector<SpecEntry>> specializations_;
     uint32_t global_version_ = 0;
+    std::size_t max_specializations_ = 2048; // Issue #985
+    std::uint64_t access_clock_ = 0;
+    std::uint64_t evictions_ = 0;
 };
 
 // ── Runtime shape guard helper ────────────────────────────────

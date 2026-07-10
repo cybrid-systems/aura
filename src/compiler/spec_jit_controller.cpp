@@ -6,6 +6,7 @@
 #include "value_tags.h"
 #include <algorithm>
 #include <cstdio>
+#include <limits>
 
 // Shape guard runtime — checks runtime arg values against expected shape map.
 // Returns true if all args match. Used at the call site before invoking
@@ -127,21 +128,49 @@ SpecJITController::compile_specialized(const std::string& fn_name, const std::ui
     for (std::uint32_t i = 0; i < shape_map_size; ++i)
         shape_key = (shape_key << 1) ^ static_cast<ShapeID>(shape_map[i]);
 
-    // Check if already cached
+    // Check if already cached with a live pointer.
     for (auto& e : entries) {
         if (e.shape == shape_key) {
-            if (e.fn_ptr)
+            if (e.fn_ptr) {
+                e.last_used = ++access_clock_;
                 return e.fn_ptr;
+            }
+            // Issue #986: do not keep null placeholders; fall through to
+            // re-request without growing the vector.
+            break;
         }
     }
 
-    // The actual compilation happens in service.ixx via AuraJIT::compile().
-    // Here we just record the specialization attempt.
-    entries.push_back({shape_key, nullptr, global_version_});
-
-    std::fprintf(stderr, "spec: cached specialization request for '%s' (shape_key=%lu)\n",
-                 fn_name.c_str(), (unsigned long)shape_key);
+    // Issue #986: do NOT push a {shape, nullptr} entry. Compilation is
+    // performed in service.ixx via AuraJIT::compile(); this controller only
+    // tracks successful specializations (install_specialization). Logging
+    // the request is enough for diagnostics.
+    std::fprintf(stderr, "spec: specialization request for '%s' (shape_key=%lu)\n", fn_name.c_str(),
+                 (unsigned long)shape_key);
+    maybe_evict_();
     return nullptr;
+}
+
+void SpecJITController::maybe_evict_() {
+    // Issue #985: drop whole-fn vectors when over cap (oldest last_used).
+    while (specializations_.size() > max_specializations_ && !specializations_.empty()) {
+        auto victim = specializations_.begin();
+        std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
+        for (auto it = specializations_.begin(); it != specializations_.end(); ++it) {
+            std::uint64_t age = std::numeric_limits<std::uint64_t>::max();
+            for (auto& e : it->second)
+                if (e.last_used < age)
+                    age = e.last_used;
+            if (it->second.empty())
+                age = 0;
+            if (age < oldest) {
+                oldest = age;
+                victim = it;
+            }
+        }
+        specializations_.erase(victim);
+        ++evictions_;
+    }
 }
 
 bool SpecJITController::has_specialization(const std::string& fn_name, ShapeID shape) const {
@@ -161,7 +190,7 @@ aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_nam
     if (it == specializations_.end())
         return nullptr;
     for (auto& e : it->second) {
-        if (e.shape == shape)
+        if (e.shape == shape && e.fn_ptr != nullptr)
             return e.fn_ptr;
     }
     return nullptr;
@@ -171,15 +200,15 @@ void SpecJITController::invalidate(const std::string& fn_name) {
     auto it = specializations_.find(fn_name);
     if (it != specializations_.end()) {
         global_version_++;
-        // Clear fn_ptrs so next call re-compiles
-        for (auto& e : it->second)
-            e.fn_ptr = nullptr;
+        // Issue #986: drop entries entirely (no null placeholders).
+        specializations_.erase(it);
     }
 }
 
 void SpecJITController::clear() {
     specializations_.clear();
     global_version_ = 0;
+    access_clock_ = 0;
 }
 
 // Issue #170 Phase 2 / item #1: deopt signal for the shape

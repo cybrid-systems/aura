@@ -5514,6 +5514,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_cache_v2_evictions_total{0};        // #959
     std::atomic<std::uint64_t> session_registry_unregisters_total{0}; // #955
     std::atomic<std::uint64_t> bugfix_batch_941_967_active{1};
+
+    // ── Issues #985–#1013: cache bounds + production hardening ──
+    std::atomic<std::uint64_t> cache_specjit_evictions_total{0};     // #985
+    std::atomic<std::uint64_t> cache_shape_evictions_total{0};       // #992
+    std::atomic<std::uint64_t> cache_jit_unhandled_erases_total{0};  // #993
+    std::atomic<std::uint64_t> cache_adt_cap_clears_total{0};        // #994
+    std::atomic<std::uint64_t> bounded_lru_template_active{1};       // #995
+    std::atomic<std::uint64_t> resource_quota_checks_total{0};       // #1013
+    std::atomic<std::uint64_t> resource_quota_rejects_total{0};      // #1013
+    std::atomic<std::uint64_t> resource_quota_max_fibers{256};       // #1013
+    std::atomic<std::uint64_t> resource_quota_max_mutations{100000}; // #1013
+    std::atomic<std::uint64_t> production_hardening_985_1013_active{1};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

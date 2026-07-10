@@ -150,8 +150,9 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
             return make_int(static_cast<std::int64_t>(ev.resource_quota_time_us()));
         return make_int(0);
     });
-    // Issue #753: (resource:quota-check kind current) — enforce quota;
-    // bumps quota-violations / resource-trend / deployment-slo-hits.
+    // Issue #753 / #1013: (resource:quota-check kind current) — enforce quota;
+    // bumps quota-violations / resource-trend / deployment-slo-hits +
+    // production-hardening resource_quota_* counters.
     add("resource:quota-check", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_bool(false);
@@ -169,9 +170,13 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
             limit = ev.resource_quota_time_us();
         else
             return make_bool(false);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
         ev.bump_longrunning_resource_trend();
         if (limit > 0 && current > limit) {
             ev.bump_longrunning_quota_violations();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
             return make_bool(false);
         }
         if (limit > 0)

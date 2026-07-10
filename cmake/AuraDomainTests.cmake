@@ -41,6 +41,11 @@ aura_add_issue_test(test_bugfix_968_984)
 aura_issue_test_link_llvm_jit(test_bugfix_968_984)
 add_dependencies(all_test_issue_targets test_bugfix_968_984)
 
+# Issues #985–#1013: production cache bounds + resource quota Phase 1
+aura_add_issue_test(test_production_hardening_985_1013)
+aura_issue_test_link_llvm_jit(test_production_hardening_985_1013)
+add_dependencies(all_test_issue_targets test_production_hardening_985_1013)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

@@ -253,23 +253,20 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
     // sequence. The primitive does NOT propagate the marker to
     // children — use syntax:propagate-marker for that.
     add("syntax:set-marker", [&ev](const auto& a) -> EvalValue {
-        bool ok = true;
+        // Issue #1002: removed dead `bool ok` (error paths return merr
+        // immediately; ok was never read).
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1])) {
-            ok = false;
             return ev.make_merr("bad-arg", "usage: (syntax:set-marker node-id marker)");
         }
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto marker_val = static_cast<int>(as_int(a[1]));
         if (!ev.workspace_flat_) {
-            ok = false;
             return ev.make_merr("no-workspace", "no active workspace");
         }
         if (id >= ev.workspace_flat_->size()) {
-            ok = false;
             return ev.make_merr("out-of-range", "node id " + std::to_string(id) + " >= flat size");
         }
         if (marker_val < 0 || marker_val > 2) {
-            ok = false;
             return ev.make_merr("bad-arg",
                                 "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
         }

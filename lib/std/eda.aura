@@ -1091,17 +1091,26 @@
 (define (make-eda:cover name expr)
   (make-eda:assertion 'cover name (make-eda:property name expr)))
 
+; ── Issue #1012: eda:strcat — safe multi-arg concat via 2-arg chain ──
+; Historical note: multi-arg string-append was once lossy in Aura; C++
+; path is variadic now, but eda emitters still use 2-arg chains for
+; readability and to match emit-generate-for style.
+(define (eda:strcat . parts)
+  (let loop ((xs parts) (acc ""))
+    (if (null? xs)
+      acc
+      (loop (cdr xs) (string-append acc (if (string? (car xs))
+                                           (car xs)
+                                           (eda:name-str (car xs))))))))
+
 ; ── Assertion emitter ──
 ;
 ; "assert property (req |-> ack);\n"
 ; "assume property (rst == 0);\n"
 ; "cover property (handshake_done);\n"
 ;
-; Aura quirk: nested string-append with 3+ args drops tail.
-; Use let-binding + 2-arg string-append throughout.
+; Issue #1010: always 2-arg string-append via eda:strcat / let-chain.
 (define (eda:emit-assertion a)
-  ; Aura quirk: nested 5-arg string-append drops tail args. Use
-  ; let-bound intermediates + 2-arg string-append throughout.
   (let ((kind (eda:assertion-kind a))
         (name (eda:name-str (eda:assertion-name a)))
         (prop-expr-str (eda:emit-expr
@@ -1110,12 +1119,9 @@
                 ((equal? kind 'assert) "assert")
                 ((equal? kind 'assume) "assume")
                 ((equal? kind 'cover) "cover")
-                (else (string-append "/* unknown kind: "
-                                     (eda:name-str kind) " */ assert")))))
-      (let ((core (string-append kw " property ("
-                                 prop-expr-str ");"))
-            (trailing (string-append " // " name "\n")))
-        (string-append core trailing)))))
+                (else (eda:strcat "/* unknown kind: "
+                                  (eda:name-str kind) " */ assert")))))
+      (eda:strcat kw " property (" prop-expr-str "); // " name "\n"))))
 
 ; Display form: "assert: name = <prop-expr>"  (no semicolon)
 (define (eda:display-assertion a)
@@ -1960,6 +1966,8 @@
   (list 'eda:bitvec-param name))
 
 (export
+  ; Issue #1012 helper
+  eda:strcat
   ; IR constructors
   make-eda:module make-eda:port make-eda:wire make-eda:wire3
   make-eda:logic make-eda:reg make-eda:bit

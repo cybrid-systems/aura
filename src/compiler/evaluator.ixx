@@ -2833,6 +2833,10 @@ private:
         std::size_t cooldown_evals = 5000;
         std::size_t recent_gc_temp_window = 100;
     } memory_policy_;
+    // Issue #991: hot path uses thread_local copies (eval_flat);
+    // these fields remain for policy-reset observers / single-thread
+    // mirrors only — do not read them as the ground truth under
+    // multi-worker serve.
     // Last eval_depth_ at which auto-gc fired (for cooldown).
     std::size_t last_auto_gc_eval_depth_ = 0;
     // Counter to implement "sample every N evals".

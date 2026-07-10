@@ -34,6 +34,8 @@ void AdtRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
 
 void AdtRuntime::register_dynamic_ctor(RegisterFn add, const std::string& name, PrimFn body,
                                        int arity, std::size_t slot) {
+    // Issue #994: prevent unbounded growth under self-evo type churn.
+    maybe_cap_dynamic_ctors(4096);
     add(name, std::move(body));
     ctors_[name] = AdtCtorEntry{.name = name, .arity = arity};
     ctor_slots_[name] = slot;
