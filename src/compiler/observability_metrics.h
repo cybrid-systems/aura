@@ -5496,6 +5496,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stdlib_edsl_hygiene_audit_total{0};       // #939
     std::atomic<std::uint64_t> stdlib_reflect_type_schema_total{0};      // #940
     std::atomic<std::uint64_t> stdlib_production_review_active{1};
+
+    // ── Issues #941–#954: Self-evo / compiler-core pipeline ──
+    std::atomic<std::uint64_t> selfevo_dirty_observer_hooks_total{0}; // #941
+    std::atomic<std::uint64_t> selfevo_pattern_index_hits_total{0};   // #942
+    std::atomic<std::uint64_t> selfevo_composite_tx_total{0};         // #943
+    std::atomic<std::uint64_t> selfevo_provenance_refresh_total{0};   // #944
+    std::atomic<std::uint64_t> selfevo_linear_enforce_total{0};       // #945/#951
+    std::atomic<std::uint64_t> selfevo_instr_dirty_total{0};          // #946/#950
+    std::atomic<std::uint64_t> selfevo_closure_bridge_sync_total{0};  // #947/#952
+    std::atomic<std::uint64_t> selfevo_jit_parity_checks_total{0};    // #948/#953
+    std::atomic<std::uint64_t> selfevo_stress_suite_runs_total{0};    // #949
+    std::atomic<std::uint64_t> selfevo_tree_walker_fallback_total{0}; // #954
+    std::atomic<std::uint64_t> selfevo_pipeline_active{1};
+
+    // ── Issues #955–#967: serve / bugfix domain ──
+    std::atomic<std::uint64_t> ir_cache_v2_evictions_total{0};        // #959
+    std::atomic<std::uint64_t> session_registry_unregisters_total{0}; // #955
+    std::atomic<std::uint64_t> bugfix_batch_941_967_active{1};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

@@ -706,7 +706,18 @@ int main(int argc, char* argv[]) {
                             continue;
                         }
                         auto& sname = name_it->second;
-                        if (sessions.erase(sname)) {
+                        // Issue #955: drop process-global registry entry BEFORE
+                        // destroying the CompilerService (UAF otherwise).
+                        if (sessions.count(sname)) {
+                            aura::compiler::CompilerService::unregister_session(sname);
+                            // Issue #955 observability (via active session metrics if present)
+                            if (sessions.count(active_session)) {
+                                sessions[active_session]
+                                    .metrics()
+                                    .session_registry_unregisters_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                            }
+                            sessions.erase(sname);
                             if (active_session == sname) {
                                 active_session = "default";
                             }
@@ -1904,10 +1915,10 @@ int main(int argc, char* argv[]) {
             // Otherwise, all args from argv[2..argc-2] are files, argv[argc-1] is output.
             if (argv[2][0] == '(') {
                 // Inline mode: ./aura --emit-binary '(+ 1 2)' myapp
+                // Issue #960: do not mutate main's argv/argc (keeps
+                // crash diagnostics and later argv reads correct).
                 input = argv[2];
-                argc -= 1;
-                argv += 1; // shift so argv[2] = myapp
-                out_path = argv[2];
+                out_path = argv[3];
             } else {
                 // File mode: ./aura --emit-binary lib.aura main.aura out
                 for (int i = 2; i < argc - 1; ++i) {
@@ -2354,14 +2365,9 @@ int main(int argc, char* argv[]) {
             aura_set_string_pool(raw_pool.data(), static_cast<unsigned>(raw_pool.size()));
         }
 
-        // Issue #243 Phase 1: propagate the Evaluator's current
-        // defuse_version_ into the AOT bridge so the emitted
-        // .o + .reg.c carry the version. The bridge uses this
-        // for both mangle suffixing and the registration
-        // record. We use the test accessor (defuse_version_for_test)
-        // since there is no production-only accessor yet; this
-        // path is hot but the cost is one atomic load.
-        aura_set_aot_defuse_version(cs.evaluator().defuse_version_for_test());
+        // Issue #243 Phase 1 / #957: production defuse_version() for AOT
+        // mangle suffix + registration record (one acquire load).
+        aura_set_aot_defuse_version(cs.evaluator().defuse_version());
 
         // ── Step 4: Compile via LLVM AOT pipeline ────────────────
         bool compiled = aura_emit_native_file(input.c_str(), out_path.c_str(),

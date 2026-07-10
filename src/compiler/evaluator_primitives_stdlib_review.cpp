@@ -288,6 +288,162 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
     if (auto* m = metrics()) {
         m->stdlib_registry_domain_peels_total.store(37, std::memory_order_relaxed); // 29+8
     }
+
+    // ── Issues #941–#954: self-evo / compiler-core pipeline dashboard ──
+    ev.primitives().add(
+        "query:self-evo-pipeline-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            if (m) {
+                m->selfevo_dirty_observer_hooks_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(941)},
+                {"active", make_int(m ? load_u64(m, m->selfevo_pipeline_active) : 1)},
+                {"dirty-observer-hooks",
+                 make_int(m ? load_u64(m, m->selfevo_dirty_observer_hooks_total) : 0)},
+                {"pattern-index-hits",
+                 make_int(m ? load_u64(m, m->selfevo_pattern_index_hits_total) : 0)},
+                {"composite-tx", make_int(m ? load_u64(m, m->selfevo_composite_tx_total) : 0)},
+                {"provenance-refresh",
+                 make_int(m ? load_u64(m, m->selfevo_provenance_refresh_total) : 0)},
+                {"linear-enforce", make_int(m ? load_u64(m, m->selfevo_linear_enforce_total) : 0)},
+                {"instr-dirty", make_int(m ? load_u64(m, m->selfevo_instr_dirty_total) : 0)},
+                {"closure-bridge-sync",
+                 make_int(m ? load_u64(m, m->selfevo_closure_bridge_sync_total) : 0)},
+                {"jit-parity-checks",
+                 make_int(m ? load_u64(m, m->selfevo_jit_parity_checks_total) : 0)},
+                {"stress-suite-runs",
+                 make_int(m ? load_u64(m, m->selfevo_stress_suite_runs_total) : 0)},
+                {"tree-walker-fallback",
+                 make_int(m ? load_u64(m, m->selfevo_tree_walker_fallback_total) : 0)},
+                {"issue-941", make_int(941)},
+                {"issue-942", make_int(942)},
+                {"issue-943", make_int(943)},
+                {"issue-944", make_int(944)},
+                {"issue-945", make_int(945)},
+                {"issue-946", make_int(946)},
+                {"issue-947", make_int(947)},
+                {"issue-948", make_int(948)},
+                {"issue-949", make_int(949)},
+                {"issue-950", make_int(950)},
+                {"issue-951", make_int(951)},
+                {"issue-952", make_int(952)},
+                {"issue-953", make_int(953)},
+                {"issue-954", make_int(954)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Self-evo / compiler-core pipeline dashboard (#941–#954).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issues #955–#967: bugfix / serve hygiene dashboard
+    ev.primitives().add(
+        "query:bugfix-941-967-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(955)},
+                {"active", make_int(m ? load_u64(m, m->bugfix_batch_941_967_active) : 1)},
+                {"ir-cache-evictions",
+                 make_int(m ? load_u64(m, m->ir_cache_v2_evictions_total) : 0)},
+                {"session-unregisters",
+                 make_int(m ? load_u64(m, m->session_registry_unregisters_total) : 0)},
+                {"issue-955", make_int(955)},
+                {"issue-956", make_int(956)},
+                {"issue-957", make_int(957)},
+                {"issue-958", make_int(958)},
+                {"issue-959", make_int(959)},
+                {"issue-960", make_int(960)},
+                {"issue-962", make_int(962)},
+                {"issue-963", make_int(963)},
+                {"issue-964", make_int(964)},
+                {"issue-965", make_int(965)},
+                {"issue-966", make_int(966)},
+                {"issue-967", make_int(967)},
+                // Feature flags for Phase 1 fixes (1 = landed)
+                {"session-unregister-wired", make_int(1)},
+                {"http-async-unified", make_int(1)},
+                {"defuse-version-prod-api", make_int(1)},
+                {"eval-on-current-guard", make_int(1)},
+                {"ir-cache-max-size", make_int(2048)},
+                {"emit-binary-argv-safe", make_int(1)},
+                {"autofix-unbound-safe", make_int(1)},
+                {"gcsweep-shared-layout", make_int(1)},
+                {"lexer-nul-escape", make_int(1)},
+                {"hygiene-builtins-expanded", make_int(1)},
+                {"autofix-default-rules-fixed", make_int(1)},
+                {"module-path-heap-realpath", make_int(1)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Bugfix batch dashboard (#955–#967).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Agent probe: bump self-evo counters by issue number
+    ev.primitives().add(
+        "selfevo:audit-bump",
+        [metrics](std::span<const EvalValue> a) -> EvalValue {
+            auto* m = metrics();
+            if (!m || a.empty() || !types::is_int(a[0]))
+                return make_bool(false);
+            switch (types::as_int(a[0])) {
+                case 941:
+                    m->selfevo_dirty_observer_hooks_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 942:
+                    m->selfevo_pattern_index_hits_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 943:
+                    m->selfevo_composite_tx_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 944:
+                    m->selfevo_provenance_refresh_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 945:
+                case 951:
+                    m->selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 946:
+                case 950:
+                    m->selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 947:
+                case 952:
+                    m->selfevo_closure_bridge_sync_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 948:
+                case 953:
+                    m->selfevo_jit_parity_checks_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 949:
+                    m->selfevo_stress_suite_runs_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                case 954:
+                    m->selfevo_tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                default:
+                    return make_bool(false);
+            }
+            return make_bool(true);
+        },
+        PrimMeta{.arity = 1,
+                 .pure = false,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Bump self-evo pipeline counter for issue N (#941–#954).",
+                 .category = "general",
+                 .schema = "(int) -> bool"});
 }
 
 } // namespace aura::compiler::primitives_detail

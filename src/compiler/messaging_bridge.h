@@ -1,6 +1,7 @@
 #ifndef AURA_MESSAGING_BRIDGE_H
 #define AURA_MESSAGING_BRIDGE_H
 
+#include <cstddef>
 #include <string>
 #include <optional>
 #include <functional>
@@ -190,11 +191,22 @@ extern GCCollectFn g_gc_collect;
 // (cast at the call site to keep the include surface minimal).
 //
 // Return is an opaque `void*` — heap-allocated by the callback
-// (an `aura::messaging::GCSweepResultMsg*` per the layout in
-// evaluator_gc.cpp), owned and `delete`-d by the caller. We
-// use `void*` for the return type so the messaging bridge can
-// be a non-module .h and the layout stays an implementation
-// detail.
+// (GCSweepResultMsg*, owned and `delete`-d by the caller).
+//
+// Issue #963: single layout definition here — both evaluator_gc.cpp
+// and serve_async.cpp MUST use this struct (no local duplicates).
+struct GCSweepResultMsg {
+    std::size_t strings_freed = 0;
+    std::size_t pairs_freed = 0;
+    std::size_t closures_freed = 0;
+    std::size_t fiber_results_freed = 0;
+};
+// Opaque PassThru for mark vectors (matches GCSweepBuffers field order).
+struct GCSweepPassThru {
+    const void* string_marks = nullptr; // MarkBitVector*
+    const void* pair_marks = nullptr;
+    const void* closure_marks = nullptr;
+};
 using GCSweepFn = std::function<void*(void* sweep_buffers_out)>;
 extern GCSweepFn g_gc_sweep;
 

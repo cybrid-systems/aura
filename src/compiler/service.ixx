@@ -3681,6 +3681,15 @@ public:
                     b = 0;
         }
 
+        // Issue #946/#950: full instruction-dirty cascade for define-level mutate.
+        void mark_all_instruction_dirty() {
+            if (instruction_dirty_per_func_.empty() && !irs.empty())
+                init_instruction_dirty_from_irs();
+            for (auto& idf : instruction_dirty_per_func_)
+                for (auto& b : idf)
+                    b = 1;
+        }
+
         bool is_instruction_dirty(std::size_t func_idx, std::uint32_t block_idx,
                                   std::uint32_t inst_in_block) const {
             if (func_idx >= irs.size() || func_idx >= instruction_dirty_per_func_.size())
@@ -3868,6 +3877,31 @@ public:
         }
     };
     std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
+    // Issue #959: hard cap for long-running --serve (unbounded growth).
+    // Evicts dirty-first, then arbitrary oldest-ish (unordered_map walk).
+    static constexpr std::size_t kIRCacheV2MaxEntries = 2048;
+
+    void maybe_evict_ir_cache_v2() {
+        if (ir_cache_v2_.size() <= kIRCacheV2MaxEntries)
+            return;
+        // Prefer dropping dirty entries (will re-lower on demand).
+        for (auto it = ir_cache_v2_.begin();
+             it != ir_cache_v2_.end() && ir_cache_v2_.size() > kIRCacheV2MaxEntries;) {
+            if (it->second.dirty) {
+                it = ir_cache_v2_.erase(it);
+                metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                ++it;
+            }
+        }
+        // Still over: drop until under half water-mark headroom.
+        const std::size_t target = kIRCacheV2MaxEntries * 3 / 4;
+        for (auto it = ir_cache_v2_.begin();
+             it != ir_cache_v2_.end() && ir_cache_v2_.size() > target;) {
+            it = ir_cache_v2_.erase(it);
+            metrics_.ir_cache_v2_evictions_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 
     // ── EDSL IR cache V2 (Phase 2) public API ──
     // Called from evaluator_primitives_eval.cpp's (eval-current) primitive.
@@ -3933,6 +3967,8 @@ public:
             entry.soa_mod = std::move(pending_soa_snapshot_->module);
             pending_soa_snapshot_.reset();
         }
+        // Issue #959: enforce max-size policy after store.
+        maybe_evict_ir_cache_v2();
     }
 
     // Mark a single define dirty. Called by mutate:rebind, mutate:set-body, etc.
@@ -4044,9 +4080,14 @@ public:
         if (it != ir_cache_v2_.end()) {
             it->second.dirty = true;
             it->second.mark_all_blocks_dirty();
+            // Issue #946/#950 Phase 1: also mark instruction dirty bitmask
+            // when present (finer grain ready for partial re-lower).
+            it->second.mark_all_instruction_dirty();
+            metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #598: post-mutate linear runtime enforcement hook
             // on mutate:rebind / set-body paths (ir_cache_v2 dirty).
             metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
         }
         // Issue #225 cycle 3: invalidate the bridge data for
         // the mutated function. The bridge_epoch_ field is
@@ -6528,6 +6569,9 @@ public:
     // correctly read/write the original program's nodes.
     // Uses a transaction guard: if eval fails, all side-effect mutations
     // are automatically rolled back.
+    // Issue #958: also wrap MutationBoundaryGuard (same contract as
+    // typed_mutate) so defuse_version_ / workspace_mtx_ stay consistent
+    // when --serve routes mutate/rollback through eval_on_current.
     EvalResult eval_on_current(std::string_view sexpr) {
         if (!current_ast_ || !current_pool_) {
             return std::unexpected(
@@ -6538,10 +6582,15 @@ public:
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
         }
+        bool boundary_success = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(evaluator_, &boundary_success);
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
-        if (result)
+        if (result) {
             tx.commit();
+        } else {
+            boundary_success = false;
+        }
         return result;
     }
 
