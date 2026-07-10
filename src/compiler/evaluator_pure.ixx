@@ -288,8 +288,17 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(const types::E
 {
     if (types::is_int(v))
         return types::as_int(v);
-    if (types::is_float(v))
-        return static_cast<std::int64_t>(types::as_float(v));
+    if (types::is_float(v)) {
+        // Issue #1153: out-of-range float→int is UB via static_cast; saturate.
+        const double d = types::as_float(v);
+        constexpr double kMax = static_cast<double>(std::numeric_limits<std::int64_t>::max());
+        constexpr double kMin = static_cast<double>(std::numeric_limits<std::int64_t>::min());
+        if (!(d == d) || d >= kMax) // NaN or >= max
+            return std::numeric_limits<std::int64_t>::max();
+        if (d <= kMin)
+            return std::numeric_limits<std::int64_t>::min();
+        return static_cast<std::int64_t>(d);
+    }
     if (types::is_string(v)) {
         if (heap.empty())
             return 0; // no heap to resolve index — silent fallback
@@ -297,7 +306,15 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(const types::E
         if (idx >= heap.size())
             return 0; // out-of-bounds index — silent fallback
         try {
-            return static_cast<std::int64_t>(std::stoll(heap[idx]));
+            // Issue #1154: reject out-of-range parsed values.
+            const long long parsed = std::stoll(heap[idx]);
+            if (parsed > static_cast<long long>(std::numeric_limits<std::int64_t>::max()) ||
+                parsed < static_cast<long long>(std::numeric_limits<std::int64_t>::min())) {
+                return std::unexpected(aura::diag::Diagnostic(
+                    aura::diag::ErrorKind::TypeError,
+                    std::string("coerce: string integer out of int64 range: '") + heap[idx] + "'"));
+            }
+            return static_cast<std::int64_t>(parsed);
         } catch (const std::exception&) {
             return std::unexpected(aura::diag::Diagnostic(
                 aura::diag::ErrorKind::TypeError,
@@ -334,7 +351,18 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
         return {};
     }
     if (from == TypeTag::FLOAT && to == TypeTag::INT) {
-        val = types::make_int(static_cast<std::int64_t>(types::as_float(val)));
+        // Issue #1155: saturate float→int (no out-of-range static_cast UB).
+        const double d = types::as_float(val);
+        constexpr double kMax = static_cast<double>(std::numeric_limits<std::int64_t>::max());
+        constexpr double kMin = static_cast<double>(std::numeric_limits<std::int64_t>::min());
+        std::int64_t i = 0;
+        if (!(d == d) || d >= kMax)
+            i = std::numeric_limits<std::int64_t>::max();
+        else if (d <= kMin)
+            i = std::numeric_limits<std::int64_t>::min();
+        else
+            i = static_cast<std::int64_t>(d);
+        val = types::make_int(i);
         return {};
     }
     if (from == TypeTag::INT && to == TypeTag::STRING) {
@@ -348,8 +376,15 @@ export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
         auto idx = types::as_string_idx(val);
         if (idx < heap.size()) {
             try {
-                val = types::make_int(
-                    static_cast<std::int64_t>(std::stoll(heap[static_cast<std::size_t>(idx)])));
+                // Issue #1154: stoll throws out_of_range for overflow; no cast UB.
+                const long long parsed = std::stoll(heap[static_cast<std::size_t>(idx)]);
+                if (parsed > static_cast<long long>(std::numeric_limits<std::int64_t>::max()) ||
+                    parsed < static_cast<long long>(std::numeric_limits<std::int64_t>::min())) {
+                    return std::unexpected(
+                        aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
+                                               "coerce_value: string integer out of int64 range"));
+                }
+                val = types::make_int(static_cast<std::int64_t>(parsed));
                 return {};
             } catch (const std::exception&) {
                 return std::unexpected(aura::diag::Diagnostic(
@@ -448,9 +483,24 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
             r += types::is_float(v) ? types::as_float(v) : static_cast<double>(coerce_one(v));
         return types::make_float(r);
     }
+    // Issue #1150: checked int64 sum — overflow promotes to float (no UB).
     std::int64_t r = 0;
-    for (const auto& v : args)
-        r += coerce_one(v);
+    for (const auto& v : args) {
+        const std::int64_t op = coerce_one(v);
+        std::int64_t next = 0;
+        if (__builtin_add_overflow(r, op, &next)) {
+            double dr = static_cast<double>(r) + static_cast<double>(op);
+            // finish remaining with float path from next arg
+            // (restart from current position by consuming rest in float)
+            // We already failed at this op; remaining args not yet applied.
+            // Re-sum with float from the start for correct total.
+            double fr = 0.0;
+            for (const auto& x : args)
+                fr += types::is_float(x) ? types::as_float(x) : static_cast<double>(coerce_one(x));
+            return types::make_float(fr);
+        }
+        r = next;
+    }
     return types::make_int(r);
 }
 
@@ -497,11 +547,28 @@ export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalVa
                                           : static_cast<double>(coerce_one(args[i]));
         return types::make_float(r);
     }
-    if (args.size() == 1)
-        return types::make_int(-coerce_one(args[0]));
+    // Issue #1150: checked int64 sub — overflow/underflow promotes to float.
+    if (args.size() == 1) {
+        const std::int64_t a0 = coerce_one(args[0]);
+        std::int64_t neg = 0;
+        if (__builtin_sub_overflow(static_cast<std::int64_t>(0), a0, &neg))
+            return types::make_float(-static_cast<double>(a0));
+        return types::make_int(neg);
+    }
     std::int64_t r = coerce_one(args[0]);
-    for (std::size_t i = 1; i < args.size(); ++i)
-        r -= coerce_one(args[i]);
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::int64_t op = coerce_one(args[i]);
+        std::int64_t next = 0;
+        if (__builtin_sub_overflow(r, op, &next)) {
+            double fr = types::is_float(args[0]) ? types::as_float(args[0])
+                                                 : static_cast<double>(coerce_one(args[0]));
+            for (std::size_t j = 1; j < args.size(); ++j)
+                fr -= types::is_float(args[j]) ? types::as_float(args[j])
+                                               : static_cast<double>(coerce_one(args[j]));
+            return types::make_float(fr);
+        }
+        r = next;
+    }
     return types::make_int(r);
 }
 
@@ -540,9 +607,19 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
             r *= types::is_float(v) ? types::as_float(v) : static_cast<double>(coerce_one(v));
         return types::make_float(r);
     }
+    // Issue #1150/#1152: checked int64 mul — overflow promotes to float.
     std::int64_t r = 1;
-    for (const auto& v : args)
-        r *= coerce_one(v);
+    for (const auto& v : args) {
+        const std::int64_t op = coerce_one(v);
+        std::int64_t next = 0;
+        if (__builtin_mul_overflow(r, op, &next)) {
+            double fr = 1.0;
+            for (const auto& x : args)
+                fr *= types::is_float(x) ? types::as_float(x) : static_cast<double>(coerce_one(x));
+            return types::make_float(fr);
+        }
+        r = next;
+    }
     return types::make_int(r);
 }
 
@@ -584,12 +661,20 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
         return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
                                                       "division: at least one argument required"));
     }
-    if (args.size() == 1)
-        return types::make_int(1 / coerce_one(args[0])); // legacy: 1/x
+    // Issue #1151/#1156: single-arg reciprocal zero-check; multi-arg zero + INT64_MIN/-1.
+    if (args.size() == 1) {
+        const std::int64_t d = coerce_one(args[0]);
+        if (d == 0) {
+            return std::unexpected(
+                aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero, "division by zero"));
+        }
+        if (d == -1) {
+            // 1 / -1 is fine; only multi-arg INT64_MIN/-1 is overflow.
+        }
+        return types::make_int(1 / d); // legacy: 1/x
+    }
 
     // Multi-arg: a / b / c / ...
-    // Check all divisors (args[1..]) for zero first; bail out
-    // before mutating any state.
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (coerce_one(args[i]) == 0) {
             return std::unexpected(
@@ -613,8 +698,14 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
         return types::make_float(r);
     }
     std::int64_t r = coerce_one(args[0]);
-    for (std::size_t i = 1; i < args.size(); ++i)
-        r /= coerce_one(args[i]);
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::int64_t d = coerce_one(args[i]);
+        if (r == std::numeric_limits<std::int64_t>::min() && d == -1) {
+            return std::unexpected(
+                aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, "int64 overflow in /"));
+        }
+        r /= d;
+    }
     return types::make_int(r);
 }
 
