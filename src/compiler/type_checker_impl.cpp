@@ -1316,6 +1316,14 @@ void InferenceEngine::init_primitive_env() {
     (void)EffAgentMsg;
 
     // Mutation primitives 带效果标注
+    init_primitive_env_part0(Int, Bool, Float, String, Dyn, Void, Vector, Hash); // Issue #903
+    init_primitive_env_part1(Int, Bool, Float, String, Dyn, Void, Vector, Hash); // Issue #903
+    init_primitive_env_part2(Int, Bool, Float, String, Dyn, Void, Vector, Hash); // Issue #903
+}
+
+void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId Float, TypeId String,
+                                               TypeId Dyn, TypeId Void, TypeId Vector,
+                                               TypeId Hash) {
     register_primitive("mutate:rebind", {String, String}, Dyn);
     register_primitive("mutate:replace-type", {Int, String}, Dyn);
     register_primitive("mutate:replace-value", {Int, Dyn, String}, Dyn);
@@ -1446,7 +1454,11 @@ void InferenceEngine::init_primitive_env() {
     // Introspection
     register_primitive("type-of", {Dyn}, reg_.type_type());
     register_primitive("type?", {Dyn, String}, Bool);
+}
 
+void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId Float, TypeId String,
+                                               TypeId Dyn, TypeId Void, TypeId Vector,
+                                               TypeId Hash) {
     // Misc
     register_primitive("read", {}, String);
     register_primitive("read-file", {String}, String);
@@ -1578,6 +1590,16 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("sum", {Dyn}, Int);
     register_primitive("product", {Dyn}, Int);
     register_primitive("factorial", {Int}, Int);
+}
+
+void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId Float, TypeId String,
+                                               TypeId Dyn, TypeId Void, TypeId Vector,
+                                               TypeId Hash) {
+    auto _a = reg_.make_var("a");
+    auto _b = reg_.make_var("b");
+    auto _c = reg_.make_var("c");
+    auto _d = reg_.make_var("d");
+    auto _num = reg_.make_var("num");
 
     // std/io — return types match evaluator partition primitives (Int 0/1 for
     // success/failure, not Bool; the runtime never makes Bool here)
@@ -2196,6 +2218,259 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
 TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
     cur_loc_ = {v.line, v.col, 0};
 
+    if (auto cached = synthesize_flat_try_cache(flat, id)) // Issue #903
+        return *cached;
+    using Tag = NodeTag;
+    TypeId result = reg_.dynamic_type();
+    switch (v.tag) {
+        case Tag::LiteralInt:
+            result = (v.marker == SyntaxMarker::BoolLiteral) ? reg_.bool_type() : reg_.int_type();
+            break;
+        case Tag::LiteralFloat:
+            result = reg_.lookup_type("Float");
+            break;
+        case Tag::LiteralString:
+            result = reg_.string_type();
+            break;
+        case Tag::Variable:
+            result = synthesize_flat_var(flat, pool, id, v);
+            break;
+        case Tag::Call:
+            result = synthesize_flat_call(flat, pool, v);
+            break;
+        case Tag::IfExpr:
+            result = synthesize_flat_if(flat, pool, id, v);
+            break;
+        case Tag::Lambda:
+            result = synthesize_flat_lambda(flat, pool, v);
+            break;
+        case Tag::Let:
+            result = synthesize_flat_let(flat, pool, id, v, false);
+            break;
+        case Tag::LetRec:
+            result = synthesize_flat_let(flat, pool, id, v, true);
+            break;
+        case Tag::Begin:
+            result = synthesize_flat_begin(flat, pool, v);
+            break;
+        case Tag::TypeAnnotation:
+            result = synthesize_flat_annotation(flat, pool, v);
+            break;
+        case Tag::Coercion: {
+            // CoercionNode: return the target type (not inner type)
+            // Inner expression was checked when the CoercionNode was inserted.
+            auto target_tid = flat.type_id(id);
+            if (target_tid != 0) {
+                result = TypeId{target_tid, 1};
+            } else {
+                // Fallback: synthesize inner (no target type available)
+                result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+            }
+            break;
+        }
+        case Tag::Linear:
+            // (Linear e): wrap type as (Linear T) for ownership tracking
+            if (!v.children.empty()) {
+                auto inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+                result = reg_.register_linear(inner_type);
+            } else {
+                result = reg_.dynamic_type();
+            }
+            break;
+        case Tag::Move:
+            result = synthesize_flat_move(flat, pool, v);
+            break;
+        case Tag::Borrow:
+            result = synthesize_flat_borrow(flat, pool, v);
+            break;
+        case Tag::MutBorrow:
+            result = synthesize_flat_mut_borrow(flat, pool, v);
+            break;
+        case Tag::Drop:
+            result = synthesize_flat_drop(flat, pool, v);
+            break;
+        case Tag::DefineType:
+            result = synthesize_flat_define_type(flat, pool, v);
+            break;
+        case Tag::Define: {
+            auto def_name = pool.resolve(v.sym_id);
+            if (!v.children.empty()) {
+                auto val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+                if (def_name.size() > 0)
+                    env_.bind(std::string(def_name), val_type);
+            }
+            result = reg_.void_type();
+            break;
+        }
+        case Tag::Set:
+            result = reg_.void_type();
+            break;
+        case Tag::Quote:
+            result = reg_.dynamic_type();
+            break;
+        case Tag::MacroDef:
+            result = synthesize_flat_macro_def(flat, pool, v);
+            break;
+        case Tag::DefineModule:
+            result = synthesize_flat_define_module(flat, pool, v);
+            break;
+        default:
+            result = reg_.dynamic_type();
+            break;
+    }
+
+    // Cache result for future incremental calls.
+    // Store the type index even if it's a fresh var — after constraint solving
+    // in infer_flat, the root's cache will be updated with the normalized type.
+    // The cache read path skips TYPE_VAR entries, so stale vars cause a
+    // re-compute which then stores the resolved type.
+    flat.set_type(id, result.index);
+    flat.clear_dirty(id);
+    return result;
+}
+
+TypeId InferenceEngine::synthesize_flat_define_type(FlatAST& flat, StringPool& pool, NodeView v) {
+    TypeId result = reg_.void_type();
+    // (define-type (Name params...) (Ctor fields...) ...)
+    // Register the type and bind constructors with proper function types.
+    auto type_name = std::string(pool.resolve(v.sym_id));
+
+    // Create type variables for type parameters
+    std::vector<TypeId> type_params;
+    for (auto pid : v.params) {
+        auto pname = std::string(pool.resolve(pid));
+        auto tv = cs_.fresh_var();
+        type_params.push_back(tv);
+    }
+
+    // Create the variant type itself (parametric if needed)
+    // For now, use the registry to create a named type entry
+    TypeId variant_type;
+    // Always look up or create a named type entry so ADT ctors can be
+    // registered against it (for match exhaustiveness checking).
+    // For parametric types, we still want a named entry for the ADT
+    // itself; the parametric instance is built via Forall.
+    auto named_tid = reg_.lookup_type(type_name);
+    if (!named_tid.valid()) {
+        named_tid = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
+    }
+    if (type_params.empty()) {
+        // Look up or create concrete variant type
+        variant_type = named_tid;
+    } else if (type_params.size() == 1) {
+        // Single-param type: use the type var as return marker
+        // Forall instantiation will propagate the concrete type
+        variant_type = type_params[0];
+    } else {
+        // Multi-param: use first param as marker for now
+        variant_type = type_params[0];
+    }
+
+    // Register each constructor with field types
+    for (auto cid : v.children) {
+        if (cid >= flat.size())
+            continue;
+        auto cv = flat.get(cid);
+        if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty())
+            continue;
+        auto quoted = cv.child(0);
+        if (quoted >= flat.size())
+            continue;
+
+        // Extract constructor name and field types from the quoted list
+        // Format: (cons 'ctor-name (cons 'ft1 (cons 'ft2 ...)))
+        std::string ctor_name;
+        std::vector<TypeId> field_types;
+
+        auto walk = quoted;
+        while (walk < flat.size()) {
+            auto nv = flat.get(walk);
+            if (nv.tag != aura::ast::NodeTag::Pair)
+                break;
+            auto car_id = nv.child(0);
+            auto cdr_id = nv.child(1);
+            if (car_id >= flat.size())
+                break;
+
+            auto car_v = flat.get(car_id);
+            if (car_v.tag == aura::ast::NodeTag::Variable && ctor_name.empty()) {
+                // First element is constructor name
+                ctor_name = std::string(pool.resolve(car_v.sym_id));
+            } else if (car_v.tag == aura::ast::NodeTag::Variable) {
+                // Field type name — look up or create a type variable
+                auto ft_name = std::string(pool.resolve(car_v.sym_id));
+                // Check if it's a type parameter
+                bool is_param = false;
+                for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                    auto pname = std::string(pool.resolve(v.params[pi]));
+                    if (pname == ft_name) {
+                        field_types.push_back(type_params[pi]);
+                        is_param = true;
+                        break;
+                    }
+                }
+                if (!is_param) {
+                    // Look up built-in type name
+                    auto ftid = reg_.lookup_type(ft_name);
+                    if (ftid.valid())
+                        field_types.push_back(ftid);
+                    else
+                        field_types.push_back(reg_.dynamic_type());
+                }
+            }
+            walk = cdr_id;
+        }
+
+        if (ctor_name.empty())
+            continue;
+
+        // Record constructor for match exhaustiveness checking
+        auto tid = reg_.lookup_type(type_name);
+        if (tid.valid()) {
+            // Collect all constructors for this ADT
+            auto existing = reg_.get_adt_constructors(tid);
+            if (!existing ||
+                std::find(existing->begin(), existing->end(), ctor_name) == existing->end()) {
+                auto ctors = existing ? *existing : std::vector<std::string>{};
+                ctors.push_back(ctor_name);
+                reg_.register_adt_constructors(tid, ctors);
+            }
+        }
+
+        // Build constructor type: (field-type-1 ... -> variant-type)
+        TypeId ctor_type;
+        if (field_types.empty()) {
+            // No fields: (-> variant-type)
+            ctor_type = reg_.register_func({}, variant_type);
+        } else if (field_types.size() == 1) {
+            // Single field: (field-type -> variant-type)
+            ctor_type = reg_.register_func(field_types, variant_type);
+        } else {
+            // Multiple fields: nested functions (field1 -> (field2 -> ... (->
+            // variant-type)))
+            TypeId rest = variant_type;
+            for (auto it = field_types.rbegin(); it != field_types.rend(); ++it)
+                rest = reg_.register_func({*it}, rest);
+            ctor_type = rest;
+        }
+
+        // Wrap in forall for polymorphic types (e.g. ∀a. (a -> Option a))
+        if (!type_params.empty()) {
+            TypeId poly_type = ctor_type;
+            // Build nested forall from last to first
+            for (auto it = type_params.rbegin(); it != type_params.rend(); ++it) {
+                poly_type = reg_.register_forall(*it, poly_type);
+            }
+            env_.bind(ctor_name, poly_type);
+        } else {
+            env_.bind(ctor_name, ctor_type);
+        }
+    }
+    result = reg_.void_type();
+    return result;
+}
+
+std::optional<TypeId> InferenceEngine::synthesize_flat_try_cache(FlatAST& flat, NodeId id) {
     // Incremental: if node is clean AND has a resolved cached type, return cached result.
     // Dirty propagation ensures ancestors of mutated nodes are marked dirty,
     // so clean nodes' cached types remain valid.
@@ -2315,324 +2590,96 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     }
 
     TypeId result;
-    using Tag = NodeTag;
-    switch (v.tag) {
-        case Tag::LiteralInt:
-            result = (v.marker == SyntaxMarker::BoolLiteral) ? reg_.bool_type() : reg_.int_type();
-            break;
-        case Tag::LiteralFloat:
-            result = reg_.lookup_type("Float");
-            break;
-        case Tag::LiteralString:
-            result = reg_.string_type();
-            break;
-        case Tag::Variable:
-            result = synthesize_flat_var(flat, pool, id, v);
-            break;
-        case Tag::Call:
-            result = synthesize_flat_call(flat, pool, v);
-            break;
-        case Tag::IfExpr:
-            result = synthesize_flat_if(flat, pool, id, v);
-            break;
-        case Tag::Lambda:
-            result = synthesize_flat_lambda(flat, pool, v);
-            break;
-        case Tag::Let:
-            result = synthesize_flat_let(flat, pool, id, v, false);
-            break;
-        case Tag::LetRec:
-            result = synthesize_flat_let(flat, pool, id, v, true);
-            break;
-        case Tag::Begin:
-            result = synthesize_flat_begin(flat, pool, v);
-            break;
-        case Tag::TypeAnnotation:
-            result = synthesize_flat_annotation(flat, pool, v);
-            break;
-        case Tag::Coercion: {
-            // CoercionNode: return the target type (not inner type)
-            // Inner expression was checked when the CoercionNode was inserted.
-            auto target_tid = flat.type_id(id);
-            if (target_tid != 0) {
-                result = TypeId{target_tid, 1};
-            } else {
-                // Fallback: synthesize inner (no target type available)
-                result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-            }
-            break;
-        }
-        case Tag::Linear:
-            // (Linear e): wrap type as (Linear T) for ownership tracking
-            if (!v.children.empty()) {
-                auto inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-                result = reg_.register_linear(inner_type);
-            } else {
-                result = reg_.dynamic_type();
-            }
-            break;
-        case Tag::Move:
-            result = synthesize_flat_move(flat, pool, v);
-            break;
-        case Tag::Borrow:
-            result = synthesize_flat_borrow(flat, pool, v);
-            break;
-        case Tag::MutBorrow:
-            result = synthesize_flat_mut_borrow(flat, pool, v);
-            break;
-        case Tag::Drop:
-            result = synthesize_flat_drop(flat, pool, v);
-            break;
-        case Tag::DefineType: {
-            // (define-type (Name params...) (Ctor fields...) ...)
-            // Register the type and bind constructors with proper function types.
-            auto type_name = std::string(pool.resolve(v.sym_id));
+    return std::nullopt;
+}
 
-            // Create type variables for type parameters
-            std::vector<TypeId> type_params;
-            for (auto pid : v.params) {
-                auto pname = std::string(pool.resolve(pid));
-                auto tv = cs_.fresh_var();
-                type_params.push_back(tv);
-            }
 
-            // Create the variant type itself (parametric if needed)
-            // For now, use the registry to create a named type entry
-            TypeId variant_type;
-            // Always look up or create a named type entry so ADT ctors can be
-            // registered against it (for match exhaustiveness checking).
-            // For parametric types, we still want a named entry for the ADT
-            // itself; the parametric instance is built via Forall.
-            auto named_tid = reg_.lookup_type(type_name);
-            if (!named_tid.valid()) {
-                named_tid = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
-            }
-            if (type_params.empty()) {
-                // Look up or create concrete variant type
-                variant_type = named_tid;
-            } else if (type_params.size() == 1) {
-                // Single-param type: use the type var as return marker
-                // Forall instantiation will propagate the concrete type
-                variant_type = type_params[0];
-            } else {
-                // Multi-param: use first param as marker for now
-                variant_type = type_params[0];
-            }
-
-            // Register each constructor with field types
-            for (auto cid : v.children) {
-                if (cid >= flat.size())
-                    continue;
-                auto cv = flat.get(cid);
-                if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty())
-                    continue;
-                auto quoted = cv.child(0);
-                if (quoted >= flat.size())
-                    continue;
-
-                // Extract constructor name and field types from the quoted list
-                // Format: (cons 'ctor-name (cons 'ft1 (cons 'ft2 ...)))
-                std::string ctor_name;
-                std::vector<TypeId> field_types;
-
-                auto walk = quoted;
-                while (walk < flat.size()) {
-                    auto nv = flat.get(walk);
-                    if (nv.tag != aura::ast::NodeTag::Pair)
-                        break;
-                    auto car_id = nv.child(0);
-                    auto cdr_id = nv.child(1);
-                    if (car_id >= flat.size())
-                        break;
-
-                    auto car_v = flat.get(car_id);
-                    if (car_v.tag == aura::ast::NodeTag::Variable && ctor_name.empty()) {
-                        // First element is constructor name
-                        ctor_name = std::string(pool.resolve(car_v.sym_id));
-                    } else if (car_v.tag == aura::ast::NodeTag::Variable) {
-                        // Field type name — look up or create a type variable
-                        auto ft_name = std::string(pool.resolve(car_v.sym_id));
-                        // Check if it's a type parameter
-                        bool is_param = false;
-                        for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
-                            auto pname = std::string(pool.resolve(v.params[pi]));
-                            if (pname == ft_name) {
-                                field_types.push_back(type_params[pi]);
-                                is_param = true;
-                                break;
-                            }
-                        }
-                        if (!is_param) {
-                            // Look up built-in type name
-                            auto ftid = reg_.lookup_type(ft_name);
-                            if (ftid.valid())
-                                field_types.push_back(ftid);
-                            else
-                                field_types.push_back(reg_.dynamic_type());
-                        }
-                    }
-                    walk = cdr_id;
-                }
-
-                if (ctor_name.empty())
-                    continue;
-
-                // Record constructor for match exhaustiveness checking
-                auto tid = reg_.lookup_type(type_name);
-                if (tid.valid()) {
-                    // Collect all constructors for this ADT
-                    auto existing = reg_.get_adt_constructors(tid);
-                    if (!existing || std::find(existing->begin(), existing->end(), ctor_name) ==
-                                         existing->end()) {
-                        auto ctors = existing ? *existing : std::vector<std::string>{};
-                        ctors.push_back(ctor_name);
-                        reg_.register_adt_constructors(tid, ctors);
-                    }
-                }
-
-                // Build constructor type: (field-type-1 ... -> variant-type)
-                TypeId ctor_type;
-                if (field_types.empty()) {
-                    // No fields: (-> variant-type)
-                    ctor_type = reg_.register_func({}, variant_type);
-                } else if (field_types.size() == 1) {
-                    // Single field: (field-type -> variant-type)
-                    ctor_type = reg_.register_func(field_types, variant_type);
-                } else {
-                    // Multiple fields: nested functions (field1 -> (field2 -> ... (->
-                    // variant-type)))
-                    TypeId rest = variant_type;
-                    for (auto it = field_types.rbegin(); it != field_types.rend(); ++it)
-                        rest = reg_.register_func({*it}, rest);
-                    ctor_type = rest;
-                }
-
-                // Wrap in forall for polymorphic types (e.g. ∀a. (a -> Option a))
-                if (!type_params.empty()) {
-                    TypeId poly_type = ctor_type;
-                    // Build nested forall from last to first
-                    for (auto it = type_params.rbegin(); it != type_params.rend(); ++it) {
-                        poly_type = reg_.register_forall(*it, poly_type);
-                    }
-                    env_.bind(ctor_name, poly_type);
-                } else {
-                    env_.bind(ctor_name, ctor_type);
-                }
-            }
-            result = reg_.void_type();
-            break;
-        }
-        case Tag::Define: {
-            auto def_name = pool.resolve(v.sym_id);
-            if (!v.children.empty()) {
-                auto val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-                if (def_name.size() > 0)
-                    env_.bind(std::string(def_name), val_type);
-            }
-            result = reg_.void_type();
-            break;
-        }
-        case Tag::Set:
-            result = reg_.void_type();
-            break;
-        case Tag::Quote:
-            result = reg_.dynamic_type();
-            break;
-        case Tag::MacroDef: {
-            env_.push_scope();
-            std::vector<TypeId> param_types;
-            for (auto pid : v.params) {
-                auto pname = std::string(pool.resolve(pid));
-                auto pv = cs_.fresh_var();
-                env_.bind(pname, pv);
-                param_types.push_back(pv);
-            }
-            TypeId body_type = reg_.void_type();
-            if (!v.children.empty()) {
-                auto body_id = v.child(0);
-                body_type = synthesize_flat(flat, pool, body_id, flat.get(body_id));
-            }
-            env_.pop_scope();
-            result = reg_.register_func(std::move(param_types), body_type);
-            break;
-        }
-        case Tag::DefineModule: {
-            // (define-module (Name :T ...) body...)
-            // Scan body for Define/Export, build a ModuleType with export signatures.
-            auto mod_name = pool.resolve(v.sym_id);
-            std::vector<std::pair<std::string, TypeId>> members;
-            std::unordered_set<std::string> exports;
-            std::vector<std::string> type_param_names;
-            std::vector<TypeId> type_param_vars;
-
-            // Push scope for type param bindings
-            env_.push_scope();
-            for (auto sym : v.params) {
-                auto pname = std::string(pool.resolve(sym));
-                auto tv = cs_.fresh_var();
-                type_param_names.push_back(pname);
-                type_param_vars.push_back(tv);
-                // Bind the type param name as a type-level variable in env,
-                // so body function signatures can reference it.
-                env_.bind(pname, tv);
-            }
-
-            for (auto cid : v.children) {
-                auto cv = flat.get(cid);
-                if (cv.tag == NodeTag::Define && cv.sym_id != INVALID_SYM) {
-                    auto fn_name = std::string(pool.resolve(cv.sym_id));
-                    TypeId fn_type = reg_.dynamic_type();
-                    if (cv.children.size() > 0) {
-                        auto val_id = cv.child(0);
-                        fn_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
-                        // Normalize only the return type to resolve constrained type vars
-                        // (e.g., + returns Int). Leave param types as-is so type param
-                        // substitution can still match their type var IDs.
-                        if (auto* ft = reg_.func_of(fn_type)) {
-                            auto new_ret = cs_.normalize(ft->ret);
-                            fn_type = reg_.register_func(ft->args, new_ret);
-                        }
-                    }
-                    members.push_back({fn_name, fn_type});
-                } else if (cv.tag == NodeTag::Export) {
-                    for (auto eid : cv.children) {
-                        auto ev = flat.get(eid);
-                        if (ev.tag == NodeTag::Variable && ev.sym_id != INVALID_SYM)
-                            exports.insert(std::string(pool.resolve(ev.sym_id)));
-                    }
-                }
-            }
-            env_.pop_scope();
-
-            // Only include exported members in ModuleType
-            std::vector<std::pair<std::string, TypeId>> export_members;
-            for (auto& [name, ty] : members) {
-                if (exports.empty() || exports.count(name))
-                    export_members.push_back({name, ty});
-            }
-
-            ModuleType mt{std::move(export_members)};
-            mt.type_params = std::move(type_param_names);
-            mt.type_param_vars = std::move(type_param_vars);
-            auto mt_id = reg_.register_module(std::move(mt));
-            env_.bind(std::string(mod_name), mt_id);
-            result = mt_id;
-            break;
-        }
-        default:
-            result = reg_.dynamic_type();
-            break;
+TypeId InferenceEngine::synthesize_flat_macro_def(FlatAST& flat, StringPool& pool, NodeView v) {
+    TypeId result = reg_.void_type();
+    env_.push_scope();
+    std::vector<TypeId> param_types;
+    for (auto pid : v.params) {
+        auto pname = std::string(pool.resolve(pid));
+        auto pv = cs_.fresh_var();
+        env_.bind(pname, pv);
+        param_types.push_back(pv);
     }
-
-    // Cache result for future incremental calls.
-    // Store the type index even if it's a fresh var — after constraint solving
-    // in infer_flat, the root's cache will be updated with the normalized type.
-    // The cache read path skips TYPE_VAR entries, so stale vars cause a
-    // re-compute which then stores the resolved type.
-    flat.set_type(id, result.index);
-    flat.clear_dirty(id);
+    TypeId body_type = reg_.void_type();
+    if (!v.children.empty()) {
+        auto body_id = v.child(0);
+        body_type = synthesize_flat(flat, pool, body_id, flat.get(body_id));
+    }
+    env_.pop_scope();
+    result = reg_.register_func(std::move(param_types), body_type);
     return result;
 }
+
+
+TypeId InferenceEngine::synthesize_flat_define_module(FlatAST& flat, StringPool& pool, NodeView v) {
+    TypeId result = reg_.void_type();
+    // (define-module (Name :T ...) body...)
+    // Scan body for Define/Export, build a ModuleType with export signatures.
+    auto mod_name = pool.resolve(v.sym_id);
+    std::vector<std::pair<std::string, TypeId>> members;
+    std::unordered_set<std::string> exports;
+    std::vector<std::string> type_param_names;
+    std::vector<TypeId> type_param_vars;
+
+    // Push scope for type param bindings
+    env_.push_scope();
+    for (auto sym : v.params) {
+        auto pname = std::string(pool.resolve(sym));
+        auto tv = cs_.fresh_var();
+        type_param_names.push_back(pname);
+        type_param_vars.push_back(tv);
+        // Bind the type param name as a type-level variable in env,
+        // so body function signatures can reference it.
+        env_.bind(pname, tv);
+    }
+
+    for (auto cid : v.children) {
+        auto cv = flat.get(cid);
+        if (cv.tag == NodeTag::Define && cv.sym_id != INVALID_SYM) {
+            auto fn_name = std::string(pool.resolve(cv.sym_id));
+            TypeId fn_type = reg_.dynamic_type();
+            if (cv.children.size() > 0) {
+                auto val_id = cv.child(0);
+                fn_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+                // Normalize only the return type to resolve constrained type vars
+                // (e.g., + returns Int). Leave param types as-is so type param
+                // substitution can still match their type var IDs.
+                if (auto* ft = reg_.func_of(fn_type)) {
+                    auto new_ret = cs_.normalize(ft->ret);
+                    fn_type = reg_.register_func(ft->args, new_ret);
+                }
+            }
+            members.push_back({fn_name, fn_type});
+        } else if (cv.tag == NodeTag::Export) {
+            for (auto eid : cv.children) {
+                auto ev = flat.get(eid);
+                if (ev.tag == NodeTag::Variable && ev.sym_id != INVALID_SYM)
+                    exports.insert(std::string(pool.resolve(ev.sym_id)));
+            }
+        }
+    }
+    env_.pop_scope();
+
+    // Only include exported members in ModuleType
+    std::vector<std::pair<std::string, TypeId>> export_members;
+    for (auto& [name, ty] : members) {
+        if (exports.empty() || exports.count(name))
+            export_members.push_back({name, ty});
+    }
+
+    ModuleType mt{std::move(export_members)};
+    mt.type_params = std::move(type_param_names);
+    mt.type_param_vars = std::move(type_param_vars);
+    auto mt_id = reg_.register_module(std::move(mt));
+    env_.bind(std::string(mod_name), mt_id);
+    result = mt_id;
+    return result;
+}
+
 
 TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, NodeId id,
                                             NodeView v) {
@@ -2739,64 +2786,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     // Special inference for arithmetic primitives: constrain return via arg types.
     // This gives us (Int, Int) -> Int inference inside lambdas where args are type vars,
     // and (Float, x) -> Float promotion without losing specificity to Dyn.
-    auto infer_arith = [&]() -> std::optional<TypeId> {
-        auto callee_of_func = flat.get(func_id);
-        if (callee_of_func.tag != NodeTag::Variable || callee_of_func.sym_id == INVALID_SYM)
-            return std::nullopt;
-        auto fname = pool.resolve(callee_of_func.sym_id);
-        static const std::unordered_set<std::string> arith = {"+", "-", "*", "/"};
-        if (!arith.count(std::string(fname)))
-            return std::nullopt;
-
-        // Variadic arith with 0 or 1 args
-        // (+) → Int, (+ x) → type of x (or Int if unknown)
-        if (v.children.size() < 3) {
-            if (v.children.size() == 2) {
-                auto t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
-                t0 = cs_.normalize(t0);
-                if (!reg_.is_var(t0))
-                    return t0;
-            }
-            return reg_.int_type();
-        }
-
-        // Synthesize arg types (pure lookup for variables, no side effects)
-        TypeId t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
-        TypeId t1 = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
-        t0 = cs_.normalize(t0);
-        t1 = cs_.normalize(t1);
-        auto tag0 = reg_.tag_of(t0);
-        auto tag1 = reg_.tag_of(t1);
-
-        // Both concrete: return the wider type
-        if (tag0 == TypeTag::INT && tag1 == TypeTag::INT)
-            return reg_.int_type();
-        if (tag0 == TypeTag::FLOAT && tag1 == TypeTag::FLOAT)
-            return reg_.lookup_type("Float");
-        if ((tag0 == TypeTag::INT && tag1 == TypeTag::FLOAT) ||
-            (tag0 == TypeTag::FLOAT && tag1 == TypeTag::INT)) {
-            // Coerce Int to Float
-            if (tag0 == TypeTag::INT)
-                cs_.consistent_unify(t0, reg_.lookup_type("Float"));
-            if (tag1 == TypeTag::INT)
-                cs_.consistent_unify(t1, reg_.lookup_type("Float"));
-            return reg_.lookup_type("Float");
-        }
-
-        // Both concrete but not INT/FLOAT: runtime will coerce to numeric
-        // e.g., (+ "42" 1) → String coerce to Int at runtime
-        if (!reg_.is_var(t0) && !reg_.is_var(t1)) {
-            // Return Int for arithmetic (runtime handles coercion)
-            return reg_.int_type();
-        }
-
-        // At least one is a type variable: create a fresh result var and constrain
-        auto result = cs_.fresh_var();
-        cs_.consistent_unify(t0, result);
-        cs_.consistent_unify(t1, result);
-        return result;
-    };
-    if (auto arith_result = infer_arith()) {
+    // Issue #903 arith peel
+    if (auto arith_result = synthesize_flat_call_arith(flat, pool, v, func_id)) {
         // Mark args as checked (synthesize_flat already processed them)
         return *arith_result;
     }
@@ -2983,6 +2974,67 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         synthesize_flat(flat, pool, v.child(i), flat.get(v.child(i)));
     return reg_.dynamic_type();
 }
+
+std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat, StringPool& pool,
+                                                                  NodeView v, NodeId func_id) {
+
+    auto callee_of_func = flat.get(func_id);
+    if (callee_of_func.tag != NodeTag::Variable || callee_of_func.sym_id == INVALID_SYM)
+        return std::nullopt;
+    auto fname = pool.resolve(callee_of_func.sym_id);
+    static const std::unordered_set<std::string> arith = {"+", "-", "*", "/"};
+    if (!arith.count(std::string(fname)))
+        return std::nullopt;
+
+    // Variadic arith with 0 or 1 args
+    // (+) → Int, (+ x) → type of x (or Int if unknown)
+    if (v.children.size() < 3) {
+        if (v.children.size() == 2) {
+            auto t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+            t0 = cs_.normalize(t0);
+            if (!reg_.is_var(t0))
+                return t0;
+        }
+        return reg_.int_type();
+    }
+
+    // Synthesize arg types (pure lookup for variables, no side effects)
+    TypeId t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+    TypeId t1 = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+    t0 = cs_.normalize(t0);
+    t1 = cs_.normalize(t1);
+    auto tag0 = reg_.tag_of(t0);
+    auto tag1 = reg_.tag_of(t1);
+
+    // Both concrete: return the wider type
+    if (tag0 == TypeTag::INT && tag1 == TypeTag::INT)
+        return reg_.int_type();
+    if (tag0 == TypeTag::FLOAT && tag1 == TypeTag::FLOAT)
+        return reg_.lookup_type("Float");
+    if ((tag0 == TypeTag::INT && tag1 == TypeTag::FLOAT) ||
+        (tag0 == TypeTag::FLOAT && tag1 == TypeTag::INT)) {
+        // Coerce Int to Float
+        if (tag0 == TypeTag::INT)
+            cs_.consistent_unify(t0, reg_.lookup_type("Float"));
+        if (tag1 == TypeTag::INT)
+            cs_.consistent_unify(t1, reg_.lookup_type("Float"));
+        return reg_.lookup_type("Float");
+    }
+
+    // Both concrete but not INT/FLOAT: runtime will coerce to numeric
+    // e.g., (+ "42" 1) → String coerce to Int at runtime
+    if (!reg_.is_var(t0) && !reg_.is_var(t1)) {
+        // Return Int for arithmetic (runtime handles coercion)
+        return reg_.int_type();
+    }
+
+    // At least one is a type variable: create a fresh result var and constrain
+    auto result = cs_.fresh_var();
+    cs_.consistent_unify(t0, result);
+    cs_.consistent_unify(t1, result);
+    return result;
+}
+
 
 TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v,
                                                TypeId expected_type) {
@@ -4184,146 +4236,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
     else if (v.tag == NodeTag::Lambda)
         check_flat_lambda(flat, pool, v, expected);
     else if (v.tag == NodeTag::IfExpr) {
-        // If in check mode: check condition is Bool, check both branches
-        // against expected, and unify them.
-        // Issue #283: also run analyze_predicate_flat on the
-        // condition so that the then-branch can see the
-        // narrowed type. This makes check-mode produce the
-        // same diagnostic precision as synthesize-mode for
-        // Occurrence Typing predicates.
-        if (v.children.size() < 2)
-            return;
-        auto cond_id = v.child(0);
-        auto then_id = v.child(1);
-        // Condition must be Bool
-        auto cond_type = synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
-        cs_.consistent_unify(cond_type, reg_.bool_type());
-        // Issue #283: extract Occurrence Typing narrowing on the
-        // condition. Mirrors the synthesize_flat_if path
-        // (line ~2493) but in check-mode we only APPLY the
-        // narrowing; we don't recompute via synthesize. The
-        // expected-type check below is what enforces the
-        // contract; the narrowing just gives the checker more
-        // information about the then-branch.
-        //
-        // Issue #283 follow-up #5: opt-out flag. When
-        // bidirectional_mode_ is false, skip the narrowing
-        // application and fall through to the uniform check
-        // (preserves legacy behavior). Default true.
-        if (!bidirectional_mode_) {
-            // Opt-out: no narrowing application.
-            check_flat(flat, pool, then_id, expected);
-            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
-                check_flat(flat, pool, v.child(2), expected);
-        } else {
-            // Issue #627: shared predicate memo/epoch + narrow_evidence
-            // (force re-analyze on dirty predicate nodes).
-            const auto pred = resolve_if_predicate_occurrence(flat, pool, id, cond_id,
-                                                              /*check_mode=*/true);
-            auto occ = pred.occ;
-            if (occ && !occ->is_negation) {
-                // Then-branch: variable has refined type
-                env_.push_scope();
-                ownership_env_.push_scope();
-                if (env_.is_bound(occ->var_name))
-                    env_.bind(occ->var_name, occ->refined_type);
-                // Linear ownership: narrowed bindings are Owned
-                // (the predicate guarantees presence; use is
-                // permitted). This mirrors the original-type
-                // default of `Owned` for unknown vars.
-                ownership_env_.mark(occ->var_name, OwnershipState::Owned);
-                // Issue #283 follow-up #3: also capture provenance
-                // in check-mode. This mirrors the synthesize_flat_if
-                // capture so (query:provenance-of var) works
-                // whether the workspace was last typechecked via
-                // synthesize or check. The capture_epoch is the
-                // current inference engine's epoch.
-                {
-                    std::string refined_str;
-                    if (occ->refined_type.index != 0) {
-                        auto n = reg_.name_of(occ->refined_type);
-                        if (!n.empty())
-                            refined_str = std::string(n);
-                    }
-                    std::string pred_src = "(...)";
-                    if (cond_id < flat.size()) {
-                        auto cn = flat.get(cond_id);
-                        if (cn.tag == NodeTag::Call && !cn.children.empty()) {
-                            auto fn = flat.get(cn.child(0));
-                            if (fn.tag == NodeTag::Variable) {
-                                pred_src = std::string(pool.resolve(fn.sym_id));
-                                if (cn.children.size() >= 2) {
-                                    auto arg = flat.get(cn.child(1));
-                                    if (arg.tag == NodeTag::Variable)
-                                        pred_src += " " + std::string(pool.resolve(arg.sym_id));
-                                }
-                            }
-                        }
-                    }
-                    NarrowingRecord rec;
-                    rec.var_name = occ->var_name;
-                    rec.predicate_src = pred_src;
-                    rec.refined_type_str = refined_str;
-                    rec.if_node = id; // check_flat's id param
-                    rec.cond_node = cond_id;
-                    rec.is_negation = false;
-                    rec.narrow_evidence = last_if_narrowing_;
-                    rec.capture_epoch = cache_epoch_;
-                    flat.record_narrowing(std::move(rec));
-                }
-                if (subtree_has_linear_ops(flat, then_id)) {
-                    ownership_env_.mark_ownership_dirty(occ->var_name);
-                    bump_linear_occurrence_predicate_safe(cs_.metrics_);
-                }
-                check_flat(flat, pool, then_id, expected);
-                ownership_env_.pop_scope();
-                env_.pop_scope();
-            } else if (occ && occ->is_negation) {
-                // Negation: else-branch gets the refinement.
-                env_.push_scope();
-                ownership_env_.push_scope();
-                if (env_.is_bound(occ->var_name))
-                    env_.bind(occ->var_name, occ->refined_type);
-                ownership_env_.mark(occ->var_name, OwnershipState::Owned);
-                // Issue #283 follow-up #3: capture provenance for
-                // the negation case (else-branch gets refinement).
-                {
-                    std::string refined_str;
-                    if (occ->refined_type.index != 0) {
-                        auto n = reg_.name_of(occ->refined_type);
-                        if (!n.empty())
-                            refined_str = std::string(n);
-                    }
-                    NarrowingRecord rec;
-                    rec.var_name = occ->var_name;
-                    rec.predicate_src = "(not (...))";
-                    rec.refined_type_str = refined_str;
-                    rec.if_node = id;
-                    rec.cond_node = cond_id;
-                    rec.is_negation = true;
-                    rec.narrow_evidence = 0;
-                    rec.capture_epoch = cache_epoch_;
-                    flat.record_narrowing(std::move(rec));
-                }
-                if (v.children.size() >= 3 && v.child(2) != NULL_NODE) {
-                    if (subtree_has_linear_ops(flat, v.child(2))) {
-                        ownership_env_.mark_ownership_dirty(occ->var_name);
-                        bump_linear_occurrence_predicate_safe(cs_.metrics_);
-                    }
-                    check_flat(flat, pool, v.child(2), expected);
-                }
-                ownership_env_.pop_scope();
-                env_.pop_scope();
-                // Then-branch: no refinement
-                check_flat(flat, pool, then_id, expected);
-            } else {
-                // No narrowing predicate — fall back to original
-                // uniform check.
-                check_flat(flat, pool, then_id, expected);
-                if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
-                    check_flat(flat, pool, v.child(2), expected);
-            }
-        } // end bidirectional_mode_ opt-out
+        check_flat_if(flat, pool, id, v, expected); // Issue #903
     } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
         // Let in check mode: check value, then check body against expected
         bool is_rec = (v.tag == NodeTag::LetRec);
@@ -4496,6 +4409,157 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         }
     }
 }
+
+void InferenceEngine::check_flat_if(FlatAST& flat, StringPool& pool, NodeId id, NodeView v,
+                                    TypeId expected) {
+    // If in check mode: check condition is Bool, check both branches
+    // against expected, and unify them.
+    // Issue #283: also run analyze_predicate_flat on the
+    // condition so that the then-branch can see the
+    // narrowed type. This makes check-mode produce the
+    // same diagnostic precision as synthesize-mode for
+    // Occurrence Typing predicates.
+    if (v.children.size() < 2)
+        return;
+    auto cond_id = v.child(0);
+    auto then_id = v.child(1);
+    // Condition must be Bool
+    auto cond_type = synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
+    cs_.consistent_unify(cond_type, reg_.bool_type());
+    // Issue #283: extract Occurrence Typing narrowing on the
+    // condition. Mirrors the synthesize_flat_if path
+    // (line ~2493) but in check-mode we only APPLY the
+    // narrowing; we don't recompute via synthesize. The
+    // expected-type check below is what enforces the
+    // contract; the narrowing just gives the checker more
+    // information about the then-branch.
+    //
+    // Issue #283 follow-up #5: opt-out flag. When
+    // bidirectional_mode_ is false, skip the narrowing
+    // application and fall through to the uniform check
+    // (preserves legacy behavior). Default true.
+    check_flat_if_narrowing(flat, pool, id, v, expected, cond_id, then_id);
+}
+
+void InferenceEngine::check_flat_if_narrowing(FlatAST& flat, StringPool& pool, NodeId id,
+                                              NodeView v, TypeId expected, NodeId cond_id,
+                                              NodeId then_id) {
+    if (!bidirectional_mode_) {
+        // Opt-out: no narrowing application.
+        check_flat(flat, pool, then_id, expected);
+        if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+            check_flat(flat, pool, v.child(2), expected);
+    } else {
+        // Issue #627: shared predicate memo/epoch + narrow_evidence
+        // (force re-analyze on dirty predicate nodes).
+        const auto pred = resolve_if_predicate_occurrence(flat, pool, id, cond_id,
+                                                          /*check_mode=*/true);
+        auto occ = pred.occ;
+        if (occ && !occ->is_negation) {
+            // Then-branch: variable has refined type
+            env_.push_scope();
+            ownership_env_.push_scope();
+            if (env_.is_bound(occ->var_name))
+                env_.bind(occ->var_name, occ->refined_type);
+            // Linear ownership: narrowed bindings are Owned
+            // (the predicate guarantees presence; use is
+            // permitted). This mirrors the original-type
+            // default of `Owned` for unknown vars.
+            ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+            // Issue #283 follow-up #3: also capture provenance
+            // in check-mode. This mirrors the synthesize_flat_if
+            // capture so (query:provenance-of var) works
+            // whether the workspace was last typechecked via
+            // synthesize or check. The capture_epoch is the
+            // current inference engine's epoch.
+            {
+                std::string refined_str;
+                if (occ->refined_type.index != 0) {
+                    auto n = reg_.name_of(occ->refined_type);
+                    if (!n.empty())
+                        refined_str = std::string(n);
+                }
+                std::string pred_src = "(...)";
+                if (cond_id < flat.size()) {
+                    auto cn = flat.get(cond_id);
+                    if (cn.tag == NodeTag::Call && !cn.children.empty()) {
+                        auto fn = flat.get(cn.child(0));
+                        if (fn.tag == NodeTag::Variable) {
+                            pred_src = std::string(pool.resolve(fn.sym_id));
+                            if (cn.children.size() >= 2) {
+                                auto arg = flat.get(cn.child(1));
+                                if (arg.tag == NodeTag::Variable)
+                                    pred_src += " " + std::string(pool.resolve(arg.sym_id));
+                            }
+                        }
+                    }
+                }
+                NarrowingRecord rec;
+                rec.var_name = occ->var_name;
+                rec.predicate_src = pred_src;
+                rec.refined_type_str = refined_str;
+                rec.if_node = id; // check_flat's id param
+                rec.cond_node = cond_id;
+                rec.is_negation = false;
+                rec.narrow_evidence = last_if_narrowing_;
+                rec.capture_epoch = cache_epoch_;
+                flat.record_narrowing(std::move(rec));
+            }
+            if (subtree_has_linear_ops(flat, then_id)) {
+                ownership_env_.mark_ownership_dirty(occ->var_name);
+                bump_linear_occurrence_predicate_safe(cs_.metrics_);
+            }
+            check_flat(flat, pool, then_id, expected);
+            ownership_env_.pop_scope();
+            env_.pop_scope();
+        } else if (occ && occ->is_negation) {
+            // Negation: else-branch gets the refinement.
+            env_.push_scope();
+            ownership_env_.push_scope();
+            if (env_.is_bound(occ->var_name))
+                env_.bind(occ->var_name, occ->refined_type);
+            ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+            // Issue #283 follow-up #3: capture provenance for
+            // the negation case (else-branch gets refinement).
+            {
+                std::string refined_str;
+                if (occ->refined_type.index != 0) {
+                    auto n = reg_.name_of(occ->refined_type);
+                    if (!n.empty())
+                        refined_str = std::string(n);
+                }
+                NarrowingRecord rec;
+                rec.var_name = occ->var_name;
+                rec.predicate_src = "(not (...))";
+                rec.refined_type_str = refined_str;
+                rec.if_node = id;
+                rec.cond_node = cond_id;
+                rec.is_negation = true;
+                rec.narrow_evidence = 0;
+                rec.capture_epoch = cache_epoch_;
+                flat.record_narrowing(std::move(rec));
+            }
+            if (v.children.size() >= 3 && v.child(2) != NULL_NODE) {
+                if (subtree_has_linear_ops(flat, v.child(2))) {
+                    ownership_env_.mark_ownership_dirty(occ->var_name);
+                    bump_linear_occurrence_predicate_safe(cs_.metrics_);
+                }
+                check_flat(flat, pool, v.child(2), expected);
+            }
+            ownership_env_.pop_scope();
+            env_.pop_scope();
+            // Then-branch: no refinement
+            check_flat(flat, pool, then_id, expected);
+        } else {
+            // No narrowing predicate — fall back to original
+            // uniform check.
+            check_flat(flat, pool, then_id, expected);
+            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                check_flat(flat, pool, v.child(2), expected);
+        }
+    } // end bidirectional_mode_ opt-out
+}
+
 
 void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView v,
                                       TypeId expected) {

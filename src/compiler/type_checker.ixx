@@ -727,6 +727,39 @@ public:
     }
     void check_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId id,
                     aura::core::TypeId expected);
+    void check_flat_if(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId id,
+                       aura::ast::NodeView v, aura::core::TypeId expected);
+    void check_flat_if_narrowing(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                 aura::ast::NodeId id, aura::ast::NodeView v,
+                                 aura::core::TypeId expected, aura::ast::NodeId cond_id,
+                                 aura::ast::NodeId then_id);
+    void init_primitive_env_part0(aura::core::TypeId Int, aura::core::TypeId Bool,
+                                  aura::core::TypeId Float, aura::core::TypeId String,
+                                  aura::core::TypeId Dyn, aura::core::TypeId Void,
+                                  aura::core::TypeId Vector, aura::core::TypeId Hash);
+    void init_primitive_env_part1(aura::core::TypeId Int, aura::core::TypeId Bool,
+                                  aura::core::TypeId Float, aura::core::TypeId String,
+                                  aura::core::TypeId Dyn, aura::core::TypeId Void,
+                                  aura::core::TypeId Vector, aura::core::TypeId Hash);
+    void init_primitive_env_part2(aura::core::TypeId Int, aura::core::TypeId Bool,
+                                  aura::core::TypeId Float, aura::core::TypeId String,
+                                  aura::core::TypeId Dyn, aura::core::TypeId Void,
+                                  aura::core::TypeId Vector, aura::core::TypeId Hash);
+    std::optional<aura::core::TypeId> synthesize_flat_call_arith(aura::ast::FlatAST& flat,
+                                                                 aura::ast::StringPool& pool,
+                                                                 aura::ast::NodeView v,
+                                                                 aura::ast::NodeId func_id);
+    std::optional<aura::core::TypeId> synthesize_flat_try_cache(aura::ast::FlatAST& flat,
+                                                                aura::ast::NodeId id);
+    aura::core::TypeId synthesize_flat_macro_def(aura::ast::FlatAST& flat,
+                                                 aura::ast::StringPool& pool,
+                                                 aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_define_module(aura::ast::FlatAST& flat,
+                                                     aura::ast::StringPool& pool,
+                                                     aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_define_type(aura::ast::FlatAST& flat,
+                                                   aura::ast::StringPool& pool,
+                                                   aura::ast::NodeView v);
 
     // Initialize environment with primitive type signatures
     void init_primitive_env();

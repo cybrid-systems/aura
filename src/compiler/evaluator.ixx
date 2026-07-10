@@ -760,6 +760,10 @@ namespace primitives_detail {
     void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+
+    // Issue #909: friend structs holding peeled register parts (≤300 lines each).
+#include "compiler/observability_prims_decl.inc"
+#include "compiler/compile_prims_decl.inc"
 } // namespace primitives_detail
 
 void defuse_index_destroy(void** slot);
@@ -832,6 +836,9 @@ export class Evaluator {
                                                    Evaluator& ev);
     friend void primitives_detail::register_eval_observability_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    // Issue #909: peeled register structs access private Evaluator state.
+    friend struct primitives_detail::ObservabilityPrims;
+    friend struct primitives_detail::CompilePrims;
     friend void
     primitives_detail::register_eda_primitives(std::function<void(std::string, PrimFn)> add,
                                                Evaluator& ev);
