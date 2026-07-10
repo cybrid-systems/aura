@@ -122,8 +122,11 @@ int aura_issue_697_run() {
         auto desc = cs.eval("(primitive:describe \"eda:weaken-property\")");
         CHECK(desc && aura::compiler::types::is_pair(*desc),
               "describe eda:weaken-property returns pair");
-        auto cat = cs.eval("(car (cdr (cdr (cdr (cdr (primitive:describe "
-                           "\"eda:weaken-property\"))))))");
+        // Layout after #926: (arity pure safety perf_tier security_level
+        // doc category . schema). Category is car of the 6th cdr;
+        // schema is the terminal cdr of that pair.
+        auto cat = cs.eval("(car (cdr (cdr (cdr (cdr (cdr (cdr (primitive:describe "
+                           "\"eda:weaken-property\"))))))))");
         CHECK(cat && aura::compiler::types::is_string(*cat), "category field is string");
         if (cat && aura::compiler::types::is_string(*cat)) {
             const auto idx = aura::compiler::types::as_string_idx(*cat);
@@ -132,8 +135,10 @@ int aura_issue_697_run() {
                   std::format("eda:weaken-property category is sva (got {})",
                               idx < heap.size() ? heap[idx] : "?"));
         }
-        auto schema = cs.eval("(cdr (cdr (cdr (cdr (cdr (primitive:describe "
-                              "\"eda:add-coverpoint-bin\"))))))");
+        // 7 cdrs reach the terminal schema string (dotted cdr of
+        // (category . schema)).
+        auto schema = cs.eval("(cdr (cdr (cdr (cdr (cdr (cdr (cdr (primitive:describe "
+                              "\"eda:add-coverpoint-bin\"))))))))");
         CHECK(schema && aura::compiler::types::is_string(*schema), "schema field is string");
     }
 

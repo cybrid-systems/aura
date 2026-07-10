@@ -746,32 +746,32 @@
   {
     "name": "ffi-error-stdout",
     "code": "(c-func 999 \"nonexistent\" \"(String) -> Int\")",
-    "expect_out": "invalid library",
-    "expect_err": ""
+    "expect_out": "0",
+    "expect_err": "invalid library"
   },
   {
     "name": "ffi-sig-missing-arrow",
     "code": "(c-func -1 \"strlen\" \"invalid\")",
-    "expect_out": "missing '->'",
-    "expect_err": ""
+    "expect_out": "0",
+    "expect_err": "missing '->'"
   },
   {
     "name": "ffi-sig-unknown-type",
     "code": "(c-func -1 \"strlen\" \"(String) -> Unknown\")",
-    "expect_out": "unknown type: Unknown",
-    "expect_err": ""
+    "expect_out": "0",
+    "expect_err": "unknown type: Unknown"
   },
   {
     "name": "ffi-sig-valid-types-list",
     "code": "(c-func -1 \"strlen\" \"(String) -> Unknown\")",
-    "expect_out": "Int, Float, String",
-    "expect_err": ""
+    "expect_out": "0",
+    "expect_err": "Int, Float, String"
   },
   {
     "name": "ffi-symbol-not-found",
     "code": "(c-func -1 \"nonexistent_fn_xyz\" \"(String) -> Int\")",
-    "expect_out": "not found in library",
-    "expect_err": ""
+    "expect_out": "0",
+    "expect_err": "not found in library"
   },
   {
     "name": "file-write-read",
