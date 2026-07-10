@@ -19,181 +19,181 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ai-native-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ai-native-meta-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ai-native-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:ai-native-meta-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:aot-checkpoint-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-concurrent-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-concurrent-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:aot-hot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-hotswap-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:aot-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-hotswap-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:aot-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:aot-production-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-reload-func-table-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-reload-func-table-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:aot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compact-defrag-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compact-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-policy-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:arena-auto-compact-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:arena-auto-policy-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:arena-auto-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:arena-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:arena-compaction-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-fragmentation-snapshot` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-live-defrag-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-live-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:arena-compaction-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:arena-fragmentation-snapshot` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-live-defrag-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:arena-live-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:arena-production-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:ast-column-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-rollback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-snapshot-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:atomic-batch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:atomic-batch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:atomic-batch-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `query:atomic-batch-sv-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `query:bidirectional-narrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:build-index` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:bundle-codegen-decouple-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:bundle-codegen-decouple-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:ci-reproducibility-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:closed-loop-convergence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:closure-bridge-safety-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ci-reproducibility-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:closed-loop-convergence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:closure-bridge-safety-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `query:closure-env-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:closure-epoch-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:code-as-data-production-health` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:closure-epoch-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
+- `query:closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:code-as-data-production-health` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:coercion-elim-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:coercion-narrowing-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:commercial-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:compiler-cache-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:compiler-cache-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:compiler-closure-inval-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-core-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:compiler-core-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
 - `query:compiler-gc-root-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:compiler-invalidate-guard-steal-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:compiler-root-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:compiler-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-invalidate-guard-steal-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:compiler-root-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
 - `query:compiler-runtime-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:concurrent-safety-full-cycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:concurrent-safety-full-cycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:consolidated-p0-production-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:consolidated-production-priority-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-blame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-reverify-occurrence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:constraint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:constraint-reverify-occurrence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:constraint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `query:constraint-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:contracts-hotpath-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:contracts-production-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:cpp26-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:cpp26-modernization-sweep-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:cxx26-hotpath-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:cxx26-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:dead-coercion-elim-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:dead-coercion-elision-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:cpp26-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:cpp26-modernization-sweep-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:cxx26-hotpath-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:cxx26-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `query:dead-coercion-elim-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-elision-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `query:dead-coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:declarative-primitive-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:declarative-primitive-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:def-use` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:define-mutate-ir-invalidation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:defines` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defuse-infer-partial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:defuse-infer-partial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:defuse-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:deployment-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:dirty-epoch-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:dirty-epoch-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:dirty-propagation-cost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-reason-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-region-rendering-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:dirty-region-rendering-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 - `query:dirty-subtree` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirtyaware-impact-enforcement-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:dirtyaware-ir-cache-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:dirtyaware-impact-enforcement-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:dirtyaware-ir-cache-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:eda-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-foundation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:eda-hw-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:eda-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:eda-foundation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-hw-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:eda-primitives-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-production-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:eda-production-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 - `query:eda-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:eda-sv-closedloop-stress-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:edsl-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-core-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-core-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
 - `query:edsl-eda-sv-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-hotpath-real-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-hotpath-real-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:edsl-query-mutate-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `query:edsl-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-struct-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-struct-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:envframe-dualpath-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:envframe-dualpath-mandatory-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:envframe-dualpath-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:envframe-dualpath-mandatory-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:envframe-dualpath-stale-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:envframe-dualpath-stale-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:envframe-dualpath-stale-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:envframe-dualpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:envframe-production-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:epoch-delta-since-last-query` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:error-handling-policy-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:extension-kit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ffi-call-overhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:fiber-epoch-type-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:error-handling-policy-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:extension-kit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:ffi-call-overhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:fiber-epoch-type-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:fiber-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:fiber-scheduler-init-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:fiber-scheduler-init-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:find` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:full-closedloop-compiler-edsl-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:gc-panic-deferral-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:gc-safepoint-deferral-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:full-closedloop-compiler-edsl-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:gc-panic-deferral-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:gc-safepoint-deferral-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:gc-safepoint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:gcc16-modules-buildenv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:gcc16-modules-buildenv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `query:generation-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:guard-panic-reflect-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:guard-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:guard-panic-reflect-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:guard-production-impact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-steal-gc-safety-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:guard-steal-gc-safety-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:hardware-backend-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:hardware-backend-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:hardware-backend-sv-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:hardware-backend-sv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:highperf-cpp26-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:hotpath-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:highperf-cpp26-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:hotpath-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:hygiene-violation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:incremental-closure-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:incremental-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:incremental-effectiveness` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:incremental-closure-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-effectiveness` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:incremental-production-relower-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ir-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-metadata-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-dirty-hybrid-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ir-soa-full-enforcement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ir-soa-full-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ir-soa-dirty-hybrid-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:ir-soa-full-enforcement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:ir-soa-full-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:ir-soa-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ir-soa-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:irsoa-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:jit-aot-hotswap-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:jit-aot-hotswap-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:jit-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-exception-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:jit-exception-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:jit-fallback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-fiber-exception-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-hotswap-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-rendering-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:l2-specialization-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:large-sv-pattern-defuse-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:jit-fiber-exception-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:jit-hotswap-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-rendering-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:jit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:l2-specialization-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:large-sv-pattern-defuse-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:last-mutation-blame` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-escape-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:linear-escape-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:linear-jit-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-occurrence-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:linear-occurrence-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:linear-ownership-enforcement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-ownership-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-ownership-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -203,18 +203,18 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:linear-ownership-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-ownership-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-postmutate-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:list-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:live-irclosure-envframe-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:load-or-zero-helper-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:longrunning-ai-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:longrunning-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:longrunning-stable-ref-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:list-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:live-irclosure-envframe-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:load-or-zero-helper-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:longrunning-ai-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:longrunning-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:longrunning-stable-ref-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:macro-hygiene-contract-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-hygiene-fiber-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:macro-hygiene-query-provenance-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:macro-hygiene-fiber-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:macro-hygiene-query-provenance-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:macro-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-introduced` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:macro-introduced-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:macro-introduced-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:macro-production-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-reflect-self-evo-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-reflect-self-evo-followup-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -222,11 +222,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:mark-occurrence-stale` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:match-exhaustiveness-notes` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:metrics-meta-reflection-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:metrics-meta-reflection-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:multi-fiber-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutate-atomic-batch-e2e-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:mutate-batch-atomic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:mutate-atomic-batch-e2e-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:mutate-batch-atomic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:mutation-audit-log` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:mutation-boundary-invariant-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-boundary-log` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -246,66 +246,66 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:occurrence-blame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-narrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-narrowing-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-renarrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:occurrence-renarrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:occurrence-stale-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-typing-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:opcode-coverage-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:orchestration-llm-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:opcode-coverage-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:orchestration-llm-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:orchestration-metrics` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:orchestration-steal-arena-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:orchestration-steal-outermost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:orchestration-telemetry-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ownership-escape-postmutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:panic-checkpoint-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:orchestration-steal-arena-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:orchestration-steal-outermost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:orchestration-telemetry-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:ownership-escape-postmutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:panic-checkpoint-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:panic-checkpoint-lifecycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:parent` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pass-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-dirtyaware-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pass-pipeline-dirtyaware-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:pass-pipeline-incremental-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:pass-shape-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pass-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-shape-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern-defuse-hygiene-full-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:pattern-hygiene-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pattern-defuse-hygiene-full-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:pattern-hygiene-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:pattern-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-policy` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:pattern-index-rebuild-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-index-safe-span-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pattern-index-safe-span-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:pattern-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-ir-hygiene-closed-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pattern-ir-hygiene-closed-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:pattern-macro-filter-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-production-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-structural-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-sv-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:per-fiber-exception-state-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:per-fiber-exception-state-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:per-fiber-stack-pool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitive-error-unified-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitive-fastpath-per-prim` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-error-unified-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-fastpath-per-prim` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:primitive-metadata` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitive-perf-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitive-metadata` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:primitive-perf-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitives-ai-native-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-apply-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-contract-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitives-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-contract-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:primitives-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-governance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-hotpath-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-hotpath-slo-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-namespace-alias-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitives-hotpath-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:primitives-hotpath-slo-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:primitives-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-namespace-alias-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:primitives-regex-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-registry-core-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-resource-quota-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitives-resource-quota-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:primitives-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:production-roadmap-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:prompt6-memory-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -320,61 +320,61 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:reflect-edsl-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:reflect-node-members` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reflect-postmutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:reflection-edsl-extension-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:reflection-schema-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:reflection-edsl-extension-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:reflection-schema-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:reflection-selfmod-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:registry-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-ffi-buffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-jit-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-observability-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:registry-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-ffi-buffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-jit-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-observability-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:runtime-observability-correlated-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:runtime-observability-correlated-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:runtime-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:runtime-production-health` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:runtime-production-health` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:scheduler-mutation-coord-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:scheduler-steal-bias-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:scheduler-steal-bias-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:scheduler-stealbudget-adaptive-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:scheduler-stealbudget-yield-class-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:scheduler-stealbudget-yield-class-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:security-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:self-evolution-chaos-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:self-evolution-hygiene-dirty-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:self-evolution-chaos-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:self-evolution-hygiene-dirty-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:self-evolution-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:self-evolution-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:seva-audit-log` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:seva-longrunning-concurrent-slo` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:seva-longrunning-harness-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:seva-audit-log` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `query:seva-longrunning-concurrent-slo` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:seva-longrunning-harness-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:shape-deopt-burst-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-folding-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:shape-jit-pass-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:shape-pass-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:shape-pass-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:shape-folding-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:shape-jit-pass-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:shape-pass-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:shape-pass-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
 - `query:shape-profiler-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-value-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:shape-value-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:shape-value-pass-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:siblings` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:soa-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:soa-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:soa-children-columnar-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:soa-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:soa-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:soa-hotpath-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:soa-production-columnar-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:solve-delta-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:source-marker-linear-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:source-marker-linear-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:span-lifetime-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref-boundary-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref-cow-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-cross-cow-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:stable-ref-full-provenance-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stable-ref-cross-cow-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:stable-ref-full-provenance-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:stable-ref-lifecycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-mutation-log-hardening-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stable-ref-mutation-log-hardening-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:stable-ref-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-provenance-sv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stable-ref-provenance-sv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:stable-ref-provenance-sv-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -382,73 +382,73 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:stable-ref-workspace-tree-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stale-ref-policy` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:stale-ref-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:stats-builder-refactor-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:stdlib-compiler-demands-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stats-builder-refactor-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:stdlib-compiler-demands-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `query:strategy-evolution-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:sv-backend-emit-bidirectional-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-closedloop-slo` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-commercial-emit-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:sv-backend-emit-bidirectional-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:sv-closedloop-slo` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:sv-commercial-emit-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:sv-defuse-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-eda-primitives-cluster-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-interface-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:sv-eda-primitives-cluster-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:sv-interface-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:sv-node-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-production-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:sv-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-structured-edsl-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-sva-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-verification-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-closedloop-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:sv-verification-feedback-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-feedback-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-self-evolution-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:sv-verification-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-verification-closedloop-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `query:sv-verification-feedback-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:sv-verification-feedback-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:sv-verification-self-evolution-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-verification-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:tag-arity-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task2-refinement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-cache-locality-win` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-contracts` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-safety-score` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-mutation-stability` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:task6-concurrent-fidelity` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:task6-concurrent-fidelity` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:task6-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:terminal-buffer-diff-present-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:terminal-render-production-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:terminal-rendering-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-bundle-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-harness-bootstrap-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-harness-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-json-report-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-profile-flag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:terminal-buffer-diff-present-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:terminal-render-production-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:terminal-rendering-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:test-bundle-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-bootstrap-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-json-report-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-profile-flag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:top5-commercial-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-incremental-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:typed-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-mutate-coercion-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:typed-mutation-audit-pass-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:typed-mutation-audit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:typed-mutate-coercion-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-audit-pass-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:typed-mutation-audit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:typed-mutation-stats-task1` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typesystem-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:typesystem-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:value-dispatch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:value-shape-consteval-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:value-shape-consteval-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:verification-feedback-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:verification-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:verify-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:verify-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:verify-tool-guard-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:verify-tool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:work-steal-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:workspace-closedloop-fiber-eda-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:workspace-closedloop-fiber-multi-agent-yield-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:workspace-closedloop-fiber-eda-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:workspace-closedloop-fiber-multi-agent-yield-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:workspace-snapshot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:yield-checkpoint-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:zero-copy-framebuffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:yield-checkpoint-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:zero-copy-framebuffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
 ## Mutate: (4)
 
 - `mutate:extract-function` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
 
@@ -458,7 +458,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:defs` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `ast:generation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `ast:list-snapshots` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:node-lifecycle-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -525,71 +525,71 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Compile: (65)
 
-- `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:cache-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:constraint-dep-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:constraint-solver-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-elapsed` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-kept-for-debug` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dep-edges` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-impact-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-reason-counts` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:epoch` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-compatible?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-coercion-lossy?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-coercion-warning` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:incremental-typecheck-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:inline-pass-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:invalidations-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ir-soa-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ir-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:let-poly-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:linear-elide-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:match-narrowing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:multi-mutation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mutation-log-invalidation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mutator-dispatch-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-blame-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occ-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occurrence-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occurrence-typing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-reinfer-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:schema-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:status` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-bump-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-dep-graph-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-propagation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:cache-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:constraint-dep-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-solver-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dead-coercion-elapsed` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dead-coercion-kept-for-debug` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dead-coercion-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dep-edges` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:dirty-impact-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dirty-reason-counts` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:epoch` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:hw-bitvec-compatible?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-coercion-lossy?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:hw-coercion-warning` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:incremental-typecheck-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:inline-pass-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:invalidations-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-soa-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:let-poly-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:linear-elide-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:macro-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:macro-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:match-narrowing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:multi-mutation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:mutation-log-invalidation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:mutator-dispatch-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:narrowing-blame-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occ-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occurrence-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occurrence-typing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-defuse-index-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:per-symbol-reinfer-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:schema-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:status` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:subtree-bump-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:subtree-generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:type-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:type-dep-graph-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:type-propagation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 
 ## C FFI (10)
 
@@ -606,7 +606,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Core builtins (250)
 
-- `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `api-reference` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -624,7 +624,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `auto-evolve-stop` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-tick` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-total-fixed` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-rollback-on-panic` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `auto-rollback-on-panic` *[convenience]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `boolean?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `caaar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
@@ -690,8 +690,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `foldl` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `format` *[convenience]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `gc` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `gc-arena-info` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `gc-arena-stats` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `gc-arena-info` *[convenience]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `gc-arena-stats` *[convenience]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-freeze` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -769,10 +769,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `number->string` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `number?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `pair?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `panic-auto-rollback?` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-checkpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-auto-rollback?` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-checkpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `pow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `procedure?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `query-annotate-functions` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -827,8 +827,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `suggest-annotation-at` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol-append` *[convenience]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `symbol?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
-- `syntax-marker` *[convenience]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax-marker-counts` *[convenience]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax-marker` *[convenience]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax-marker-counts` *[convenience]* — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `take` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `tcp-close` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
@@ -841,7 +841,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `type?` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `typecheck-status` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `typecheck-status` *[convenience]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `use` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -883,7 +883,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Atomic-Batch: (1)
 
-- `atomic-batch:stats` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `atomic-batch:stats` *[core]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 
 ## Channel: (5)
 
@@ -895,13 +895,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Closure: (1)
 
-- `closure:stats` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `closure:stats` *[core]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 
 ## Concurrency: (3)
 
-- `concurrency:stats` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `concurrency:version-current?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `concurrency:version-snapshot` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:stats` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `concurrency:version-current?` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `concurrency:version-snapshot` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
 
 ## Dirty: (4)
 
@@ -912,7 +912,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Eda: (13)
 
-- `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `eda:ingest-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:invoke-simulator` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:load-sv` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
@@ -920,15 +920,15 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eda:parse-netlist` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:parse-verification-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:query-nodes` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-commercial-simulator-stub` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:run-commercial-simulator-stub` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `eda:run-hardware-feedback` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-verification-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:run-verification-feedback` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `eda:validate-sv-emit-roundtrip` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:waveform-snapshot` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 
 ## Edsl: (1)
 
-- `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 
 ## Eval: (1)
 
@@ -940,9 +940,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Hygiene: (3)
 
-- `hygiene:allow-macro-mutate?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `hygiene:protected?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `hygiene:set-allow-macro-mutate!` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:allow-macro-mutate?` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `hygiene:protected?` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `hygiene:set-allow-macro-mutate!` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
 
 ## Ir-Cache-V2: (2)
 
@@ -951,11 +951,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Jit: (5)
 
-- `jit:deopt-fn?` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-depth` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-fibers` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-fibers-clear` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:intrinsic-count` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:deopt-fn?` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:exception-depth` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:exception-fibers` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:exception-fibers-clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:intrinsic-count` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 
 ## Mutation-Log: (2)
 
@@ -973,7 +973,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Primitives: (2)
 
-- `primitives:alias` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `primitives:alias` *[core]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
 - `primitives:contract-probe` *[core]* — `src/compiler/evaluator_primitives_test.cpp`
 
 ## Reflect: (2)
@@ -983,13 +983,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Resource: (3)
 
-- `resource:quota-check` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `resource:quota-get` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `resource:quota-set` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `resource:quota-check` *[core]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `resource:quota-get` *[core]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `resource:quota-set` *[core]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 
 ## Runtime: (1)
 
-- `runtime:self-heal-on-drift` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `runtime:self-heal-on-drift` *[core]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 
 ## Scheduler: (1)
 
@@ -1003,16 +1003,16 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Seva: (5)
 
-- `seva:achieve-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:approve-mutation` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:fix-reset-bugs` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:achieve-coverage` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:approve-mutation` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:fix-reset-bugs` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
 
 ## Stats: (2)
 
-- `stats:count` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `stats:list` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `stats:count` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:list` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 
 ## Strategy: (4)
 
@@ -1028,20 +1028,20 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Syntax: (4)
 
-- `syntax:get-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:propagate-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:get-provenance` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:propagate-marker` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
 
 ## Terminal: (7)
 
-- `terminal:clear` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:create-buffer` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:diff` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:draw-batch` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:mark-dirty-region` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:present` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:present-delta` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:create-buffer` *[core]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `terminal:diff` *[core]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `terminal:draw-batch` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:mark-dirty-region` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:present` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:present-delta` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 
 ## Thread_Pool: (1)
 
@@ -1049,13 +1049,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Verify: (7)
 
-- `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:coverage-holes` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-assert-failure` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-coverage-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-formal-cex` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:report-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:suggest-constraint-refine` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `verify:coverage-holes` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:parse-assert-failure` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:parse-coverage-feedback` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:parse-formal-cex` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:report-coverage` *[core]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `verify:suggest-constraint-refine` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 
 ## Ws: (1)
 
@@ -1070,7 +1070,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1091,79 +1091,79 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:version` — `src/compiler/evaluator_primitives_ast.cpp`
-- `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:cache-size` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-elapsed` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-kept-for-debug` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dep-edges` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-impact-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-reason-counts` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:epoch` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-compatible?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-coercion-lossy?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-coercion-warning` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ir-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occ-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occurrence-typing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-reinfer-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:status` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-bump-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-generation` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:cache-size` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dead-coercion-elapsed` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dead-coercion-kept-for-debug` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dep-edges` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:dirty-count` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:dirty-impact-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dirty-reason-counts` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:epoch` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:hw-bitvec-compatible?` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:hw-coercion-lossy?` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:hw-coercion-warning` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-stats` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:macro-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occ-cache-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occurrence-typing-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-defuse-index-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:per-symbol-reinfer-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:snapshot` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:status` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:subtree-bump-count` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:subtree-generation` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
+- `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
-- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-checkpoint` — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-restore` — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-safe-source` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-restore` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-safe-source` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -1191,7 +1191,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ### Core builtins (must remain primitive) (223)
 
-- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
+- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1218,7 +1218,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `asin` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` — `src/compiler/evaluator_primitives_math.cpp`
-- `atomic-batch:stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `atomic-batch:stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `caaar` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -1247,10 +1247,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `char?` — `src/compiler/evaluator_primitives_char.cpp`
 - `check` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `closure:stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `concurrency:stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
+- `closure:stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `concurrency:stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `cons` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cos` — `src/compiler/evaluator_primitives_math.cpp`
 - `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1262,7 +1262,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `dirty:summary` — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
-- `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `eda:ingest-result` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:invoke-simulator` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:load-sv` — `src/compiler/evaluator_primitives_eda.cpp`
@@ -1270,12 +1270,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eda:parse-netlist` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:parse-verification-result` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:query-nodes` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-commercial-simulator-stub` — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:run-commercial-simulator-stub` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `eda:run-hardware-feedback` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
+- `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `eda:validate-sv-emit-roundtrip` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:waveform-snapshot` — `src/compiler/evaluator_primitives_eda.cpp`
-- `edsl:define-struct` — `src/compiler/evaluator_primitives_observability.cpp`
+- `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error?` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -1297,19 +1297,19 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `hash` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hot-swap:fn` — `src/compiler/evaluator_primitives_types.cpp`
-- `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `hygiene:protected?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `hygiene:protected?` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `import` — `src/compiler/evaluator_primitives_module.cpp`
 - `integer?` — `src/compiler/evaluator_primitives_core.cpp`
 - `intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `ir-cache-v2:dependents` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ir-cache-v2:dirty?` — `src/compiler/evaluator_primitives_eval.cpp`
-- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-depth` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-fibers` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:intrinsic-count` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:exception-depth` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:exception-fibers` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:intrinsic-count` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `keyword?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `lcm` — `src/compiler/evaluator_primitives_math.cpp`
 - `length` — `src/compiler/evaluator_primitives_list.cpp`
@@ -1339,7 +1339,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `orchestration:tune-gc-frequency` — `src/compiler/evaluator_primitives_query.cpp`
 - `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `pow` — `src/compiler/evaluator_primitives_math.cpp`
-- `primitives:alias` — `src/compiler/evaluator_primitives_observability.cpp`
+- `primitives:alias` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
 - `primitives:contract-probe` — `src/compiler/evaluator_primitives_test.cpp`
 - `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
 - `quotient` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1350,29 +1350,29 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `reflect:validate-macro-body` — `src/compiler/evaluator_primitives_query.cpp`
 - `remainder` — `src/compiler/evaluator_primitives_math.cpp`
 - `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `resource:quota-check` — `src/compiler/evaluator_primitives_observability.cpp`
-- `resource:quota-get` — `src/compiler/evaluator_primitives_observability.cpp`
-- `resource:quota-set` — `src/compiler/evaluator_primitives_observability.cpp`
+- `resource:quota-check` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `resource:quota-get` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `resource:quota-set` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `reverse` — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `round` — `src/compiler/evaluator_primitives_math.cpp`
-- `runtime:self-heal-on-drift` — `src/compiler/evaluator_primitives_observability.cpp`
+- `runtime:self-heal-on-drift` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `scheduler:pin` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `security:grant-capability!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:sandbox-mode?` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-sandbox-mode!` — `src/compiler/evaluator_primitives_security.cpp`
 - `send` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `session:create` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `seva:achieve-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:approve-mutation` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:fix-reset-bugs` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:generate-regression` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:run-demo-with-metrics` — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:achieve-coverage` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:approve-mutation` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:fix-reset-bugs` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:generate-regression` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:run-demo-with-metrics` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
-- `stats:count` — `src/compiler/evaluator_primitives_observability.cpp`
-- `stats:list` — `src/compiler/evaluator_primitives_observability.cpp`
+- `stats:count` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:list` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `strategy:active` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy:escalate` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy:report-success` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1382,33 +1382,33 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `string?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `substring` — `src/compiler/evaluator_primitives_pair.cpp`
 - `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
-- `syntax:get-provenance` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:propagate-marker` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-marker` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-provenance` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:get-provenance` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:propagate-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:set-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:set-provenance` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `synthesize:define` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:fill` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 - `take` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` — `src/compiler/evaluator_primitives_math.cpp`
-- `terminal:clear` — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:create-buffer` — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:diff` — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:draw-batch` — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:mark-dirty-region` — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:present` — `src/compiler/evaluator_primitives_observability.cpp`
-- `terminal:present-delta` — `src/compiler/evaluator_primitives_observability.cpp`
+- `terminal:clear` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:create-buffer` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `terminal:diff` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `terminal:draw-batch` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:mark-dirty-region` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:present` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:present-delta` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `use` — `src/compiler/evaluator_primitives_module.cpp`
-- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:coverage-holes` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-formal-cex` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:suggest-constraint-refine` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `verify:coverage-holes` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:parse-formal-cex` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `verify:suggest-constraint-refine` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `void` — `src/compiler/evaluator_primitives_core.cpp`
 - `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_primitives_control.cpp`
@@ -1420,181 +1420,181 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ai-native-extension-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ai-native-meta-extension-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ai-native-extension-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:ai-native-meta-extension-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:aot-checkpoint-version-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-concurrent-hotupdate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-concurrent-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:aot-hot-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-hotswap-pipeline-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:aot-hotupdate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-hotswap-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:aot-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:aot-production-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compact-defrag-fiber-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compact-defrag-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-compaction-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-policy-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-auto-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:aot-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:arena-auto-compact-defrag-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compaction-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:arena-auto-policy-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:arena-auto-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:arena-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:arena-compaction-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-fragmentation-snapshot` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-live-defrag-full-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:arena-live-defrag-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:arena-compaction-stats-hash` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:arena-fragmentation-snapshot` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-live-defrag-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:arena-live-defrag-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:arena-production-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:ast-column-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-rollback-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-snapshot-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:atomic-batch-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `query:atomic-batch-sv-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `query:bidirectional-narrow-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:bundle-codegen-decouple-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:bundle-codegen-decouple-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:ci-reproducibility-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:closed-loop-convergence-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:closure-bridge-safety-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ci-reproducibility-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:closed-loop-convergence-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:closure-bridge-safety-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `query:closure-env-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:closure-epoch-concurrency-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:closure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:code-as-data-production-health` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:closure-epoch-concurrency-stats` — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
+- `query:closure-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:code-as-data-production-health` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:coercion-elim-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:coercion-narrowing-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:commercial-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:compiler-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:compiler-cache-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:compiler-closure-inval-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-core-incremental-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:compiler-core-incremental-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
 - `query:compiler-gc-root-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-incremental-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:compiler-invalidate-guard-steal-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:compiler-root-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:compiler-incremental-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-invalidate-guard-steal-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:compiler-root-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
 - `query:compiler-runtime-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:concurrent-safety-full-cycle-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:concurrent-safety-full-cycle-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:consolidated-p0-production-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:consolidated-production-priority-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-reverify-occurrence-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:constraint-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:constraint-reverify-occurrence-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:constraint-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `query:constraint-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:contracts-hotpath-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:contracts-production-hotpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:cpp26-contracts-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:cpp26-modernization-sweep-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:cxx26-hotpath-invariants` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:cxx26-invariants` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:dead-coercion-elim-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:dead-coercion-elision-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:cpp26-contracts-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:cpp26-modernization-sweep-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:cxx26-hotpath-invariants` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:cxx26-invariants` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `query:dead-coercion-elim-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-elision-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `query:dead-coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:declarative-primitive-registry-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:declarative-primitive-registry-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:define-mutate-ir-invalidation-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:defines` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defuse-infer-partial-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:defuse-infer-partial-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:defuse-version-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:deployment-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:dirty-epoch-marker-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:dirty-epoch-marker-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:dirty-impact` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:dirty-propagation-cost-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-reason-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-region-rendering-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:dirty-region-rendering-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 - `query:dirty-subtree` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirtyaware-impact-enforcement-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:dirtyaware-ir-cache-consistency-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:dirtyaware-impact-enforcement-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:dirtyaware-ir-cache-consistency-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:eda-concurrency-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-foundation-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:eda-hw-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:eda-infra-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:eda-foundation-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-hw-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-infra-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:eda-primitives-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-production-readiness` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:eda-production-readiness` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 - `query:eda-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:eda-sv-closedloop-stress-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:edsl-concurrency-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-core-stability-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-core-stability-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
 - `query:edsl-eda-sv-closedloop-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-hotpath-real-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-hotpath-real-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:edsl-query-mutate-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-readiness` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-readiness` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `query:edsl-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-struct-meta-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:edsl-struct-meta-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:envframe-dualpath-enforce-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:envframe-dualpath-mandatory-enforce-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:envframe-dualpath-enforce-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:envframe-dualpath-mandatory-enforce-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:envframe-dualpath-stale-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:envframe-dualpath-stale-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:envframe-dualpath-stale-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:envframe-dualpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:envframe-production-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:epoch-delta-since-last-query` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:epoch-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:error-handling-policy-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:extension-kit-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ffi-call-overhead-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:fiber-epoch-type-safety-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:error-handling-policy-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:extension-kit-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:ffi-call-overhead-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:fiber-epoch-type-safety-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:fiber-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:fiber-scheduler-init-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:fiber-scheduler-init-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:find` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:full-closedloop-compiler-edsl-fidelity-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:gc-panic-deferral-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:gc-safepoint-deferral-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:full-closedloop-compiler-edsl-fidelity-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:gc-panic-deferral-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:gc-safepoint-deferral-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:gc-safepoint-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:gcc16-modules-buildenv-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:gcc16-modules-buildenv-stats` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `query:generation-epoch-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-error-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:guard-panic-reflect-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:guard-error-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:guard-panic-reflect-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:guard-production-impact-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-steal-gc-safety-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:guard-steal-gc-safety-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:hardware-backend-commercial-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:hardware-backend-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:hardware-backend-sv-closedloop-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:hardware-backend-sv-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:highperf-cpp26-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:hotpath-bottleneck-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:highperf-cpp26-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:hotpath-bottleneck-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:hygiene-violation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:incremental-closure-bridge-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:incremental-closure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:incremental-effectiveness` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:incremental-closure-bridge-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-closure-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-effectiveness` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:incremental-production-relower-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:index-stats` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ir-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:ir-metadata-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-dirty-hybrid-full-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ir-soa-full-enforcement-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ir-soa-full-migration-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ir-soa-dirty-hybrid-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:ir-soa-full-enforcement-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:ir-soa-full-migration-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:ir-soa-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-migration-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:ir-soa-migration-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:irsoa-incremental-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:jit-aot-hotswap-fidelity-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:jit-aot-hotswap-fidelity-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:jit-consistency-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-exception-bridge-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:jit-exception-bridge-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:jit-fallback-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-fiber-exception-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-hotswap-closure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-rendering-coverage-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:jit-typed-mutation-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:l2-specialization-deopt-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:large-sv-pattern-defuse-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:jit-fiber-exception-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:jit-hotswap-closure-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-rendering-coverage-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:jit-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-stats-hash` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-typed-mutation-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:l2-specialization-deopt-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:large-sv-pattern-defuse-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:last-mutation-blame` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-escape-mutate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:linear-escape-mutate-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:linear-jit-safety-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-occurrence-mutate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:linear-occurrence-mutate-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:linear-ownership-enforcement-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-ownership-gc-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-ownership-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1604,18 +1604,18 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:linear-ownership-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-ownership-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:linear-postmutate-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:list-soa-hotpath-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:live-irclosure-envframe-gc-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:load-or-zero-helper-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:longrunning-ai-infra-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:longrunning-infra-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:longrunning-stable-ref-dirty-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:list-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:live-irclosure-envframe-gc-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:load-or-zero-helper-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:longrunning-ai-infra-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:longrunning-infra-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:longrunning-stable-ref-dirty-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:macro-hygiene-contract-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-hygiene-fiber-panic-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:macro-hygiene-query-provenance-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:macro-hygiene-fiber-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:macro-hygiene-query-provenance-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:macro-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:macro-introduced-provenance-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:macro-introduced-provenance-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:macro-production-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-reflect-self-evo-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-reflect-self-evo-followup-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1623,11 +1623,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:mark-occurrence-stale` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:marker-stats` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:match-exhaustiveness-notes` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:metrics-meta-reflection-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:metrics-meta-reflection-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:multi-fiber-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutate-atomic-batch-e2e-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:mutate-batch-atomic-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:mutate-atomic-batch-e2e-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:mutate-batch-atomic-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:mutation-audit-log` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:mutation-boundary-invariant-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-boundary-log` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1647,66 +1647,66 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:occurrence-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-narrow-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-narrowing-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-renarrow-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:occurrence-renarrow-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:occurrence-stale-count` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-typing-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:opcode-coverage-deopt-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:orchestration-llm-bottleneck-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:opcode-coverage-deopt-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:orchestration-llm-bottleneck-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:orchestration-metrics` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:orchestration-steal-arena-gc-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:orchestration-steal-outermost-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:orchestration-telemetry-pipeline-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:ownership-escape-postmutate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:panic-checkpoint-fiber-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:orchestration-steal-arena-gc-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:orchestration-steal-outermost-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:orchestration-telemetry-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:ownership-escape-postmutate-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:panic-checkpoint-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:panic-checkpoint-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pass-contracts-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-dirtyaware-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pass-pipeline-dirtyaware-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:pass-pipeline-incremental-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:pass-shape-epoch-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pass-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-shape-epoch-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern-defuse-hygiene-full-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:pattern-hygiene-provenance-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pattern-defuse-hygiene-full-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:pattern-hygiene-provenance-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:pattern-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:pattern-index-rebuild-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-index-safe-span-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pattern-index-safe-span-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:pattern-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-ir-hygiene-closed-loop-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:pattern-ir-hygiene-closed-loop-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:pattern-macro-filter-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-production-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-structural-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-sv-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:per-fiber-exception-state-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:per-fiber-exception-state-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:per-fiber-stack-pool-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitive-error-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitive-error-unified-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitive-fastpath-per-prim` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitive-error-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-error-unified-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-fastpath-per-prim` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-meta-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:primitive-metadata` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitive-perf-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitive-metadata` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:primitive-perf-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitives-ai-native-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-apply-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-consistency-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-contract-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitives-consistency-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-contract-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:primitives-error-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-governance-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-hotpath-registry-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-hotpath-slo-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-hotpath-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-meta` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-meta-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:primitives-namespace-alias-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitives-hotpath-registry-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:primitives-hotpath-slo-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:primitives-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-meta-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-namespace-alias-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:primitives-regex-error-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-registry-core-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:primitives-registry-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-resource-quota-fiber-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:primitives-resource-quota-fiber-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
 - `query:primitives-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:production-roadmap-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:prompt6-memory-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1721,61 +1721,61 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:reflect-edsl-bridge-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:reflect-node-members` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reflect-postmutate-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:reflection-edsl-extension-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:reflection-schema-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:reflection-edsl-extension-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:reflection-schema-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:reflection-selfmod-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:registry-extension-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-jit-soa-hotpath-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:render-observability-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:registry-extension-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-jit-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-observability-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:runtime-observability-correlated-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:runtime-observability-correlated-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:runtime-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:runtime-production-health` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:runtime-production-health` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:scheduler-mutation-coord-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:scheduler-steal-bias-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:scheduler-steal-bias-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:scheduler-stealbudget-adaptive-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:scheduler-stealbudget-yield-class-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:scheduler-stealbudget-yield-class-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:security-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:self-evolution-chaos-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:self-evolution-hygiene-dirty-epoch-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:self-evolution-chaos-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:self-evolution-hygiene-dirty-epoch-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:self-evolution-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:self-evolution-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:seva-audit-log` — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:seva-longrunning-concurrent-slo` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:seva-longrunning-harness-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:seva-audit-log` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `query:seva-longrunning-concurrent-slo` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:seva-longrunning-harness-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:shape-deopt-burst-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-folding-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:shape-jit-pass-closedloop-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:shape-pass-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:shape-pass-hotpath-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:shape-folding-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:shape-jit-pass-closedloop-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:shape-pass-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:shape-pass-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
 - `query:shape-profiler-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-jit-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:shape-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-value-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:shape-value-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:shape-value-pass-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:soa-adoption-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:soa-adoption-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:soa-children-columnar-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:soa-dirty-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:soa-dirty-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:soa-hotpath-adoption-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:soa-production-columnar-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:solve-delta-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:source-marker-linear-consistency-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:source-marker-linear-consistency-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:span-lifetime-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref-boundary-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref-cow-fiber-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-cross-cow-provenance-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:stable-ref-full-provenance-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stable-ref-cross-cow-provenance-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:stable-ref-full-provenance-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:stable-ref-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-mutation-log-hardening-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stable-ref-mutation-log-hardening-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:stable-ref-provenance` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-provenance-sv-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stable-ref-provenance-sv-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:stable-ref-provenance-sv-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1783,68 +1783,68 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:stable-ref-workspace-tree-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:stale-ref-stats` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:stats-builder-refactor-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:stdlib-compiler-demands-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:stats-builder-refactor-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:stdlib-compiler-demands-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `query:strategy-evolution-stats` — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:sv-backend-emit-bidirectional-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-closedloop-slo` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-commercial-emit-fidelity-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:sv-backend-emit-bidirectional-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:sv-closedloop-slo` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:sv-commercial-emit-fidelity-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:sv-defuse-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-eda-primitives-cluster-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-interface-structure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:sv-eda-primitives-cluster-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:sv-interface-structure-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:sv-node-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-production-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:sv-stability-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-structured-edsl-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:sv-sva-structure-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-verification-closedloop-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-closedloop-stats-hash` — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:sv-verification-feedback-closedloop-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-feedback-mutate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-self-evolution-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:sv-verification-structure-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:sv-verification-closedloop-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-verification-closedloop-stats-hash` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `query:sv-verification-feedback-closedloop-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:sv-verification-feedback-mutate-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:sv-verification-self-evolution-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-verification-structure-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:tag-arity-count` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task2-refinement-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-cache-locality-win` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-contracts` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-safety-score` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-mutation-stability` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:task6-concurrent-fidelity` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:task6-concurrent-fidelity` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:task6-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:terminal-buffer-diff-present-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:terminal-render-production-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:terminal-rendering-module-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-bundle-migration-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-harness-bootstrap-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-harness-module-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-json-report-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:test-profile-flag-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:terminal-buffer-diff-present-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:terminal-render-production-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:terminal-rendering-module-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:test-bundle-migration-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-bootstrap-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-module-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-json-report-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-profile-flag-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:top5-commercial-coverage-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-incremental-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:typed-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-mutate-coercion-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:typed-mutation-audit-pass-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:typed-mutation-audit-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:typed-mutate-coercion-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-audit-pass-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:typed-mutation-audit-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
 - `query:typed-mutation-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:typed-mutation-stats-task1` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typesystem-typed-mutate-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:typesystem-typed-mutate-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:value-dispatch-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:value-shape-consteval-full-v2-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:value-shape-consteval-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:verification-feedback-loop-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:verification-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `query:verify-tool-guard-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:verify-tool-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:work-steal-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:workspace-closedloop-fiber-eda-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:workspace-closedloop-fiber-multi-agent-yield-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:workspace-closedloop-fiber-eda-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:workspace-closedloop-fiber-multi-agent-yield-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:workspace-snapshot-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
 ### Convenience (candidates for stdlib migration) (147)
 
@@ -1856,7 +1856,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `auto-evolve-stop` — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-tick` — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-total-fixed` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_observability.cpp`
+- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `c-alloc` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` — `src/compiler/ffi_primitives_impl.cpp`
@@ -1891,8 +1891,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `file-exists?` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-size` — `src/compiler/evaluator_primitives_file.cpp`
 - `format` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `gc-arena-info` — `src/compiler/evaluator_primitives_observability.cpp`
-- `gc-arena-stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `gc-arena-info` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `gc-arena-stats` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1975,8 +1975,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `string-ref` — `src/compiler/evaluator_primitives_pair.cpp`
 - `suggest-annotation-at` — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol-append` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `syntax-marker` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax-marker-counts` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax-marker-counts` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `tcp-close` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
@@ -1986,7 +1986,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
-- `typecheck-status` — `src/compiler/evaluator_primitives_observability.cpp`
+- `typecheck-status` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` — `src/compiler/evaluator_primitives_vector.cpp`

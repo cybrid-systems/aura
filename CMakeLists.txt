@@ -38,7 +38,44 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_workspace.cpp
     src/compiler/evaluator_primitives_ast.cpp
     src/compiler/evaluator_primitives_compile.cpp
+    src/compiler/evaluator_primitives_compile_00.cpp
+    src/compiler/evaluator_primitives_compile_01.cpp
+    src/compiler/evaluator_primitives_compile_02.cpp
+    src/compiler/evaluator_primitives_compile_03.cpp
+    src/compiler/evaluator_primitives_compile_04.cpp
+    src/compiler/evaluator_primitives_compile_05.cpp
+    src/compiler/evaluator_primitives_compile_06.cpp
+    src/compiler/evaluator_primitives_compile_07.cpp
     src/compiler/evaluator_primitives_observability.cpp
+    src/compiler/evaluator_primitives_obs_eval_00.cpp
+    src/compiler/evaluator_primitives_obs_eval_01.cpp
+    src/compiler/evaluator_primitives_obs_eval_02.cpp
+    src/compiler/evaluator_primitives_obs_eval_03.cpp
+    src/compiler/evaluator_primitives_obs_eval_04.cpp
+    src/compiler/evaluator_primitives_obs_eval_05.cpp
+    src/compiler/evaluator_primitives_obs_eval_06.cpp
+    src/compiler/evaluator_primitives_obs_eval_07.cpp
+    src/compiler/evaluator_primitives_obs_eval_08.cpp
+    src/compiler/evaluator_primitives_obs_eval_09.cpp
+    src/compiler/evaluator_primitives_obs_eval_10.cpp
+    src/compiler/evaluator_primitives_obs_eval_11.cpp
+    src/compiler/evaluator_primitives_obs_eval_12.cpp
+    src/compiler/evaluator_primitives_obs_eval_13.cpp
+    src/compiler/evaluator_primitives_obs_jit_00.cpp
+    src/compiler/evaluator_primitives_obs_jit_01.cpp
+    src/compiler/evaluator_primitives_obs_jit_02.cpp
+    src/compiler/evaluator_primitives_obs_jit_03.cpp
+    src/compiler/evaluator_primitives_obs_jit_04.cpp
+    src/compiler/evaluator_primitives_obs_jit_05.cpp
+    src/compiler/evaluator_primitives_obs_jit_06.cpp
+    src/compiler/evaluator_primitives_obs_jit_07.cpp
+    src/compiler/evaluator_primitives_obs_jit_08.cpp
+    src/compiler/evaluator_primitives_obs_jit_09.cpp
+    src/compiler/evaluator_primitives_obs_jit_10.cpp
+    src/compiler/evaluator_primitives_obs_jit_11.cpp
+    src/compiler/evaluator_primitives_obs_jit_12.cpp
+    src/compiler/evaluator_primitives_obs_jit_13.cpp
+    src/compiler/evaluator_primitives_obs_jit_14.cpp
     src/compiler/verify_tool.cpp
     src/compiler/evaluator_primitives_eda.cpp
     src/compiler/evaluator_primitives_messaging.cpp
