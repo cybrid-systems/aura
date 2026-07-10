@@ -2371,125 +2371,17 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 result = reg_.dynamic_type();
             }
             break;
-        case Tag::Move: {
-            // (move e): check ownership, mark Moved, same type
-            TypeId inner_type = reg_.void_type();
-            if (!v.children.empty()) {
-                auto inner_v = flat.get(v.child(0));
-                if (inner_v.tag == NodeTag::Variable) {
-                    auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                    auto var_ty = env_.lookup(var_name);
-                    bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
-                    if (is_linear) {
-                        if (!ownership_env_.can_move(var_name)) {
-                            auto st = ownership_env_.get(var_name);
-                            auto msg =
-                                "cannot move " + var_name + " — " + ownership_env_.state_name(st);
-                            // Issue #79: linear-resource violations are
-                            // System-level (not Caller) — the resource
-                            // state is invariant of the call site.
-                            diag_.report(
-                                Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                    .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                    .with_suggestion(
-                                        "rebind " + var_name +
-                                        " to a fresh value, or end the active borrow first"));
-                        }
-                        ownership_env_.mark(var_name, OwnershipState::Moved);
-                    }
-                }
-                inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-            }
-            // Moving a linear resource consumes the wrapper and yields the
-            // underlying value, so `(move (Linear e))` has type T (not
-            // (Linear T)) and can flow into Any-typed positions (e.g. display).
-            if (auto* lt = reg_.linear_of(inner_type))
-                inner_type = lt->inner;
-            result = inner_type;
+        case Tag::Move:
+            result = synthesize_flat_move(flat, pool, v);
             break;
-        }
-        case Tag::Borrow: {
-            // (& e): immutable borrow, mark Borrowed
-            TypeId inner_type = reg_.void_type();
-            if (!v.children.empty()) {
-                auto inner_v = flat.get(v.child(0));
-                if (inner_v.tag == NodeTag::Variable) {
-                    auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                    auto var_ty = env_.lookup(var_name);
-                    bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
-                    if (is_linear) {
-                        if (!ownership_env_.can_borrow(var_name)) {
-                            auto st = ownership_env_.get(var_name);
-                            auto msg =
-                                "cannot borrow " + var_name + " — " + ownership_env_.state_name(st);
-                            diag_.report(
-                                Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                    .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                    .with_suggestion("end the active mutable borrow of " +
-                                                     var_name +
-                                                     " before taking an immutable borrow"));
-                        }
-                        ownership_env_.mark(var_name, OwnershipState::Borrowed);
-                    }
-                }
-                inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-            }
-            result = inner_type;
+        case Tag::Borrow:
+            result = synthesize_flat_borrow(flat, pool, v);
             break;
-        }
-        case Tag::MutBorrow: {
-            // (&mut e): mutable borrow, exclusive access
-            TypeId inner_type = reg_.void_type();
-            if (!v.children.empty()) {
-                auto inner_v = flat.get(v.child(0));
-                if (inner_v.tag == NodeTag::Variable) {
-                    auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                    auto var_ty = env_.lookup(var_name);
-                    bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
-                    if (is_linear) {
-                        if (!ownership_env_.can_mut_borrow(var_name)) {
-                            auto st = ownership_env_.get(var_name);
-                            auto msg = "cannot mutably borrow " + var_name + " — " +
-                                       ownership_env_.state_name(st);
-                            diag_.report(
-                                Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                    .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                    .with_suggestion("end any active borrows of " + var_name +
-                                                     " before taking a mutable borrow"));
-                        }
-                        ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
-                    }
-                }
-                inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-            }
-            result = inner_type;
+        case Tag::MutBorrow:
+            result = synthesize_flat_mut_borrow(flat, pool, v);
             break;
-        }
         case Tag::Drop:
-            // (drop e): consume inner, return Void
-            if (!v.children.empty()) {
-                auto inner_v = flat.get(v.child(0));
-                if (inner_v.tag == NodeTag::Variable) {
-                    auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                    auto var_ty = env_.lookup(var_name);
-                    bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
-                    if (is_linear) {
-                        if (!ownership_env_.can_drop(var_name)) {
-                            auto st = ownership_env_.get(var_name);
-                            auto msg =
-                                "cannot drop " + var_name + " — " + ownership_env_.state_name(st);
-                            diag_.report(
-                                Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                    .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                    .with_suggestion("end active borrows of " + var_name +
-                                                     " before dropping"));
-                        }
-                        ownership_env_.mark(var_name, OwnershipState::Moved);
-                    }
-                }
-                synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-            }
-            result = reg_.void_type();
+            result = synthesize_flat_drop(flat, pool, v);
             break;
         case Tag::DefineType: {
             // (define-type (Name params...) (Ctor fields...) ...)
@@ -4166,6 +4058,115 @@ TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& po
         }
     }
     return inner_type;
+}
+
+// Issue #903 Phase 1: ownership-op peels from synthesize_flat switch.
+TypeId InferenceEngine::synthesize_flat_move(FlatAST& flat, StringPool& pool, NodeView v) {
+    // (move e): check ownership, mark Moved, unwrap Linear T → T
+    TypeId inner_type = reg_.void_type();
+    if (!v.children.empty()) {
+        auto inner_v = flat.get(v.child(0));
+        if (inner_v.tag == NodeTag::Variable) {
+            auto var_name = std::string(pool.resolve(inner_v.sym_id));
+            auto var_ty = env_.lookup(var_name);
+            bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+            if (is_linear) {
+                if (!ownership_env_.can_move(var_name)) {
+                    auto st = ownership_env_.get(var_name);
+                    auto msg = "cannot move " + var_name + " — " + ownership_env_.state_name(st);
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                     .with_suggestion("rebind " + var_name +
+                                                      " to a fresh value, or end the active "
+                                                      "borrow first"));
+                }
+                ownership_env_.mark(var_name, OwnershipState::Moved);
+            }
+        }
+        inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+    }
+    if (auto* lt = reg_.linear_of(inner_type))
+        inner_type = lt->inner;
+    return inner_type;
+}
+
+TypeId InferenceEngine::synthesize_flat_borrow(FlatAST& flat, StringPool& pool, NodeView v) {
+    // (& e): immutable borrow, mark Borrowed
+    TypeId inner_type = reg_.void_type();
+    if (!v.children.empty()) {
+        auto inner_v = flat.get(v.child(0));
+        if (inner_v.tag == NodeTag::Variable) {
+            auto var_name = std::string(pool.resolve(inner_v.sym_id));
+            auto var_ty = env_.lookup(var_name);
+            bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+            if (is_linear) {
+                if (!ownership_env_.can_borrow(var_name)) {
+                    auto st = ownership_env_.get(var_name);
+                    auto msg = "cannot borrow " + var_name + " — " + ownership_env_.state_name(st);
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                     .with_suggestion("end the active mutable borrow of " +
+                                                      var_name +
+                                                      " before taking an immutable borrow"));
+                }
+                ownership_env_.mark(var_name, OwnershipState::Borrowed);
+            }
+        }
+        inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+    }
+    return inner_type;
+}
+
+TypeId InferenceEngine::synthesize_flat_mut_borrow(FlatAST& flat, StringPool& pool, NodeView v) {
+    // (&mut e): mutable borrow, exclusive access
+    TypeId inner_type = reg_.void_type();
+    if (!v.children.empty()) {
+        auto inner_v = flat.get(v.child(0));
+        if (inner_v.tag == NodeTag::Variable) {
+            auto var_name = std::string(pool.resolve(inner_v.sym_id));
+            auto var_ty = env_.lookup(var_name);
+            bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+            if (is_linear) {
+                if (!ownership_env_.can_mut_borrow(var_name)) {
+                    auto st = ownership_env_.get(var_name);
+                    auto msg =
+                        "cannot mutably borrow " + var_name + " — " + ownership_env_.state_name(st);
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                     .with_suggestion("end any active borrows of " + var_name +
+                                                      " before taking a mutable borrow"));
+                }
+                ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
+            }
+        }
+        inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+    }
+    return inner_type;
+}
+
+TypeId InferenceEngine::synthesize_flat_drop(FlatAST& flat, StringPool& pool, NodeView v) {
+    // (drop e): consume inner, return Void
+    if (!v.children.empty()) {
+        auto inner_v = flat.get(v.child(0));
+        if (inner_v.tag == NodeTag::Variable) {
+            auto var_name = std::string(pool.resolve(inner_v.sym_id));
+            auto var_ty = env_.lookup(var_name);
+            bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+            if (is_linear) {
+                if (!ownership_env_.can_drop(var_name)) {
+                    auto st = ownership_env_.get(var_name);
+                    auto msg = "cannot drop " + var_name + " — " + ownership_env_.state_name(st);
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                     .with_suggestion("end active borrows of " + var_name +
+                                                      " before dropping"));
+                }
+                ownership_env_.mark(var_name, OwnershipState::Moved);
+            }
+        }
+        synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+    }
+    return reg_.void_type();
 }
 
 void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, TypeId expected) {

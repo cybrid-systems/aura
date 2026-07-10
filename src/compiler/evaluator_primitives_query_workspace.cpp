@@ -1396,17 +1396,20 @@ void register_workspace_query_primitives(
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
     //
-    // Optional keywords (Issue #267 / #486):
+    // Optional keywords (Issue #267 / #486 / #922):
     //   :include-macro-introduced [#t|#f]
     //   :allow-macro-introduced [#t|#f]  — discoverable alias (#486)
-    // When absent or #f, macro-introduced root positions are skipped
-    // (Issue #140 hygiene default). When #t, they are included.
+    //   :exclude-macro-introduced [#t|#f] — Issue #922 explicit hygiene
+    //     predicate (default #t = safe self-evolution; opposite of include)
+    // When absent or include=#f, macro-introduced root positions are skipped
+    // (Issue #140 hygiene default). When include=#t, they are included.
     add("query:pattern", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty())
             return mev("bad-arg",
                        "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                       " [:allow-macro-introduced [#t]] [:respect-hygiene [#t|#f]]"
+                       " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                       " [:respect-hygiene [#t|#f]]"
                        " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
@@ -1462,6 +1465,22 @@ void register_workspace_query_primitives(
                 };
                 if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
                     consume_bool(include_macro_introduced);
+                } else if (kw == ":exclude-macro-introduced") {
+                    // Issue #922: explicit hygiene predicate for safe
+                    // self-evolution. Default exclude (include=false) is
+                    // already the behavior when the keyword is absent;
+                    // this keyword makes the filter discoverable for AI
+                    // agents. :exclude-macro-introduced #t → skip MacroIntroduced
+                    // (safe); #f → allow MacroIntroduced in results.
+                    bool exclude = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            exclude = as_bool(a[ai + 1]);
+                        else
+                            exclude = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                    include_macro_introduced = !exclude;
                 } else if (kw == ":respect-hygiene") {
                     // Issue #547: discoverable alias for
                     // :include-macro-introduced. Same semantics
@@ -1499,9 +1518,10 @@ void register_workspace_query_primitives(
                     return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
                 }
             } else {
-                return mev("bad-arg", "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                                      " [:allow-macro-introduced [#t]] [:nested-arity [#t|#f]]"
-                                      " [:strict-arity [#t]] [:with-markers [#t]])");
+                return mev("bad-arg",
+                           "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                           " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                           " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
             }
         }
         if (!have_pattern)

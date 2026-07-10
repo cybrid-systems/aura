@@ -824,6 +824,16 @@ private:
     aura::core::TypeId synthesize_flat_annotation(aura::ast::FlatAST& flat,
                                                   aura::ast::StringPool& pool,
                                                   aura::ast::NodeView v);
+    // Issue #903 Phase 1: peel ownership-ops from synthesize_flat switch.
+    aura::core::TypeId synthesize_flat_move(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                            aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_borrow(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                              aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_mut_borrow(aura::ast::FlatAST& flat,
+                                                  aura::ast::StringPool& pool,
+                                                  aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_drop(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                            aura::ast::NodeView v);
 
     void check_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                          aura::ast::NodeView v, aura::core::TypeId expected);
