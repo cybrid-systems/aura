@@ -2,15 +2,15 @@
 
 # Primitives (generated)
 
-**929** registrations scanned from `src/**/*.cpp`.
+**934** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (13%)
-- **core**: 225 primitives (24%)
-- **internal-observable**: 432 primitives (47%)
-- **convenience**: 149 primitives (16%)
+- **core**: 227 primitives (24%)
+- **internal-observable**: 432 primitives (46%)
+- **convenience**: 152 primitives (16%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
@@ -516,6 +516,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `fiber:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
+## Agent: (2)
+
+- `agent:running?` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `agent:tick` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+
 ## Session: (1)
 
 - `session:create` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -608,7 +613,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (252)
+## Core builtins (255)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -835,6 +840,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `symbol?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` *[convenience]* — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `syntax-marker-counts` *[convenience]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `sys-open` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `sys-read` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `sys-write` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
 - `take` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `tcp-close` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
@@ -1200,13 +1208,15 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (225)
+### Core builtins (must remain primitive) (227)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
+- `agent:running?` — `src/compiler/evaluator_primitives_agent.cpp`
+- `agent:tick` — `src/compiler/evaluator_primitives_agent.cpp`
 - `append` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
@@ -1863,7 +1873,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
-### Convenience (candidates for stdlib migration) (149)
+### Convenience (candidates for stdlib migration) (152)
 
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1996,6 +2006,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `symbol-append` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `syntax-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `syntax-marker-counts` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `sys-open` — `src/compiler/evaluator_primitives_io.cpp`
+- `sys-read` — `src/compiler/evaluator_primitives_io.cpp`
+- `sys-write` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-close` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`

@@ -40,6 +40,16 @@ inline constexpr const char* kCapExceptionControl = "exception-control";
 inline constexpr const char* kCapMacro = "macro";
 inline constexpr const char* kCapQuery = "query";
 
+// Issues #1325–#1330 Phase 1: architecture reduction + cap retrofit scaffold.
+// Full Phase 5 gates all remaining ~50 primitives; these names land early so
+// Phases 1–4 can wire deny_* helpers incrementally.
+inline constexpr const char* kCapCapability = "capability"; // cap:grant / cap:revoke
+inline constexpr const char* kCapAgent = "agent";           // agent:tick bridge
+inline constexpr const char* kCapSysRead = "sys-read";      // raw sys-read binding
+inline constexpr const char* kCapSysWrite = "sys-write";    // raw sys-write binding
+inline constexpr const char* kCapSysOpen = "sys-open";      // raw sys-open binding
+inline constexpr const char* kCapSyscall = "syscall";       // high-risk arbitrary syscall
+
 // Effect bit tags (mirror aura.core.capability_model Effect enum).
 inline constexpr std::uint16_t kEffectNone = 0;
 inline constexpr std::uint16_t kEffectRead = 1 << 0;

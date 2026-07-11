@@ -5882,6 +5882,35 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_fn_unhandled_counts_query_locked{1};
     // #1324 invalidate / invalidate_prefix lock-before-erase
     std::atomic<std::uint64_t> jit_invalidate_lock_before_erase{1};
+
+    // ── Issues #1325–#1330: primitive surface reduction architecture ──
+    // META roadmap: 700+ → ~50 user-facing primitives over 5 phases.
+    std::atomic<std::uint64_t> production_sweep_1325_1330_active{1};
+    // #1325 META inventory / target surface
+    std::atomic<std::uint64_t> prim_surface_reduction_plan_active{1};
+    std::atomic<std::uint64_t> prim_surface_target_count{50};
+    std::atomic<std::uint64_t> prim_surface_phases_total{5};
+    // #1326 Phase 1: demote/delete write-side compile/jit (deprecation cycle)
+    std::atomic<std::uint64_t> prim_write_side_compile_jit_demotion_active{1};
+    std::atomic<std::uint64_t> prim_write_side_deprecation_hits{0};
+    std::atomic<std::uint64_t> prim_stats_namespace_active{1};
+    std::atomic<std::uint64_t> prim_stats_alias_hits{0};
+    // #1327 Phase 2: agent service bridge
+    std::atomic<std::uint64_t> agent_service_bridge_active{1};
+    std::atomic<std::uint64_t> agent_tick_total{0};
+    std::atomic<std::uint64_t> agent_legacy_auto_evolve_hits{0};
+    // #1328 Phase 3: query essentials keep-list
+    std::atomic<std::uint64_t> query_essentials_plan_active{1};
+    std::atomic<std::uint64_t> query_essentials_keep_count{10};
+    // #1329 Phase 4: stdlib → Aura + sys-* bindings scaffold
+    std::atomic<std::uint64_t> stdlib_sys_bindings_active{1};
+    std::atomic<std::uint64_t> sys_open_calls{0};
+    std::atomic<std::uint64_t> sys_read_calls{0};
+    std::atomic<std::uint64_t> sys_write_calls{0};
+    // #1330 Phase 5: capability retrofit scaffold
+    std::atomic<std::uint64_t> cap_retrofit_scaffold_active{1};
+    std::atomic<std::uint64_t> cap_capability_constant_count{8}; // new caps this batch
+    std::atomic<std::uint64_t> cap_denial_total{0};
 };
 
 
