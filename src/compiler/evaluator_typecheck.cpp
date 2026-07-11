@@ -263,11 +263,17 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         // Soft type noise (Linear refinement, ADT match shape) is tracked by
         // ownership / adt-exhaustiveness metrics; do not hard-reject rebind.
         // Keep ParseError / InternalError / ArityMismatch as hard rejects.
+        // Issue #CI / p0: UnboundVariable that survived top_defines filtering is a
+        // REAL free-var error (e.g. undefined-fn) — must hard-reject so
+        // typecheck-status-after-bad-mutate / agents see selective failure.
         bool only_soft = true;
         for (auto& d : local_diags) {
+            if (d.kind == aura::diag::ErrorKind::UnboundVariable) {
+                only_soft = false;
+                break;
+            }
             if (d.kind != aura::diag::ErrorKind::TypeError &&
-                d.kind != aura::diag::ErrorKind::Warning && d.kind != aura::diag::ErrorKind::Note &&
-                d.kind != aura::diag::ErrorKind::UnboundVariable) {
+                d.kind != aura::diag::ErrorKind::Warning && d.kind != aura::diag::ErrorKind::Note) {
                 only_soft = false;
                 break;
             }
