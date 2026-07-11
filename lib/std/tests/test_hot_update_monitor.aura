@@ -1,0 +1,22 @@
+; lib/std/tests/test_hot_update_monitor.aura — Issue #1370
+
+(require "std/hot-update" all:)
+(require "std/hot-update/monitor" all:)
+
+(define (test-hot-update-monitor)
+  (let* ((hits 0)
+         (m (make-hot-update-monitor
+              (lambda (stats)
+                (set! hits (+ hits 1))
+                stats)))
+         (h0 (hot-update:health))
+         (last (monitor:run-n m 3))
+         (running (monitor:running? m)))
+    (monitor:stop m)
+    (and (string? h0)
+         running
+         (= hits 3)
+         (not (monitor:running? m))
+         (if last #t #t))))
+
+(test-hot-update-monitor)

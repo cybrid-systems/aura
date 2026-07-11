@@ -1,0 +1,24 @@
+; lib/std/tests/test_hot_update_region.aura — Issue #1370
+
+(require "std/hot-update" all:)
+(require "std/hot-update/region" all:)
+
+(define (test-hot-update-region)
+  (begin
+    (region:clear!)
+    (let ((m0 (region:get))
+          (own (region:own-mask 42)))
+      (region:isolate! 42)
+      (let ((m1 (region:get)))
+        (hot-update:set-region! 7)
+        (let ((m2 (hot-update:get-region)))
+          (and (= m0 0)
+               (> own 0)
+               (= m1 own)
+               (= m2 7)
+               (region:compatible? 0 99)
+               (region:compatible? 5 0)
+               (region:compatible? 5 5)
+               (not (region:compatible? 5 6))))))))
+
+(test-hot-update-region)

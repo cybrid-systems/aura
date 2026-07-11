@@ -106,6 +106,19 @@
     (list "tui/anim"
       (list "TUI animation timeline (frames + fps ticks)"
             "(require \"std/tui/anim\" all:)"))
+    ; ── AOT hot-update (Issue #1370) ──
+    (list "hot-update"
+      (list "AOT hot-reload + region + health (high-level Agent API)"
+            "(require \"std/hot-update\" all:)"))
+    (list "hot-update/reload"
+      (list "AOT reload strategies (manual, threshold, composite)"
+            "(require \"std/hot-update/reload\" all:)"))
+    (list "hot-update/region"
+      (list "Multi-agent region isolation helpers"
+            "(require \"std/hot-update/region\" all:)"))
+    (list "hot-update/monitor"
+      (list "Hot-update health monitor poll helpers"
+            "(require \"std/hot-update/monitor\" all:)"))
     ; ── IO / system ──
     (list "fs"
       (list "Filesystem helpers"

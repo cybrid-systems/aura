@@ -1,0 +1,4 @@
+make-manual-reload: Any -> Any
+make-threshold-reload: Any Any Any -> Any
+make-composite-reload: Any -> Any
+make-once-reload: Any -> Any
