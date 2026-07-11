@@ -1,4 +1,5 @@
 module;
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -17,6 +18,9 @@ import aura.compiler.ir_soa;
 import aura.compiler.evaluator;
 
 namespace aura::compiler {
+
+// Issue #1244 Phase 1: count IR instructions stamped MacroIntroduced.
+export inline std::atomic<std::uint64_t> hygiene_ir_macro_marker_total{0};
 
 // A slot binding: either a local variable (slot index) or captured (env slot)
 enum class BindingKind : std::uint8_t { Local, Captured, Cell };
@@ -181,8 +185,15 @@ export struct LoweringState {
             // the call-site level (in addition to the existing
             // per-function IRFunction::marker check from #246).
             // 0=User, 1=MacroIntroduced, 2=BoolLiteral.
+            // Issue #1244 Phase 1: full IR hygiene propagation of
+            // SyntaxMarker::MacroIntroduced for JIT/AOT/inliner guards.
             auto mk = current_flat->marker(current_source_id);
             blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);
+            if (mk == aura::ast::SyntaxMarker::MacroIntroduced) {
+                // Observability for hygiene-IR propagation (CompilerMetrics
+                // not always available in lowering TU — bump local atomic).
+                hygiene_ir_macro_marker_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         // Issue #254: dual-emit to SoA (when enabled). Mirrors
         // the AoS push above. The SoA path uses

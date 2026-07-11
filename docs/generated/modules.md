@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**62** `export module` declarations in `src/**/*.ixx`.
+**63** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -35,6 +35,7 @@
 | `aura.compiler.pass_manager` | `src/compiler/pass_manager.ixx` |
 | `aura.compiler.query` | `src/compiler/query.ixx` |
 | `aura.compiler.service` | `src/compiler/service.ixx` |
+| `aura.compiler.soa_view` | `src/compiler/soa_view.ixx` |
 | `aura.compiler.sv_ir` | `src/compiler/sv_ir.ixx` |
 | `aura.compiler.sv_verification_executor` | `src/compiler/sv_verification_executor.ixx` |
 | `aura.compiler.sva_semantic_eval` | `src/compiler/sva_semantic_eval.ixx` |
