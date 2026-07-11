@@ -1502,6 +1502,41 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1306–#1310).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1311–#1315 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1311-1315-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1311)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1311_1315_active) : 1)},
+                {"cow-boundary-pins-mutex",
+                 make_int(m ? load_u64(m, m->cow_boundary_pins_mutex) : 1)},
+                {"jit-runtime-setters-locked",
+                 make_int(m ? load_u64(m, m->jit_runtime_setters_locked) : 1)},
+                {"terminal-buffer-creates",
+                 make_int(m ? load_u64(m, m->terminal_buffer_creates) : 0)},
+                {"terminal-set-cell-total",
+                 make_int(m ? load_u64(m, m->terminal_set_cell_total) : 0)},
+                {"terminal-diff-updates", make_int(m ? load_u64(m, m->terminal_diff_updates) : 0)},
+                {"terminal-present-batch-total",
+                 make_int(m ? load_u64(m, m->terminal_present_batch_total) : 0)},
+                {"render-hotpath-samples",
+                 make_int(m ? load_u64(m, m->render_hotpath_samples) : 0)},
+                {"render-frame-reset-total",
+                 make_int(m ? load_u64(m, m->render_frame_reset_total) : 0)},
+                {"issue-1315", make_int(1315)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1311–#1315).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

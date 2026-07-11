@@ -12,6 +12,7 @@ module;
 #include <fcntl.h>
 #include <dlfcn.h>
 #include "runtime_shared.h"
+#include "observability_metrics.h"
 #include "git_ctx.h"
 
 #if __has_include(<curl/curl.h>)
@@ -721,6 +722,129 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         ::close(static_cast<int>(types::as_int(a[0])));
         return make_void();
+    });
+
+    // ── Issues #1313/#1314 Phase 1: terminal screen buffer + batch present ──
+    // Lightweight in-process buffer (cells as packed int32: ch | fg<<16 | bg<<24).
+    // Full GapBuffer/diff ANSI path is follow-up; this ships Agent-callable surface.
+    struct TermBuf {
+        std::int32_t w = 0;
+        std::int32_t h = 0;
+        std::vector<std::uint32_t> cells;
+    };
+    static std::mutex s_term_mtx;
+    static std::vector<std::unique_ptr<TermBuf>> s_term_bufs;
+
+    add("make-terminal-buffer", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // (make-terminal-buffer width height) → buffer-id
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_int(-1);
+        auto w = as_int(a[0]);
+        auto h = as_int(a[1]);
+        if (w <= 0 || h <= 0 || w > 512 || h > 256)
+            return make_int(-1);
+        auto buf = std::make_unique<TermBuf>();
+        buf->w = static_cast<std::int32_t>(w);
+        buf->h = static_cast<std::int32_t>(h);
+        buf->cells.assign(static_cast<std::size_t>(w * h), static_cast<std::uint32_t>(' '));
+        std::lock_guard<std::mutex> lock(s_term_mtx);
+        auto id = static_cast<std::int64_t>(s_term_bufs.size());
+        s_term_bufs.push_back(std::move(buf));
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->terminal_buffer_creates.fetch_add(1, std::memory_order_relaxed);
+        return make_int(id);
+    });
+
+    add("terminal-set-cell", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // (terminal-set-cell buf-id x y ch [fg [bg]]) → #t/#f
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        auto id = as_int(a[0]);
+        auto x = as_int(a[1]);
+        auto y = as_int(a[2]);
+        auto ch = static_cast<std::uint32_t>(as_int(a[3]) & 0xFFFF);
+        auto fg =
+            a.size() >= 5 && is_int(a[4]) ? static_cast<std::uint32_t>(as_int(a[4]) & 0xFF) : 7u;
+        auto bg =
+            a.size() >= 6 && is_int(a[5]) ? static_cast<std::uint32_t>(as_int(a[5]) & 0xFF) : 0u;
+        std::lock_guard<std::mutex> lock(s_term_mtx);
+        if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+            return make_bool(false);
+        auto& b = *s_term_bufs[id];
+        if (x < 0 || y < 0 || x >= b.w || y >= b.h)
+            return make_bool(false);
+        b.cells[static_cast<std::size_t>(y * b.w + x)] = ch | (fg << 16) | (bg << 24);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
+        return make_bool(true);
+    });
+
+    add("terminal-diff-update", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // (terminal-diff-update old-id new-id) → changed-cell-count
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_int(-1);
+        auto oid = as_int(a[0]);
+        auto nid = as_int(a[1]);
+        std::lock_guard<std::mutex> lock(s_term_mtx);
+        if (oid < 0 || nid < 0 || static_cast<std::size_t>(oid) >= s_term_bufs.size() ||
+            static_cast<std::size_t>(nid) >= s_term_bufs.size() || !s_term_bufs[oid] ||
+            !s_term_bufs[nid])
+            return make_int(-1);
+        auto& o = *s_term_bufs[oid];
+        auto& n = *s_term_bufs[nid];
+        if (o.w != n.w || o.h != n.h)
+            return make_int(static_cast<std::int64_t>(n.cells.size())); // full refresh
+        std::int64_t changed = 0;
+        for (std::size_t i = 0; i < o.cells.size(); ++i) {
+            if (o.cells[i] != n.cells[i])
+                ++changed;
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->terminal_diff_updates.fetch_add(1, std::memory_order_relaxed);
+        return make_int(changed);
+    });
+
+    add("terminal-present-batch", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #1314: (terminal-present-batch buf-id [fd]) → bytes-written
+        // Phase 1: emit a compact text frame of printable cells to stdout/fd.
+        if (a.empty() || !is_int(a[0]))
+            return make_int(-1);
+        auto id = as_int(a[0]);
+        int fd = 1; // stdout
+        if (a.size() >= 2 && is_int(a[1]))
+            fd = static_cast<int>(as_int(a[1]));
+        std::string out;
+        {
+            std::lock_guard<std::mutex> lock(s_term_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+                return make_int(-1);
+            auto& b = *s_term_bufs[id];
+            out.reserve(static_cast<std::size_t>(b.w * b.h + b.h));
+            for (std::int32_t y = 0; y < b.h; ++y) {
+                for (std::int32_t x = 0; x < b.w; ++x) {
+                    auto cell = b.cells[static_cast<std::size_t>(y * b.w + x)];
+                    char c = static_cast<char>(cell & 0xFF);
+                    out.push_back(c >= 32 ? c : ' ');
+                }
+                out.push_back('\n');
+            }
+        }
+        auto n = ::write(fd, out.data(), out.size());
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->terminal_present_batch_total.fetch_add(1, std::memory_order_relaxed);
+            m->terminal_present_bytes_total.fetch_add(n > 0 ? static_cast<std::uint64_t>(n) : 0,
+                                                      std::memory_order_relaxed);
+            m->render_hotpath_samples.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_int(n > 0 ? static_cast<std::int64_t>(n) : 0);
+    });
+
+    add("terminal-present", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Alias of terminal-present-batch for Agent convenience (#1313).
+        auto r = ev.primitives().lookup("terminal-present-batch");
+        if (!r)
+            return make_int(-1);
+        return (*r)(a);
     });
 }
 

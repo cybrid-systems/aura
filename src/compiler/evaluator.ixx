@@ -8590,15 +8590,22 @@ public:
         return last_atomic_batch_snapshot_id_;
     }
     // Issue #738: COW/sub-workspace StableNodeRef boundary pinning.
+    // Issue #1311 (P0): mutex + snapshot iteration — concurrent pin +
+    // propagate was a data race on this vector (and re-entrant push
+    // during outer iteration).
     std::vector<aura::ast::FlatAST::StableNodeRef> cow_boundary_pinned_refs_{};
+    mutable std::mutex cow_boundary_pins_mtx_{};
     std::atomic<std::uint64_t> cow_boundary_pins_total_{0};
     void pin_stable_ref_for_cow_boundary(aura::ast::FlatAST::StableNodeRef ref) noexcept {
         ref.pin_for_cow();
-        for (const auto& existing : cow_boundary_pinned_refs_) {
-            if (existing.id == ref.id && existing.workspace_id == ref.workspace_id)
-                return;
+        {
+            std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+            for (const auto& existing : cow_boundary_pinned_refs_) {
+                if (existing.id == ref.id && existing.workspace_id == ref.workspace_id)
+                    return;
+            }
+            cow_boundary_pinned_refs_.push_back(ref);
         }
-        cow_boundary_pinned_refs_.push_back(ref);
         cow_boundary_pins_total_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_flat_)
             workspace_flat_->bump_pinned_across_boundaries();
@@ -8612,7 +8619,14 @@ public:
             return;
         workspace_flat_->set_workspace_cow_epoch(child_cow_epoch);
         const auto parent_layer = wt->nodes_[child_layer].parent_layer_idx;
-        for (const auto& pinned : cow_boundary_pinned_refs_) {
+        // Snapshot under lock so re-entrant pin_stable_ref does not
+        // invalidate the iteration range (Issue #1311).
+        std::vector<aura::ast::FlatAST::StableNodeRef> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+            snapshot = cow_boundary_pinned_refs_;
+        }
+        for (const auto& pinned : snapshot) {
             if (pinned.workspace_id != parent_layer)
                 continue;
             auto resolved = wt->resolve_stable_ref(parent_layer, pinned, child_layer);
@@ -8640,6 +8654,7 @@ public:
         return cow_boundary_pins_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::size_t cow_boundary_pinned_ref_count() const noexcept {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
         return cow_boundary_pinned_refs_.size();
     }
     // Issue #737: snapshot capture/restore without re-acquiring

@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 #include "hash_meta.h" // FNV constants (#901)
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -389,6 +390,47 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         bool was_set = ev.arena_->defrag_requested();
         ev.arena_->request_defrag();
         return make_bool(!was_set); // true = newly set, false = already set
+    });
+
+    // ── Issue #1315 Phase 1: render-frame arena lifecycle ──
+    // (arena-render-frame-reset) — quick per-frame boundary for TUI loops.
+    // Phase 1: temp_arena_ reset when safe + metrics; full time-boxed compact
+    // is follow-up.
+    add("arena-render-frame-reset", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (ev.any_active_mutation_boundary()) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->render_frame_reset_deferred.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        std::int64_t reclaimed = 0;
+        if (ev.temp_arena_) {
+            // O(1) reset of temp arena used for frame scratch.
+            ev.temp_arena_->reset();
+            reclaimed = 1;
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->render_frame_reset_total.fetch_add(1, std::memory_order_relaxed);
+            m->render_frame_reset_reclaimed.fetch_add(static_cast<std::uint64_t>(reclaimed),
+                                                      std::memory_order_relaxed);
+        }
+        return make_int(reclaimed);
+    });
+
+    add("query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        auto load = [](const std::atomic<std::uint64_t>& a) {
+            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+        };
+        // Minimal hash: reuse string_heap + FlatHashTable via pair list of ints
+        // through existing pattern — return a 3-tuple pair chain as simple ints
+        // via string report for Phase 1 simplicity.
+        auto resets = m ? load(m->render_frame_reset_total) : 0;
+        auto deferred = m ? load(m->render_frame_reset_deferred) : 0;
+        auto reclaimed = m ? load(m->render_frame_reset_reclaimed) : 0;
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::format("resets={} deferred={} reclaimed={} schema=1315",
+                                              resets, deferred, reclaimed));
+        return types::make_string(sidx);
     });
     // (arena:defrag-requested?) — query the defrag request flag.
     // Returns #t if a defrag was requested and not yet acted on,
