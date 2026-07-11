@@ -25,6 +25,7 @@ module;
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <expected>
 #include <format>
@@ -708,16 +709,12 @@ export struct Closure {
     EnvId env_id = NULL_ENV_ID;
     bool dotted = false;
     ast::ASTArena* owner_arena = nullptr; // arena where flat/pool/env lives
-    // Issue #223: epoch captured at closure construction. The
-    // IRExecutor / apply_closure compares this against the
-    // service's bridge_epoch(); a mismatch means the closure's
-    // flat*/pool* are stale (arena was reset or a major mutation
-    // invalidated the captured pointers). Default 0 = legacy
-    // / unset (such closures are NOT auto-invalidated — they
-    // pre-date the tracking and the caller is responsible for
-    // setting this on construction). New code paths that bridge
-    // from the IR executor or the parser should set this to the
-    // current bridge_epoch() at construction time.
+    // Issue #223 / #1365: epoch captured at closure construction.
+    // apply_closure compares against service bridge_epoch(); mismatch
+    // means flat*/pool* may be stale. Default 0 = unstamped. All
+    // construction sites must call Evaluator::stamp_closure_bridge_epoch
+    // (Issue #1365). Unstamped + active tracking → is_bridge_stale true
+    // unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1.
     std::uint64_t bridge_epoch = 0;
 };
 
@@ -1159,32 +1156,41 @@ public:
     void install_compiler_gc_roots_fn(CompilerGcRootsFlushFn fn) noexcept {
         compiler_gc_roots_fn_ = fn;
     }
-    // Issue #223 / #296: returns true if a closure's captured
+    // Issue #223 / #296 / #1365: returns true if a closure's captured
     // bridge_epoch is stale relative to the current epoch.
     //
-    // INVARIANT (Bridge Lifetime Contract):
-    //   1. bridge_epoch == 0 means "legacy / not tracked" and
-    //      is treated as trustworthy (the closure pre-dates
-    //      the tracking; caller manages its own lifetime).
-    //   2. Non-zero values are validated strictly: any
-    //      mismatch is treated as stale and triggers the
-    //      body_source re-parse fallback (or invalidation).
-    //   3. Callers must NOT pass current_epoch == 0 when the
-    //      bridge has been bumped — this would falsely
-    //      validate stale closures.
-    //   4. The bridge_epoch counter is bumped atomically via
-    //      bump_bridge_epoch() on every structural mutation
-    //      that may invalidate captured flat*/pool* pointers.
+    // INVARIANT (Bridge Lifetime Contract, strict as of #1365):
+    //   1. current_epoch == 0 → bridge tracking inactive (pre-service
+    //      or never bumped): never treat as stale.
+    //   2. bridge_epoch == 0 with current_epoch != 0 → unstamped
+    //      while tracking is active → STALE (was legacy trust;
+    //      AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores trust).
+    //   3. Non-zero mismatch → stale (safe-fallback / re-parse).
+    //   4. Construction sites must call stamp_closure_bridge_epoch.
     //
     // State machine:
-    //   fresh closure ─captures─> bridge_epoch = current
+    //   fresh closure ─stamp─> bridge_epoch = current
     //   bump_bridge_epoch() ─bumps─> current
     //   is_bridge_stale(captured, current) ─checks─> bool
     //   stale closure ─falls back─> body_source re-parse
     static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
-        if (bridge_epoch == 0)
-            return false; // legacy / unset: trust the closure
+        if (current_epoch == 0)
+            return false; // tracking inactive
+        if (bridge_epoch == 0) {
+            // Issue #1365: strict by default; legacy opt-in for fixtures
+            static const bool legacy_trust = []() noexcept {
+                if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+                    return e[0] != '0' && e[0] != '\0';
+                return false;
+            }();
+            return !legacy_trust;
+        }
         return bridge_epoch != current_epoch;
+    }
+
+    // Issue #1365: stamp construction-site epoch (call on every new Closure).
+    void stamp_closure_bridge_epoch(Closure& cl) const noexcept {
+        cl.bridge_epoch = current_bridge_epoch();
     }
     void set_session_id(const std::string& id) { session_id_ = id; }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)

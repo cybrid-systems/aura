@@ -140,7 +140,9 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
     const auto cur_epoch = ev.current_bridge_epoch();
-    if (cl.bridge_epoch != 0 && ev.is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
+    // Issue #1365: always consult is_bridge_stale (strict: unstamped → stale
+    // when tracking is active). Previously skipped bridge_epoch==0 entirely.
+    if (ev.is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
         stale = true;
         if (m) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
@@ -1073,14 +1075,13 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 EnvId cap_id = alloc_env_frame_from_env(env);
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-                    closures_[cid] =
-                        Closure{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
-                }
-                // Store param SymIds directly (Issue #145: SoA migration).
-                // Interning already happened at the lambda creation site
-                // (param_syms are SymId from pool->intern).
-                for (auto ps : param_syms) {
-                    closures_[cid].params.push_back(ps);
+                    Closure cl{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
+                    // Issue #1365: stamp bridge_epoch at construction
+                    stamp_closure_bridge_epoch(cl);
+                    // Store param SymIds directly (Issue #145: SoA migration).
+                    for (auto ps : param_syms)
+                        cl.params.push_back(ps);
+                    closures_[cid] = std::move(cl);
                 }
                 return make_closure(cid);
             }
@@ -1173,6 +1174,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
                         auto* copied_env = copy_env(env, target);
                         Closure cl;
+                        // Issue #1365: stamp first so unstamped closures cannot bypass safety
+                        stamp_closure_bridge_epoch(cl);
                         for (auto ps : param_syms) {
                             cl.params.push_back(ps); // Issue #145: SymId, not string
                         }
@@ -2994,8 +2997,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     EnvId cap_id = alloc_env_frame_from_env(*current_env);
                     {
                         std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-                        closures_[cid] =
-                            Closure{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+                        Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+                        // Issue #1365: stamp bridge_epoch at construction
+                        stamp_closure_bridge_epoch(cl);
+                        closures_[cid] = std::move(cl);
                     }
                     // Do NOT cache closure values — the closure captures the current env and a
                     // cached closure would reuse the same env on subsequent evaluations (wrong
