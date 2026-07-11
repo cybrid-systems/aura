@@ -1437,6 +1437,43 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1296–#1300).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1301–#1305 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1301-1305-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1301)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1301_1305_active) : 1)},
+                {"mutation-log-compact-on-rollback",
+                 make_int(m ? load_u64(m, m->mutation_log_compact_on_rollback) : 1)},
+                {"jit-arena-env-bounds-check",
+                 make_int(m ? load_u64(m, m->jit_arena_env_bounds_check) : 1)},
+                {"jit-closure-name-fallback-fixed",
+                 make_int(m ? load_u64(m, m->jit_closure_name_fallback_fixed) : 1)},
+                {"jit-fns-overflow-map-active",
+                 make_int(m ? load_u64(m, m->jit_fns_overflow_map_active) : 1)},
+                {"jit-closure-cache-write-lock",
+                 make_int(m ? load_u64(m, m->jit_closure_cache_write_lock) : 1)},
+                {"issue-1305", make_int(1305)},
+            };
+            if (auto* ws = ev.workspace_flat()) {
+                kv.emplace_back(
+                    "mutation-log-compacted-records",
+                    make_int(static_cast<std::int64_t>(ws->mutation_log_compacted_records())));
+                kv.emplace_back("mutation-log-compact-ops", make_int(static_cast<std::int64_t>(
+                                                                ws->mutation_log_compact_ops())));
+            }
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1301–#1305).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
