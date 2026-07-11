@@ -9189,8 +9189,14 @@ public:
                 // (the outermost one only).
                 ev_->mutation_boundary_held_.store(true, std::memory_order_release);
                 // Issue #1252: coverage counter — every outermost Guard wrap.
+                // Issue #1364: mutation × safepoint telemetry (benign race).
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
                     m->mutation_boundary_primitives_wrapped.fetch_add(1, std::memory_order_relaxed);
+                    if (aura::gc_hooks::in_gc_safepoint()) {
+                        m->mutation_in_safepoint_total.fetch_add(1, std::memory_order_relaxed);
+                        // Collision = mutation entry observed during active STW flag
+                        m->safepoint_collision_total.fetch_add(1, std::memory_order_relaxed);
+                    }
                 }
             }
             if (fine_rollback_)

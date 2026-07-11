@@ -5723,7 +5723,11 @@ struct CompilerMetrics {
 
     // ── Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1256_1260_active{1};
-    std::atomic<std::uint64_t> gc_safepoint_mutation_metrics{1};              // #1256
+    std::atomic<std::uint64_t> gc_safepoint_mutation_metrics{1}; // #1256
+    // Issue #1364: mutation × GC safepoint observability (benign race telemetry)
+    std::atomic<std::uint64_t> mutation_in_safepoint_total{0};                // #1364
+    std::atomic<std::uint64_t> safepoint_yield_on_mutation_total{0};          // #1364
+    std::atomic<std::uint64_t> safepoint_collision_total{0};                  // #1364
     std::atomic<std::uint64_t> workspace_provenance_auto_remapped{0};         // #1257
     std::atomic<std::uint64_t> workspace_cross_layer_validations_on_merge{0}; // #1257
     std::atomic<std::uint64_t> workspace_merge_mismatch_prevented{0};         // #1257
