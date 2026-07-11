@@ -8,6 +8,7 @@ module;
 #include "per_defuse_index.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -719,6 +720,17 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
     // Returns #t on success, #f if the hook is not installed
     // or the node-id is out of range.
     add("compile:mark-narrowing-dirty!", [&ev](const auto& a) -> EvalValue {
+        // Issue #1293 Phase 1: deopt DoS vector — require kCapCompileDeopt.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapCompileDeopt) &&
+            !ev.has_capability(aura::compiler::security::kCapCompile) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: compile-deopt required",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         if (!ev.set_occurrence_dirty_fn_)

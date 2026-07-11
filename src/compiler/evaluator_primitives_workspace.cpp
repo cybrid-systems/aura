@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -406,15 +407,42 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(n->cow_refused_count));
     });
     // (workspace:delete id) → #t
-    add("workspace:delete", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("workspace:delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
+        // Issue #1294 Phase 1: capability gate for workspace control.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: workspace required",
+                                        ev.primitive_error_counter_ptr());
+        }
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        // Issue #1292 (P0): if we delete the active workspace, free of
+        // owned flat/pool would leave ev.workspace_flat_ dangling.
+        // Capture was-active before delete, then refresh like workspace:switch.
+        const bool was_active = (wt->active_idx() == idx);
         if (!wt->delete_child(idx))
             return make_bool(false);
-        if (wt->active_idx() == idx)
+        if (was_active) {
             wt->set_active(0);
+            auto* ws = wt->active();
+            if (ws) {
+                ev.workspace_flat_ = ws->flat;
+                ev.workspace_pool_ = ws->pool;
+                ev.workspace_read_only_ = ws->read_only;
+                if (ws->flat)
+                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+            } else {
+                ev.workspace_flat_ = nullptr;
+                ev.workspace_pool_ = nullptr;
+                ev.workspace_read_only_ = false;
+            }
+            // ASAN fix #107: drop def-use index bound to freed flat.
+            destroy_defuse_index();
+        }
         return make_bool(true);
     });
 

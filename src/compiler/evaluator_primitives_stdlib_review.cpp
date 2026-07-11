@@ -1373,6 +1373,40 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1286–#1290).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1291–#1295 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1291-1295-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1291)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1291_1295_active) : 1)},
+                {"fiber-spawn-fid-holder-fixed",
+                 make_int(m ? load_u64(m, m->fiber_spawn_fid_holder_fixed) : 1)},
+                {"workspace-delete-pointer-refresh",
+                 make_int(m ? load_u64(m, m->workspace_delete_pointer_refresh) : 1)},
+                {"capability-compile-gates-active",
+                 make_int(m ? load_u64(m, m->capability_compile_gates_active) : 1)},
+                {"capability-compile-denials",
+                 make_int(m ? load_u64(m, m->capability_compile_denials) : 0)},
+                {"capability-retrofit-scaffold-active",
+                 make_int(m ? load_u64(m, m->capability_retrofit_scaffold_active) : 1)},
+                {"capability-exception-control-active",
+                 make_int(m ? load_u64(m, m->capability_exception_control_active) : 1)},
+                {"capability-exception-control-denials",
+                 make_int(m ? load_u64(m, m->capability_exception_control_denials) : 0)},
+                {"issue-1295", make_int(1295)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1291–#1295).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

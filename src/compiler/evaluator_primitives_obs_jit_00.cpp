@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
+#include "security_capabilities.h"
 #include "observability_metrics.h"
 #include "compiler/shape.h"
 #include "compiler/value_tags.h"
@@ -142,8 +143,20 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
 
     // (jit:exception-fibers-clear) — Issue #195: clear all
     // per-fiber exception state. Returns void. Used by the
-    // session-reset path; safe to call from Aura code.
+    // session-reset path.
+    // Issue #1295 (P0): requires kCapExceptionControl in sandbox —
+    // process-global clear can corrupt in-flight try/catch on other fibers.
     add("jit:exception-fibers-clear", [&ev](const auto&) -> EvalValue {
+        if (ev.sandbox_mode() &&
+            !ev.has_capability(aura::compiler::security::kCapExceptionControl) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->capability_exception_control_denials.fetch_add(1, std::memory_order_relaxed);
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: exception-control required",
+                                        ev.primitive_error_counter_ptr());
+        }
         aura_exception_clear_all();
         return make_void();
     });

@@ -28,6 +28,18 @@ inline constexpr const char* kCapSelfEvo = "self-evo";
 inline constexpr const char* kCapSynthesize = "synthesize";
 inline constexpr const char* kCapStrategy = "strategy";
 
+// Issues #1293/#1294/#1295 Phase 1: compile / fiber / workspace / exception
+// control capability gates (retrofit scaffold for systematic coverage).
+inline constexpr const char* kCapCompile = "compile";
+inline constexpr const char* kCapCompileStats = "compile-stats";
+inline constexpr const char* kCapCompileDirty = "compile-dirty";
+inline constexpr const char* kCapCompileDeopt = "compile-deopt";
+inline constexpr const char* kCapFiber = "fiber";
+inline constexpr const char* kCapWorkspace = "workspace";
+inline constexpr const char* kCapExceptionControl = "exception-control";
+inline constexpr const char* kCapMacro = "macro";
+inline constexpr const char* kCapQuery = "query";
+
 // Effect bit tags (mirror aura.core.capability_model Effect enum).
 inline constexpr std::uint16_t kEffectNone = 0;
 inline constexpr std::uint16_t kEffectRead = 1 << 0;
