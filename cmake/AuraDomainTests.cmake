@@ -216,6 +216,14 @@ aura_add_issue_test(test_terminal_deprecation)
 aura_issue_test_link_llvm_jit(test_terminal_deprecation)
 add_dependencies(all_test_issue_targets test_terminal_deprecation)
 
+# Issue #1352: terminal buffer lifecycle + per-buffer mutex
+aura_add_issue_test(test_terminal_lifecycle)
+aura_issue_test_link_llvm_jit(test_terminal_lifecycle)
+add_dependencies(all_test_issue_targets test_terminal_lifecycle)
+aura_add_issue_test(test_terminal_concurrent)
+aura_issue_test_link_llvm_jit(test_terminal_concurrent)
+add_dependencies(all_test_issue_targets test_terminal_concurrent)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

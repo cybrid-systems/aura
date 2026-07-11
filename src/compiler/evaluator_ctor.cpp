@@ -64,6 +64,9 @@ void Evaluator::build_primitive_slots() {
 }
 
 Evaluator::Evaluator() {
+    // Issue #1352: retain process-wide terminal buffer registry for this Evaluator.
+    primitives_detail::retain_terminal_buffer_registry();
+
     aura::messaging::g_heap_mutex = [this]() -> std::mutex& { return heap_mutex(); };
 
     top_.set_primitives(&primitives_);
@@ -242,6 +245,10 @@ Evaluator::~Evaluator() {
     // exposed via a similar helper in evaluator_fiber_mutation.cpp.
     unbind_yield_hook_evaluator();
     unbind_query_evaluator();
+
+    // Issue #1352: drop process-wide terminal buffers when the last Evaluator
+    // is destroyed (refcount). Concurrent multi-CS tests share the registry.
+    primitives_detail::release_terminal_buffer_registry();
 
     defuse_index_destroy(&defuse_index_);
     modules_.clear();

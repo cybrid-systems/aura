@@ -23,6 +23,7 @@
 #include "primitives_meta.h"
 #include "runtime_shared.h"
 #include "hash_meta.h"
+#include "terminal_buffer_registry.hh"
 #include <string>
 #include <vector>
 
