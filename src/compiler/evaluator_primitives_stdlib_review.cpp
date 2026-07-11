@@ -1337,6 +1337,42 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Generation wrap / auto-restamp stats (#1282).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1286–#1290 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1286-1290-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1286)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1286_1290_active) : 1)},
+                {"invalidate-per-block-dirty-active",
+                 make_int(m ? load_u64(m, m->invalidate_per_block_dirty_active) : 1)},
+                {"invalidate-per-block-dirty-total",
+                 make_int(m ? load_u64(m, m->invalidate_per_block_dirty_total) : 0)},
+                {"closure-bridge-epoch-safety-active",
+                 make_int(m ? load_u64(m, m->closure_bridge_epoch_safety_active) : 1)},
+                {"closure-bridge-epoch-safety-enforced",
+                 make_int(m ? load_u64(m, m->closure_bridge_epoch_safety_enforced) : 0)},
+                {"guard-shape-linear-unified-active",
+                 make_int(m ? load_u64(m, m->guard_shape_linear_unified_active) : 1)},
+                {"guard-shape-linear-unified-checks",
+                 make_int(m ? load_u64(m, m->guard_shape_linear_unified_checks) : 0)},
+                {"jit-unhandled-fail-fast-active",
+                 make_int(m ? load_u64(m, m->jit_unhandled_fail_fast_active) : 1)},
+                {"ownership-lambda-params-fixed",
+                 make_int(m ? load_u64(m, m->ownership_lambda_params_fixed) : 1)},
+                {"issue-1290", make_int(1290)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1286–#1290).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

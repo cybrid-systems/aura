@@ -5774,6 +5774,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> tree_walker_fallback_reduction{1};      // #1284
     std::atomic<std::uint64_t> jit_exception_opcodes_covered{1};       // #1285
     std::atomic<std::uint64_t> jit_exception_opcode_lowered{0};        // #1285
+
+    // ── Issues #1286–#1290: invalidate/block-dirty, closure epoch, GuardShape, JIT fail-fast,
+    // ownership Lambda ──
+    std::atomic<std::uint64_t> production_sweep_1286_1290_active{1};
+    std::atomic<std::uint64_t> invalidate_per_block_dirty_total{0};     // #1286
+    std::atomic<std::uint64_t> invalidate_per_block_dirty_active{1};    // #1286
+    std::atomic<std::uint64_t> closure_bridge_epoch_safety_enforced{0}; // #1287
+    std::atomic<std::uint64_t> closure_bridge_epoch_safety_active{1};   // #1287
+    std::atomic<std::uint64_t> guard_shape_linear_unified_active{1};    // #1288
+    std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};    // #1288
+    std::atomic<std::uint64_t> jit_unhandled_fail_fast_active{1};       // #1289
+    std::atomic<std::uint64_t> ownership_lambda_params_fixed{1};        // #1290
 };
 
 

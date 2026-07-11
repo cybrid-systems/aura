@@ -7694,6 +7694,14 @@ private:
         // after post-mutate shape/ownership change.
         invalidate_shape(name);
 
+        // Issue #1286: per-block dirty on ir_cache_v2_ for the mutated
+        // function (and cascade dependents below). Enables partial re-lower
+        // consumers via is_block_dirty without full-module wipe.
+        if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
+            vit->second.mark_all_blocks_dirty();
+            metrics_.invalidate_per_block_dirty_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
         // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
         // A mutate:* that triggers this must drain any in-flight compile
         // before erasing the cache entry, otherwise another fiber could
@@ -7769,6 +7777,12 @@ private:
             for (auto& dep_name : dependents) {
                 jit_cache_.erase(dep_name);
                 metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1286: cascade per-block dirty to dependents.
+                if (auto dit = ir_cache_v2_.find(dep_name); dit != ir_cache_v2_.end()) {
+                    dit->second.mark_all_blocks_dirty();
+                    metrics_.invalidate_per_block_dirty_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                }
             }
         }
         // Issue #491: drop stale AuraJIT modules alongside jit_cache_
