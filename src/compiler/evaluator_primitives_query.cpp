@@ -7185,11 +7185,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         auto* ws = ev->workspace_flat();
         if (!ws)
             return make_int(0);
-        // Lazy rebuild on first call: if the index is
-        // empty, build it from the current AST.
-        if (ws->tag_arity_index_size() == 0) {
-            ws->rebuild_tag_arity_index();
-        }
+        // Issue #1371: ensure index is fresh (delta if append-only,
+        // full rebuild if empty/dirty-with-mutate).
+        ws->ensure_tag_arity_index();
         const auto tag = static_cast<std::uint32_t>(as_int(a[0]));
         const auto ar = static_cast<std::uint16_t>(as_int(a[1]));
         const auto nodes = ws->find_by_tag_arity(tag, ar, ar);

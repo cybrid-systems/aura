@@ -1282,12 +1282,10 @@ public:
     // Issue #447: tag+arity pre-index for query:pattern.
     // Index: (NodeTag, arity) → list of NodeIds matching.
     // arity is a 16-bit value (high byte = min children,
-    // low byte = max children; both 0xFF for "any"). We
-    // use a flat vector of (key, value) entries for
-    // simplicity in the P0; the follow-up switches to a
-    // hash map (tag, arity) → vector<NodeId> for O(1)
-    // lookup. P0 builds the index lazily on first
-    // query:pattern call (bumped by the primitive).
+    // low byte = max children; both 0xFF for "any").
+    // Issue #1371: hash map (tag, arity) → vector<NodeId>
+    // for O(1) find_by_tag_arity (was linear vector scan).
+    // Built lazily on first query:pattern / ensure call.
     struct TagArityKey {
         std::uint32_t tag;
         std::uint16_t arity_min;
@@ -1296,7 +1294,26 @@ public:
             return tag == o.tag && arity_min == o.arity_min && arity_max == o.arity_max;
         }
     };
-    std::pmr::vector<std::pair<TagArityKey, std::pmr::vector<NodeId>>> tag_arity_index_;
+    struct TagArityKeyHash {
+        std::size_t operator()(const TagArityKey& k) const noexcept {
+            // FNV-1a style mix of tag + arity range.
+            std::uint64_t h = 14695981039346656037ull;
+            auto mix = [&](std::uint64_t x) noexcept {
+                h ^= x;
+                h *= 1099511628211ull;
+            };
+            mix(static_cast<std::uint64_t>(k.tag));
+            mix(static_cast<std::uint64_t>(k.arity_min));
+            mix(static_cast<std::uint64_t>(k.arity_max));
+            return static_cast<std::size_t>(h);
+        }
+    };
+    using TagArityIndexMap =
+        std::pmr::unordered_map<TagArityKey, std::pmr::vector<NodeId>, TagArityKeyHash>;
+    TagArityIndexMap tag_arity_index_;
+    // AST size() after last full rebuild or successful delta sync.
+    // Enables append-only delta: [built_size, size()).
+    std::size_t tag_arity_index_built_size_ = 0;
     // Issue #447: index hit/miss counters (stats-only,
     // relaxed-ordering). Exposed via (query:query-stats)
     // primitive.
@@ -1314,14 +1331,11 @@ public:
     mutable std::atomic<std::uint64_t> tag_arity_index_delta_hits_{0};
     // Issue #547: dirty flag + mark counter for the
     // tag_arity_index. mark_dirty_upward + structural mutate
-    // paths set this flag; rebuild_tag_arity_index() clears
-    // it. The flag is the "lazy invalidation" hook that
-    // lets callers decide whether to incrementally patch
-    // (rebuild_tag_arity_index_delta(affected)) or full
-    // rebuild (rebuild_tag_arity_index()) on the next query.
+    // paths set this flag; rebuild_tag_arity_index() /
+    // rebuild_tag_arity_index_delta() clear it. Callers use
+    // ensure_tag_arity_index() to choose delta vs full rebuild.
     // Bump counter (tag_arity_index_dirty_marks_) is stats-
-    // only and exposed via the new (query:pattern-index-
-    // stats) primitive.
+    // only and exposed via (query:pattern-index-stats).
     mutable std::atomic<bool> tag_arity_index_dirty_{false};
     mutable std::atomic<std::uint64_t> tag_arity_index_dirty_marks_{0};
     // Module-level eval result cache (int64_t = EvalValue serialization).
@@ -1659,11 +1673,9 @@ public:
             return 0;
         return dirty_[id];
     }
-    // Issue #447: tag+arity pre-index for query:pattern.
-    // Rebuilds the (tag, arity) → vector<NodeId> index
-    // over all live nodes. Idempotent. Stats-only
-    // counter bumped. The follow-up will hook this
-    // into mark_dirty_upward to maintain incrementally.
+    // Issue #447 / #1371: tag+arity pre-index for query:pattern.
+    // Full rebuild of the (tag, arity) → vector<NodeId> hash map
+    // over all live nodes. Idempotent. Stats counters bumped.
     void rebuild_tag_arity_index() noexcept {
         tag_arity_index_.clear();
         // Issue #554: time the rebuild so (query:pattern-
@@ -1678,22 +1690,10 @@ public:
             const std::size_t ar = children_[id].size();
             const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
                                   static_cast<std::uint16_t>(ar)};
-            // Linear scan to find the bucket (P0 — the
-            // follow-up uses a hash map).
-            bool found = false;
-            for (auto& [k, v] : tag_arity_index_) {
-                if (k == key) {
-                    v.push_back(id);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                std::pmr::vector<NodeId> bucket;
-                bucket.push_back(id);
-                tag_arity_index_.push_back({key, std::move(bucket)});
-            }
+            // Issue #1371: O(1) bucket insert via hash map.
+            tag_arity_index_[key].push_back(id);
         }
+        tag_arity_index_built_size_ = n;
         tag_arity_index_rebuilds_.fetch_add(1, std::memory_order_relaxed);
         // Issue #554: record elapsed microseconds for the
         // (query:pattern-index-stats) primitive's AI Agent
@@ -1706,26 +1706,96 @@ public:
         // now in sync with the AST.
         tag_arity_index_dirty_.store(false, std::memory_order_release);
     }
-    // Issue #447: find all NodeIds matching (tag,
+    // Issue #1371: incremental append of [start_id, end_id)
+    // into the hash map. Safe when those node ids are new
+    // (append-only growth). Does NOT remove stale entries for
+    // mutated in-place nodes — callers that change arity of
+    // existing ids must fall back to rebuild_tag_arity_index().
+    void rebuild_tag_arity_index_delta(NodeId start_id, NodeId end_id) noexcept {
+        auto t0 = std::chrono::steady_clock::now();
+        const std::size_t n = size();
+        if (end_id > n)
+            end_id = static_cast<NodeId>(n);
+        for (NodeId id = start_id; id < end_id; ++id) {
+            const auto tag = static_cast<std::uint32_t>(tag_[id]);
+            const std::size_t ar = children_[id].size();
+            const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
+                                  static_cast<std::uint16_t>(ar)};
+            tag_arity_index_[key].push_back(id);
+        }
+        if (static_cast<std::size_t>(end_id) > tag_arity_index_built_size_)
+            tag_arity_index_built_size_ = static_cast<std::size_t>(end_id);
+        tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
+        auto t1 = std::chrono::steady_clock::now();
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        tag_arity_index_rebuild_time_us_.fetch_add(static_cast<std::uint64_t>(us),
+                                                   std::memory_order_relaxed);
+        tag_arity_index_dirty_.store(false, std::memory_order_release);
+    }
+    // Issue #1371: refresh index if dirty. Prefer append-only
+    // delta when AST only grew past last built size; otherwise
+    // full rebuild (handles in-place arity/tag mutations).
+    void ensure_tag_arity_index() noexcept {
+        if (!tag_arity_index_dirty_.load(std::memory_order_acquire)) {
+            // First build: empty map with clean dirty flag.
+            if (tag_arity_index_.empty() && size() > 0)
+                rebuild_tag_arity_index();
+            return;
+        }
+        const std::size_t n = size();
+        if (!tag_arity_index_.empty() && n > tag_arity_index_built_size_) {
+            rebuild_tag_arity_index_delta(static_cast<NodeId>(tag_arity_index_built_size_),
+                                          static_cast<NodeId>(n));
+            return;
+        }
+        rebuild_tag_arity_index();
+    }
+    // Issue #1371: structural dirty + index policy. Marks the
+    // index dirty (like mark_dirty_upward) and, when `id` is a
+    // newly appended node past the last built size, applies a
+    // single-node delta immediately so append-only mutate
+    // batches stay O(1) per node.
+    void mark_dirty_upward_with_index_update(NodeId id) {
+        mark_dirty_upward(id);
+        if (id == NULL_NODE || id >= size())
+            return;
+        if (tag_arity_index_.empty())
+            return; // not built yet — ensure will full-rebuild
+        if (static_cast<std::size_t>(id) >= tag_arity_index_built_size_) {
+            // Append-only: index this node into its bucket.
+            const auto tag = static_cast<std::uint32_t>(tag_[id]);
+            const std::size_t ar = children_[id].size();
+            const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
+                                  static_cast<std::uint16_t>(ar)};
+            tag_arity_index_[key].push_back(id);
+            if (static_cast<std::size_t>(id) + 1 > tag_arity_index_built_size_)
+                tag_arity_index_built_size_ = static_cast<std::size_t>(id) + 1;
+            tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
+            // If only appends happened, clear dirty; ensure still
+            // full-rebuilds if other mutate paths dirtied earlier.
+            // Leave dirty true only if built_size still lags size.
+            if (tag_arity_index_built_size_ >= size())
+                tag_arity_index_dirty_.store(false, std::memory_order_release);
+        }
+        // In-place mutate (id < built_size): leave dirty; ensure
+        // will full-rebuild on next query.
+    }
+    // Issue #447 / #1371: find all NodeIds matching (tag,
     // arity_min, arity_max). Returns a copy of the
-    // bucket. Bumps hit/miss counter accordingly.
-    // The P0 build of the index is lazy: callers
-    // should call rebuild_tag_arity_index() first
-    // (the (query:query-stats) primitive does this
-    // implicitly on the first call).
+    // bucket. O(1) hash lookup. Bumps hit/miss counter.
+    // Callers should call ensure_tag_arity_index() /
+    // rebuild_tag_arity_index() first when the index may
+    // be dirty (query:pattern does this).
     [[nodiscard]] std::pmr::vector<NodeId>
     find_by_tag_arity(std::uint32_t tag, std::uint16_t arity_min, std::uint16_t arity_max) const {
-        std::pmr::vector<NodeId> out;
         const TagArityKey key{tag, arity_min, arity_max};
-        for (const auto& [k, v] : tag_arity_index_) {
-            if (k == key) {
-                out = v;
-                tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
-                return out;
-            }
+        auto it = tag_arity_index_.find(key);
+        if (it != tag_arity_index_.end()) {
+            tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
+            return it->second;
         }
         tag_arity_index_misses_.fetch_add(1, std::memory_order_relaxed);
-        return out;
+        return {};
     }
     // Issue #447: query-stats accessors.
     [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
@@ -2406,6 +2476,8 @@ public:
         , type_cache_binding_gen_(alloc)
         , schema_cache_(alloc)
         , error_kind_(alloc)
+        // Issue #1371: tag_arity hash map (declared before value_cache_).
+        , tag_arity_index_(alloc)
         , value_cache_(alloc)
         , mutation_log_(alloc)
         , narrowing_log_(alloc)
@@ -3883,6 +3955,7 @@ public:
         // reset. The next query:pattern call will rebuild
         // it lazily.
         tag_arity_index_.clear();
+        tag_arity_index_built_size_ = 0;
         type_id_.clear();
         mutation_log_.clear();
         // Issue #282: clear narrowing provenance on FlatAST reset.
@@ -6076,6 +6149,18 @@ public:
             auto_compact_on_commit_count_.fetch_add(1, std::memory_order_relaxed);
             if (size() >= max_live_nodes_warn_)
                 live_nodes_threshold_warn_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #1371: after batch commit, refresh tag_arity
+        // index via delta when only appends occurred; otherwise
+        // leave dirty for ensure_tag_arity_index on next query.
+        if (tag_arity_index_dirty_.load(std::memory_order_acquire)) {
+            const std::size_t n = size();
+            if (!tag_arity_index_.empty() && n > tag_arity_index_built_size_) {
+                rebuild_tag_arity_index_delta(static_cast<NodeId>(tag_arity_index_built_size_),
+                                              static_cast<NodeId>(n));
+            }
+            // else: in-place mutates or empty index — keep dirty
+            // so ensure_tag_arity_index() full-rebuilds later.
         }
     }
 

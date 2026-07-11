@@ -314,6 +314,11 @@ aura_add_issue_test(test_hot_update_stdlib)
 aura_issue_test_link_llvm_jit(test_hot_update_stdlib)
 add_dependencies(all_test_issue_targets test_hot_update_stdlib)
 
+# Issue #1371: tag_arity_index_ unordered_map + delta path
+aura_add_issue_test(test_tag_arity_index_perf)
+aura_issue_test_link_llvm_jit(test_tag_arity_index_perf)
+add_dependencies(all_test_issue_targets test_tag_arity_index_perf)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
