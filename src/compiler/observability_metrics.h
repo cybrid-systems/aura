@@ -5772,6 +5772,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261
     std::atomic<std::uint64_t> dep_graph_nested_lambda_full_dirty{0}; // #1261
     std::atomic<std::uint64_t> dep_graph_hygiene_propagate{0};        // #1261
+    // Issue #1376: dep_graph_ record_dependency lock observability
+    std::atomic<std::uint64_t> dep_graph_record_total{0};       // every record_dependency call
+    std::atomic<std::uint64_t> dep_graph_record_dedup_total{0}; // skipped as already present
+    std::atomic<std::uint64_t> dep_graph_record_inserted{0};    // new edges written
     std::atomic<std::uint64_t> hot_swap_versioned_mangle_enforced{0}; // #1262
     std::atomic<std::uint64_t> aot_region_filter_enforced{1};         // #1262
     std::atomic<std::uint64_t> arena_reset_dirty_forced{0};           // #1263
