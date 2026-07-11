@@ -234,16 +234,22 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         if (stolen->is_stealable() &&
             stolen->last_yield_reason() == YieldReason::MutationBoundary) {
             stolen->bump_steal_deferred_mutation_boundary();
-            // Issue #783: refine the deferral into
+            // Issue #783 + #1254: refine the deferral into
             // "inner" (depth>0 — actual safety hazard,
             // would risk deadlock / hygiene drift).
             // Outermost (depth==0) defers are
             // separately tracked via #754's bias
-            // feature (still deferred). For now, all
-            // non-safe MutationBoundary defers are
-            // depth>0 inner defers (since the safe
-            // path is taken above when depth==0).
-            stolen->bump_steal_inner_mutation_boundary_deferred();
+            // feature (still deferred). Non-safe
+            // MutationBoundary defers with depth>0 are
+            // dedicated inner-boundary steals.
+            // Issue #783 + #1254: inner (depth>0) is the actual safety hazard.
+            if (stolen->is_at_inner_mutation_boundary()) {
+                stolen->bump_steal_inner_mutation_boundary_deferred();
+                metrics::adaptive_steal_stats().steal_deferred_inner_boundary.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                stolen->bump_steal_inner_mutation_boundary_deferred();
+            }
             call_steal_deferred_violation();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
                 1, std::memory_order_relaxed);

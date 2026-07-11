@@ -74,11 +74,12 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
     if (ws_id >= ws_flat_->size() || pat_id == NULL_NODE)
         return (pat_id == NULL_NODE) ? (ws_id == NULL_NODE) : false;
 
-    // Issue #421: recursive hygiene — refuse to descend into
-    // MacroIntroduced subtrees when the caller opted out of
-    // :include-macro-introduced / :respect-hygiene #t.
+    // Issue #421 + #1255: recursive hygiene — hard skip MacroIntroduced
+    // subtrees when the caller did not pass :include-macro-introduced /
+    // :allow-macro? #t. Always count the filter (fast path included).
     if (skip_macro_introduced_ && ws_flat_->is_macro_introduced(ws_id)) {
         ++recursive_macro_skipped_;
+        ++macro_intro_filtered_strict_;
         return false;
     }
 

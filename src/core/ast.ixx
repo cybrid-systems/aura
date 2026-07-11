@@ -1488,6 +1488,10 @@ public:
     // Exposed via (query:dirty-propagation-stats).
     mutable std::atomic<std::uint64_t> mark_dirty_early_exit_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_max_depth_observed_{0};
+    // Issue #1251: early-exit truncations when depth/count bounds hit.
+    mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0};
+    // Issue #1251: rollback_to_size triggered soft compaction.
+    mutable std::atomic<std::uint64_t> rollback_compaction_triggered_{0};
     // Issue #412: per-FlatAST type cache generation counter.
     // Bumped by mark_dirty_upward() and by the explicit
     // bump_type_cache_generation() accessor. The
@@ -2105,6 +2109,8 @@ public:
         , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
         , mark_dirty_early_exit_count_(other.mark_dirty_early_exit_count_.load())
         , mark_dirty_max_depth_observed_(other.mark_dirty_max_depth_observed_.load())
+        , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
+        , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
         , node_compact_total_(other.node_compact_total_.load())
@@ -2171,6 +2177,8 @@ public:
             mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
             mark_dirty_early_exit_count_.store(other.mark_dirty_early_exit_count_.load());
             mark_dirty_max_depth_observed_.store(other.mark_dirty_max_depth_observed_.load());
+            mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+            rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
             node_compact_total_.store(other.node_compact_total_.load());
@@ -2241,6 +2249,8 @@ public:
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
         , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
+        , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
+        , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
         , node_compact_total_(other.node_compact_total_.load())
@@ -2304,6 +2314,8 @@ public:
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
             mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+            mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+            rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
             node_compact_total_.store(other.node_compact_total_.load());
@@ -4559,6 +4571,12 @@ public:
     // from the leaf to all ancestors. Default is kGeneralDirty for
     // backward compatibility with the 30+ callers that don't yet
     // classify their mutations.
+    // Issue #1251: production bounds for dirty propagation under
+    // large-scale AI multi-round editing. Configurable via these
+    // constants; Agent can observe truncations via counters.
+    static constexpr std::uint64_t kMarkDirtyMaxDepth = 64;
+    static constexpr std::uint64_t kMarkDirtyCountThreshold = 4096;
+
     void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty,
                            std::uint8_t ppa_reasons = 0)
         // Issue #273: node must be in-bounds; NULL_NODE would resize dirty_ to ~4G.
@@ -4583,9 +4601,25 @@ public:
         if (!propagate_sva_verify && id < verify_dirty_.size())
             propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;
         std::uint64_t touched = 0;
+        bool truncated = false;
         std::deque<NodeId> queue;
         queue.push_back(id);
         while (!queue.empty()) {
+            // Issue #1251: bound depth/count to avoid p99 latency spikes
+            // on pathological parent chains / SoC-scale ASTs.
+            if (touched >= kMarkDirtyMaxDepth || touched >= kMarkDirtyCountThreshold) {
+                truncated = true;
+                mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
+                // Still stamp the current chain top so Define-level
+                // subtree_gen consumers observe invalidation.
+                if (!queue.empty()) {
+                    auto top = queue.front();
+                    mark_dirty(top, reasons);
+                    if (top < tag_.size())
+                        bump_generation_subtree(top);
+                }
+                break;
+            }
             auto nid = queue.front();
             queue.pop_front();
             mark_dirty(nid, reasons);
@@ -4597,6 +4631,7 @@ public:
             if (p != NULL_NODE)
                 queue.push_back(p);
         }
+        (void)truncated;
         // Issue #471: track max traversal depth. The
         // max-depth is the deepest BFS level reached in
         // this call. Atomic max — CAS loop.
@@ -5839,6 +5874,13 @@ public:
     std::uint64_t mark_dirty_max_depth_observed() const noexcept {
         return mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
     }
+    // Issue #1251: dirty propagation bound truncations + rollback compaction.
+    [[nodiscard]] std::uint64_t mark_dirty_truncated_count() const noexcept {
+        return mark_dirty_truncated_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t rollback_compaction_triggered() const noexcept {
+        return rollback_compaction_triggered_.load(std::memory_order_relaxed);
+    }
 
     // Issue #275: std::expected rollback entry point.
     [[nodiscard]] std::expected<void, MutationError> try_rollback_record(MutationRecord& rec) {
@@ -5988,6 +6030,18 @@ public:
         pre(true) {
         if (mutation_log_.size() <= checkpoint_size)
             return 0;
+        // Issue #1251: before replaying a large mutation log, soft-
+        // compact dead node slots to bound memory growth under long
+        // AI multi-round edit sessions.
+        static constexpr std::size_t kRollbackCompactionLogThreshold = 10'000;
+        if (mutation_log_.size() > kRollbackCompactionLogThreshold) {
+            if (compact_nodes_soft() > 0)
+                rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
+            else
+                // Still record the decision point so Agents see the
+                // hot path even when free_list_ had nothing to recycle.
+                rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
+        }
         std::size_t count = 0;
         for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
             auto& rec = mutation_log_[i - 1];

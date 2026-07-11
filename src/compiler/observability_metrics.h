@@ -5680,6 +5680,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> agent_string_heap_bounds_hardened{1};     // #1249
     std::atomic<std::uint64_t> stable_ref_auto_pin_total{0};             // #1250
     std::atomic<std::uint64_t> stable_ref_full_path_enforced{1};         // #1250
+
+    // ── Issues #1251–#1255: dirty/Guard/steal/pattern Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1251_1255_active{1};
+    std::atomic<std::uint64_t> mark_dirty_bounds_enforced{1};             // #1251
+    std::atomic<std::uint64_t> rollback_compaction_path{1};               // #1251
+    std::atomic<std::uint64_t> mutation_boundary_primitives_wrapped{0};   // #1252
+    std::atomic<std::uint64_t> mutation_boundary_linear_revalidations{0}; // #1252
+    std::atomic<std::uint64_t> mutation_boundary_steal_recoveries{0};     // #1252
+    std::atomic<std::uint64_t> mutation_hold_duration_us_total{0};        // #1253
+    std::atomic<std::uint64_t> mutation_hold_samples{0};                  // #1253
+    std::atomic<std::uint64_t> mutation_hold_duration_us_max{0};          // #1253
+    std::atomic<std::uint64_t> mutation_too_long_total{0};                // #1253
+    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};          // #1254
+    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};        // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};      // #1255
+    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};       // #1255
+    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};    // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};   // #1255
 };
 
 

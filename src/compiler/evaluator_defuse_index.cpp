@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -799,10 +800,16 @@ void Evaluator::install_defuse_subsystem() {
 
         // Incremental path: only rebuild callers_of_ for affected syms
         // when flat size hasn't changed (mutations that modify existing nodes).
+        // Issue #1255: precise incremental DefUse maintenance after structural mutate.
         if (!affected_sym_ids.empty()) {
             if (workspace_flat_->size() == idx->flat_size_at_build_) {
                 idx->update_callers_for(*workspace_flat_, affected_sym_ids);
                 defuse_version_.store(1, std::memory_order_relaxed);
+                ++defuse_incremental_updates_;
+                if (compiler_metrics_) {
+                    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                    m->defuse_incremental_updates_total.fetch_add(1, std::memory_order_relaxed);
+                }
                 return idx;
             }
         }
@@ -811,6 +818,11 @@ void Evaluator::install_defuse_subsystem() {
         idx->build(*workspace_flat_, *workspace_pool_);
         defuse_version_.store(1, std::memory_order_relaxed);
         defuse_rebuild_count_++;
+        ++defuse_full_rebuild_fallbacks_;
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->defuse_full_rebuild_fallbacks_total.fetch_add(1, std::memory_order_relaxed);
+        }
         return idx;
     };
 

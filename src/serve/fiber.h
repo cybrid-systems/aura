@@ -152,9 +152,20 @@ public:
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         if (r != YieldReason::MutationBoundary)
             return true;
-        // Issue #588: read this fiber's stack depth, not the
-        // thief thread's thread_local depth.
-        return aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) == 0;
+        // Issue #588 + #1254: only outermost (depth == 0) is steal-safe.
+        // Inner MutationBoundaryGuard nesting must force defer — steals
+        // inside nested atomic sections risk partial rollback races.
+        const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_);
+        return depth == 0;
+    }
+
+    // Issue #1254: true when yielded at MutationBoundary with depth > 0
+    // (inner nested Guard). Used by steal loop for dedicated metrics.
+    [[nodiscard]] bool is_at_inner_mutation_boundary() const noexcept {
+        auto r = last_yield_reason_.load(std::memory_order_acquire);
+        if (r != YieldReason::MutationBoundary)
+            return false;
+        return aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) > 0;
     }
 
     // Issue #451: yield_classification() — returns a
