@@ -5911,6 +5911,32 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cap_retrofit_scaffold_active{1};
     std::atomic<std::uint64_t> cap_capability_constant_count{8}; // new caps this batch
     std::atomic<std::uint64_t> cap_denial_total{0};
+
+    // ── Issues #1331–#1343: 5-layer TUI pixel rendering architecture ──
+    std::atomic<std::uint64_t> production_sweep_1331_1343_active{1};
+    // #1331 META
+    std::atomic<std::uint64_t> tui_architecture_plan_active{1};
+    std::atomic<std::uint64_t> tui_layers_total{5};
+    // #1332 runtime
+    std::atomic<std::uint64_t> tui_runtime_active{1};
+    std::atomic<std::uint64_t> tui_init_total{0};
+    std::atomic<std::uint64_t> tui_present_total{0};
+    std::atomic<std::uint64_t> tui_cell_writes{0};
+    std::atomic<std::uint64_t> tui_diff_cells_emitted{0};
+    // #1333 primitives
+    std::atomic<std::uint64_t> tui_primitives_active{1};
+    // #1334–#1335 stdlib
+    std::atomic<std::uint64_t> tui_stdlib_active{1};
+    // #1337 demo
+    std::atomic<std::uint64_t> tui_cyber_cat_demo_active{1};
+    // #1342 opts
+    std::atomic<std::uint64_t> tui_sync_output_active{1};
+    std::atomic<std::uint64_t> tui_sync_output_frames{0};
+    std::atomic<std::uint64_t> tui_half_block_pixels{0};
+    // #1343 extensions
+    std::atomic<std::uint64_t> tui_mouse_scaffold_active{1};
+    std::atomic<std::uint64_t> tui_mouse_enable_total{0};
+    std::atomic<std::uint64_t> tui_games_scaffold_active{1};
 };
 
 

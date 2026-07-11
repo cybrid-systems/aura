@@ -1,0 +1,44 @@
+; examples/cyber_cat.aura — Issue #1337 Phase 1: cyber cat TUI demo (headless-safe)
+;
+; Run:  aura examples/cyber_cat.aura
+; Or:   (load "examples/cyber_cat.aura") (cyber-cat-demo)
+
+(define (rgb r g b) (+ (* r 65536) (* g 256) b))
+(define NEON-PINK (rgb 255 50 200))
+(define MATRIX-GREEN (rgb 0 200 80))
+(define BG 0)
+
+(define (cyber-cat-demo)
+  (tui:init "Cyber Cat v1.0" 48 16)
+  (tui:hide-cursor)
+  (let ((frame 0) (cat-col 4))
+    (let loop ((i 0))
+      (if (>= i 24)
+        (begin (tui:show-cursor) (tui:shutdown) #t)
+        (begin
+          (set! frame (+ frame 1))
+          (set! cat-col (+ 4 (modulo frame 20)))
+          ; matrix-ish dots
+          (tui:clear BG BG)
+          (let y-loop ((y 1))
+            (if (>= y 14) #t
+              (begin
+                (tui:cell (modulo (+ y frame) 48) y
+                          (if (= (modulo (+ y frame) 5) 0) "#" " ")
+                          MATRIX-GREEN BG 0)
+                (y-loop (+ y 1)))))
+          ; cat glyph line
+          (tui:cell cat-col 8 "/" NEON-PINK BG 0)
+          (tui:cell (+ cat-col 1) 8 "\\" NEON-PINK BG 0)
+          (tui:cell (+ cat-col 2) 8 "_" NEON-PINK BG 0)
+          (tui:cell (+ cat-col 3) 8 "/" NEON-PINK BG 0)
+          (tui:cell (+ cat-col 4) 8 "\\" NEON-PINK BG 0)
+          (tui:cell 1 0 "C" NEON-PINK BG 1)
+          (tui:cell 2 0 "Y" NEON-PINK BG 1)
+          (tui:cell 3 0 "B" NEON-PINK BG 1)
+          (tui:cell 4 0 "E" NEON-PINK BG 1)
+          (tui:cell 5 0 "R" NEON-PINK BG 1)
+          (tui:present)
+          (loop (+ i 1)))))))
+
+(cyber-cat-demo)

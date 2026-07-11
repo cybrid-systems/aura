@@ -1,0 +1,37 @@
+; lib/std/tui/sprite.aura — Issues #1334 Phase 1: pixel art sprites
+
+(export make-sprite sprite-rows sprite-width sprite-height draw-sprite draw-anim
+        CAT-IDLE-1 CAT-WALK-1 cat-frames)
+
+(define (make-sprite rows) (cons 'sprite rows))
+(define (sprite-rows sp) (cdr sp))
+(define (sprite-width sp)
+  (let ((rows (sprite-rows sp)))
+    (if (null? rows) 0 (string-length (car rows)))))
+(define (sprite-height sp) (length (sprite-rows sp)))
+
+(define (draw-sprite col row sprite fg bg)
+  (let loop ((r 0) (lines (sprite-rows sprite)))
+    (if (null? lines) #t
+      (begin
+        (draw-text col (+ row r) (car lines) fg bg)
+        (loop (+ r 1) (cdr lines))))))
+
+(define (draw-anim col row frames frame-idx fg bg)
+  (let* ((n (length frames))
+         (frame (list-ref frames (modulo frame-idx n))))
+    (draw-sprite col row frame fg bg)))
+
+(define CAT-IDLE-1
+  (make-sprite
+    (list "  /\\_/\\  "
+          " ( o.o ) "
+          "  > ^ <  ")))
+
+(define CAT-WALK-1
+  (make-sprite
+    (list "  /\\_/\\  "
+          " ( o.o ) "
+          "  > ~ <_ ")))
+
+(define cat-frames (list CAT-IDLE-1 CAT-WALK-1 CAT-IDLE-1 CAT-WALK-1))

@@ -1,0 +1,40 @@
+; lib/std/tui/run.aura — Issues #1335 Phase 1: game loop + tui:run
+
+(export tui:run game-loop continuous-render text-scroller-demo)
+
+; Enter TUI (headless-safe), run thunk, always shutdown.
+(define (tui:run title thunk)
+  (tui:init title)
+  (tui:hide-cursor)
+  (let ((result (thunk)))
+    (tui:show-cursor)
+    (tui:shutdown)
+    result))
+
+; Simplified fixed-iteration game loop (no real clock; n-frames or until tick returns #f)
+(define (game-loop fps tick-fn render-fn)
+  (let ((max-frames (* fps 2)))
+    (let loop ((i 0))
+      (if (>= i max-frames) #t
+        (if (tick-fn)
+          (begin
+            (render-fn)
+            (tui:present)
+            (loop (+ i 1)))
+          #t)))))
+
+(define (continuous-render fps render-fn)
+  (game-loop fps (lambda () #t) render-fn))
+
+(define (text-scroller-demo)
+  (tui:run "Text Scroller" (lambda ()
+    (let ((x 0))
+      (game-loop 10
+        (lambda ()
+          (set! x (modulo (+ x 1) 40))
+          (let ((e (tui:read-event 0)))
+            (if (and (pair? e) (string=? (car e) "quit")) #f #t)))
+        (lambda ()
+          (tui:clear 0 0)
+          (tui:cell x 5 "H" 65535 0 0)
+          (tui:cell (+ x 1) 5 "I" 65535 0 0)))))))

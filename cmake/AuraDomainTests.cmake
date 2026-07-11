@@ -191,6 +191,11 @@ aura_add_issue_test(test_production_sweep_1325_1330)
 aura_issue_test_link_llvm_jit(test_production_sweep_1325_1330)
 add_dependencies(all_test_issue_targets test_production_sweep_1325_1330)
 
+# Issues #1331–#1343: 5-layer TUI pixel rendering architecture
+aura_add_issue_test(test_production_sweep_1331_1343)
+aura_issue_test_link_llvm_jit(test_production_sweep_1331_1343)
+add_dependencies(all_test_issue_targets test_production_sweep_1331_1343)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
