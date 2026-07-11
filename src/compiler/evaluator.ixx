@@ -14,6 +14,7 @@ module;
 // here in the module preamble (avoids the import-only
 // restriction on .h).
 #include "observability_metrics.h"
+#include "primitives_meta.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include <algorithm>
@@ -130,6 +131,13 @@ export struct PrimMeta {
 
 export class Primitives {
 public:
+    // Issue #1356: compact hot-tier entry.
+    struct HotEntry {
+        std::string name;
+        PrimFn fn;
+        std::size_t slot = 0;
+    };
+
     Primitives();
     // Issue #914: string_view primary API (string& converts implicitly).
     [[nodiscard]] std::optional<PrimFn> lookup(std::string_view n) const pre(!n.empty());
@@ -137,11 +145,15 @@ public:
     void add(const std::string& name, PrimFn fn, PrimMeta meta) {
         const std::size_t slot = ordered_names_.size();
         ordered_names_.push_back(name);
+        const bool is_hot = (meta.perf_tier == kPrimPerfHot);
         meta_.push_back(std::move(meta));
         fn_slots_.push_back(fn);
         table_[name] = std::move(fn);
         // Issue #899: O(1) reverse index for slot_for_name.
         name_to_slot_[ordered_names_.back()] = slot;
+        // Issue #1356: provisional hot-tier entry (finalized after all regs).
+        if (is_hot)
+            hot_map_[ordered_names_.back()] = fn_slots_.back();
     }
     // Issue #709: O(1) slot dispatch — dense table parallel to ordered_names_.
     [[nodiscard]] std::optional<PrimFn> slot_lookup_fast(std::size_t slot) const {
@@ -149,11 +161,19 @@ public:
             return std::nullopt;
         return fn_slots_[slot];
     }
-    // Issue #891: lookup by string_view without temporary std::string
-    // (transparent hash on table_).
+    // Issue #891/#1356: name lookup — HotTierTable first, then main table_.
     [[nodiscard]] std::optional<PrimFn> lookup_cstr(std::string_view name) const {
         if (name.empty())
             return std::nullopt;
+        // Issue #1356: prefer compact hot map (hot-tier primitives).
+        if (auto hit = hot_map_.find(name); hit != hot_map_.end()) {
+            hot_dispatch_hits_.fetch_add(1, std::memory_order_relaxed);
+            if (aura::core::arena_policy::in_render_hotpath())
+                hot_dispatch_hits_render_.fetch_add(1, std::memory_order_relaxed);
+            return hit->second;
+        }
+        if (aura::core::arena_policy::in_render_hotpath())
+            cold_dispatch_fallback_.fetch_add(1, std::memory_order_relaxed);
         auto it = table_.find(name);
         return it != table_.end() ? std::optional(it->second) : std::nullopt;
     }
@@ -179,7 +199,46 @@ public:
         const auto slot = slot_for_name(name);
         if (slot < meta_.size())
             meta_[slot] = std::move(meta);
+        // Keep hot map coherent when tier is backfilled later.
+        if (slot < meta_.size() && slot < ordered_names_.size() && slot < fn_slots_.size()) {
+            if (meta_[slot].perf_tier == kPrimPerfHot)
+                hot_map_[ordered_names_[slot]] = fn_slots_[slot];
+            else
+                hot_map_.erase(ordered_names_[slot]);
+        }
     }
+    // Issue #1356: rebuild HotTierTable from meta_ after full registration.
+    void finalize_hot_table() {
+        hot_map_.clear();
+        hot_entries_.clear();
+        for (std::size_t i = 0; i < ordered_names_.size() && i < meta_.size(); ++i) {
+            if (meta_[i].perf_tier != kPrimPerfHot)
+                continue;
+            HotEntry e;
+            e.name = ordered_names_[i];
+            e.fn = fn_slots_[i];
+            e.slot = i;
+            hot_entries_.push_back(std::move(e));
+            hot_map_[ordered_names_[i]] = fn_slots_[i];
+        }
+        // Sort by name for stable iteration / optional binary search.
+        std::sort(hot_entries_.begin(), hot_entries_.end(),
+                  [](const HotEntry& a, const HotEntry& b) { return a.name < b.name; });
+        hot_table_size_.store(hot_map_.size(), std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t hot_table_size() const noexcept {
+        return hot_table_size_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t hot_dispatch_hits() const noexcept {
+        return hot_dispatch_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t hot_dispatch_hits_render() const noexcept {
+        return hot_dispatch_hits_render_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t cold_dispatch_fallback() const noexcept {
+        return cold_dispatch_fallback_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] const std::vector<HotEntry>& hot_entries() const noexcept { return hot_entries_; }
     [[nodiscard]] std::size_t category_meta_count(std::string_view category) const noexcept {
         std::size_t n = 0;
         for (const auto& m : meta_)
@@ -191,6 +250,14 @@ public:
         std::size_t n = 0;
         for (const auto& m : meta_)
             if (!m.doc.empty() && !m.schema.empty())
+                ++n;
+        return n;
+    }
+    // Count meta with perf_tier=hot (may exceed hot_table until finalize).
+    [[nodiscard]] std::size_t hot_meta_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& m : meta_)
+            if (m.perf_tier == kPrimPerfHot)
                 ++n;
         return n;
     }
@@ -214,6 +281,13 @@ public:
 
 private:
     std::unordered_map<std::string, PrimFn, StringHash, StringEq> table_;
+    // Issue #1356: HotTierTable — name → fn for kPrimPerfHot only.
+    std::unordered_map<std::string, PrimFn, StringHash, StringEq> hot_map_;
+    std::vector<HotEntry> hot_entries_;
+    mutable std::atomic<std::uint64_t> hot_dispatch_hits_{0};
+    mutable std::atomic<std::uint64_t> hot_dispatch_hits_render_{0};
+    mutable std::atomic<std::uint64_t> cold_dispatch_fallback_{0};
+    std::atomic<std::size_t> hot_table_size_{0};
     // Issue #899: reverse index name → slot for O(1) slot_for_name.
     std::unordered_map<std::string, std::size_t, StringHash, StringEq> name_to_slot_;
     // Issue #145 Phase 2.4: pmr-backed to match Evaluator's

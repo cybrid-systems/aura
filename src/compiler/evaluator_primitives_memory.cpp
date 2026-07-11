@@ -538,6 +538,41 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
     });
 
+    // ── Issue #1356: HotTierTable dispatch stats ──
+    add("query:prim-dispatch-stats", [&ev](const auto&) -> EvalValue {
+        auto& p = ev.primitives();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto hot_sz = static_cast<std::int64_t>(p.hot_table_size());
+        const auto hits = static_cast<std::int64_t>(p.hot_dispatch_hits());
+        const auto hits_r = static_cast<std::int64_t>(p.hot_dispatch_hits_render());
+        const auto cold = static_cast<std::int64_t>(p.cold_dispatch_fallback());
+        if (m) {
+            m->prim_hot_table_size.store(static_cast<std::uint64_t>(hot_sz),
+                                         std::memory_order_relaxed);
+            m->prim_hot_dispatch_hits.store(static_cast<std::uint64_t>(hits),
+                                            std::memory_order_relaxed);
+            m->prim_hot_dispatch_hits_render.store(static_cast<std::uint64_t>(hits_r),
+                                                   std::memory_order_relaxed);
+            m->prim_cold_dispatch_fallback.store(static_cast<std::uint64_t>(cold),
+                                                 std::memory_order_relaxed);
+        }
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(
+            std::format("hot_table_size={} hot_dispatch_hits={} hot_dispatch_hits_render={} "
+                        "cold_dispatch_fallback={} hot_meta_count={} schema=1356",
+                        hot_sz, hits, hits_r, cold, static_cast<std::int64_t>(p.hot_meta_count())));
+        return types::make_string(sidx);
+    });
+    add("prim-hot-table-size", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(ev.primitives().hot_table_size()));
+    });
+    add("prim-hot-dispatch-hits", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(ev.primitives().hot_dispatch_hits()));
+    });
+    add("prim-cold-dispatch-fallback", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(ev.primitives().cold_dispatch_fallback()));
+    });
+
     add("query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         auto load = [](const std::atomic<std::uint64_t>& a) {

@@ -114,6 +114,14 @@ Evaluator::Evaluator() {
     // Issue #697: backfill SV/EDA PrimMeta after compile partition registers
     // eda:run-verification-feedback and eda:demo-sv-self-evolution.
     backfill_eda_sv_primitive_meta();
+
+    // Issue #1356: rebuild HotTierTable after all registrations + meta backfill.
+    primitives_.finalize_hot_table();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->prim_hot_table_size.store(static_cast<std::uint64_t>(primitives_.hot_table_size()),
+                                     std::memory_order_relaxed);
+        m->prim_hot_tier_active.store(1, std::memory_order_relaxed);
+    }
 }
 
 void Evaluator::backfill_eda_sv_primitive_meta() {

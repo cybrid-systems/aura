@@ -239,6 +239,11 @@ aura_add_issue_test(test_render_mutation_checkpoint)
 aura_issue_test_link_llvm_jit(test_render_mutation_checkpoint)
 add_dependencies(all_test_issue_targets test_render_mutation_checkpoint)
 
+# Issue #1356: HotTierTable tier-based primitive dispatch
+aura_add_issue_test(test_tier_dispatch)
+aura_issue_test_link_llvm_jit(test_tier_dispatch)
+add_dependencies(all_test_issue_targets test_tier_dispatch)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
