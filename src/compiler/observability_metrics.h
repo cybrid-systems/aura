@@ -5615,6 +5615,36 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aura_result_migration_scaffold{1};    // #1199
     std::atomic<std::uint64_t> mailbox_multi_fiber_scaffold{1};      // #1200
     std::atomic<std::uint64_t> optimization_passes_registry{1};      // #1201
+
+    // ── Issues #1202–#1228: orchestration / heal / memory / observability Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1202_1228_active{1};
+    std::atomic<std::uint64_t> parallel_orch_scaffold{1};            // #1202
+    std::atomic<std::uint64_t> self_healing_hooks_active{1};         // #1203
+    std::atomic<std::uint64_t> pure_analysis_pass_asserts{1};        // #1204
+    std::atomic<std::uint64_t> agent_fiber_safepoint_wired{1};       // #1205
+    std::atomic<std::uint64_t> dirty_propagation_module{1};          // #1206
+    std::atomic<std::uint64_t> recovery_stall_budget_scaffold{1};    // #1207
+    std::atomic<std::uint64_t> orch_agent_metrics_scaffold{1};       // #1208
+    std::atomic<std::uint64_t> shape_render_fingerprint_scaffold{1}; // #1209
+    std::atomic<std::uint64_t> longrunning_fiber_obs_scaffold{1};    // #1210
+    std::atomic<std::uint64_t> multi_fiber_mailbox_typed{1};         // #1211
+    std::atomic<std::uint64_t> seva_self_opt_loop_scaffold{1};       // #1212
+    std::atomic<std::uint64_t> mutation_audit_wal_scaffold{1};       // #1213
+    std::atomic<std::uint64_t> arena_moving_defrag_scaffold{1};      // #1214
+    std::atomic<std::uint64_t> production_health_slo_scaffold{1};    // #1215
+    std::atomic<std::uint64_t> typed_mutation_audit_pass{1};         // #1216
+    std::atomic<std::uint64_t> envframe_version_propagate{1};        // #1217
+    std::atomic<std::uint64_t> ir_region_effect_annotations{1};      // #1218
+    std::atomic<std::uint64_t> slo_self_heal_triggers{1};            // #1219
+    std::atomic<std::uint64_t> closure_bridge_epoch_scaffold{1};     // #1220
+    std::atomic<std::uint64_t> hotpath_contract_test_gates{1};       // #1221
+    std::atomic<std::uint64_t> metrics_prometheus_scaffold{1};       // #1222
+    std::atomic<std::uint64_t> gc_ffi_root_registration{1};          // #1223
+    std::atomic<std::uint64_t> dead_metric_detection_scaffold{1};    // #1224
+    std::atomic<std::uint64_t> arena_stats_per_fiber{1};             // #1225
+    std::atomic<std::uint64_t> lifetime_pin_scaffold{1};             // #1226
+    std::atomic<std::uint64_t> hot_path_primitives_module{1};        // #1227
+    std::atomic<std::uint64_t> eda_parse_common_dedup{1};            // #1228
 };
 
 

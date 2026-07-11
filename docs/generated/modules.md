@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**50** `export module` declarations in `src/**/*.ixx`.
+**57** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -13,11 +13,14 @@
 | `aura.compiler.coercion_map` | `src/compiler/coercion_map.ixx` |
 | `aura.compiler.compute_kind` | `src/compiler/compute_kind.ixx` |
 | `aura.compiler.constant_folding` | `src/compiler/constant_folding.ixx` |
+| `aura.compiler.dirty_propagation` | `src/compiler/dirty_propagation.ixx` |
+| `aura.compiler.eda_parse_common` | `src/compiler/eda_parse_common.ixx` |
 | `aura.compiler.evaluator` | `src/compiler/evaluator.ixx` |
 | `aura.compiler.evaluator_pure` | `src/compiler/evaluator_pure.ixx` |
 | `aura.compiler.ffi_hot_path` | `src/compiler/ffi_hot_path.ixx` |
 | `aura.compiler.ffi_primitives` | `src/compiler/ffi_primitives.ixx` |
 | `aura.compiler.hardware_backend` | `src/compiler/hardware_backend.ixx` |
+| `aura.compiler.hot_path_primitives` | `src/compiler/hot_path_primitives.ixx` |
 | `aura.compiler.ir` | `src/compiler/ir.ixx` |
 | `aura.compiler.ir_cache_pure` | `src/compiler/ir_cache_pure.ixx` |
 | `aura.compiler.ir_executor` | `src/compiler/ir_executor.ixx` |
@@ -33,6 +36,7 @@
 | `aura.compiler.sv_ir` | `src/compiler/sv_ir.ixx` |
 | `aura.compiler.type_checker` | `src/compiler/type_checker.ixx` |
 | `aura.compiler.type_concepts` | `src/compiler/type_concepts.ixx` |
+| `aura.compiler.typed_mutation_audit_pass` | `src/compiler/typed_mutation_audit_pass.ixx` |
 | `aura.compiler.value` | `src/compiler/value.ixx` |
 | `aura.core` | `src/core/core.ixx` |
 | `aura.core.arena` | `src/core/arena.ixx` |
@@ -41,6 +45,7 @@
 | `aura.core.concepts` | `src/core/concepts.ixx` |
 | `aura.core.cxx26_invariants` | `src/core/cxx26_invariants.ixx` |
 | `aura.core.error` | `src/core/error.ixx` |
+| `aura.core.lifetime_pin` | `src/core/lifetime_pin.ixx` |
 | `aura.core.mutation` | `src/core/mutation.ixx` |
 | `aura.core.mutators` | `src/core/mutators.ixx` |
 | `aura.core.provenance_tracker` | `src/core/provenance_tracker.ixx` |
@@ -56,3 +61,5 @@
 | `aura.renderer.batch_terminal` | `src/renderer/batch_terminal.ixx` |
 | `aura.renderer.render_ffi` | `src/renderer/render_ffi.ixx` |
 | `aura.renderer.render_pass` | `src/renderer/render_pass.ixx` |
+| `aura.serve.multi_fiber_mailbox` | `src/serve/multi_fiber_mailbox.ixx` |
+| `aura.serve.parallel_orch` | `src/serve/parallel_orch.ixx` |

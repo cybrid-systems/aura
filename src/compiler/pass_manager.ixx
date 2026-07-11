@@ -348,17 +348,9 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
 // canary for the "concepts work as advertised" promise.
 //
 // PureAnalysisPass satisfaction: requires const run().
-// ComputeKindWrap's run() is currently non-const (it
-// mutates results_). To make it PureAnalysisPass, mark
-// run() const + mark results_ mutable. That's a separate
-// refactor — left as a follow-up. The static_assert is
-// commented out below until ComputeKindWrap is migrated.
-//
-// static_assert(PureAnalysisPass<ComputeKindWrap>,
-//               "ComputeKindWrap should be PureAnalysisPass (run() must be const)");
-//
-// static_assert(PureAnalysisPass<ArityWrap>,
-//               "ArityWrap should be PureAnalysisPass (run() must be const)");
+// Issue #1204 Phase 1: ComputeKindWrap / ArityWrap already use
+// const run() + mutable accumulators (#606). static_asserts live
+// after the class definitions (see below).
 
 // IncrementalPass satisfaction: requires run_function +
 // run_block. Issue #606: ConstantFoldingWrap now exposes
@@ -670,8 +662,11 @@ static_assert(JITFriendlyPass<ArityWrap>, "ArityWrap exposes pipeline_epoch_hint
 static_assert(IncrementalPass<ConstantFoldingWrap>,
               "ConstantFoldingWrap should be IncrementalPass (run_function/run_block aliases)");
 
-// Issue #606: PureAnalysisPass satisfaction for the new ShapeWrap +
-// LinearOwnershipWrap (placed with the other Pass static_asserts).
+// Issue #606 / #1204: PureAnalysisPass for analysis wraps (const run).
+static_assert(PureAnalysisPass<aura::compiler::ComputeKindWrap>,
+              "ComputeKindWrap should be PureAnalysisPass (run() must be const)");
+static_assert(PureAnalysisPass<aura::compiler::ArityWrap>,
+              "ArityWrap should be PureAnalysisPass (run() must be const)");
 static_assert(PureAnalysisPass<aura::compiler::ShapeWrap>, "ShapeWrap should be PureAnalysisPass");
 static_assert(PureAnalysisPass<aura::compiler::LinearOwnershipWrap>,
               "LinearOwnershipWrap should be PureAnalysisPass");

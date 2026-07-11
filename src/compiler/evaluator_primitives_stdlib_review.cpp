@@ -802,6 +802,79 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1177–#1201).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1202–#1228 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1202-1228-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1202)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1202_1228_active) : 1)},
+                {"parallel-orch-scaffold",
+                 make_int(m ? load_u64(m, m->parallel_orch_scaffold) : 1)},
+                {"self-healing-hooks-active",
+                 make_int(m ? load_u64(m, m->self_healing_hooks_active) : 1)},
+                {"pure-analysis-pass-asserts",
+                 make_int(m ? load_u64(m, m->pure_analysis_pass_asserts) : 1)},
+                {"agent-fiber-safepoint-wired",
+                 make_int(m ? load_u64(m, m->agent_fiber_safepoint_wired) : 1)},
+                {"dirty-propagation-module",
+                 make_int(m ? load_u64(m, m->dirty_propagation_module) : 1)},
+                {"multi-fiber-mailbox-typed",
+                 make_int(m ? load_u64(m, m->multi_fiber_mailbox_typed) : 1)},
+                {"production-health-slo-scaffold",
+                 make_int(m ? load_u64(m, m->production_health_slo_scaffold) : 1)},
+                {"typed-mutation-audit-pass",
+                 make_int(m ? load_u64(m, m->typed_mutation_audit_pass) : 1)},
+                {"metrics-prometheus-scaffold",
+                 make_int(m ? load_u64(m, m->metrics_prometheus_scaffold) : 1)},
+                {"lifetime-pin-scaffold", make_int(m ? load_u64(m, m->lifetime_pin_scaffold) : 1)},
+                {"hot-path-primitives-module",
+                 make_int(m ? load_u64(m, m->hot_path_primitives_module) : 1)},
+                {"eda-parse-common-dedup",
+                 make_int(m ? load_u64(m, m->eda_parse_common_dedup) : 1)},
+                {"issue-1228", make_int(1228)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1202–#1228).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #1215 Phase 1: composite production-health query (SLO surface).
+    ev.primitives().add(
+        "query:production-health",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            const auto heal = m ? load_u64(m, m->longrunning_heal_triggers_total) : 0;
+            const auto quota_v = m ? load_u64(m, m->longrunning_quota_violations_total) : 0;
+            // Simple health score: 100 baseline minus violations (floor 0).
+            std::int64_t score = 100;
+            if (quota_v > 0)
+                score = std::max<std::int64_t>(0, 100 - static_cast<std::int64_t>(quota_v));
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1215)},
+                {"score", make_int(score)},
+                {"heal-triggers", make_int(heal)},
+                {"quota-violations", make_int(static_cast<std::int64_t>(quota_v))},
+                {"slo-enforcement",
+                 make_int(m ? load_u64(m, m->production_health_slo_scaffold) : 1)},
+                {"healthy", make_int(score >= 80 ? 1 : 0)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Composite production health / SLO surface (#1215).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
