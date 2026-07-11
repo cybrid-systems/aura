@@ -5834,6 +5834,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> terminal_present_sgr_emits_total{0};
     std::atomic<std::uint64_t> terminal_present_csi_h_rows_total{0};
     std::atomic<std::uint64_t> terminal_present_sync_frames_total{0};
+    // #1350: 24-bit RGB + Unicode cell format
+    std::atomic<std::uint64_t> terminal_cell64_active{1};
+    std::atomic<std::uint64_t> terminal_set_cell_rgb_total{0};
+    std::atomic<std::uint64_t> terminal_set_cell_unicode_total{0};
     std::atomic<std::uint64_t> render_hotpath_samples{0};       // #1314
     std::atomic<std::uint64_t> render_frame_reset_total{0};     // #1315
     std::atomic<std::uint64_t> render_frame_reset_deferred{0};  // #1315

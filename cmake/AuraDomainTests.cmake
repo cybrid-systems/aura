@@ -206,6 +206,11 @@ aura_add_issue_test(test_terminal_ansi_emit)
 aura_issue_test_link_llvm_jit(test_terminal_ansi_emit)
 add_dependencies(all_test_issue_targets test_terminal_ansi_emit)
 
+# Issue #1350: 24-bit RGB + Unicode terminal cells
+aura_add_issue_test(test_terminal_rgb)
+aura_issue_test_link_llvm_jit(test_terminal_rgb)
+add_dependencies(all_test_issue_targets test_terminal_rgb)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
