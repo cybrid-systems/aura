@@ -119,6 +119,8 @@ int main() {
         CHECK(file_exists("lib/std/tui/sprite.aura"), "sprite.aura");
         CHECK(file_exists("lib/std/tui/input.aura"), "input.aura");
         CHECK(file_exists("lib/std/tui/run.aura"), "run.aura");
+        CHECK(file_exists("lib/std/tui/scene.aura"), "scene.aura");
+        CHECK(file_exists("lib/std/tui/anim.aura"), "anim.aura");
         CHECK(file_exists("examples/cyber_cat.aura"), "cyber_cat.aura");
         CHECK(file_exists("examples/snake.aura"), "snake.aura");
         CHECK(file_exists("examples/tetris.aura"), "tetris.aura");

@@ -249,6 +249,11 @@ aura_add_issue_test(test_render_telemetry)
 aura_issue_test_link_llvm_jit(test_render_telemetry)
 add_dependencies(all_test_issue_targets test_render_telemetry)
 
+# Issue #1358: cyber_cat end-to-end TUI demo smoke
+aura_add_issue_test(test_cyber_cat_smoke)
+aura_issue_test_link_llvm_jit(test_cyber_cat_smoke)
+add_dependencies(all_test_issue_targets test_cyber_cat_smoke)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

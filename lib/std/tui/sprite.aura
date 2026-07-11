@@ -1,7 +1,10 @@
-; lib/std/tui/sprite.aura — Issues #1334 Phase 1: pixel art sprites
+; lib/std/tui/sprite.aura — Issues #1334 / #1358: pixel art sprites + blit
+;
+; (require "std/tui/sprite" all:)
 
-(export make-sprite sprite-rows sprite-width sprite-height draw-sprite draw-anim
-        CAT-IDLE-1 CAT-WALK-1 cat-frames)
+(export make-sprite sprite-rows sprite-width sprite-height
+        draw-sprite draw-anim sprite-blit-tui!
+        CAT-IDLE-1 CAT-WALK-1 CAT-IDLE-2 CAT-WALK-2 cat-frames cyber-cat-frames)
 
 (define (make-sprite rows) (cons 'sprite rows))
 (define (sprite-rows sp) (cdr sp))
@@ -10,17 +13,30 @@
     (if (null? rows) 0 (string-length (car rows)))))
 (define (sprite-height sp) (length (sprite-rows sp)))
 
+; Draw on global tui:* surface (transparent = space)
 (define (draw-sprite col row sprite fg bg)
   (let loop ((r 0) (lines (sprite-rows sprite)))
     (if (null? lines) #t
       (begin
-        (draw-text col (+ row r) (car lines) fg bg)
+        (let* ((line (car lines))
+               (n (string-length line)))
+          (let x-loop ((i 0))
+            (if (>= i n) #t
+              (begin
+                (let ((ch (substring line i (+ i 1))))
+                  (if (string=? ch " ") #t
+                    (tui:cell (+ col i) (+ row r) ch fg bg 0)))
+                (x-loop (+ i 1))))))
         (loop (+ r 1) (cdr lines))))))
 
 (define (draw-anim col row frames frame-idx fg bg)
   (let* ((n (length frames))
          (frame (list-ref frames (modulo frame-idx n))))
     (draw-sprite col row frame fg bg)))
+
+; Alias used by scene graph
+(define (sprite-blit-tui! col row sprite fg bg)
+  (draw-sprite col row sprite fg bg))
 
 (define CAT-IDLE-1
   (make-sprite
@@ -34,4 +50,28 @@
           " ( o.o ) "
           "  > ~ <_ ")))
 
+(define CAT-IDLE-2
+  (make-sprite
+    (list "  /\\_/\\  "
+          " ( -.- ) "
+          "  > ^ <  ")))
+
+(define CAT-WALK-2
+  (make-sprite
+    (list "  /\\_/\\  "
+          " ( o.o ) "
+          " _> ~ <  ")))
+
 (define cat-frames (list CAT-IDLE-1 CAT-WALK-1 CAT-IDLE-1 CAT-WALK-1))
+
+; Neon cyber cat (blockier, used by cyber_cat demo)
+(define cyber-cat-frames
+  (list
+    (make-sprite
+      (list "  /\\_/\\  "
+            " (=^.^=) "
+            "  (\"\")_  "))
+    (make-sprite
+      (list "  /\\_/\\  "
+            " (=o.o=) "
+            "  _(\"\")  "))))

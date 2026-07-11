@@ -1,9 +1,17 @@
-; lib/std/tui/input.aura — Issues #1334/#1343 Phase 1: input helpers
+; lib/std/tui/input.aura — Issues #1334/#1343/#1353/#1358: input helpers
+;
+; (require "std/tui/input" all:)
+; Events from tui:read-event: ("key" . ch-string) | ("quit" . _) | ("mouse" . ...)
 
 (export event-wait key-event? quit-event? mouse-event? resize-event?
-        event-key key=? ctrl-c? mouse-enable)
+        event-key key=? ctrl-c? mouse-enable
+        arrow-left? arrow-right? arrow-up? arrow-down?
+        tui-poll-event tui-read-key move-delta-from-event)
 
 (define (event-wait ms)
+  (tui:read-event ms))
+
+(define (tui-poll-event ms)
   (tui:read-event ms))
 
 (define (key-event? e)
@@ -26,6 +34,30 @@
 
 (define (ctrl-c? e)
   (or (quit-event? e) (key=? e "\x03")))
+
+; Arrow keys emit Unicode via #1353 (↑↓→←) or legacy CSI as single-char keys
+(define (arrow-up? e)
+  (or (key=? e "↑") (key=? e "A") (key=? e "w") (key=? e "W")))
+(define (arrow-down? e)
+  (or (key=? e "↓") (key=? e "B") (key=? e "s") (key=? e "S")))
+(define (arrow-right? e)
+  (or (key=? e "→") (key=? e "C") (key=? e "d") (key=? e "D")))
+(define (arrow-left? e)
+  (or (key=? e "←") (key=? e "D") (key=? e "a") (key=? e "A")))
+
+; Returns (dx . dy) for movement keys, or #f
+(define (move-delta-from-event e)
+  (cond
+    ((not e) #f)
+    ((arrow-left? e) (cons -1 0))
+    ((arrow-right? e) (cons 1 0))
+    ((arrow-up? e) (cons 0 -1))
+    ((arrow-down? e) (cons 0 1))
+    (else #f)))
+
+(define (tui-read-key ms)
+  (let ((e (tui:read-event ms)))
+    (if (key-event? e) (event-key e) #f)))
 
 (define (mouse-enable on?)
   (tui:mouse (if on? 1 0)))

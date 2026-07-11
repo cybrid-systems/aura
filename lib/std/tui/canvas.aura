@@ -1,9 +1,16 @@
-; lib/std/tui/canvas.aura — Issues #1334 Phase 1: high-level drawing on tui:* primitives
+; lib/std/tui/canvas.aura — Issues #1334 / #1358: high-level drawing surface
 ;
 ; (require "std/tui/canvas" all:)
+;
+; Two backends:
+;   tui:* global session  — (canvas-use-tui!) then draw-*/present
+;   terminal-buffer id    — (make-canvas w h) → buffer-backed canvas
 
-(export rgb BLACK WHITE RED GREEN BLUE CYAN MAGENTA YELLOW
-        canvas-clear draw-char draw-text draw-rect fill-rect draw-pixel present)
+(export rgb BLACK WHITE RED GREEN BLUE CYAN MAGENTA YELLOW NEON-PINK MATRIX-GREEN
+        canvas-use-tui! make-canvas canvas-id canvas-width canvas-height
+        canvas-clear canvas-set! canvas-set-rgb! canvas-present canvas-destroy
+        draw-char draw-text draw-rect fill-rect draw-pixel present
+        canvas-fill!)
 
 (define (rgb r g b) (+ (* r 65536) (* g 256) b))
 (define BLACK 0)
@@ -14,6 +21,15 @@
 (define CYAN 65535)
 (define MAGENTA 16711935)
 (define YELLOW 16776960)
+(define NEON-PINK (rgb 255 50 200))
+(define MATRIX-GREEN (rgb 0 200 80))
+
+; ── Global tui:* session helpers (headless-safe via tui:init) ──
+
+(define (canvas-use-tui! title w h)
+  (tui:init title w h)
+  (tui:hide-cursor)
+  #t)
 
 (define (canvas-clear fg bg)
   (tui:clear fg bg))
@@ -46,8 +62,43 @@
   (fill-rect col row 1 height fg bg)
   (fill-rect (+ col width -1) row 1 height fg bg))
 
-; Half-block subcell (#1342)
 (define (draw-pixel col row top-rgb bot-rgb)
   (tui:pixel col row top-rgb bot-rgb))
 
 (define (present) (tui:present))
+
+; ── Buffer-backed canvas (make-terminal-buffer / set-cell / present-batch) ──
+; Layout: (canvas id w h)
+
+(define (make-canvas w h)
+  (let ((id (make-terminal-buffer w h)))
+    (list 'canvas id w h)))
+
+(define (canvas-id c) (car (cdr c)))
+(define (canvas-width c) (car (cdr (cdr c))))
+(define (canvas-height c) (car (cdr (cdr (cdr c)))))
+
+(define (canvas-set! c x y ch-code fg bg)
+  (terminal-set-cell (canvas-id c) x y ch-code fg bg))
+
+; 24-bit RGB path (#1350)
+(define (canvas-set-rgb! c x y ch-code fr fg fb br bg bb)
+  (terminal-set-cell-rgb (canvas-id c) x y ch-code fr fg fb br bg bb))
+
+(define (canvas-fill! c ch-code fg bg)
+  (let ((w (canvas-width c)) (h (canvas-height c)))
+    (let y-loop ((j 0))
+      (if (>= j h) #t
+        (begin
+          (let x-loop ((i 0))
+            (if (>= i w) #t
+              (begin
+                (canvas-set! c i j ch-code fg bg)
+                (x-loop (+ i 1)))))
+          (y-loop (+ j 1)))))))
+
+(define (canvas-present c)
+  (terminal-present-batch (canvas-id c)))
+
+(define (canvas-destroy c)
+  (delete-terminal-buffer (canvas-id c)))

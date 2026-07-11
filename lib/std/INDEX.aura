@@ -87,6 +87,25 @@
     (list "string"
       (list "String utilities"
             "(string:length \"hello\")"))
+    ; ── TUI (Issues #1334–#1358) ──
+    (list "tui/canvas"
+      (list "TUI canvas: colors, draw-text/rect, buffer-backed make-canvas"
+            "(require \"std/tui/canvas\" all:)"))
+    (list "tui/sprite"
+      (list "TUI sprites + cyber cat frames"
+            "(require \"std/tui/sprite\" all:)"))
+    (list "tui/input"
+      (list "TUI input poll + arrow/WASD helpers"
+            "(require \"std/tui/input\" all:)"))
+    (list "tui/run"
+      (list "TUI run/game-loop + raw-mode session"
+            "(require \"std/tui/run\" all:)"))
+    (list "tui/scene"
+      (list "TUI scene graph (list of sprite/text/char objects)"
+            "(require \"std/tui/scene\" all:)"))
+    (list "tui/anim"
+      (list "TUI animation timeline (frames + fps ticks)"
+            "(require \"std/tui/anim\" all:)"))
     ; ── IO / system ──
     (list "fs"
       (list "Filesystem helpers"

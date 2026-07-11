@@ -1,0 +1,45 @@
+; lib/std/tui/anim.aura — Issue #1358: animation timeline (frame index + fps)
+;
+; (require "std/tui/anim" all:)
+; Layout: (anim frames fps current tick-counter)
+
+(export make-anim anim-frames anim-fps anim-current anim-tick!
+        anim-frame anim-advance!)
+
+(define (make-anim frames fps)
+  (list 'anim frames fps 0 0))
+
+(define (anim-frames a) (car (cdr a)))
+(define (anim-fps a) (car (cdr (cdr a))))
+(define (anim-current a) (car (cdr (cdr (cdr a)))))
+(define (anim-tick-counter a) (car (cdr (cdr (cdr (cdr a))))))
+
+(define (anim-frame a)
+  (let* ((frames (anim-frames a))
+         (n (length frames))
+         (i (modulo (anim-current a) n)))
+    (list-ref frames i)))
+
+; Advance by one logical tick; returns current frame sprite/data.
+; ticks-per-frame ≈ max(1, fps divisor for fixed frame demos).
+(define (anim-tick! a)
+  (let* ((ctr (+ (anim-tick-counter a) 1))
+         (fps (anim-fps a))
+         (tpf (if (<= fps 0) 1 (if (< fps 1) 1 fps)))
+         (advance? (= (modulo ctr tpf) 0)))
+    (set-car! (cdr (cdr (cdr (cdr a)))) ctr)
+    (if advance?
+      (let* ((frames (anim-frames a))
+             (n (length frames))
+             (cur (anim-current a))
+             (next (modulo (+ cur 1) n)))
+        (set-car! (cdr (cdr (cdr a))) next)
+        (list-ref frames next))
+      (anim-frame a))))
+
+(define (anim-advance! a)
+  (let* ((frames (anim-frames a))
+         (n (length frames))
+         (next (modulo (+ (anim-current a) 1) n)))
+    (set-car! (cdr (cdr (cdr a))) next)
+    (anim-frame a)))
