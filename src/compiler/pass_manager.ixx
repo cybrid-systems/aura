@@ -1283,6 +1283,9 @@ public:
         eliminated_ = 0;
         type_prop_hits_ = 0;
         narrow_evidence_hits_ = 0;
+        nested_hits_ = 0;
+        dynamic_hits_ = 0;
+        parent_type_stamped_ = 0;
         kept_for_debug_ = 0;
         elapsed_us_ = 0;
         if (keep_for_debug_) {
@@ -1392,6 +1395,17 @@ public:
                             changed = true;
                             continue;
                         }
+                        // Issue #1338: parent/source type stamp when
+                        // cast carries narrow_evidence but source was
+                        // untyped — propagate so later DCE can elide.
+                        if (src->type_id == 0 && instr.type_id != 0) {
+                            // Non-const mutate via index map.
+                            auto it = slot_to_idx.find(ops[1]);
+                            if (it != slot_to_idx.end()) {
+                                block.instructions[it->second].type_id = instr.type_id;
+                                ++parent_type_stamped_;
+                            }
+                        }
                     }
                 }
 
@@ -1420,6 +1434,7 @@ public:
                         // Skip the intermediate cast: ops[1] = src->ops[1]
                         ops[1] = src->operands[1];
                         ++eliminated_;
+                        ++nested_hits_;
                         changed = true;
                         continue;
                     }
@@ -1470,6 +1485,7 @@ public:
                                 .type_id = src_tid,
                             };
                             ++eliminated_;
+                            ++dynamic_hits_;
                             changed = true;
                             continue;
                         }
@@ -1534,6 +1550,10 @@ public:
     std::size_t type_prop_hits() const { return type_prop_hits_; }
     // Issue #629: Rule 6 elisions using narrow_evidence.
     std::size_t narrow_evidence_hits() const { return narrow_evidence_hits_; }
+    // Issue #1338/#1341: per-reason elision + parent type stamp counts.
+    std::size_t nested_hits() const { return nested_hits_; }
+    std::size_t dynamic_hits() const { return dynamic_hits_; }
+    std::size_t parent_type_stamped() const { return parent_type_stamped_; }
     // Issue #508: number of CastOps that were NOT elided because
     // keep_for_debug was set. Useful for "what would the pass
     // have done?" observability in blame mode.
@@ -1550,6 +1570,9 @@ private:
     std::size_t eliminated_ = 0;
     std::size_t type_prop_hits_ = 0;
     std::size_t narrow_evidence_hits_ = 0;
+    std::size_t nested_hits_ = 0;
+    std::size_t dynamic_hits_ = 0;
+    std::size_t parent_type_stamped_ = 0;
     std::size_t kept_for_debug_ = 0;
     std::uint64_t elapsed_us_ = 0;
     bool keep_for_debug_ = false;

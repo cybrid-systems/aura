@@ -49,4 +49,7 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                                                    aura::ast::NodeView v,
                                                    LinearLowerInner lower_inner);
 
+// Issue #1339: process-wide MoveOp elision counter.
+[[nodiscard]] std::uint64_t linear_move_elided_total() noexcept;
+
 } // namespace aura::compiler

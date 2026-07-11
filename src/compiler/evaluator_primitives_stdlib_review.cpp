@@ -20,6 +20,8 @@ import std;
 import aura.compiler.value;
 import aura.compiler.macro_expansion;
 import aura.compiler.pass_manager;
+import aura.compiler.lowering_linear_types;
+import aura.core.ast;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1877,6 +1879,177 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1331–#1343 TUI architecture).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep ──
+    ev.primitives().add(
+        "query:production-sweep-1336-1348-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            if (m) {
+                // Mirror workspace FlatAST atomics into CompilerMetrics.
+                if (auto* ws = ev.workspace_flat()) {
+                    m->dirty_upward_pruned_boundary_total.store(
+                        ws->mark_dirty_boundary_prune_count(), std::memory_order_relaxed);
+                    m->ast_auto_compact_on_commit_total.store(ws->auto_compact_on_commit_count(),
+                                                              std::memory_order_relaxed);
+                    m->ast_live_nodes_warn_total.store(ws->live_nodes_threshold_warn_count(),
+                                                       std::memory_order_relaxed);
+                    m->stable_ref_lockfree_validate_total.store(
+                        ws->lockfree_stable_ref_validate_count(), std::memory_order_relaxed);
+                    m->stable_ref_stale_refresh_total.store(ws->stale_ref_auto_refresh_count(),
+                                                            std::memory_order_relaxed);
+                    m->ast_compaction_threshold.store(
+                        static_cast<std::uint64_t>(ws->compaction_free_list_threshold()),
+                        std::memory_order_relaxed);
+                    m->ast_max_live_nodes.store(
+                        static_cast<std::uint64_t>(ws->max_live_nodes_warn()),
+                        std::memory_order_relaxed);
+                }
+                m->linear_move_elided_total.store(aura::compiler::linear_move_elided_total(),
+                                                  std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1336)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1336_1348_active) : 1)},
+                // #1336
+                {"incremental-tc-selective-active",
+                 make_int(m ? load_u64(m, m->incremental_tc_selective_active) : 1)},
+                {"infer-flat-partial-selective-total",
+                 make_int(m ? load_u64(m, m->infer_flat_partial_selective_total) : 0)},
+                {"solve-delta-worklist-limited-total",
+                 make_int(m ? load_u64(m, m->solve_delta_worklist_limited_total) : 0)},
+                {"solve-delta-worklist-soft-cap",
+                 make_int(m ? load_u64(m, m->solve_delta_worklist_soft_cap) : 256)},
+                // #1338
+                {"ir-parent-type-stamp-active",
+                 make_int(m ? load_u64(m, m->ir_parent_type_stamp_active) : 1)},
+                {"ir-parent-type-stamped-total",
+                 make_int(m ? load_u64(m, m->ir_parent_type_stamped_total) : 0)},
+                {"dce-cast-elision-total",
+                 make_int(m ? load_u64(m, m->dce_cast_elision_total) : 0)},
+                {"dce-elide-identity-total",
+                 make_int(m ? load_u64(m, m->dce_elide_identity_total) : 0)},
+                {"dce-elide-narrow-total",
+                 make_int(m ? load_u64(m, m->dce_elide_narrow_total) : 0)},
+                // #1339
+                {"linear-move-elide-active",
+                 make_int(m ? load_u64(m, m->linear_move_elide_active) : 1)},
+                {"linear-move-elided-total",
+                 make_int(m ? load_u64(m, m->linear_move_elided_total) : 0)},
+                // #1340
+                {"adt-exhaust-incremental-active",
+                 make_int(m ? load_u64(m, m->adt_exhaust_incremental_active) : 1)},
+                {"adt-exhaust-rechecks-total",
+                 make_int(m ? load_u64(m, m->adt_exhaust_rechecks_total) : 0)},
+                // #1341
+                {"blame-elision-reason-obs-active",
+                 make_int(m ? load_u64(m, m->blame_elision_reason_obs_active) : 1)},
+                // #1344
+                {"sv-highlevel-mutate-active",
+                 make_int(m ? load_u64(m, m->sv_highlevel_mutate_active) : 1)},
+                {"eda-mutate-modport-total",
+                 make_int(m ? load_u64(m, m->eda_mutate_modport_total) : 0)},
+                {"eda-mutate-interface-total",
+                 make_int(m ? load_u64(m, m->eda_mutate_interface_total) : 0)},
+                {"eda-mutate-property-total",
+                 make_int(m ? load_u64(m, m->eda_mutate_property_total) : 0)},
+                {"query-sv-pattern-preset-active",
+                 make_int(m ? load_u64(m, m->query_sv_pattern_preset_active) : 1)},
+                // #1345
+                {"dirty-upward-prune-active",
+                 make_int(m ? load_u64(m, m->dirty_upward_prune_active) : 1)},
+                {"dirty-upward-pruned-boundary-total",
+                 make_int(m ? load_u64(m, m->dirty_upward_pruned_boundary_total) : 0)},
+                {"dirty-upward-max-depth-config",
+                 make_int(m ? load_u64(m, m->dirty_upward_max_depth_config) : 64)},
+                // #1346
+                {"stable-ref-lockfree-path-active",
+                 make_int(m ? load_u64(m, m->stable_ref_lockfree_path_active) : 1)},
+                {"stable-ref-lockfree-validate-total",
+                 make_int(m ? load_u64(m, m->stable_ref_lockfree_validate_total) : 0)},
+                {"stable-ref-stale-refresh-total",
+                 make_int(m ? load_u64(m, m->stable_ref_stale_refresh_total) : 0)},
+                // #1347
+                {"sv-feedback-harness-active",
+                 make_int(m ? load_u64(m, m->sv_feedback_harness_active) : 1)},
+                {"verify-parse-coverage-total",
+                 make_int(m ? load_u64(m, m->verify_parse_coverage_total) : 0)},
+                {"verify-parse-assert-total",
+                 make_int(m ? load_u64(m, m->verify_parse_assert_total) : 0)},
+                {"verify-auto-trigger-mutate-total",
+                 make_int(m ? load_u64(m, m->verify_auto_trigger_mutate_total) : 0)},
+                // #1348
+                {"ast-auto-compact-active",
+                 make_int(m ? load_u64(m, m->ast_auto_compact_active) : 1)},
+                {"ast-auto-compact-on-commit-total",
+                 make_int(m ? load_u64(m, m->ast_auto_compact_on_commit_total) : 0)},
+                {"ast-live-nodes-warn-total",
+                 make_int(m ? load_u64(m, m->ast_live_nodes_warn_total) : 0)},
+                {"ast-compaction-threshold",
+                 make_int(m ? load_u64(m, m->ast_compaction_threshold) : 1024)},
+                {"ast-max-live-nodes", make_int(m ? load_u64(m, m->ast_max_live_nodes) : 1000000)},
+                {"issue-1348", make_int(1348)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1336–#1341, #1344–#1348 type/AST/EDA).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #1347 harness uses existing verify:parse-coverage-feedback /
+    // verify:parse-assert-failure (wired with production-sweep counters
+    // in evaluator_primitives_compile_04.cpp).
+
+    // Issue #1344: query:sv-interface / query:sv-property pattern presets.
+    ev.primitives().add(
+        "query:sv-interface",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_int(0);
+            std::int64_t n = 0;
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                if (ws->is_free_slot(id))
+                    continue;
+                if (ws->get(id).tag == aura::ast::NodeTag::Interface)
+                    ++n;
+            }
+            return make_int(n);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Count Interface nodes in workspace (SV pattern preset #1344).",
+                 .category = "query",
+                 .schema = "() -> int"});
+
+    ev.primitives().add(
+        "query:sv-property",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_int(0);
+            std::int64_t n = 0;
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                if (ws->is_free_slot(id))
+                    continue;
+                if (ws->get(id).tag == aura::ast::NodeTag::Property)
+                    ++n;
+            }
+            return make_int(n);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Count Property nodes in workspace (SV pattern preset #1344).",
+                 .category = "query",
+                 .schema = "() -> int"});
 }
 
 } // namespace aura::compiler::primitives_detail

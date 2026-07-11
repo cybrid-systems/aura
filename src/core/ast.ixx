@@ -1500,6 +1500,14 @@ public:
     mutable std::atomic<std::uint64_t> mark_dirty_max_depth_observed_{0};
     // Issue #1251: early-exit truncations when depth/count bounds hit.
     mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0};
+    // Issue #1345: stop-at Define/Interface/Module boundary prune hits.
+    mutable std::atomic<std::uint64_t> mark_dirty_boundary_prune_count_{0};
+    // Issue #1348: auto soft-compact on atomic batch commit.
+    mutable std::atomic<std::uint64_t> auto_compact_on_commit_count_{0};
+    mutable std::atomic<std::uint64_t> live_nodes_threshold_warn_count_{0};
+    // Configurable soft-compact policy (#1348).
+    std::size_t compaction_free_list_threshold_ = 1024;
+    std::size_t max_live_nodes_warn_ = 1'000'000;
     // Issue #1251: rollback_to_size triggered soft compaction.
     mutable std::atomic<std::uint64_t> rollback_compaction_triggered_{0};
     // Issue #1319 Phase 1: structural mutate counters (insert/remove child).
@@ -2126,6 +2134,11 @@ public:
         , mark_dirty_early_exit_count_(other.mark_dirty_early_exit_count_.load())
         , mark_dirty_max_depth_observed_(other.mark_dirty_max_depth_observed_.load())
         , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
+        , mark_dirty_boundary_prune_count_(other.mark_dirty_boundary_prune_count_.load())
+        , auto_compact_on_commit_count_(other.auto_compact_on_commit_count_.load())
+        , live_nodes_threshold_warn_count_(other.live_nodes_threshold_warn_count_.load())
+        , compaction_free_list_threshold_(other.compaction_free_list_threshold_)
+        , max_live_nodes_warn_(other.max_live_nodes_warn_)
         , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
@@ -2194,6 +2207,11 @@ public:
             mark_dirty_early_exit_count_.store(other.mark_dirty_early_exit_count_.load());
             mark_dirty_max_depth_observed_.store(other.mark_dirty_max_depth_observed_.load());
             mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+            mark_dirty_boundary_prune_count_.store(other.mark_dirty_boundary_prune_count_.load());
+            auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
+            live_nodes_threshold_warn_count_.store(other.live_nodes_threshold_warn_count_.load());
+            compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
+            max_live_nodes_warn_ = other.max_live_nodes_warn_;
             rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
@@ -2266,6 +2284,11 @@ public:
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
         , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
         , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
+        , mark_dirty_boundary_prune_count_(other.mark_dirty_boundary_prune_count_.load())
+        , auto_compact_on_commit_count_(other.auto_compact_on_commit_count_.load())
+        , live_nodes_threshold_warn_count_(other.live_nodes_threshold_warn_count_.load())
+        , compaction_free_list_threshold_(other.compaction_free_list_threshold_)
+        , max_live_nodes_warn_(other.max_live_nodes_warn_)
         , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
@@ -2331,6 +2354,11 @@ public:
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
             mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
             mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+            mark_dirty_boundary_prune_count_.store(other.mark_dirty_boundary_prune_count_.load());
+            auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
+            live_nodes_threshold_warn_count_.store(other.live_nodes_threshold_warn_count_.load());
+            compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
+            max_live_nodes_warn_ = other.max_live_nodes_warn_;
             rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
@@ -3785,6 +3813,32 @@ public:
     void record_stale_ref_auto_refresh() noexcept {
         stale_ref_auto_refresh_count_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1346: lock-free StableNodeRef validate path counter.
+    mutable std::atomic<std::uint64_t> lockfree_stable_ref_validate_count_{0};
+    void record_lockfree_stable_ref_validate() noexcept {
+        lockfree_stable_ref_validate_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t lockfree_stable_ref_validate_count() const noexcept {
+        return lockfree_stable_ref_validate_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1345 / #1346 observability accessors.
+    [[nodiscard]] std::uint64_t mark_dirty_boundary_prune_count() const noexcept {
+        return mark_dirty_boundary_prune_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t auto_compact_on_commit_count() const noexcept {
+        return auto_compact_on_commit_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t live_nodes_threshold_warn_count() const noexcept {
+        return live_nodes_threshold_warn_count_.load(std::memory_order_relaxed);
+    }
+    void set_compaction_free_list_threshold(std::size_t n) noexcept {
+        compaction_free_list_threshold_ = n == 0 ? 1 : n;
+    }
+    void set_max_live_nodes_warn(std::size_t n) noexcept { max_live_nodes_warn_ = n == 0 ? 1 : n; }
+    [[nodiscard]] std::size_t compaction_free_list_threshold() const noexcept {
+        return compaction_free_list_threshold_;
+    }
+    [[nodiscard]] std::size_t max_live_nodes_warn() const noexcept { return max_live_nodes_warn_; }
 
     void clear() {
         tag_.clear();
@@ -4814,14 +4868,23 @@ public:
     // perf benchmarking). On workloads with lots of
     // repeated small mutations in deep ASTs, this
     // should fire often.
+    // Issue #1345: optional max_depth (-1 = default kMarkDirtyMaxDepth)
+    // and stop_at_boundary (Define/Interface/Module/Modport prune).
     void mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons = kGeneralDirty,
-                                std::uint8_t ppa_reasons = 0) pre(id < tag_.size()) {
+                                std::uint8_t ppa_reasons = 0, int max_depth = -1,
+                                bool stop_at_boundary = true) pre(id < tag_.size()) {
         mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
         std::uint64_t touched = 0;
         std::uint64_t fixed_point_hits = 0;
+        const std::uint64_t depth_cap =
+            max_depth < 0 ? kMarkDirtyMaxDepth : static_cast<std::uint64_t>(max_depth);
         std::deque<NodeId> queue;
         queue.push_back(id);
         while (!queue.empty()) {
+            if (touched >= depth_cap) {
+                mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
             auto nid = queue.front();
             queue.pop_front();
             // Issue #336: if the node is already dirty
@@ -4831,6 +4894,17 @@ public:
                 mark_dirty(nid, reasons);
                 apply_ppa_dirty_bits(nid, ppa_reasons);
                 ++touched;
+            }
+            // Issue #1345: configurable boundary prune — stop
+            // ascending at module/interface/define roots so
+            // large SoC ASTs do not re-dirty the entire tree.
+            if (stop_at_boundary && nid < tag_.size()) {
+                const auto t = tag_[nid];
+                if (t == NodeTag::Define || t == NodeTag::Interface || t == NodeTag::DefineModule ||
+                    t == NodeTag::Modport) {
+                    mark_dirty_boundary_prune_count_.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
             }
             auto p = parent_[nid];
             if (p == NULL_NODE)
@@ -5893,6 +5967,17 @@ public:
         // bump to happen unconditionally). Count it here.
         bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
         atomic_batch_commits_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1348: long-run soft compaction policy — when the
+        // free_list_ grows past the threshold (or live size exceeds
+        // the warn cap), recycle dead slots without invalidating
+        // StableNodeRefs (compact_nodes_soft does not remap ids).
+        if (free_list_.size() >= compaction_free_list_threshold_ ||
+            size() >= max_live_nodes_warn_) {
+            (void)compact_nodes_soft();
+            auto_compact_on_commit_count_.fetch_add(1, std::memory_order_relaxed);
+            if (size() >= max_live_nodes_warn_)
+                live_nodes_threshold_warn_count_.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     // Roll back the batch. No bump (the changes were never
