@@ -402,6 +402,12 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(snap.children_safe_view_count))},
             {"parent-safe-view-count",
              make_int(static_cast<std::int64_t>(snap.parent_safe_view_count))},
+            // Issue #1282: auto-restamp after generation wrap recovery count.
+            {"auto-restamp-on-wrap",
+             make_int(static_cast<std::int64_t>(snap.auto_restamp_on_wrap_count))},
+            // Issue #1281: children_ PCV topology restore count.
+            {"children-topology-restore",
+             make_int(static_cast<std::int64_t>(snap.children_topology_restore_count))},
         };
         return build_hash(kv);
     });

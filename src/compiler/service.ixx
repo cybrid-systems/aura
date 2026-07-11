@@ -1318,11 +1318,12 @@ public:
 
         // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
         // The lowering doesn't know about them, so fallback to tree-walker.
+        // Issue #1284: ir_cache_v2_ define cache also counts as known.
         if (flat.get(root).tag == aura::ast::NodeTag::Variable) {
             auto root_name = pool.resolve(flat.get(root).sym_id);
             if (evaluator_.primitives().slot_for_name(std::string(root_name)) >=
                     evaluator_.primitives().slot_count() &&
-                ir_cache_.count(std::string(root_name)) == 0)
+                !name_in_ir_define_cache(std::string(root_name)))
                 return true;
         }
 
@@ -1384,8 +1385,8 @@ public:
                 if (!var_name.empty() && var_name[0] == ':')
                     return true;
                 if (user_bindings_.count(std::string(var_name))) {
-                    if (ir_cache_.count(std::string(var_name)) == 0 &&
-                        ir_value_cell_bindings_.count(std::string(var_name)) == 0)
+                    // Issue #1284: also accept ir_cache_v2_ define hits.
+                    if (!name_in_ir_define_cache(std::string(var_name)))
                         return true;
                 }
                 auto vn = std::string(var_name);
@@ -1394,7 +1395,7 @@ public:
                 if (!vn.empty() &&
                     evaluator_.primitives().slot_for_name(vn) >=
                         evaluator_.primitives().slot_count() &&
-                    ir_cache_.count(vn) == 0 && !lowering_known.count(vn)) {
+                    !name_in_ir_define_cache(vn) && !lowering_known.count(vn)) {
                     return true;
                 }
             }
@@ -1429,9 +1430,10 @@ public:
 
                         // Call callee that's not a known primitive or cached define
                         // may come from a runtime import — fallback to tree-walker.
+                        // Issue #1284: ir_cache_v2_ counts as a define-cache hit.
                         if (evaluator_.primitives().slot_for_name(name) >=
                                 evaluator_.primitives().slot_count() &&
-                            ir_cache_.count(name) == 0 && !lowering_known.count(name)) {
+                            !name_in_ir_define_cache(name) && !lowering_known.count(name)) {
                             return true;
                         }
                     }
@@ -1558,8 +1560,8 @@ public:
                     return;
                 }
                 if (user_bindings_.count(std::string(var_name))) {
-                    if (ir_cache_.count(std::string(var_name)) == 0 &&
-                        ir_value_cell_bindings_.count(std::string(var_name)) == 0) {
+                    // Issue #1284: ir_cache_v2_ define cache avoids fallback.
+                    if (!name_in_ir_define_cache(std::string(var_name))) {
                         needs = true;
                         return;
                     }
@@ -1570,7 +1572,7 @@ public:
                 if (!vn.empty() &&
                     evaluator_.primitives().slot_for_name(vn) >=
                         evaluator_.primitives().slot_count() &&
-                    ir_cache_.count(vn) == 0 && !lowering_known.count(vn)) {
+                    !name_in_ir_define_cache(vn) && !lowering_known.count(vn)) {
                     needs = true;
                     return;
                 }
@@ -1591,9 +1593,10 @@ public:
                         }
                         if (name == "catch")
                             return;
+                        // Issue #1284: ir_cache_v2_ define cache hits.
                         if (evaluator_.primitives().slot_for_name(name) >=
                                 evaluator_.primitives().slot_count() &&
-                            ir_cache_.count(name) == 0 && !lowering_known.count(name)) {
+                            !name_in_ir_define_cache(name) && !lowering_known.count(name)) {
                             needs = true;
                             return;
                         }
@@ -1618,6 +1621,19 @@ public:
     }
     [[nodiscard]] std::uint64_t get_needs_tree_walker_slow_path_hits() const noexcept {
         return metrics_.needs_tree_walker_slow_path_hits.load(std::memory_order_relaxed);
+    }
+
+    // Issue #1284: name is IR-resolvable if present in v1 cache, value-cell
+    // bindings, OR ir_cache_v2_ (post-mutate define cache). Counting v2 hits
+    // measures how often define-cache avoids tree-walker fallback.
+    [[nodiscard]] bool name_in_ir_define_cache(const std::string& name) const {
+        if (ir_cache_.count(name) || ir_value_cell_bindings_.count(name))
+            return true;
+        if (ir_cache_v2_.count(name)) {
+            metrics_.tree_walker_define_cache_hits.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
     }
 
     // Issue #808 Phase 1: AuraResult-facing eval entry (wraps EvalResult).
@@ -5828,6 +5844,9 @@ public:
             s.structural_rollback_besteffort = ws_flat->structural_rollback_besteffort();
             s.children_safe_view_count = ws_flat->children_safe_view_count();
             s.parent_safe_view_count = ws_flat->parent_safe_view_count();
+            // Issue #1281/#1282: children topology restore + wrap restamp.
+            s.children_topology_restore_count = ws_flat->children_topology_restore_count();
+            s.auto_restamp_on_wrap_count = ws_flat->auto_restamp_on_wrap_count();
             // Issue #256: AST operation observability counters
             // (children/parent_of/mark_dirty_upward call counts
             // + total nodes marked dirty).

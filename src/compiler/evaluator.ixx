@@ -8137,8 +8137,12 @@ public:
             // pre-mutation snapshot. The checkpoint's children_snapshot
             // holds shared_ptrs to the pre-mutation PCs (PCV COW),
             // so the restoration is O(1) per node.
+            // Issue #1281: PCV topology fidelity is mandatory on
+            // every failed boundary — restore_children always runs.
             workspace_flat_->restore_children(std::move(cp.children_snapshot));
             stats.children_column_restored = true;
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->children_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
             // Issue #266: restore sym_id_ / param columns for bulk
             // rename operations when fine rollback was requested.
             if (cp.fine_rollback) {
@@ -8167,8 +8171,21 @@ public:
         // Issue #273: structural mutates bump generation_; refresh all
         // live node_gen_ entries so subsequent eval_flat paths see
         // valid NodeIds (including unrelated workspace defines).
-        if (workspace_flat_)
+        // Issue #1282: restamp also consumes auto_restamp_pending_
+        // after a generation wrap so live node_gen_ recovers.
+        if (workspace_flat_) {
+            const bool wrap_pending = workspace_flat_->auto_restamp_pending();
             workspace_flat_->restamp_all_node_generations();
+            if (wrap_pending) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->generation_auto_restamp_on_wrap.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        // Issue #1283: unified provenance capture at Guard boundary exit.
+        // Stamps defuse_version / mutation impact into Agent-visible metrics
+        // so closed-loop self-evo can blame dirty nodes on this boundary.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->provenance_boundary_capture_count.fetch_add(1, std::memory_order_relaxed);
         // Bump version on both success and failure (legacy
         // invariant: 2 bumps per boundary). The lock is
         // released by the unique_lock going out of scope.

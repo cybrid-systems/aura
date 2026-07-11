@@ -1233,6 +1233,110 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1276–#1280).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1281–#1285 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1281-1285-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1281)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1281_1285_active) : 1)},
+                {"children-topology-rollback-fidelity",
+                 make_int(m ? load_u64(m, m->children_topology_rollback_fidelity) : 1)},
+                {"children-topology-rollback-count",
+                 make_int(m ? load_u64(m, m->children_topology_rollback_count) : 0)},
+                {"generation-wrap-restamp-policy",
+                 make_int(m ? load_u64(m, m->generation_wrap_restamp_policy) : 1)},
+                {"generation-auto-restamp-on-wrap",
+                 make_int(m ? load_u64(m, m->generation_auto_restamp_on_wrap) : 0)},
+                {"provenance-boundary-hooks-active",
+                 make_int(m ? load_u64(m, m->provenance_boundary_hooks_active) : 1)},
+                {"provenance-boundary-capture-count",
+                 make_int(m ? load_u64(m, m->provenance_boundary_capture_count) : 0)},
+                {"dirty-provenance-stats-active",
+                 make_int(m ? load_u64(m, m->dirty_provenance_stats_active) : 1)},
+                {"tree-walker-fallback-reduction",
+                 make_int(m ? load_u64(m, m->tree_walker_fallback_reduction) : 1)},
+                {"tree-walker-define-cache-hits",
+                 make_int(m ? load_u64(m, m->tree_walker_define_cache_hits) : 0)},
+                {"jit-exception-opcodes-covered",
+                 make_int(m ? load_u64(m, m->jit_exception_opcodes_covered) : 1)},
+                {"jit-exception-opcode-lowered",
+                 make_int(m ? load_u64(m, m->jit_exception_opcode_lowered) : 0)},
+                {"issue-1285", make_int(1285)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1281–#1285).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #1283: query:dirty-provenance-stats — Agent-visible
+    // aggregation of boundary provenance captures + dirty impact.
+    ev.primitives().add(
+        "query:dirty-provenance-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1283)},
+                {"active", make_int(m ? load_u64(m, m->dirty_provenance_stats_active) : 1)},
+                {"boundary-hooks-active",
+                 make_int(m ? load_u64(m, m->provenance_boundary_hooks_active) : 1)},
+                {"boundary-capture-count",
+                 make_int(m ? load_u64(m, m->provenance_boundary_capture_count) : 0)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Dirty + StableNodeRef provenance boundary stats (#1283).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // Issue #1282: query:generation-stats — Agent-visible wrap/restamp surface
+    // under the query: namespace (ast:generation-stats remains for legacy callers).
+    ev.primitives().add(
+        "query:generation-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1282)},
+                {"wrap-restamp-policy",
+                 make_int(m ? load_u64(m, m->generation_wrap_restamp_policy) : 1)},
+                {"auto-restamp-on-wrap",
+                 make_int(m ? load_u64(m, m->generation_auto_restamp_on_wrap) : 0)},
+            };
+            // Enrich with live FlatAST counters when a workspace is loaded.
+            if (auto* ws = ev.workspace_flat()) {
+                kv.emplace_back("current-generation",
+                                make_int(static_cast<std::int64_t>(ws->current_generation())));
+                kv.emplace_back("generation-wrap-total",
+                                make_int(static_cast<std::int64_t>(ws->generation_wrap_count())));
+                kv.emplace_back("current-wrap-epoch",
+                                make_int(static_cast<std::int64_t>(ws->wrap_epoch())));
+                kv.emplace_back(
+                    "auto-restamp-on-wrap-flat",
+                    make_int(static_cast<std::int64_t>(ws->auto_restamp_on_wrap_count())));
+                kv.emplace_back(
+                    "children-topology-restore",
+                    make_int(static_cast<std::int64_t>(ws->children_topology_restore_count())));
+            }
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Generation wrap / auto-restamp stats (#1282).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

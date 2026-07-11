@@ -141,6 +141,11 @@ aura_add_issue_test(test_production_sweep_1276_1280)
 aura_issue_test_link_llvm_jit(test_production_sweep_1276_1280)
 add_dependencies(all_test_issue_targets test_production_sweep_1276_1280)
 
+# Issues #1281–#1285: children rollback/gen wrap/provenance/fallback/JIT EH Phase 1
+aura_add_issue_test(test_production_sweep_1281_1285)
+aura_issue_test_link_llvm_jit(test_production_sweep_1281_1285)
+add_dependencies(all_test_issue_targets test_production_sweep_1281_1285)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

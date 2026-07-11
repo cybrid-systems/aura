@@ -1437,6 +1437,13 @@ public:
     // legacy add_mutation() and miss the children_ restore.
     mutable std::atomic<std::uint64_t> structural_rollback_success_{0};
     mutable std::atomic<std::uint64_t> structural_rollback_besteffort_{0};
+    // Issue #1282: set when generation_ wraps; consumed by
+    // restamp_all_node_generations / maybe_auto_restamp_on_wrap so
+    // live node_gen_ is restamped without manual agent intervention.
+    mutable std::atomic<bool> auto_restamp_pending_{false};
+    mutable std::atomic<std::uint64_t> auto_restamp_on_wrap_count_{0};
+    // Issue #1281: children topology restore via PCV snapshot count.
+    mutable std::atomic<std::uint64_t> children_topology_restore_count_{0};
     // Issue #370: lifetime-safe view counter. Bumped in
     // children_safe(NodeId). Mirrors children_call_count_ for
     // the raw children(NodeId) accessor. AI agents can use
@@ -3393,7 +3400,11 @@ public:
             snapshot.resize(children_.size());
         }
         children_ = std::move(snapshot);
+        // Issue #1281: every PCV topology restore is a fidelity event.
+        children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
         bump_generation();
+        // Issue #1282: if a wrap was observed mid-mutation, restamp now.
+        maybe_auto_restamp_on_wrap();
     }
 
     // Issue #266: capture / restore sym_id_ for fine-grained rollback
@@ -5557,6 +5568,17 @@ public:
     [[nodiscard]] std::uint64_t structural_rollback_besteffort() const noexcept {
         return structural_rollback_besteffort_.load(std::memory_order_relaxed);
     }
+    // Issue #1281: children_ PCV topology restores (snapshot path).
+    [[nodiscard]] std::uint64_t children_topology_restore_count() const noexcept {
+        return children_topology_restore_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1282: auto-restamp after generation wrap.
+    [[nodiscard]] std::uint64_t auto_restamp_on_wrap_count() const noexcept {
+        return auto_restamp_on_wrap_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool auto_restamp_pending() const noexcept {
+        return auto_restamp_pending_.load(std::memory_order_relaxed);
+    }
     // Issue #370: lifetime-safe view call counter.
     [[nodiscard]] std::uint64_t children_safe_view_count() const noexcept {
         return children_safe_view_count_.load(std::memory_order_relaxed);
@@ -5587,6 +5609,21 @@ public:
             if (!on_free[id] && id < node_gen_.size())
                 node_gen_[id] = generation_;
         }
+        // Issue #1282: if restamp was pending due to uint16 wrap,
+        // clear the flag and count the recovery (Agent-visible via
+        // ast:generation-stats / production-sweep-1281-1285-stats).
+        if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed)) {
+            auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // Issue #1282: if a generation wrap marked auto_restamp_pending_,
+    // restamp live node_gen_ now. Safe to call from non-noexcept
+    // paths (restore_children, mutation boundary exit).
+    void maybe_auto_restamp_on_wrap() {
+        if (!auto_restamp_pending_.load(std::memory_order_relaxed))
+            return;
+        restamp_all_node_generations();
     }
 
     // Refresh node_gen_ on one subtree (narrower than restamp_all).
@@ -5638,6 +5675,11 @@ public:
             // its prior value (~130K mutates in).
             // uint32_t: ~2.6e14 mutates per wrap_epoch wrap.
             wrap_epoch_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1282: schedule automatic restamp of live
+            // node_gen_ (restamp itself allocates; cannot run in
+            // this noexcept path). Consumed by maybe_auto_restamp_on_wrap
+            // / restamp_all_node_generations on the next safe path.
+            auto_restamp_pending_.store(true, std::memory_order_relaxed);
         }
         // Issue #255: only count actual bumps (suppressed
         // ones are accounted for via atomic_batch_commits_).
