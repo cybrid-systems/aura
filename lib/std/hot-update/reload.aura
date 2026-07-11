@@ -1,0 +1,52 @@
+; lib/std/hot-update/reload.aura — Issue #1370
+; Reload strategies for AOT modules.
+;
+; (require "std/hot-update/reload" all:)
+
+(require "std/hot-update" all:)
+
+(export make-manual-reload
+        make-threshold-reload
+        make-composite-reload
+        make-once-reload)
+
+; Strategy 1: Manual — caller triggers via returned thunk
+(define (make-manual-reload path)
+  (lambda ()
+    (hot-update:reload path)))
+
+; Strategy 2: Once-guarded reload — only reloads once until reset flag
+; Returns a pair: (reload-thunk . reset-thunk) as a list for simplicity.
+(define (make-once-reload path)
+  (let ((done? #f))
+    (lambda (cmd)
+      (cond
+        ((string=? cmd "reload")
+         (if done?
+           #f
+           (begin
+             (set! done? #t)
+             (hot-update:reload path))))
+        ((string=? cmd "reset")
+         (set! done? #f)
+         #t)
+        ((string=? cmd "done?")
+         done?)
+        (else #f)))))
+
+; Strategy 3: Threshold — reload when (perf-fn) exceeds threshold
+(define (make-threshold-reload path perf-fn threshold)
+  (lambda ()
+    (let ((current (perf-fn)))
+      (if (> current threshold)
+        (hot-update:reload path)
+        #f))))
+
+; Composite: run each strategy thunk in order; return last non-#f or #f
+(define (make-composite-reload . strategies)
+  (lambda ()
+    (let loop ((ss strategies) (last #f))
+      (if (null? ss)
+        last
+        (let ((r ((car ss))))
+          (loop (cdr ss) (if r r last)))))))

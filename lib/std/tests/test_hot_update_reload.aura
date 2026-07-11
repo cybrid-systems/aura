@@ -1,0 +1,29 @@
+; lib/std/tests/test_hot_update_reload.aura — Issue #1370
+; Returns #t when reload API smoke checks pass.
+
+(require "std/hot-update" all:)
+(require "std/hot-update/reload" all:)
+
+(define (test-hot-update-reload)
+  (let* ((cfg (hot-update:default-config))
+         (v (hot-update:config-version cfg))
+         (r (hot-update:config-retries cfg))
+         ; missing so → #f after retries
+         (ok (hot-update:reload "/tmp/aura_hot_update_missing_1370.so"))
+         (ok2 (hot-update:reload-version "/tmp/aura_hot_update_missing_1370.so" 0))
+         (manual (make-manual-reload "/tmp/aura_hot_update_missing_1370.so"))
+         (m-ok (manual))
+         (once (make-once-reload "/tmp/aura_hot_update_missing_1370.so"))
+         (o1 (once "reload"))
+         (o2 (once "reload"))
+         (done (once "done?")))
+    (and (= v 0)
+         (= r 3)
+         (not ok)
+         (not ok2)
+         (not m-ok)
+         (not o1)
+         (not o2)
+         done)))
+
+(test-hot-update-reload)

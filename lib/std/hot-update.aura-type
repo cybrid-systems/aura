@@ -1,0 +1,15 @@
+hot-update:make-config: Any Any Any -> Any
+hot-update:default-config: -> Any
+hot-update:config-version: Any -> Any
+hot-update:config-retries: Any -> Any
+hot-update:config-telemetry?: Any -> Any
+hot-update:reload: Any -> Any
+hot-update:reload-with: Any Any -> Any
+hot-update:reload-version: Any Any -> Any
+hot-update:get-module-version: -> Any
+hot-update:set-module-version!: Any -> Any
+hot-update:set-region!: Any -> Any
+hot-update:get-region: -> Any
+hot-update:stats: -> Any
+hot-update:reload-stats: -> Any
+hot-update:health: -> Any

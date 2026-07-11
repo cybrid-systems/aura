@@ -1,0 +1,6 @@
+make-hot-update-monitor: Any -> Any
+monitor:poll: Any -> Any
+monitor:run-n: Any Any -> Any
+monitor:stop: Any -> Any
+monitor:running?: Any -> Any
+monitor:last-stats: Any -> Any

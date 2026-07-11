@@ -1,0 +1,35 @@
+; lib/std/hot-update/region.aura — Issue #1370
+; Multi-agent region isolation helpers.
+;
+; (require "std/hot-update/region" all:)
+
+(export region:own-mask
+        region:isolate!
+        region:get
+        region:compatible?
+        region:clear!)
+
+; Derive a non-zero region mask from a small integer agent id.
+; (For string agent names, pass a pre-hashed int from the host.)
+(define (region:own-mask agent-id)
+  (let ((id (if (< agent-id 0) (- agent-id) agent-id)))
+    (let ((m (+ 1 (modulo id 65535))))
+      m)))
+
+(define (region:isolate! agent-id)
+  (aot:set-region-mask (region:own-mask agent-id)))
+
+(define (region:get)
+  (aot:get-region-mask))
+
+(define (region:clear!)
+  (aot:set-region-mask 0))
+
+; Compatible if either side has no isolation (0), or other is subset of mine.
+; Bit-and via: for small masks, equality check is enough for Phase 1 isolate!
+; (own-mask produces simple ints). Full bit-and when both non-zero: require equal.
+(define (region:compatible? mine other)
+  (cond
+    ((= mine 0) #t)
+    ((= other 0) #t)
+    (else (= mine other))))

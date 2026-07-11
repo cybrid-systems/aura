@@ -309,6 +309,11 @@ aura_add_issue_test(test_aot_mangle_top)
 aura_issue_test_link_llvm_jit(test_aot_mangle_top)
 add_dependencies(all_test_issue_targets test_aot_mangle_top)
 
+# Issue #1370: lib/std/hot-update Aura stdlib
+aura_add_issue_test(test_hot_update_stdlib)
+aura_issue_test_link_llvm_jit(test_hot_update_stdlib)
+add_dependencies(all_test_issue_targets test_hot_update_stdlib)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

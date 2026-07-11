@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**57** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**58** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -27,6 +27,7 @@
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-keys` `hash-values` `hash-length` `hash->list` … (+6) | hash.aura -- Hash table operations |
 | `std/heal` | `heal` | — |
+| `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-parse` `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- delegates to built-in json-parse / json-encode |

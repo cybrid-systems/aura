@@ -1,0 +1,106 @@
+; lib/std/hot-update.aura — Issue #1370
+; High-level AOT hot-reload + region management for AI agents.
+;
+; Builds on C/Aura primitives from #1366–#1368:
+;   (aot:reload path [version])
+;   (aot:set-region-mask mask) / (aot:get-region-mask)
+;   (aot:set-module-version v) / (aot:get-module-version)
+;   (query:aot-stats) / (query:aot-reload-primitive-stats)
+;
+; Usage:
+;   (require "std/hot-update" all:)
+;   (hot-update:reload "/path/to/module.so")
+;   (hot-update:set-region! 7)
+;   (hot-update:health)
+
+(export hot-update:make-config
+        hot-update:default-config
+        hot-update:config-version
+        hot-update:config-retries
+        hot-update:config-telemetry?
+        hot-update:reload
+        hot-update:reload-with
+        hot-update:reload-version
+        hot-update:get-module-version
+        hot-update:set-module-version!
+        hot-update:set-region!
+        hot-update:get-region
+        hot-update:stats
+        hot-update:reload-stats
+        hot-update:health)
+
+; ── Config as list: (default-version retry-count enable-telemetry) ──
+; Keep plain lists (no define-record) for max Aura dialect portability.
+
+(define (hot-update:make-config version retries telemetry)
+  (list version retries telemetry))
+
+(define (hot-update:default-config)
+  (list 0 3 #t))
+
+(define (hot-update:config-version cfg)
+  (car cfg))
+
+(define (hot-update:config-retries cfg)
+  (car (cdr cfg)))
+
+(define (hot-update:config-telemetry? cfg)
+  (car (cdr (cdr cfg))))
+
+; ── Core reload with optional retry (no sleep primitive — immediate retries) ──
+; Optional second arg: config list from hot-update:make-config / default-config.
+
+(define (hot-update:reload path)
+  (hot-update:reload-with path (hot-update:default-config)))
+
+(define (hot-update:reload-with path cfg)
+  (let ((version (car cfg))
+        (retries (car (cdr cfg))))
+    (let loop ((attempt 0))
+      (let ((ok (aot:reload path version)))
+        (cond
+          (ok #t)
+          ((>= attempt retries) #f)
+          (else (loop (+ attempt 1))))))))
+
+(define (hot-update:reload-version path version)
+  (aot:reload path version))
+
+; ── Module version / region ──
+
+(define (hot-update:get-module-version)
+  (aot:get-module-version))
+
+(define (hot-update:set-module-version! v)
+  (aot:set-module-version v))
+
+(define (hot-update:set-region! mask)
+  (aot:set-region-mask mask))
+
+(define (hot-update:get-region)
+  (aot:get-region-mask))
+
+; ── Telemetry ──
+
+(define (hot-update:stats)
+  (query:aot-stats))
+
+(define (hot-update:reload-stats)
+  (query:aot-reload-primitive-stats))
+
+; Health: "unknown" | "healthy" | "warning" | "degraded"
+; Uses real query:aot-stats keys (#452).
+(define (hot-update:health)
+  (let* ((stats (query:aot-stats))
+         (stale (hash-ref stats "aot-stale-reject-count"))
+         (ok (hash-ref stats "aot-hot-update-success-count"))
+         (stale-n (if stale stale 0))
+         (ok-n (if ok ok 0))
+         (total (+ stale-n ok-n)))
+    (cond
+      ((= total 0) "unknown")
+      ; degraded: stale rejects ≥ 10% of outcomes
+      ((>= (* stale-n 10) total) "degraded")
+      ; healthy: successes ≥ 90% of outcomes
+      ((>= (* ok-n 10) (* total 9)) "healthy")
+      (else "warning"))))

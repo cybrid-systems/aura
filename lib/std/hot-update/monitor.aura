@@ -1,0 +1,48 @@
+; lib/std/hot-update/monitor.aura — Issue #1370
+; Lightweight hot-update health monitor (poll N times, no sleep).
+;
+; (require "std/hot-update/monitor" all:)
+
+(require "std/hot-update" all:)
+
+(export make-hot-update-monitor
+        monitor:poll
+        monitor:run-n
+        monitor:stop
+        monitor:running?
+        monitor:last-stats)
+
+; Monitor as list: (callback running? last-stats poll-count)
+; callback: (lambda (stats) ...) called each poll with query:aot-stats
+
+(define (make-hot-update-monitor callback)
+  (list callback #t #f 0))
+
+(define (monitor:running? m)
+  (car (cdr m)))
+
+(define (monitor:last-stats m)
+  (car (cdr (cdr m))))
+
+(define (monitor:stop m)
+  ; mutate list cells via set-car! on cdr chain
+  (set-car! (cdr m) #f)
+  #t)
+
+(define (monitor:poll m)
+  (if (not (monitor:running? m))
+    #f
+    (let ((stats (hot-update:stats))
+          (cb (car m)))
+      (set-car! (cdr (cdr m)) stats)
+      (set-car! (cdr (cdr (cdr m)))
+                (+ 1 (car (cdr (cdr (cdr m))))))
+      (cb stats)
+      stats)))
+
+; Run up to n polls while running? remains #t
+(define (monitor:run-n m n)
+  (let loop ((i 0) (last #f))
+    (if (or (>= i n) (not (monitor:running? m)))
+      last
+      (loop (+ i 1) (monitor:poll m)))))
