@@ -983,6 +983,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             int replaced = 0;
             std::vector<aura::ast::NodeId> replaced_roots;
+            // Issue #1265: all-or-nothing — capture log size so parse
+            // failures roll back every partial set_child (matches
+            // mutate:atomic-batch pattern). No silent partial commit.
+            const std::uint64_t initial_log_size = flat.all_mutations().size();
             flat.begin_atomic_batch();
             for (auto& match_ref : matches) {
                 if (!stable_match_still_attached(flat, match_ref))
@@ -1024,8 +1028,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
 
                 auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
-                if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
-                    continue;
+                if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
+                    // Issue #1265: parse failure → full atomic rollback.
+                    // Never commit a partial match set (self-evolution
+                    // correctness: agent must not see silent skips).
+                    flat.rollback_since(initial_log_size);
+                    flat.rollback_atomic_batch();
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->query_and_replace_parse_abort.fetch_add(1, std::memory_order_relaxed);
+                    return mev("parse-failure",
+                               "mutate:query-and-replace: template parse failed on a match "
+                               "(all-or-nothing; batch rolled back)");
+                }
 
                 flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
                 replaced_roots.push_back(repl_pr.root);
@@ -1039,6 +1053,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return make_bool(false);
             }
             flat.commit_atomic_batch();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->query_and_replace_all_or_nothing.fetch_add(1, std::memory_order_relaxed);
 
             // Issue #262: precise dirty + incremental defuse refresh
             // instead of destroying the index and marking all defines.

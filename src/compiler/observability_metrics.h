@@ -5712,6 +5712,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> panic_transfer_on_steal{0};                    // #1260
     std::atomic<std::uint64_t> panic_transfer_failed{0};                      // #1260
     std::atomic<std::uint64_t> panic_checkpoint_steal_hardened{1};            // #1260
+
+    // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
+    std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261
+    std::atomic<std::uint64_t> dep_graph_nested_lambda_full_dirty{0}; // #1261
+    std::atomic<std::uint64_t> dep_graph_hygiene_propagate{0};        // #1261
+    std::atomic<std::uint64_t> hot_swap_versioned_mangle_enforced{0}; // #1262
+    std::atomic<std::uint64_t> aot_region_filter_enforced{1};         // #1262
+    std::atomic<std::uint64_t> arena_reset_dirty_forced{0};           // #1263
+    std::atomic<std::uint64_t> hot_update_race_detected{0};           // #1264
+    std::atomic<std::uint64_t> hot_update_epoch_fences{1};            // #1264
+    std::atomic<std::uint64_t> query_and_replace_all_or_nothing{0};   // #1265
+    std::atomic<std::uint64_t> query_and_replace_parse_abort{0};      // #1265
 };
 
 
