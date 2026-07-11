@@ -2702,7 +2702,12 @@ void* AuraJIT::get_function_ptr(const char* name) {
 // either textual LLVM IR or a native .o file. Both are no-ops
 // if no module has been compiled yet (returns empty / false).
 std::string AuraJIT::compile_to_llvm_ir() {
-    if (!impl_ || !impl_->last_module_) {
+    // Issue #1308 (P0): hold compile_mtx_ — last_module_ is written under
+    // this lock in compile(); unguarded read races with replace/free (UAF).
+    if (!impl_)
+        return std::string();
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    if (!impl_->last_module_) {
         return std::string();
     }
     std::string buf;
@@ -2713,7 +2718,11 @@ std::string AuraJIT::compile_to_llvm_ir() {
 }
 
 bool AuraJIT::compile_to_object_file(const std::string& path) {
-    if (!impl_ || !impl_->last_module_) {
+    // Issue #1308 (P0): same lock as compile_to_llvm_ir.
+    if (!impl_)
+        return false;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    if (!impl_->last_module_) {
         return false;
     }
     // Reuse the existing AOT pipeline (same TargetMachine setup
