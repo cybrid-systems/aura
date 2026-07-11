@@ -1505,7 +1505,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             else if (rebuilds > 0 &&
                      rebuild_time_us > static_cast<std::uint64_t>(delta_hits + 1) * 100)
                 recommendation = 2;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1542,6 +1542,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("arity-accuracy", arity_accuracy);
             insert_kv("delta-hit-rate", delta_hit_rate);
             insert_kv("recommendation", recommendation);
+            // Issue #1372: race window hits (0 with snapshot_tag_arity_bucket)
+            insert_kv("race-window-hits",
+                      static_cast<std::int64_t>(ev->get_tag_arity_index_race_window_hits()));
             insert_kv("schema", 621);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

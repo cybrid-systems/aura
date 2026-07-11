@@ -2165,11 +2165,19 @@ private:
     // workspace_mtx_: writers exclusive, readers concurrent,
     // never both inside the same task at once.
     mutable std::shared_mutex tag_arity_index_mtx_;
+    // Issue #1372: bumped on every successful build/sync under
+    // unique_lock. Snapshot path records epoch at copy time;
+    // a mismatched epoch would mean a concurrent writer raced
+    // the lock (should be impossible) — counted as race hit.
+    mutable std::atomic<std::uint64_t> tag_arity_index_epoch_{0};
+    mutable std::atomic<std::uint64_t> tag_arity_index_race_window_hits_{0};
     // Build (or rebuild) the index for the current
     // workspace. Called by query:pattern (and other
     // future matchers) before walking.
     void build_tag_arity_index(std::uint8_t trigger = static_cast<std::uint8_t>(
                                    PatternIndexRebuildTrigger::LazyQuery)) const;
+    // Assumes tag_arity_index_mtx_ already held exclusively.
+    void build_tag_arity_index_unlocked(std::uint8_t trigger) const;
     void maybe_eager_rebuild_pattern_index_after_cow() const noexcept;
     void bump_pattern_index_rebuild_trigger(std::uint8_t trigger) const noexcept;
     void tag_arity_index_insert_node(const ast::FlatAST& flat, ast::NodeId id) const;
@@ -2191,6 +2199,7 @@ private:
         tag_arity_index_workspace_ = nullptr;
         tag_arity_index_synced_size_ = 0;
         tag_arity_index_synced_gen_ = 0;
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
     }
     // Issue #912: typed pointer preferred; void* kept for set_type_registry
     // ABI with CompilerService (core::TypeRegistry lives in another module).
@@ -8084,6 +8093,17 @@ public:
     // index itself.
     void force_build_tag_arity_index() const {
         build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery));
+    }
+    // Issue #1372: build (if needed) + copy bucket under a single
+    // unique_lock — closes the #371 race window. Match runs on the
+    // snapshot outside the lock.
+    [[nodiscard]] std::vector<ast::NodeId>
+    snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger = static_cast<std::uint8_t>(
+                                                     PatternIndexRebuildTrigger::LazyQuery)) const;
+    // Issue #1372: race-window hits (0 with snapshot path). Exposed
+    // via query:pattern-index-stats-hash "race-window-hits".
+    [[nodiscard]] std::uint64_t get_tag_arity_index_race_window_hits() const noexcept {
+        return tag_arity_index_race_window_hits_.load(std::memory_order_relaxed);
     }
     // Test accessors for setting the workspace directly
     // (bypassing the Aura primitive pipeline, which is
