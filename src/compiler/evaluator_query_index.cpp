@@ -197,32 +197,24 @@ void Evaluator::maybe_eager_rebuild_pattern_index_after_cow() const noexcept {
         build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerCow));
 }
 
-void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
-    // Issue #371: take unique_lock for the duration of the
-    // build/sync path. invalidate_tag_arity_index() (reached
-    // below when workspace_flat_ is null) takes the same
-    // lock internally — reentry into a non-recursive
-    // std::unique_lock<shared_mutex> would deadlock, so the
-    // helper variants (invalidate_tag_arity_index, etc.)
-    // assume the lock is already held when called from
-    // build_tag_arity_index. We keep the helpers named
-    // *insert_node / *remove_node etc. lock-free for that
-    // reason.
-    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
+void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
+    // Issue #371 / #1372: callers must hold tag_arity_index_mtx_
+    // exclusively. Nested helpers (insert/remove/rebuild) are
+    // lock-free under that umbrella.
     if (!workspace_flat_) {
-        // Direct clear — lock already held. Do NOT call
-        // invalidate_tag_arity_index() here (would deadlock).
         tag_arity_index_.clear();
         tag_arity_indexed_key_.clear();
         tag_arity_index_workspace_ = nullptr;
         tag_arity_index_synced_size_ = 0;
         tag_arity_index_synced_gen_ = 0;
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         return;
     }
     const auto& flat = *workspace_flat_;
 
     if (tag_arity_index_workspace_ != workspace_flat_ || tag_arity_index_.empty()) {
         tag_arity_index_rebuild_full(flat);
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
         return;
     }
@@ -234,14 +226,46 @@ void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
 
     if (cur_gen == tag_arity_index_synced_gen_ && cur_size > tag_arity_index_synced_size_) {
         tag_arity_index_append_nodes(flat, tag_arity_index_synced_size_);
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
         return;
     }
 
     tag_arity_index_sync_after_mutation(flat);
+    tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
     flat.bump_tag_arity_index_delta_hits();
     bump_edsl_tag_arity_delta_patch();
     bump_pattern_index_rebuild_trigger(trigger);
+}
+
+void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
+    // Issue #371: take unique_lock for the duration of the
+    // build/sync path. Nested helpers assume lock is held.
+    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
+    build_tag_arity_index_unlocked(trigger);
+}
+
+std::vector<aura::ast::NodeId> Evaluator::snapshot_tag_arity_bucket(std::uint64_t key,
+                                                                    std::uint8_t trigger) const {
+    // Issue #1372: single unique_lock covers build + bucket copy.
+    // Closes the #371 race window (build release → shared find).
+    // Matchers iterate the returned snapshot outside the lock so
+    // reader parallelism is preserved for the expensive match work.
+    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
+    build_tag_arity_index_unlocked(trigger);
+    const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
+    auto it = tag_arity_index_.find(key);
+    if (it == tag_arity_index_.end())
+        return {};
+    std::vector<aura::ast::NodeId> out = it->second;
+    // Defensive: under unique_lock epoch cannot change; if it
+    // ever does, count a race-window hit and return empty so
+    // callers fall back safely.
+    if (tag_arity_index_epoch_.load(std::memory_order_acquire) != epoch_at_copy) {
+        tag_arity_index_race_window_hits_.fetch_add(1, std::memory_order_relaxed);
+        return {};
+    }
+    return out;
 }
 
 void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, EvalValue result,

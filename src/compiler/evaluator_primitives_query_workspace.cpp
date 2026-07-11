@@ -1701,30 +1701,23 @@ void register_workspace_query_primitives(
             // Index lookup: find all nodes whose (tag, arity)
             // matches the pattern's root.
             //
-            // Issue #371: build takes unique_lock internally,
-            // we then drop back to shared_lock for the actual
-            // `find` + bucket iteration. The window between
-            // build's lock release and our shared_lock acquire
-            // admits a semantic race (another fiber can
-            // invalidate + rebuild with a different gen), but
-            // the worst case is `find` returning end() — safe
-            // (no UB on hash table). We accept that gap for the
-            // scope of #371; closing it is a follow-up
-            // (combined build+read under a single unique_lock
-            // would defeat reader parallelism).
-            ws.build_tag_arity_index();
-            std::shared_lock<std::shared_mutex> rlock(ws.tag_arity_index_mtx);
+            // Issue #1372 (closes #371 follow-up): build + bucket
+            // copy under a single unique_lock via
+            // snapshot_tag_arity_bucket — eliminates the race
+            // window between build's lock release and shared
+            // find. Match iterates the returned snapshot outside
+            // the lock (reader parallelism preserved for match
+            // work; only the short build+copy is exclusive).
             const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
             const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
                                           static_cast<std::uint64_t>(pat_child_count);
-            auto it = ws.tag_arity_index.find(pat_key);
-            if (it == ws.tag_arity_index.end()) {
+            const auto bucket = ev.snapshot_tag_arity_bucket(pat_key);
+            if (bucket.empty()) {
                 // No nodes match the pattern's (tag, arity).
                 // Skip the full walk.
                 ev.bump_pattern_structural_index_miss();
                 return make_void();
             }
-            const auto& bucket = it->second;
             ev.bump_pattern_structural_index_hit();
             ev.bump_total_query_calls();
             for (aura::ast::NodeId id : bucket) {
