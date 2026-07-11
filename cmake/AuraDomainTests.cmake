@@ -259,6 +259,11 @@ aura_add_issue_test(test_tl_arena_capacity)
 aura_issue_test_link_llvm_jit(test_tl_arena_capacity)
 add_dependencies(all_test_issue_targets test_tl_arena_capacity)
 
+# Issue #1360: env_frames_ truncate on panic (stable append-only EnvId)
+aura_add_issue_test(test_envframe_stableid)
+aura_issue_test_link_llvm_jit(test_envframe_stableid)
+add_dependencies(all_test_issue_targets test_envframe_stableid)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

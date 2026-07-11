@@ -261,11 +261,9 @@ bool Evaluator::save_panic_checkpoint() {
     if (idx >= string_heap_.size())
         return false;
     panic_safe_source_ = string_heap_[idx];
-    // Issue #242: snapshot the 4 pmr/append-only arena sizes
-    // so restore_panic_checkpoint can truncate them back.
-    // env_frames_ size is recorded for diagnostics only (the
-    // deque itself is NOT truncated on restore — see
-    // restore_panic_checkpoint).
+    // Issue #242 / #1360: snapshot append-only arena sizes so
+    // restore_panic_checkpoint can truncate them back (including
+    // env_frames_ — append-only EnvId keeps pre-checkpoint ids valid).
     panic_safe_cells_size_ = cells_.size();
     panic_safe_pairs_size_ = pairs_.size();
     panic_safe_string_heap_size_ = string_heap_.size();
@@ -300,11 +298,9 @@ bool Evaluator::restore_panic_checkpoint() {
         bump_linear_postmutate_post_rollback_revalidate();
     }
     if (ok) {
-        // Issue #242: truncate the 3 append-only arenas back to
-        // their checkpoint sizes. We do NOT truncate env_frames_
-        // (the Closure::env_id indices must remain valid for
-        // already-constructed closures; the version stamping
-        // from Phase 1 detects stale frames instead).
+        // Issue #242 / #1360: truncate append-only arenas back to
+        // checkpoint sizes — including env_frames_ (append-only
+        // EnvId: pre-checkpoint indices stay valid; post ones OOB).
         //
         // The source string we just pushed back is at idx; we
         // resize string_heap_ to idx+1 (= pre-save size + 1) so
@@ -350,18 +346,11 @@ bool Evaluator::restore_panic_checkpoint() {
         if (panic_safe_pairs_size_ > 0 && pairs_.size() != panic_safe_pairs_size_) {
             bump_panic_checkpoint_size_mismatch();
         }
-        // Issue #356: mark env_frames_ entries allocated during
-        // the doomed transaction as INVALID_VERSION. The frames
-        // stay allocated (truncating env_frames_ would invalidate
-        // Closure::env_id indices for closures that captured
-        // pre-rollback frames), but materialize_call_env and the
-        // parent walks will refuse to use them — preserving the
-        // invariant "any frame reachable from a live Closure is
-        // usable". This is the scope-limited compromise for the
-        // full stable-id indirection refactor (which would let
-        // env_frames_ actually shrink); see the issue body for
-        // the design sketch.
-        invalidate_post_rollback_env_frames();
+        // Issue #1360: actually truncate env_frames_ (was mark-only
+        // INVALID_VERSION in #356 — leaked ~8MB/day under panic load).
+        // truncate_env_frames_to_checkpoint also soft-marks doomed
+        // frames and bumps envframe_post_rollback_invalidations_.
+        (void)truncate_env_frames_to_checkpoint();
         // Clear checkpoint after successful restore
         panic_safe_source_.clear();
         panic_safe_cells_size_ = 0;

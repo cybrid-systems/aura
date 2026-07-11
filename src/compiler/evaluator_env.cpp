@@ -779,34 +779,19 @@ std::uint64_t Evaluator::resync_live_closure_env_versions_on_invalidate() {
 // Issue #356: invalidate_post_rollback_env_frames — mark
 // every env_frames_ entry at indices
 // [panic_safe_env_frames_size_, env_frames_.size()) as
-// INVALID_VERSION. Called from restore_panic_checkpoint after
-// the 3 arena truncations (cells_/pairs_/string_heap_) have
-// completed successfully.
+// INVALID_VERSION without shrinking the deque.
 //
-// The frames stay allocated — truncating env_frames_ would
-// invalidate Closure::env_id indices for any closure that
-// captured a frame before the doomed transaction. Marking
-// them invalid lets materialize_call_env / the
-// refresh_stale_frame_in_walk walker refuse to use them
-// without crashing (preserves the invariant "any frame
-// reachable from a live Closure is usable").
+// Issue #1360 supersedes this on the restore path with
+// truncate_env_frames_to_checkpoint() (actual shrink). This
+// helper remains for unit tests and as a soft-fail path.
 //
-// Thread-safety: this is a writer (mutates version_ fields
-// across many frames), so it takes the exclusive
-// env_frames_lock(). Callers must NOT hold any reader lock
-// at the time of the call.
-//
-// Bumps envframe_post_rollback_invalidations_ by the count
-// of newly-invalid frames so observability can report
-// post-rollback leak volume.
+// Thread-safety: exclusive env_frames_lock(). Callers must NOT
+// hold any reader lock at the time of the call.
 void Evaluator::invalidate_post_rollback_env_frames() {
     const std::size_t checkpoint_size = panic_safe_env_frames_size_;
     const std::size_t current_size = env_frames_.size();
     if (checkpoint_size >= current_size)
         return; // nothing to invalidate
-    // Exclusive lock — many writes, one atomic counter bump
-    // at the end. alloc_env_frame cannot run concurrently
-    // because the lock excludes it.
     std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
     std::uint64_t invalidated = 0;
     for (std::size_t i = checkpoint_size; i < current_size; ++i) {
@@ -818,6 +803,49 @@ void Evaluator::invalidate_post_rollback_env_frames() {
     if (invalidated > 0) {
         bump_envframe_post_rollback_invalidations(invalidated);
     }
+}
+
+// Issue #1360: shrink env_frames_ to the panic checkpoint size.
+// Append-only EnvId: pre-checkpoint indices [0, N) are unchanged
+// and remain valid for live Closure::env_id. Post-checkpoint
+// EnvIds become OOB; resolve_env_frame returns nullptr (no UAF).
+// Also marks doomed frames INVALID_VERSION before erase so any
+// concurrent reader that raced before resize sees terminal
+// invalid, then bumps env_generation_ + truncate counters.
+std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
+    const std::size_t checkpoint_size = panic_safe_env_frames_size_;
+    std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
+    const std::size_t current_size = env_frames_.size();
+    if (checkpoint_size >= current_size)
+        return 0;
+    const std::size_t dropped = current_size - checkpoint_size;
+    // Soft-mark first (helps race windows + keeps #356 counter hot)
+    std::uint64_t invalidated = 0;
+    for (std::size_t i = checkpoint_size; i < current_size; ++i) {
+        if (env_frames_[i].version_ != INVALID_VERSION) {
+            env_frames_[i].version_ = INVALID_VERSION;
+            ++invalidated;
+        }
+    }
+    if (invalidated > 0)
+        bump_envframe_post_rollback_invalidations(invalidated);
+    // Actually reclaim memory / cap growth
+    env_frames_.resize(checkpoint_size);
+    ++env_generation_;
+    bump_envframe_truncate(dropped);
+    return dropped;
+}
+
+const EnvFrame* Evaluator::resolve_env_frame(EnvId id) const noexcept {
+    if (id == NULL_ENV_ID || id >= env_frames_.size())
+        return nullptr;
+    return &env_frames_[id];
+}
+
+EnvFrame* Evaluator::resolve_env_frame_mut(EnvId id) noexcept {
+    if (id == NULL_ENV_ID || id >= env_frames_.size())
+        return nullptr;
+    return &env_frames_[id];
 }
 
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
