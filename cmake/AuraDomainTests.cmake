@@ -224,6 +224,11 @@ aura_add_issue_test(test_terminal_concurrent)
 aura_issue_test_link_llvm_jit(test_terminal_concurrent)
 add_dependencies(all_test_issue_targets test_terminal_concurrent)
 
+# Issue #1353: keyboard raw mode + non-blocking poll
+aura_add_issue_test(test_terminal_input)
+aura_issue_test_link_llvm_jit(test_terminal_input)
+add_dependencies(all_test_issue_targets test_terminal_input)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

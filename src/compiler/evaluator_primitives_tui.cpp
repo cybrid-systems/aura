@@ -1,5 +1,5 @@
-// evaluator_primitives_tui.cpp — Issues #1331–#1343 Phase 1: 10 tui:* primitives
-// Headless-safe wrapper over src/tui/tui_runtime.hh
+// evaluator_primitives_tui.cpp — Issues #1331–#1343/#1353: tui:* primitives
+// Headless-safe wrapper over src/tui/tui_runtime.hh + tui_input.hh (#1353 raw input)
 
 module;
 
@@ -7,6 +7,7 @@ module;
 #include "observability_metrics.h"
 #include "primitives_detail.h"
 #include "security_capabilities.h"
+#include "tui/tui_input.hh"
 #include "tui/tui_runtime.hh"
 #include <cstdint>
 #include <string>
@@ -88,6 +89,29 @@ namespace {
             m->tui_mouse_enable_total.store(
                 aura::tui::g_tui_mouse_enable_total.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
+            // #1353 input metrics
+            m->tui_raw_mode_on_total.store(
+                aura::tui::g_tui_raw_mode_on_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_raw_mode_off_total.store(
+                aura::tui::g_tui_raw_mode_off_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_poll_event_total.store(
+                aura::tui::g_tui_poll_event_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_poll_event_hits.store(
+                aura::tui::g_tui_poll_event_hits.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_key_events_total.store(
+                aura::tui::g_tui_key_events_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_mouse_events_total.store(
+                aura::tui::g_tui_mouse_events_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_quit_events_total.store(
+                aura::tui::g_tui_quit_events_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->tui_input_active.store(1, std::memory_order_relaxed);
         }
     }
 
@@ -182,13 +206,39 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 
-    // 7. (tui:read-event [timeout-ms]) → event list | #f
+    // 7. (tui:read-event [timeout-ms]) → (tag . payload) | #f
+    // #1353: works with raw mode / inject-bytes even without tui:init (input path).
     add("tui:read-event", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto& tui = aura::tui::global_tui();
         int timeout = 0;
         if (!a.empty() && is_int(a[0]))
             timeout = static_cast<int>(as_int(a[0]));
-        auto ev_opt = tui.is_initialized() ? tui.read_event(timeout) : std::nullopt;
+        // Prefer TUIRuntime queue when initialized; otherwise poll global input directly.
+        std::optional<aura::tui::Event> ev_opt;
+        if (tui.is_initialized())
+            ev_opt = tui.read_event(timeout);
+        else {
+            auto ie = aura::tui::global_tui_input().poll_event(timeout);
+            if (ie) {
+                aura::tui::Event e;
+                using K = aura::tui::InputEvent::Kind;
+                if (ie->kind == K::Key) {
+                    e.type = aura::tui::Event::Type::Key;
+                    e.key = ie->ch;
+                } else if (ie->kind == K::Quit) {
+                    e.type = aura::tui::Event::Type::Quit;
+                } else if (ie->kind == K::Mouse) {
+                    e.type = aura::tui::Event::Type::Mouse;
+                    e.mouse_button = ie->btn;
+                    e.mouse_x = ie->col;
+                    e.mouse_y = ie->row;
+                } else {
+                    bump_tui_metrics(ev);
+                    return make_bool(false);
+                }
+                ev_opt = e;
+            }
+        }
         bump_tui_metrics(ev);
         if (!ev_opt)
             return make_bool(false);
@@ -207,7 +257,62 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.pairs_.push_back({make_string(tidx), make_string(kidx)});
             return make_pair(p);
         }
+        if (ev_opt->type == T::Mouse) {
+            auto tidx = static_cast<std::uint64_t>(ev.push_string_heap("mouse"));
+            auto p2 = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(ev_opt->mouse_x), make_int(ev_opt->mouse_y)});
+            auto p1 = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(ev_opt->mouse_button), make_pair(p2)});
+            auto p0 = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(tidx), make_pair(p1)});
+            return make_pair(p0);
+        }
         return make_bool(false);
+    });
+
+    // #1353: (tui:raw-mode-on) → #t/#f  — enable raw mode (idempotent)
+    add("tui:raw-mode-on", [&ev](std::span<const EvalValue>) -> EvalValue {
+        bool ok = aura::tui::global_tui_input().enable_raw_mode();
+        bump_tui_metrics(ev);
+        return make_bool(ok);
+    });
+
+    // #1353: (tui:raw-mode-off) → #t
+    add("tui:raw-mode-off", [&ev](std::span<const EvalValue>) -> EvalValue {
+        bool ok = aura::tui::global_tui_input().disable_raw_mode();
+        bump_tui_metrics(ev);
+        return make_bool(ok);
+    });
+
+    // #1353: (tui:is-raw-mode) → #t/#f
+    add("tui:is-raw-mode", [](std::span<const EvalValue>) -> EvalValue {
+        return make_bool(aura::tui::global_tui_input().is_raw_mode());
+    });
+
+    // #1353: (tui:terminal-size) → (rows . cols) via TIOCGWINSZ
+    add("tui:terminal-size", [&ev](std::span<const EvalValue>) -> EvalValue {
+        auto [rows, cols] = aura::tui::global_tui_input().terminal_size();
+        auto pidx = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(rows), make_int(cols)});
+        return make_pair(pidx);
+    });
+
+    // #1353: (tui:enable-mouse) / alias of (tui:mouse 1) with SGR emit
+    add("tui:enable-mouse", [&ev](std::span<const EvalValue>) -> EvalValue {
+        aura::tui::global_tui().set_mouse_enabled(true);
+        bump_tui_metrics(ev);
+        return make_bool(true);
+    });
+
+    // #1353: (tui:inject-bytes "...") — feed raw CSI/UTF-8 for headless tests
+    add("tui:inject-bytes", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto i = as_string_idx(a[0]);
+        if (i >= ev.string_heap_.size())
+            return make_bool(false);
+        aura::tui::global_tui_input().inject_bytes(ev.string_heap_[i]);
+        return make_bool(true);
     });
 
     // 8. (tui:hide-cursor)

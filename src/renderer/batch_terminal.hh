@@ -110,6 +110,14 @@ inline void ansi_clear_screen(std::string& out) {
     out.append("\033[2J\033[H");
 }
 
+// #1353: mouse tracking SGR 1006 + button events
+inline void ansi_mouse_on(std::string& out) {
+    out.append("\033[?1006h\033[?1000h");
+}
+inline void ansi_mouse_off(std::string& out) {
+    out.append("\033[?1000l\033[?1006l");
+}
+
 // UTF-8 encode a Unicode codepoint (BMP + supplementary).
 inline void append_utf8(std::string& out, std::uint32_t cp) {
     if (cp < 32u || (cp >= 0x7Fu && cp < 0xA0u)) {

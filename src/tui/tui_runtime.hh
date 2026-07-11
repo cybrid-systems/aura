@@ -10,12 +10,15 @@
 #ifndef AURA_TUI_TUI_RUNTIME_HH
 #define AURA_TUI_TUI_RUNTIME_HH
 
+#include "tui/tui_input.hh"
+
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -87,6 +90,8 @@ public:
     void shutdown() {
         if (!initialized_)
             return;
+        // #1353: leave raw mode if we entered it with the TUI session.
+        global_tui_input().disable_raw_mode();
         cursor_visible_ = true;
         mouse_enabled_ = false;
         initialized_ = false;
@@ -162,20 +167,53 @@ public:
 
     void set_mouse_enabled(bool on) {
         mouse_enabled_ = on;
+        auto& in = global_tui_input();
+        if (on)
+            in.enable_mouse();
+        else
+            in.disable_mouse();
         if (on)
             g_tui_mouse_enable_total.fetch_add(1, std::memory_order_relaxed);
     }
-    [[nodiscard]] bool mouse_enabled() const noexcept { return mouse_enabled_; }
+    [[nodiscard]] bool mouse_enabled() const noexcept {
+        return mouse_enabled_ || global_tui_input().mouse_enabled();
+    }
 
-    // Phase 1: headless returns nullopt; inject_key for tests/demos.
-    std::optional<Event> read_event(int /*timeout_ms*/ = 0) {
+    // #1353: inject queue first, then real/raw/injected byte stream via TUIInput.
+    std::optional<Event> read_event(int timeout_ms = 0) {
         g_tui_read_event_total.fetch_add(1, std::memory_order_relaxed);
         if (!injected_.empty()) {
             Event e = injected_.front();
             injected_.erase(injected_.begin());
             return e;
         }
-        return std::nullopt;
+        auto ie = global_tui_input().poll_event(timeout_ms);
+        if (!ie)
+            return std::nullopt;
+        Event e;
+        switch (ie->kind) {
+            case InputEvent::Kind::Key:
+                e.type = Event::Type::Key;
+                e.key = ie->ch;
+                break;
+            case InputEvent::Kind::Quit:
+                e.type = Event::Type::Quit;
+                break;
+            case InputEvent::Kind::Mouse:
+                e.type = Event::Type::Mouse;
+                e.mouse_button = ie->btn;
+                e.mouse_x = ie->col;
+                e.mouse_y = ie->row;
+                break;
+            case InputEvent::Kind::Resize:
+                e.type = Event::Type::Resize;
+                e.new_cols = ie->col;
+                e.new_rows = ie->row;
+                break;
+            default:
+                return std::nullopt;
+        }
+        return e;
     }
 
     void inject_key(std::uint32_t key) {
@@ -190,6 +228,9 @@ public:
         e.type = Event::Type::Quit;
         injected_.push_back(e);
     }
+
+    // #1353: inject raw terminal bytes (CSI arrows, mouse SGR, etc.)
+    void inject_bytes(std::string_view bytes) { global_tui_input().inject_bytes(bytes); }
 
 private:
     static void append_utf8(std::string& out, std::uint32_t cp) {

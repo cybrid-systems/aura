@@ -5951,6 +5951,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> tui_mouse_scaffold_active{1};
     std::atomic<std::uint64_t> tui_mouse_enable_total{0};
     std::atomic<std::uint64_t> tui_games_scaffold_active{1};
+    // #1353 keyboard raw mode + poll input
+    std::atomic<std::uint64_t> tui_input_active{1};
+    std::atomic<std::uint64_t> tui_raw_mode_on_total{0};
+    std::atomic<std::uint64_t> tui_raw_mode_off_total{0};
+    std::atomic<std::uint64_t> tui_poll_event_total{0};
+    std::atomic<std::uint64_t> tui_poll_event_hits{0};
+    std::atomic<std::uint64_t> tui_key_events_total{0};
+    std::atomic<std::uint64_t> tui_mouse_events_total{0};
+    std::atomic<std::uint64_t> tui_quit_events_total{0};
 
     // ── Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep ──
     std::atomic<std::uint64_t> production_sweep_1336_1348_active{1};
