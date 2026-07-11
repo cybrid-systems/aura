@@ -1559,6 +1559,8 @@ static IRModule lower_to_ir_impl(
     LoweringState state(arena);
     // Issue #684: production dual-emit to IRFunctionSoA columns.
     state.enable_soa_dual_emit();
+    // Issue #1318 Phase 1: track dual-emit bridge usage toward full SoA primary path.
+    aura::compiler::ir_soa_migration::record_dual_emit_bridge();
     state.instruction_reserve_hint = flat.size();
     state.value_cells = value_cells;
     state.current_narrowing_evidence = narrowing_evidence;

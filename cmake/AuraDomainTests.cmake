@@ -176,6 +176,11 @@ aura_add_issue_test(test_production_sweep_1311_1315)
 aura_issue_test_link_llvm_jit(test_production_sweep_1311_1315)
 add_dependencies(all_test_issue_targets test_production_sweep_1311_1315)
 
+# Issues #1316–#1320: render JIT stability, render obs meta, SoA migrate, gap buffer, defrag
+aura_add_issue_test(test_production_sweep_1316_1320)
+aura_issue_test_link_llvm_jit(test_production_sweep_1316_1320)
+add_dependencies(all_test_issue_targets test_production_sweep_1316_1320)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

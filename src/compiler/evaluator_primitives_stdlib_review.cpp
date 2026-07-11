@@ -8,6 +8,9 @@ module;
 #include "hash_meta.h"
 #include "primitives_detail.h"
 #include "primitives_meta.h"
+#include "core/arena_auto_policy_stats.h"
+#include "core/gap_buffer.hh"
+#include "jit_typed_mutation_stats.h"
 
 module aura.compiler.evaluator;
 
@@ -1535,6 +1538,101 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .perf_tier = kPrimPerfHot,
                  .security_level = kPrimSecSafe,
                  .doc = "Phase 1 production sweep (#1311–#1315).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // ── Issues #1316–#1320 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1316-1320-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            // Sync process-wide counters into CompilerMetrics for a coherent snapshot.
+            if (m) {
+                m->arena_compact_soft_gated_render.store(
+                    aura::core::arena_policy::compact_soft_gated_render_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->arena_defrag_attempted_total.store(
+                    std::max(m->arena_defrag_attempted_total.load(std::memory_order_relaxed),
+                             aura::core::arena_policy::defrag_attempted_total.load(
+                                 std::memory_order_relaxed)),
+                    std::memory_order_relaxed);
+                m->gap_buffer_structural_mutate_hits.store(
+                    aura::ast::g_gap_buffer_structural_mutate_hits.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->gap_buffer_insert_total.store(
+                    aura::ast::g_gap_buffer_insert_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->gap_buffer_erase_total.store(
+                    aura::ast::g_gap_buffer_erase_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->ir_soa_dual_emit_bridge_count.store(
+                    aura::compiler::ir_soa_migration::dual_emit_bridge_count.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->render_jit_deopt_applied.store(
+                    std::max(m->render_jit_deopt_applied.load(std::memory_order_relaxed),
+                             aura::core::arena_policy::render_jit_deopt_applied_total.load(
+                                 std::memory_order_relaxed)),
+                    std::memory_order_relaxed);
+                m->render_jit_deopt_throttled.store(
+                    std::max(m->render_jit_deopt_throttled.load(std::memory_order_relaxed),
+                             aura::core::arena_policy::render_jit_deopt_throttled_total.load(
+                                 std::memory_order_relaxed)),
+                    std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1316)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1316_1320_active) : 1)},
+                // #1316
+                {"render-stable-hot-path",
+                 make_int(m ? load_u64(m, m->render_stable_hot_path_active) : 1)},
+                {"render-jit-deopt-applied",
+                 make_int(m ? load_u64(m, m->render_jit_deopt_applied) : 0)},
+                {"render-jit-deopt-throttled",
+                 make_int(m ? load_u64(m, m->render_jit_deopt_throttled) : 0)},
+                {"render-jit-aot-prefer-hits",
+                 make_int(m ? load_u64(m, m->render_jit_aot_prefer_hits) : 0)},
+                {"render-deopt-throttle-window-ms",
+                 make_int(m ? load_u64(m, m->render_deopt_throttle_window_ms) : 500)},
+                // #1317
+                {"render-primitive-meta",
+                 make_int(m ? load_u64(m, m->render_primitive_meta_active) : 1)},
+                {"render-obs-query-hits", make_int(m ? load_u64(m, m->render_obs_query_hits) : 0)},
+                {"terminal-diff-stats-queries",
+                 make_int(m ? load_u64(m, m->terminal_diff_stats_queries) : 0)},
+                // #1318
+                {"ir-soa-migration-phase2",
+                 make_int(m ? load_u64(m, m->ir_soa_migration_phase2_active) : 1)},
+                {"ir-soa-dual-emit-bridge-count",
+                 make_int(m ? load_u64(m, m->ir_soa_dual_emit_bridge_count) : 0)},
+                // #1319
+                {"gap-buffer-structural-mutate-active",
+                 make_int(m ? load_u64(m, m->gap_buffer_structural_mutate_active) : 1)},
+                {"gap-buffer-structural-mutate-hits",
+                 make_int(m ? load_u64(m, m->gap_buffer_structural_mutate_hits) : 0)},
+                {"gap-buffer-insert-total",
+                 make_int(m ? load_u64(m, m->gap_buffer_insert_total) : 0)},
+                {"gap-buffer-erase-total",
+                 make_int(m ? load_u64(m, m->gap_buffer_erase_total) : 0)},
+                // #1320
+                {"arena-live-defrag-policy",
+                 make_int(m ? load_u64(m, m->arena_live_defrag_policy_active) : 1)},
+                {"arena-defrag-attempted-total",
+                 make_int(m ? load_u64(m, m->arena_defrag_attempted_total) : 0)},
+                {"arena-compact-soft-gated-render",
+                 make_int(m ? load_u64(m, m->arena_compact_soft_gated_render) : 0)},
+                {"arena-defrag-now-calls",
+                 make_int(m ? load_u64(m, m->arena_defrag_now_calls) : 0)},
+                {"issue-1320", make_int(1320)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1316–#1320).",
                  .category = "general",
                  .schema = "() -> hash"});
 }

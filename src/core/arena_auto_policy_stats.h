@@ -5,7 +5,9 @@
 #define AURA_CORE_ARENA_AUTO_POLICY_STATS_H
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstddef>
 
 namespace aura::core::arena_policy {
 
@@ -44,6 +46,60 @@ inline void record_shape_inval_on_compact() noexcept {
 
 inline void record_env_reval_success() noexcept {
     env_reval_success_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// ── Issue #1316/#1320: render hot-path TLS for deopt throttle + compact soft-gate ──
+// Depth counter: nested present/draw frames. Arena + evaluator share this TLS so
+// auto-compact can soft-gate during render without depending on CompilerMetrics.
+inline thread_local int g_render_hotpath_depth = 0;
+inline std::atomic<std::uint64_t> compact_soft_gated_render_total{0};
+inline std::atomic<std::uint64_t> render_hotpath_enter_total{0};
+// Deopt throttle: last applied render deopt steady-clock ns (monotonic).
+inline std::atomic<std::uint64_t> last_render_deopt_ns{0};
+inline std::atomic<std::uint64_t> render_jit_deopt_applied_total{0};
+inline std::atomic<std::uint64_t> render_jit_deopt_throttled_total{0};
+// Live defrag attempts mirrored for cross-module query without ASTArena lock.
+inline std::atomic<std::uint64_t> defrag_attempted_total{0};
+inline std::atomic<std::uint64_t> defrag_saved_bytes_total{0};
+
+inline void enter_render_hotpath() noexcept {
+    ++g_render_hotpath_depth;
+    render_hotpath_enter_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void exit_render_hotpath() noexcept {
+    if (g_render_hotpath_depth > 0)
+        --g_render_hotpath_depth;
+}
+[[nodiscard]] inline bool in_render_hotpath() noexcept {
+    return g_render_hotpath_depth > 0;
+}
+
+inline void record_compact_soft_gated_render() noexcept {
+    compact_soft_gated_render_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1316: return true if deopt should actually fire; false if throttled.
+// Window is k_window_ms (default 500ms per AC1).
+[[nodiscard]] inline bool try_render_deopt_throttle(std::uint64_t window_ms = 500) noexcept {
+    using clock = std::chrono::steady_clock;
+    const auto now_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch())
+            .count());
+    const auto window_ns = window_ms * 1'000'000ull;
+    auto prev = last_render_deopt_ns.load(std::memory_order_relaxed);
+    if (prev != 0 && now_ns > prev && (now_ns - prev) < window_ns) {
+        render_jit_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
+        return false; // throttled
+    }
+    last_render_deopt_ns.store(now_ns, std::memory_order_relaxed);
+    render_jit_deopt_applied_total.fetch_add(1, std::memory_order_relaxed);
+    return true; // apply deopt
+}
+
+inline void record_defrag_attempt(std::size_t saved_bytes = 0) noexcept {
+    defrag_attempted_total.fetch_add(1, std::memory_order_relaxed);
+    if (saved_bytes > 0)
+        defrag_saved_bytes_total.fetch_add(saved_bytes, std::memory_order_relaxed);
 }
 
 } // namespace aura::core::arena_policy

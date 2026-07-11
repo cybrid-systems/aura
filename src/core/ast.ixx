@@ -1502,6 +1502,9 @@ public:
     mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0};
     // Issue #1251: rollback_to_size triggered soft compaction.
     mutable std::atomic<std::uint64_t> rollback_compaction_triggered_{0};
+    // Issue #1319 Phase 1: structural mutate counters (insert/remove child).
+    mutable std::atomic<std::uint64_t> structural_mutate_insert_total_{0};
+    mutable std::atomic<std::uint64_t> structural_mutate_erase_total_{0};
     // Issue #1301: mutation_log_ suffix records dropped after rollback.
     mutable std::atomic<std::uint64_t> mutation_log_compacted_records_{0};
     mutable std::atomic<std::uint64_t> mutation_log_compact_ops_{0};
@@ -3337,6 +3340,9 @@ public:
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
         add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
+        // Issue #1319 Phase 1: count structural inserts; full GapBuffer-backed
+        // children_ column is progressive (PCV COW retained for snapshot/rollback).
+        structural_mutate_insert_total_.fetch_add(1, std::memory_order_relaxed);
     }
     void remove_child_locked(NodeId id, std::uint32_t idx) {
         const auto& list = children_[id];
@@ -3346,6 +3352,7 @@ public:
                 parent_[cid] = NULL_NODE;
             children_[id] = list.with_erase(idx);
             add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
+            structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -5953,6 +5960,13 @@ public:
     // primitive.
     std::uint64_t children_call_count() const noexcept {
         return children_call_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1319
+    std::uint64_t structural_mutate_insert_total() const noexcept {
+        return structural_mutate_insert_total_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t structural_mutate_erase_total() const noexcept {
+        return structural_mutate_erase_total_.load(std::memory_order_relaxed);
     }
     std::uint64_t parent_of_call_count() const noexcept {
         return parent_of_call_count_.load(std::memory_order_relaxed);

@@ -31,4 +31,16 @@ inline void record_type_propagation_stamp() noexcept {
 
 } // namespace aura::compiler::jit_typed_mutation
 
+// Issue #1318 Phase 1: dual-emit bridge counter (plain header for lowering_impl).
+namespace aura::compiler::ir_soa_migration {
+inline std::atomic<std::uint64_t> dual_emit_bridge_count{0};
+inline std::atomic<std::uint64_t> hotpath_hits{0};
+inline void record_dual_emit_bridge() noexcept {
+    dual_emit_bridge_count.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_hotpath_hit() noexcept {
+    hotpath_hits.fetch_add(1, std::memory_order_relaxed);
+}
+} // namespace aura::compiler::ir_soa_migration
+
 #endif // AURA_COMPILER_JIT_TYPED_MUTATION_STATS_H

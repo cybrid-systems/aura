@@ -60,8 +60,26 @@
 #include <type_traits> // is_trivially_copyable_v, is_trivially_destructible_v
 #include <utility>     // std::move, std::swap (uses <utility> which is std-namespace)
 #include <stdexcept>   // std::out_of_range
+#include <atomic>
+#include <cstdint>
 
 namespace aura::ast {
+
+// Issue #1319 Phase 1: process-wide GapBuffer structural-mutate metrics.
+// Bumped by GapBuffer::insert/erase so Agents can observe O(1) path usage
+// before full FlatAST children_ migration completes.
+inline std::atomic<std::uint64_t> g_gap_buffer_insert_total{0};
+inline std::atomic<std::uint64_t> g_gap_buffer_erase_total{0};
+inline std::atomic<std::uint64_t> g_gap_buffer_structural_mutate_hits{0};
+
+inline void record_gap_buffer_insert() noexcept {
+    g_gap_buffer_insert_total.fetch_add(1, std::memory_order_relaxed);
+    g_gap_buffer_structural_mutate_hits.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_gap_buffer_erase() noexcept {
+    g_gap_buffer_erase_total.fetch_add(1, std::memory_order_relaxed);
+    g_gap_buffer_structural_mutate_hits.fetch_add(1, std::memory_order_relaxed);
+}
 
 template <typename T> class GapBuffer {
 public:
@@ -242,6 +260,7 @@ public:
             gap_end_ = (old_ge - old_gs) + pos - 1;
         }
         ++size_;
+        record_gap_buffer_insert(); // #1319
     }
 
     void insert(size_type pos, T&& v) {
@@ -264,6 +283,7 @@ public:
             gap_end_ = (old_ge - old_gs) + pos - 1;
         }
         ++size_;
+        record_gap_buffer_insert(); // #1319
     }
 
     // Append a range at the end (pos = size_). Implemented as a
@@ -292,6 +312,7 @@ public:
             ++gap_end_;
         }
         --size_;
+        record_gap_buffer_erase(); // #1319
     }
 
     // Compact: collapse the gap to the end (no-op if no gap).

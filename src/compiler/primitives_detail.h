@@ -44,6 +44,18 @@ inline constexpr int kPrimCaptureContractVersion = 2;
         .schema = SCHEMA                                                                           \
     }
 
+// Issue #1317: high-perf render primitive template — perf_tier=hot, category=rendering,
+// safety includes I/O (+ optional fiber). Agents use this when adding terminal/draw primitives.
+#define RENDER_PRIMITIVE_META(ARITY, DOC, SCHEMA)                                                  \
+    ::aura::compiler::PrimMeta {                                                                   \
+        .arity = static_cast<std::uint8_t>(ARITY), .pure = false,                                  \
+        .safety_flags = static_cast<std::uint8_t>(::aura::compiler::kPrimSafetyIo |                \
+                                                  ::aura::compiler::kPrimSafetyFiber),             \
+        .perf_tier = ::aura::compiler::kPrimPerfHot,                                               \
+        .security_level = ::aura::compiler::kPrimSecSandboxed, .doc = DOC,                         \
+        .category = "rendering", .schema = SCHEMA                                                  \
+    }
+
 // Issue #498: use Evaluator::prim_registrar_with_meta() as register_with_spec.
 
 namespace primitives_detail {

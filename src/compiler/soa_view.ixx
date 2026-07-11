@@ -63,12 +63,24 @@ static_assert(SoAView<IRFunctionSoAView>, "IRFunctionSoAView must satisfy SoAVie
 // Metrics: hits when hot paths consult SoAView helpers.
 inline std::atomic<std::uint64_t> g_soa_view_hits{0};
 inline std::atomic<std::uint64_t> g_soa_view_misses{0};
+// Issue #1318 Phase 1: progressive full-migration counters (beyond dual-emit scaffold).
+inline std::atomic<std::uint64_t> g_soa_migration_hotpath_hits{0};
+inline std::atomic<std::uint64_t> g_soa_dual_emit_bridge_count{0};
+inline std::atomic<std::uint64_t> g_soa_dirty_short_circuit{0};
+inline constexpr int kSoaMigrationPhase2 = 1; // progressive; full retire of dual-emit is follow-up
 
 inline void record_soa_view_hit() noexcept {
     g_soa_view_hits.fetch_add(1, std::memory_order_relaxed);
+    g_soa_migration_hotpath_hits.fetch_add(1, std::memory_order_relaxed);
 }
 inline void record_soa_view_miss() noexcept {
     g_soa_view_misses.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_soa_dual_emit_bridge() noexcept {
+    g_soa_dual_emit_bridge_count.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_soa_dirty_short_circuit() noexcept {
+    g_soa_dirty_short_circuit.fetch_add(1, std::memory_order_relaxed);
 }
 
 // tag_arity_index: compact (tag, arity) → column index helper for matcher hot path.
