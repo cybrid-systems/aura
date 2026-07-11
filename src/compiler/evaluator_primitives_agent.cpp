@@ -12,6 +12,9 @@ module;
 #include "observability_metrics.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "core/gc_hooks.h"
+#include "security_capabilities.h"
+#include <cstdio>
+#include <algorithm>
 
 module aura.compiler.evaluator;
 
@@ -65,9 +68,63 @@ using types::make_void;
 namespace {
     std::vector<std::pair<std::string, std::string>> g_template_patterns;
     std::vector<std::vector<std::string>> g_template_params;
+
+    // Issue #1236: JSON string escape for LLM payload construction.
+    std::string json_escape(std::string_view s) {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (char c : s) {
+            switch (c) {
+                case '"':
+                    out += "\\\"";
+                    break;
+                case '\\':
+                    out += "\\\\";
+                    break;
+                case '\n':
+                    out += "\\n";
+                    break;
+                case '\r':
+                    out += "\\r";
+                    break;
+                case '\t':
+                    out += "\\t";
+                    break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char buf[8];
+                        std::snprintf(buf, sizeof(buf), "\\u%04x",
+                                      static_cast<unsigned>(static_cast<unsigned char>(c)));
+                        out += buf;
+                    } else {
+                        out.push_back(c);
+                    }
+                    break;
+            }
+        }
+        return out;
+    }
+
 } // namespace
 
-void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
+void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
+    // Issue #1232 Phase 1: gate all auto-evolve primitives with kCapSelfEvo.
+    // Local lambda (not free function) so private Evaluator heaps are reachable
+    // the same way other agent register_* lambdas already do.
+    auto add = [&ev, add_raw = std::move(add_raw)](std::string name, PrimFn fn) {
+        add_raw(std::move(name),
+                PrimFn{[&ev, fn = std::move(fn)](std::span<const EvalValue> a) -> EvalValue {
+                    if (ev.sandbox_mode() &&
+                        !ev.has_capability(aura::compiler::security::kCapSelfEvo) &&
+                        !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+                        ev.bump_capability_denial();
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "capability denied: self-evo required",
+                                                    ev.primitive_error_counter_ptr());
+                    }
+                    return fn(a);
+                }});
+    };
 
     // Issue #97 Action 2: Auto-evolve closed loop
     // (auto-evolve-once detect-fn fix-fn) → runs one cycle:
@@ -347,8 +404,23 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
-void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
+void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                     std::function<void()> destroy_defuse_index) {
+    // Issue #1232 Phase 1: gate synthesis primitives with kCapSynthesize.
+    auto add = [&ev, add_raw = std::move(add_raw)](std::string name, PrimFn fn) {
+        add_raw(std::move(name),
+                PrimFn{[&ev, fn = std::move(fn)](std::span<const EvalValue> a) -> EvalValue {
+                    if (ev.sandbox_mode() &&
+                        !ev.has_capability(aura::compiler::security::kCapSynthesize) &&
+                        !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+                        ev.bump_capability_denial();
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "capability denied: synthesize required",
+                                                    ev.primitive_error_counter_ptr());
+                    }
+                    return fn(a);
+                }});
+    };
 
     // ═══════════════════════════════════════════════════════════════
     // P15: Synthesize Template Strategy (P0)
@@ -587,17 +659,19 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
         // Auto-fix loop
         std::string last_error;
         for (int attempt = 0; attempt < max_attempts; ++attempt) {
-            // Build JSON payload manually (avoid escaping issues)
+            // Issue #1236 Phase 1: JSON-escape all interpolated fields
+            // (model, instruction, last_error) to prevent payload injection.
+            std::string user_content = instruction;
+            if (!last_error.empty())
+                user_content += " Previous attempt error: " + last_error + ". Fix it.";
             std::string body;
             body += "{\n";
-            body += "  \"model\": \"" + model + "\",\n";
+            body += "  \"model\": \"" + json_escape(model) + "\",\n";
             body += "  \"messages\": [\n";
             body += "    {\"role\": \"system\", \"content\": \"You are Aura Lisp. Return ONLY "
                     "valid Aura code. No markdown.\"},\n";
-            body += "    {\"role\": \"user\", \"content\": \"" + instruction;
-            if (!last_error.empty())
-                body += " Previous attempt error: " + last_error + ". Fix it.";
-            body += "\"}\n";
+            body +=
+                "    {\"role\": \"user\", \"content\": \"" + json_escape(user_content) + "\"}\n";
             body += "  ]\n";
             body += "}\n";
 
@@ -605,10 +679,18 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
             ev.string_heap_.push_back(body);
             auto ui2 = ev.string_heap_.size();
             ev.string_heap_.push_back(api_url);
+            // Issue #1236: do not leave API key permanently on the string heap —
+            // push, call, then scrub the slot.
             auto ki = ev.string_heap_.size();
             ev.string_heap_.push_back(api_key);
 
             auto resp = (*http_fn)({make_string(ui2), make_string(bi), make_string(ki)});
+            // Scrub key material from the heap after the call.
+            if (ki < ev.string_heap_.size()) {
+                auto& slot = ev.string_heap_[ki];
+                std::fill(slot.begin(), slot.end(), '\0');
+                slot.clear();
+            }
             if (!is_string(resp))
                 continue;
             auto ri = as_string_idx(resp);
@@ -1154,7 +1236,22 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
         });
 }
 
-void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
+void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
+    // Issue #1232 Phase 1: gate intend / strategy primitives with kCapStrategy.
+    auto add = [&ev, add_raw = std::move(add_raw)](std::string name, PrimFn fn) {
+        add_raw(std::move(name),
+                PrimFn{[&ev, fn = std::move(fn)](std::span<const EvalValue> a) -> EvalValue {
+                    if (ev.sandbox_mode() &&
+                        !ev.has_capability(aura::compiler::security::kCapStrategy) &&
+                        !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+                        ev.bump_capability_denial();
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "capability denied: strategy required",
+                                                    ev.primitive_error_counter_ptr());
+                    }
+                    return fn(a);
+                }});
+    };
 
     // ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])

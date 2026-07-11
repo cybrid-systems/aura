@@ -92,6 +92,9 @@ inline consteval EvalValueTag eval_value_tag_low2_table(std::size_t idx) noexcep
     return kEvalValueTagLow2Table[idx & 3u];
 }
 
+// Issue #465 / #1240: consteval encoding contracts for v2 dispatch
+// (low-2 table + specials + fixnum shift). Zero-overhead compile-time
+// drift detection for the 64-bit tagged EvalValue hot path.
 static_assert(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum,
               "dispatch table drift: low2=0 must be Fixnum");
 static_assert(eval_value_tag_low2_table(1) == EvalValueTag::Ref,
@@ -100,17 +103,14 @@ static_assert(eval_value_tag_low2_table(2) == EvalValueTag::StringV2,
               "dispatch table drift: low2=2 must be StringV2");
 static_assert(eval_value_tag_low2_table(3) == EvalValueTag::Special,
               "dispatch table drift: low2=3 must be Special");
-
-// Issue #465: more consteval encoding invariants for v2
-// dispatch. These are the C++26 zero-overhead way to catch
-// encoding drift at compile time (the alternative is a
-// runtime check on every dispatch, which is what was
-// happening pre-#465).
 static_assert(static_cast<std::uint8_t>(EvalValueTag::Fixnum) == 0, "Fixnum tag must be 0");
 static_assert(static_cast<std::uint8_t>(EvalValueTag::Ref) == 1, "Ref tag must be 1");
 static_assert(static_cast<std::uint8_t>(EvalValueTag::StringV2) == 2, "StringV2 tag must be 2");
 static_assert(static_cast<std::uint8_t>(EvalValueTag::Special) == 3, "Special tag must be 3");
 static_assert(static_cast<std::uint8_t>(EvalValueTag::Float) == 4, "Float tag must be 4");
+static_assert(kSpecialFalse == 3 && kSpecialTrue == 7 && kSpecialVoid == 11,
+              "special sentinel encoding");
+static_assert(kFixnumShift == 1, "fixnum shift contract");
 // Unknown = 255 must stay >= 5 (so the low-2-bit dispatch
 // never accidentally classifies a value as Unknown when the
 // real tag is Fixnum/Ref/StringV2/Special).

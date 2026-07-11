@@ -379,6 +379,12 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
     // is local to eda.cpp; a shared helper is a separate follow-up
     // (touching every file that owns a copy of the same 35 lines).
     auto build_hash_eda = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+        // Issue #1229 Phase 1: track FlatHashTable creates / estimated alloc bytes.
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->eda_hash_table_creates_total.fetch_add(1, std::memory_order_relaxed);
+            m->eda_alloc_bytes_total.fetch_add(static_cast<std::uint64_t>(16 * 24 + kv.size() * 32),
+                                               std::memory_order_relaxed);
+        }
         auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
