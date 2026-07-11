@@ -195,21 +195,17 @@ bool test_mutate_rebind_conformant() {
 
 bool test_mutate_rebind_invalid_body() {
     PRINTLN("\n--- Test 6: mutate:rebind with invalid body ---");
-    // Define a function, then try to rebind it with an
-    // unparseable body. mutate:rebind's pre-validation
-    // path (Issue #216's "schema-violation" check) is a
-    // TODO — the current behavior commits the change and
-    // the typecheck catches the issue post-mutation. This
-    // test documents the current behavior for future
-    // tightening.
+    // Unparseable rebind body must be rejected (parse-error or
+    // mutation-failed). Must NOT return #t — #1019 / post-mutate
+    // typecheck path refuses to report success on failed mutate.
     std::string out = exec_aura("(set-code \"(define (g x) (+ x 1))\") "
                                 "(display (mutate:rebind \"g\" \"(((unparseable\")) (newline)");
     std::println("result: {}", out);
     CHECK(!out.empty(), "got a response (not silent fail)");
-    // Document the current behavior: returns #t. The
-    // schema-violation check is a future cycle.
-    CHECK(out == "#t", "current behavior: rebind returns #t for unparseable body "
-                       "(post-mutation typecheck catches the issue)");
+    CHECK(out != "#t", "rebind does not claim success for unparseable body");
+    CHECK(out.find("mutation-failed") != std::string::npos ||
+              out.find("parse-error") != std::string::npos || out == "#f",
+          "rebind rejects unparseable body (mutation-failed / parse-error / #f)");
     return true;
 }
 

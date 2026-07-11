@@ -204,6 +204,27 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     }
 
     auto local_diags = diag.diagnostics();
+    // Selective rebind/set-body recheck can spuriously report UnboundVariable
+    // for the rebinding name (partial env does not re-seed the define). Fall
+    // back to a full infer_flat before rejecting the mutation — this unblocks
+    // mutate:rebind dep-chain p0 cases without masking real full-TC errors.
+    if (!local_diags.empty() && selective) {
+        aura::diag::DiagnosticCollector full_diag;
+        tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, full_diag);
+        workspace_flat_->clear_all_dirty();
+        local_diags = full_diag.diagnostics();
+        if (local_diags.empty()) {
+            last_mutate_error_.clear();
+            return true;
+        }
+        // Keep "(selective)" token so typecheck-status fixtures / agents that
+        // key off the original selective-failure message still match.
+        std::string err = "typecheck after mutate (selective) failed:";
+        for (auto& d : local_diags)
+            err += " " + d.format() + ";";
+        last_mutate_error_ = err;
+        return false;
+    }
     if (local_diags.empty()) {
         last_mutate_error_.clear();
         return true;

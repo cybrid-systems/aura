@@ -848,7 +848,9 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
             // materialize_call_env does, and subsequent walks
             // see it as fresh.
             refresh_stale_frame_in_walk(cur, "lookup_by_symid_chain");
-            return true;
+            // After refresh, still consult this frame (do not skip).
+            // Skipping + #1128 parent fallthrough returned pre-rebind
+            // bindings and broke mutate:rebind / dep-chain p0 tests.
         }
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
