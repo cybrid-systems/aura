@@ -5735,12 +5735,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_boundary_hold_time_total_us{0};           // #1373
     std::atomic<std::uint64_t> mutation_boundary_holds_total{0};                  // #1373
     std::atomic<std::uint64_t> mutation_boundary_holds_over_1ms_total{0};         // #1373
-    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};                  // #1254
-    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};                // #1255
-    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};              // #1255
-    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};               // #1255
-    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};            // #1255
-    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};           // #1255
+    // Issue #1375: 9-bucket hold-time histogram (µs boundaries):
+    //   0: 0–100us   1: 100–500us  2: 500us–1ms
+    //   3: 1–5ms     4: 5–10ms     5: 10–50ms
+    //   6: 50–100ms  7: 100ms–1s   8: >1s
+    static constexpr std::size_t kMutationBoundaryHoldHistBuckets = 9;
+    std::atomic<std::uint64_t>
+        mutation_boundary_hold_histogram[kMutationBoundaryHoldHistBuckets]{}; // #1375
+    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};              // #1254
+    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};            // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};          // #1255
+    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};           // #1255
+    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};        // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};       // #1255
 
     // ── Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1256_1260_active{1};

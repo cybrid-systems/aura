@@ -334,6 +334,11 @@ aura_add_issue_test(test_query_mutate_consistency)
 aura_issue_test_link_llvm_jit(test_query_mutate_consistency)
 add_dependencies(all_test_issue_targets test_query_mutate_consistency)
 
+# Issue #1375: MutationBoundaryGuard hold-time histogram
+aura_add_issue_test(test_mutation_hold_time)
+aura_issue_test_link_llvm_jit(test_mutation_hold_time)
+add_dependencies(all_test_issue_targets test_mutation_hold_time)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

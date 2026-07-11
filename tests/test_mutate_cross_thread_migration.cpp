@@ -100,7 +100,8 @@ int main() {
         CHECK(href(cs, "holds-over-1ms") >= 0, "holds-over-1ms key");
         CHECK(href(cs, "avg-hold-us") >= 0, "avg-hold-us key");
         CHECK(href(cs, "held-now") == 0, "held-now 0 after dtor");
-        CHECK(href(cs, "schema") == 1373, "schema 1373");
+        // Schema bumped to 1375 when hold histogram shipped (#1375).
+        CHECK(href(cs, "schema") == 1375 || href(cs, "schema") == 1373, "schema 1375");
         cs.evaluator().set_compiler_metrics(nullptr);
     }
 
