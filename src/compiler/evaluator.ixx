@@ -9303,7 +9303,8 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = (*slot)--;
             bool outermost = (prev == 1);
-            // Issue #1253 / #1373: observe outermost mutation hold duration.
+            // Issue #1253 / #1373 / #1375: observe outermost mutation hold duration.
+            // enter_ts_ is set only for the outermost Guard; nested guards skip.
             if (outermost && enter_ts_.time_since_epoch().count() != 0) {
                 const auto dur = std::chrono::steady_clock::now() - enter_ts_;
                 const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
@@ -9318,6 +9319,28 @@ public:
                     if (uus > 1000)
                         m->mutation_boundary_holds_over_1ms_total.fetch_add(
                             1, std::memory_order_relaxed);
+                    // Issue #1375: 9-bucket hold-time histogram for p50/p99 style ops.
+                    {
+                        std::size_t bucket = 8; // >1s
+                        if (uus < 100)
+                            bucket = 0;
+                        else if (uus < 500)
+                            bucket = 1;
+                        else if (uus < 1000)
+                            bucket = 2;
+                        else if (uus < 5000)
+                            bucket = 3;
+                        else if (uus < 10000)
+                            bucket = 4;
+                        else if (uus < 50000)
+                            bucket = 5;
+                        else if (uus < 100000)
+                            bucket = 6;
+                        else if (uus < 1000000)
+                            bucket = 7;
+                        m->mutation_boundary_hold_histogram[bucket].fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                     // Default policy: 500ms — metric-only (no force-yield yet).
                     constexpr std::int64_t kMaxMutationDurationUs = 500'000;
                     if (us > kMaxMutationDurationUs) {

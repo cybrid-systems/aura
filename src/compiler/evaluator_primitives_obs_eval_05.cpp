@@ -308,16 +308,17 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> hash"});
 
-    // Issue #1373: (query:mutation-boundary-hold-stats) — hold-time +
-    // cross-fiber yield / migration counters for MutationBoundaryGuard.
-    // Complements #717 fiber-boundary-violation-stats (rollback path)
-    // and #1253 mutation_hold_* (long-mutation SLO).
+    // Issue #1373 / #1375: (query:mutation-boundary-hold-stats) —
+    // hold-time + yield/migration + 9-bucket histogram for
+    // MutationBoundaryGuard. Complements #717 fiber-boundary-
+    // violation-stats and #1253 mutation_hold_* (long-mutation SLO).
     ev.primitives_.add(
         "query:mutation-boundary-hold-stats",
         [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                // 16 base fields + 9 histogram buckets → need room
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -364,6 +365,16 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t holds = m ? load(m->mutation_boundary_holds_total) : 0;
             const std::int64_t hold_us = m ? load(m->mutation_boundary_hold_time_total_us) : 0;
             const std::int64_t avg = holds > 0 ? static_cast<std::int64_t>(hold_us / holds) : 0;
+            // Issue #1375: sum of histogram for integrity check.
+            std::int64_t hist_sum = 0;
+            std::array<std::int64_t, CompilerMetrics::kMutationBoundaryHoldHistBuckets> hist{};
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets;
+                     ++i) {
+                    hist[i] = load(m->mutation_boundary_hold_histogram[i]);
+                    hist_sum += hist[i];
+                }
+            }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"same-thread-yield",
                  make_int(m ? load(m->mutation_boundary_yield_same_thread_total) : 0)},
@@ -372,21 +383,36 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"yield-rollback",
                  make_int(m ? load(m->mutation_boundary_yield_rollback_total) : 0)},
                 {"hold-time-us-total", make_int(hold_us)},
+                {"total-us", make_int(hold_us)}, // #1375 alias
                 {"holds-total", make_int(holds)},
                 {"holds-over-1ms",
                  make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
+                {"over-1ms", make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
                 {"avg-hold-us", make_int(avg)},
+                {"avg-us", make_int(avg)},
                 {"held-now", make_int(ev.mutation_boundary_held() ? 1 : 0)},
-                {"schema", make_int(1373)},
+                // Issue #1375: 9-bucket histogram keys (see bucket-labels)
+                {"hist-0-100us", make_int(hist[0])},
+                {"hist-100-500us", make_int(hist[1])},
+                {"hist-500us-1ms", make_int(hist[2])},
+                {"hist-1-5ms", make_int(hist[3])},
+                {"hist-5-10ms", make_int(hist[4])},
+                {"hist-10-50ms", make_int(hist[5])},
+                {"hist-50-100ms", make_int(hist[6])},
+                {"hist-100ms-1s", make_int(hist[7])},
+                {"hist-gt-1s", make_int(hist[8])},
+                {"hist-sum", make_int(hist_sum)},
+                {"hist-buckets", make_int(static_cast<std::int64_t>(
+                                     CompilerMetrics::kMutationBoundaryHoldHistBuckets))},
+                {"schema", make_int(1375)},
             };
             return build_hash(kv);
         },
         PrimMeta{.arity = 0,
                  .pure = true,
-                 .doc = "MutationBoundaryGuard hold-time + yield/migration counters "
-                        "(#1373). Fields: same-thread-yield, cross-thread-migration, "
-                        "yield-rollback, hold-time-us-total, holds-total, holds-over-1ms, "
-                        "avg-hold-us, held-now, schema=1373.",
+                 .doc = "MutationBoundaryGuard hold-time + yield/migration + 9-bucket "
+                        "histogram (#1373/#1375). Fields: holds-total, total-us/avg-us, "
+                        "over-1ms, hist-0-100us … hist-gt-1s, hist-sum, schema=1375.",
                  .category = "general",
                  .schema = "() -> hash"});
 }
