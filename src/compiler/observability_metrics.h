@@ -5616,6 +5616,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> prim_hot_dispatch_hits{0};
     std::atomic<std::uint64_t> prim_hot_dispatch_hits_render{0};
     std::atomic<std::uint64_t> prim_cold_dispatch_fallback{0};
+    // #1357: render prim latency + frame time histogram
+    std::atomic<std::uint64_t> render_telemetry_active{1};
+    std::atomic<std::uint64_t> render_prim_latency_samples{0};
+    std::atomic<std::uint64_t> render_prim_latency_total_ns{0};
+    std::atomic<std::uint64_t> render_frame_time_samples{0};
+    std::atomic<std::uint64_t> render_frame_time_total_ns{0};
     std::atomic<std::uint64_t> tenant_principal_scaffold{1};         // #1183/#1191
     std::atomic<std::uint64_t> render_memory_profiling_supported{1}; // #1184
     std::atomic<std::uint64_t> provenance_rollback_scaffold{1};      // #1185

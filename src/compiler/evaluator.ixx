@@ -15,6 +15,7 @@ module;
 // restriction on .h).
 #include "observability_metrics.h"
 #include "primitives_meta.h"
+#include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include <algorithm>
@@ -208,18 +209,37 @@ public:
         }
     }
     // Issue #1356: rebuild HotTierTable from meta_ after full registration.
+    // Issue #1357: wrap hot PrimFn so IR + tree-walker paths both record latency.
     void finalize_hot_table() {
         hot_map_.clear();
         hot_entries_.clear();
         for (std::size_t i = 0; i < ordered_names_.size() && i < meta_.size(); ++i) {
             if (meta_[i].perf_tier != kPrimPerfHot)
                 continue;
+            // Wrap once for render-hotpath latency (skip if already wrapped — name sentinel).
+            const std::string name = ordered_names_[i];
+            PrimFn original = fn_slots_[i];
+            PrimFn timed = [original,
+                            name](std::span<const types::EvalValue> a) -> types::EvalValue {
+                if (!aura::core::arena_policy::in_render_hotpath())
+                    return original(a);
+                const auto t0 = std::chrono::steady_clock::now();
+                auto r = original(a);
+                const auto ns =
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                   std::chrono::steady_clock::now() - t0)
+                                                   .count());
+                aura::compiler::render_telemetry::record_tracked_prim(name, ns);
+                return r;
+            };
+            fn_slots_[i] = timed;
+            table_[name] = timed;
             HotEntry e;
-            e.name = ordered_names_[i];
-            e.fn = fn_slots_[i];
+            e.name = name;
+            e.fn = timed;
             e.slot = i;
             hot_entries_.push_back(std::move(e));
-            hot_map_[ordered_names_[i]] = fn_slots_[i];
+            hot_map_[name] = timed;
         }
         // Sort by name for stable iteration / optional binary search.
         std::sort(hot_entries_.begin(), hot_entries_.end(),
@@ -2143,6 +2163,10 @@ private:
     // disabled (Evaluator constructed without service
     // orchestration; e.g. legacy standalone usage).
     void* compiler_metrics_ = nullptr;
+    // Issue #1357: per-slot render prim latency + frame mark.
+    // unique_ptr: PrimLatencyStats holds atomics (not movable for vector reallocation).
+    std::vector<std::unique_ptr<aura::compiler::render_telemetry::PrimLatencyStats>> prim_latency_;
+    std::chrono::steady_clock::time_point last_frame_mark_{};
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::vector<Env*> modules_; // module objects (arena-allocated, indexed by ModuleRef.index)
@@ -3121,6 +3145,37 @@ public:
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->primitive_call_total.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    // Issue #1357: invoke PrimFn; latency is recorded by hot PrimFn wrappers
+    // installed in finalize_hot_table() (covers IR + tree-walker).
+    template <typename Call>
+    inline types::EvalValue invoke_prim_with_telemetry(std::string_view /*name*/, Call&& call) {
+        bump_primitive_call_count();
+        return call();
+    }
+
+    // Issue #1357: mark frame boundary for histogram (called from arena-render-frame-reset).
+    void mark_render_frame_boundary() noexcept {
+        const auto now = std::chrono::steady_clock::now();
+        if (last_frame_mark_.time_since_epoch().count() != 0) {
+            const auto ns = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(now - last_frame_mark_)
+                    .count());
+            aura::compiler::render_telemetry::global_frame_time_stats().record(ns);
+            if (compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                m->render_frame_time_samples.fetch_add(1, std::memory_order_relaxed);
+                m->render_frame_time_total_ns.fetch_add(ns, std::memory_order_relaxed);
+            }
+        }
+        last_frame_mark_ = now;
+    }
+
+    [[nodiscard]] const std::vector<
+        std::unique_ptr<aura::compiler::render_telemetry::PrimLatencyStats>>&
+    prim_latency_table() const noexcept {
+        return prim_latency_;
     }
     // Issue #491 / #680 rebind observability: bump
     // hotswap-invalidate + invalidate_function-calls on

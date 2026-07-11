@@ -2,19 +2,19 @@
 
 # Primitives (generated)
 
-**971** registrations scanned from `src/**/*.cpp`.
+**976** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (13%)
-- **core**: 248 primitives (26%)
-- **internal-observable**: 436 primitives (45%)
-- **convenience**: 164 primitives (17%)
+- **core**: 248 primitives (25%)
+- **internal-observable**: 438 primitives (45%)
+- **convenience**: 167 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
-## Query: (436)
+## Query: (438)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -331,10 +331,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:render-ffi-available` *[internal-observable]* — `src/compiler/evaluator_primitives_io.cpp`
 - `query:render-ffi-buffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-ffi-count` *[internal-observable]* — `src/compiler/ffi_primitives_impl.cpp`
+- `query:render-frame-time-histogram` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:render-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-jit-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:render-jit-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_io.cpp`
 - `query:render-observability-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-prim-call-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:runtime-observability-correlated-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:runtime-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -619,7 +621,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (265)
+## Core builtins (268)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -819,8 +821,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `register-predicate!` *[convenience]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `register-strategy!` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `remainder` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `render-frame-time-samples` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `render-hotpath-depth` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-enter` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-exit` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `render-prim-latency-samples` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `reply` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reverse` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
@@ -1499,7 +1504,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (436)
+### Internal observable (stats/counters) (438)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1816,10 +1821,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:render-ffi-available` — `src/compiler/evaluator_primitives_io.cpp`
 - `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-ffi-count` — `src/compiler/ffi_primitives_impl.cpp`
+- `query:render-frame-time-histogram` — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-jit-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:render-jit-stability-stats` — `src/compiler/evaluator_primitives_io.cpp`
 - `query:render-observability-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-prim-call-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:runtime-observability-correlated-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:runtime-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1938,7 +1945,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
-### Convenience (candidates for stdlib migration) (164)
+### Convenience (candidates for stdlib migration) (167)
 
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -2057,8 +2064,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `regex-split` — `src/compiler/evaluator_primitives_math.cpp`
 - `register-predicate!` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `register-strategy!` — `src/compiler/evaluator_primitives_agent.cpp`
+- `render-frame-time-samples` — `src/compiler/evaluator_primitives_memory.cpp`
+- `render-hotpath-depth` — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-enter` — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-exit` — `src/compiler/evaluator_primitives_memory.cpp`
+- `render-prim-latency-samples` — `src/compiler/evaluator_primitives_memory.cpp`
 - `rollback-since` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `run-tests` — `src/compiler/evaluator_primitives_test.cpp`
 - `session-active?` — `src/compiler/evaluator_primitives_messaging.cpp`

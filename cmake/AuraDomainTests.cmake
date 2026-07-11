@@ -244,6 +244,11 @@ aura_add_issue_test(test_tier_dispatch)
 aura_issue_test_link_llvm_jit(test_tier_dispatch)
 add_dependencies(all_test_issue_targets test_tier_dispatch)
 
+# Issue #1357: per-prim latency + frame time histogram
+aura_add_issue_test(test_render_telemetry)
+aura_issue_test_link_llvm_jit(test_render_telemetry)
+add_dependencies(all_test_issue_targets test_render_telemetry)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

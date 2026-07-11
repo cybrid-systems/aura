@@ -7,7 +7,9 @@ module;
 #include "messaging_bridge.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
+#include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
+#include <limits>
 
 module aura.compiler.evaluator;
 
@@ -430,6 +432,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 m->render_frame_reset_deferred.fetch_add(1, std::memory_order_relaxed);
             return make_int(0);
         }
+        // Issue #1357: record inter-reset frame time into histogram.
+        ev.mark_render_frame_boundary();
         std::int64_t reclaimed = 0;
         // Issue #1355: auto-commit any leftover lightweight frames at frame boundary.
         if (ev.workspace_flat_ && ev.workspace_flat_->render_lightweight_active()) {
@@ -509,7 +513,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.exit_render_hotpath();
         return make_bool(true);
     });
-
+    add("render-hotpath-depth", [](const auto&) -> EvalValue {
+        return make_int(
+            static_cast<std::int64_t>(aura::core::arena_policy::g_render_hotpath_depth));
+    });
     // Issue #1355: int probes for Agent/tests.
     add("mutation-lightweight-total", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
@@ -571,6 +578,90 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
     add("prim-cold-dispatch-fallback", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.primitives().cold_dispatch_fallback()));
+    });
+
+    // ── Issue #1357: render prim latency + frame time histogram ──
+    add("query:render-prim-call-stats", [&ev](const auto&) -> EvalValue {
+        namespace rt = aura::compiler::render_telemetry;
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        if (m)
+            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+        // Compact string of tracked hot prims with calls/mean/min/max.
+        std::string out = "schema=1357 active=1 ";
+        std::uint64_t tracked_calls = 0;
+        for (std::size_t i = 0; i < rt::kTrackedRenderPrimCount; ++i) {
+            const auto& s = rt::tracked_prim_stats(i);
+            const auto c = s.call_count.load(std::memory_order_relaxed);
+            if (c == 0)
+                continue;
+            tracked_calls += c;
+            const auto tot = s.total_ns.load(std::memory_order_relaxed);
+            const auto mean = tot / c;
+            auto mn = s.min_ns.load(std::memory_order_relaxed);
+            if (mn == std::numeric_limits<std::uint64_t>::max())
+                mn = 0;
+            const auto mx = s.max_ns.load(std::memory_order_relaxed);
+            out += std::format("{}:calls={} mean_ns={} min_ns={} max_ns={} ",
+                               rt::kTrackedRenderPrims[i], c, mean, mn, mx);
+        }
+        // Also surface slot-table hits for this Evaluator.
+        std::uint64_t slot_calls = 0;
+        for (const auto& s : ev.prim_latency_table()) {
+            if (s)
+                slot_calls += s->call_count.load(std::memory_order_relaxed);
+        }
+        out += std::format("tracked_calls={} slot_table_calls={} samples={}", tracked_calls,
+                           slot_calls, m ? m->render_prim_latency_samples.load() : 0);
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(out));
+        return types::make_string(sidx);
+    });
+
+    add("query:render-frame-time-histogram", [&ev](const auto&) -> EvalValue {
+        namespace rt = aura::compiler::render_telemetry;
+        auto& ft = rt::global_frame_time_stats();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        if (m)
+            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+        const auto frames = ft.total_frames.load(std::memory_order_relaxed);
+        const auto tot = ft.total_ns.load(std::memory_order_relaxed);
+        const auto mean = frames ? tot / frames : 0;
+        auto mn = ft.min_ns.load(std::memory_order_relaxed);
+        if (mn == std::numeric_limits<std::uint64_t>::max())
+            mn = 0;
+        const auto mx = ft.max_ns.load(std::memory_order_relaxed);
+        std::string buckets;
+        for (int i = 0; i < rt::kFrameTimeBuckets; ++i) {
+            if (i)
+                buckets += ',';
+            buckets += std::to_string(
+                ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed));
+        }
+        // Frames under 16ms (buckets 0..8 cover 0-16ms)
+        std::uint64_t under_16 = 0;
+        for (int i = 0; i <= 8; ++i)
+            under_16 +=
+                ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed);
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::format(
+            "schema=1357 total_frames={} mean_frame_ns={} min_ns={} max_ns={} under_16ms={} "
+            "buckets=[{}] labels=0-1,1-2,2-4,4-6,6-8,8-10,10-12,12-14,14-16,16-20,20-33,>33ms",
+            frames, mean, mn, mx, under_16, buckets));
+        return types::make_string(sidx);
+    });
+
+    // Int probes for tests
+    add("render-prim-latency-samples", [&ev](const auto&) -> EvalValue {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto global = aura::compiler::render_telemetry::g_render_prim_latency_samples.load(
+            std::memory_order_relaxed);
+        if (m)
+            m->render_prim_latency_samples.store(global, std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(global));
+    });
+    add("render-frame-time-samples", [](const auto&) -> EvalValue {
+        auto& ft = aura::compiler::render_telemetry::global_frame_time_stats();
+        return make_int(static_cast<std::int64_t>(ft.total_frames.load(std::memory_order_relaxed)));
     });
 
     add("query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
