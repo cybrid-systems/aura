@@ -333,6 +333,9 @@ struct AdaptiveStealStats {
     // Issue #500: ring-neighbor steal attempts (before random victim).
     std::atomic<std::uint64_t> ring_steal_attempts{0};
     std::atomic<std::uint64_t> ring_steal_successes{0};
+    // Issue #1254: steals deferred because victim is at an inner
+    // MutationBoundaryGuard (depth > 0) — not outermost-safe.
+    std::atomic<std::uint64_t> steal_deferred_inner_boundary{0};
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {

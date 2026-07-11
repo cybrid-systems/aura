@@ -19,6 +19,7 @@ module;
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -2742,6 +2743,9 @@ private:
     std::unordered_set<std::string> defuse_affected_syms_;
     // (#10) Number of times the def-use index has been rebuilt (for stats)
     std::uint64_t defuse_rebuild_count_ = 0;
+    // Issue #1255: precise incremental DefUse vs full-rebuild fallback.
+    std::uint64_t defuse_incremental_updates_ = 0;
+    std::uint64_t defuse_full_rebuild_fallbacks_ = 0;
 
     // ── 依赖图查询回调 ─────────────────────────────────────────
     // 在 mutation 原语中查询调用者节点，绕开 DefUseIndex 前向声明问题。
@@ -8847,8 +8851,13 @@ public:
         // (any non-zero nesting → atomic_batch_active).
         bool atomic_batch_active_ = false;
         bool suppress_bump_ = false;
+        // Issue #1253: outermost mutation hold-time tracking.
+        bool is_outermost_ = false;
+        std::chrono::steady_clock::time_point enter_ts_{};
 
     public:
+        // Issue #1254: true only for the lock-owning outermost guard.
+        [[nodiscard]] bool is_outermost() const noexcept { return is_outermost_; }
         // Issue #266: enable fine-grained column snapshots for the
         // next guard on this evaluator (call before construction).
         static void enable_fine_rollback(Evaluator& ev) noexcept {
@@ -8892,7 +8901,10 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = ++(*slot);
             bool outermost = (prev == 1);
+            is_outermost_ = outermost;
             if (outermost) {
+                // Issue #1253: start hold-time clock for long-mutation policy.
+                enter_ts_ = std::chrono::steady_clock::now();
                 lock_.lock();
                 ev_->outermost_mutation_success_flag_ = flag_;
                 ev_->bind_yield_hook_evaluator();
@@ -8903,6 +8915,10 @@ public:
                 // flag is cleared by the Guard dtor
                 // (the outermost one only).
                 ev_->mutation_boundary_held_.store(true, std::memory_order_release);
+                // Issue #1252: coverage counter — every outermost Guard wrap.
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                    m->mutation_boundary_primitives_wrapped.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             if (fine_rollback_)
                 ev_->request_fine_rollback_for_next_boundary();
@@ -8936,6 +8952,34 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = (*slot)--;
             bool outermost = (prev == 1);
+            // Issue #1253: observe outermost mutation hold duration.
+            if (outermost && enter_ts_.time_since_epoch().count() != 0) {
+                const auto dur = std::chrono::steady_clock::now() - enter_ts_;
+                const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                    m->mutation_hold_duration_us_total.fetch_add(
+                        static_cast<std::uint64_t>(us > 0 ? us : 0), std::memory_order_relaxed);
+                    m->mutation_hold_samples.fetch_add(1, std::memory_order_relaxed);
+                    // Default policy: 500ms — metric-only (no force-yield yet).
+                    constexpr std::int64_t kMaxMutationDurationUs = 500'000;
+                    if (us > kMaxMutationDurationUs) {
+                        m->mutation_too_long_total.fetch_add(1, std::memory_order_relaxed);
+                        if (us > static_cast<std::int64_t>(m->mutation_hold_duration_us_max.load(
+                                     std::memory_order_relaxed))) {
+                            m->mutation_hold_duration_us_max.store(static_cast<std::uint64_t>(us),
+                                                                   std::memory_order_relaxed);
+                        }
+                    } else {
+                        auto prev_max =
+                            m->mutation_hold_duration_us_max.load(std::memory_order_relaxed);
+                        while (static_cast<std::uint64_t>(us) > prev_max &&
+                               !m->mutation_hold_duration_us_max.compare_exchange_weak(
+                                   prev_max, static_cast<std::uint64_t>(us),
+                                   std::memory_order_relaxed)) {
+                        }
+                    }
+                }
+            }
             ev_->exit_mutation_boundary(success);
             // Issue #285: explicit flush at the boundary exit so any
             // pending mutation stack state is visible to other fibers
@@ -9019,6 +9063,30 @@ public:
                 ev_->pattern_index_policy_ == PatternIndexPolicy::EagerAfterMutate) {
                 ev_->build_tag_arity_index(
                     static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
+            }
+            // Issue #1252: post-mutate linear ownership revalidate on
+            // successful outermost Guard exit (#672 path made mandatory).
+            if (outermost && success) {
+                ev_->bump_linear_post_mutate_enforcement();
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                    m->mutation_boundary_linear_revalidations.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                }
+            } else if (outermost && !success) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                    m->mutation_boundary_steal_recoveries.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            // Issue #1255: on Guard exit, if hygiene drift was seen,
+            // force DefUseIndex sync before releasing the boundary.
+            if (outermost && ev_->workspace_flat_) {
+                const auto dirty = ev_->workspace_flat_->mark_dirty_upward_call_count();
+                if (dirty > 0) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                        m->pattern_hygiene_defuse_sync_on_guard.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
             }
             // unique_lock destructor runs automatically here.
         }

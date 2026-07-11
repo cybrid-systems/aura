@@ -102,6 +102,10 @@ public:
     [[nodiscard]] std::uint64_t recursive_macro_skipped() const noexcept {
         return recursive_macro_skipped_;
     }
+    // Issue #1255: strict MacroIntroduced filter hits (same path as skip).
+    [[nodiscard]] std::uint64_t macro_intro_filtered_strict() const noexcept {
+        return macro_intro_filtered_strict_;
+    }
 
     // ─── Public state ─────────────────────────────────────────
     QueryMatchState state;
@@ -114,6 +118,7 @@ private:
     SymId wildcard_sym_;
     bool skip_macro_introduced_ = false;
     std::uint64_t recursive_macro_skipped_ = 0;
+    std::uint64_t macro_intro_filtered_strict_ = 0;
 };
 
 } // namespace aura::compiler

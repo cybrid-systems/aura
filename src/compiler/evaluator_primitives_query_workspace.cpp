@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -1829,6 +1830,14 @@ void register_workspace_query_primitives(
         // node ids (post query-split contract).
         if (matcher.recursive_macro_skipped() > 0) {
             ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
+            // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
+            ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
+        }
+        if (matcher.macro_intro_filtered_strict() > 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->pattern_hygiene_violations_caught.fetch_add(
+                    matcher.macro_intro_filtered_strict(), std::memory_order_relaxed);
+            }
         }
         if (!include_macro_introduced) {
             ev.verify_pattern_result_hygiene(flat, result, with_markers);

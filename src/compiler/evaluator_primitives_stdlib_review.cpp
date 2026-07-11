@@ -1009,6 +1009,45 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1246–#1250).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1251–#1255 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1251-1255-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1251)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1251_1255_active) : 1)},
+                {"mark-dirty-bounds-enforced",
+                 make_int(m ? load_u64(m, m->mark_dirty_bounds_enforced) : 1)},
+                {"rollback-compaction-path",
+                 make_int(m ? load_u64(m, m->rollback_compaction_path) : 1)},
+                {"mutation-boundary-primitives-wrapped",
+                 make_int(m ? load_u64(m, m->mutation_boundary_primitives_wrapped) : 0)},
+                {"mutation-boundary-linear-revalidations",
+                 make_int(m ? load_u64(m, m->mutation_boundary_linear_revalidations) : 0)},
+                {"mutation-hold-samples", make_int(m ? load_u64(m, m->mutation_hold_samples) : 0)},
+                {"mutation-too-long-total",
+                 make_int(m ? load_u64(m, m->mutation_too_long_total) : 0)},
+                {"steal-inner-boundary-hardened",
+                 make_int(m ? load_u64(m, m->steal_inner_boundary_hardened) : 1)},
+                {"pattern-hygiene-strict-enforced",
+                 make_int(m ? load_u64(m, m->pattern_hygiene_strict_enforced) : 1)},
+                {"defuse-incremental-updates",
+                 make_int(m ? load_u64(m, m->defuse_incremental_updates_total) : 0)},
+                {"defuse-full-rebuild-fallbacks",
+                 make_int(m ? load_u64(m, m->defuse_full_rebuild_fallbacks_total) : 0)},
+                {"issue-1255", make_int(1255)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1251–#1255).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
