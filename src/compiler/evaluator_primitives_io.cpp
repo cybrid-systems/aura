@@ -361,20 +361,40 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         } else
 #endif
         {
-            // Fallback: popen with single-quote escaping (safe for libgit2 path)
-            std::string cmd = "git add";
+            // Issue #1161: fork+execvp — no shell (matches git-commit #473).
+            std::vector<std::string> path_bufs;
+            path_bufs.reserve(a.size());
             for (const auto& v : a) {
                 if (!is_string(v))
                     return make_int(-1);
                 auto si = as_string_idx(v);
                 if (si >= ev.string_heap_.size())
                     return make_int(-1);
-                cmd += " \'";
-                cmd += ev.string_heap_[si];
-                cmd += "\'";
+                path_bufs.push_back(ev.string_heap_[si]);
             }
-            cmd += " 2>/dev/null";
-            rc = ::system(cmd.c_str());
+            pid_t pid = ::fork();
+            if (pid == 0) {
+                int devnull = ::open("/dev/null", O_WRONLY);
+                if (devnull >= 0) {
+                    ::dup2(devnull, STDERR_FILENO);
+                    ::close(devnull);
+                }
+                std::vector<char*> argv;
+                argv.push_back(const_cast<char*>("git"));
+                argv.push_back(const_cast<char*>("add"));
+                for (auto& s : path_bufs)
+                    argv.push_back(s.data());
+                argv.push_back(nullptr);
+                ::execvp("git", argv.data());
+                ::_exit(127);
+            }
+            if (pid > 0) {
+                int status = 0;
+                if (::waitpid(pid, &status, 0) != -1 && WIFEXITED(status))
+                    rc = WEXITSTATUS(status);
+            } else {
+                rc = -1;
+            }
         }
         return make_int(rc);
     });
@@ -469,20 +489,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         }
 
-        // Fallback: popen with single-quoted URL (no double-quote injection).
-        std::string cmd = "curl -s -f -- " + shell_single_quote(url) + " 2>/dev/null";
-        std::array<char, 4096> buf;
-        auto fp = ::popen(cmd.c_str(), "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), static_cast<int>(buf.size()), fp))
-            result += buf.data();
-        auto rc = ::pclose(fp);
-        if (rc != 0 && result.empty())
-            return make_void();
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
-        return types::make_string(sidx);
+        // Issue #1160: no shell fallback. Without libcurl, refuse rather
+        // than interpolate the URL into popen/curl (command injection).
+        (void)shell_single_quote;
+        return make_void();
     });
 
     add("http-post", [&ev](std::span<const EvalValue> a) -> EvalValue {
