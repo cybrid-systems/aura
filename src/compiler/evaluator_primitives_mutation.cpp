@@ -138,8 +138,12 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(dropped));
     });
 
-    // Issue #1362: (query:mutation-log-stats) → hash of size/compacted/ops
-    add("query:mutation-log-stats", [&ev](const auto&) -> EvalValue {
+    // Issue #1362: compaction observability hash (size/compacted/ops).
+    // Do NOT reuse query:mutation-log-stats — that name is the #553
+    // integer sum of atomic-batch + steal/rollback counters (registered
+    // in register_query_primitives). Overwriting it broke late4
+    // test_issue_557_observability and every #553 int regression.
+    add("query:mutation-log-compact-stats", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_void();
         auto* ht = FlatHashTable::create(16);
@@ -177,6 +181,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         put("compact-ops", static_cast<std::int64_t>(flat->mutation_log_compact_ops()));
         put("auto-threshold",
             static_cast<std::int64_t>(aura::ast::FlatAST::kMutationLogAutoCompactThreshold));
+        put("schema", 1362);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
