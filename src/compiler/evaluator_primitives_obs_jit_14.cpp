@@ -117,23 +117,37 @@ void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 113 (orig lines 21395-21426)
 void ObservabilityPrims::register_jit_p113(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #856 / #1136 / #1140: create-buffer counts creations only;
-    // term_buf_diff_hits_total is owned solely by terminal:diff.
-    add("terminal:create-buffer", [&ev](const auto& a) -> EvalValue {
+    // Issue #856 / #1136 / #1140 → Issue #1351 Phase A deprecation.
+    // No-op counter stubs; real APIs: make-terminal-buffer / terminal-diff-update.
+    auto deprecate_terminal_noop = [](const char* name, const char* replacement) {
+        static std::mutex warn_mu;
+        static std::unordered_set<const void*> warned;
+        std::lock_guard<std::mutex> lock(warn_mu);
+        if (warned.insert(static_cast<const void*>(name)).second) {
+            std::fprintf(stderr,
+                         "[aura] WARN: %s is deprecated (no-op); use %s instead "
+                         "(see #1351)\n",
+                         name, replacement);
+        }
+    };
+
+    add("terminal:create-buffer", [&ev, deprecate_terminal_noop](const auto& a) -> EvalValue {
         (void)a;
+        deprecate_terminal_noop("terminal:create-buffer", "make-terminal-buffer");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_buf_diff_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
-    add("terminal:diff", [&ev](const auto&) -> EvalValue {
+    add("terminal:diff", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
+        deprecate_terminal_noop("terminal:diff", "terminal-diff-update");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_buf_diff_hits_total.fetch_add(1, std::memory_order_relaxed);
             m->render_obs_v2_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
     // Issue #872: primitives:alias name target (Phase 1 registry of aliases)
     add("primitives:alias", [&ev](const auto& a) -> EvalValue {
