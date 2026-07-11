@@ -924,7 +924,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"sva-semantic-eval-scaffold",
                  make_int(m ? load_u64(m, m->sva_semantic_eval_scaffold) : 1)},
                 {"panic-checkpoint-raii-scaffold",
-                 make_int(m ? load_u64(m, m->panic_checkpoint_raii_scaffold) : 1)},
+                 make_int(m ? load_u64(m, m->panic_checkpoint_raii_scaffold) : 2)},
                 {"value-tag-consteval-contracts",
                  make_int(m ? load_u64(m, m->value_tag_consteval_contracts) : 1)},
                 {"issue-1240", make_int(1240)},

@@ -9,6 +9,7 @@ set(AURA_CXX_MODULE_CORE
     src/core/mutation.ixx
     src/core/mutators.ixx
     src/core/ast.ixx
+    src/core/panic_checkpoint_raii.ixx
     src/core/core.ixx
     src/core/type_arena.ixx
     src/core/type.ixx
