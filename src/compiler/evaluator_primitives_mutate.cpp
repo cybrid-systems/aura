@@ -323,6 +323,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return ev.string_heap_[i];
     };
 
+    // Issue #1259: every mutate:* registration goes through this wrapper.
+    // Detects "naked" mutate (no MutationBoundaryGuard entered during call)
+    // by comparing outermost-wrap counter before/after.
     auto add_mutate = [&](std::string name, auto fn) {
         add(std::move(name), [&ev, mev, fn](std::span<const EvalValue> a) -> EvalValue {
             if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate) &&
@@ -330,7 +333,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.bump_capability_denial();
                 return mev("capability-denied", "mutate capability required in sandbox mode");
             }
-            return fn(a);
+            std::uint64_t wraps_before = 0;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                wraps_before =
+                    m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+            auto result = fn(a);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                const auto wraps_after =
+                    m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+                if (wraps_after == wraps_before) {
+                    // No outermost Guard was entered — naked mutate path.
+                    m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            return result;
         });
     };
 

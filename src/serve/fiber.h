@@ -476,6 +476,11 @@ struct WorkerGCState {
     // worker has no fibers at all).
     std::atomic<int32_t> running_fiber_count{0};
 
+    // Issue #1256: safepoint wait latency under MutationBoundary hold.
+    std::atomic<std::int64_t> eventfd_wakeup_latency_us{0};
+    std::atomic<std::int64_t> safepoint_wait_while_mutation_held{0};
+    std::atomic<std::int64_t> safepoint_blocked_by_long_mutation{0};
+
     // Spin-wait until phase returns to None (safepoint resume)
     void wait_for_resume() {
         while (phase.load(std::memory_order_acquire) != GCPhase::None) {

@@ -128,23 +128,31 @@ void Fiber::check_gc_safepoint() {
     // should yield + retry). The P0 records the
     // request + the deferral; the follow-up wires
     // the actual yield+retry into the wait path.
+    const bool holding_mutation = aura_evaluator_mutation_boundary_depth() > 0;
     if (phase == GCPhase::Requested) {
         (void)aura_evaluator_request_gc_safepoint();
-        // Issue #451: attribute the safepoint wait to
+        // Issue #451 + #1256: attribute the safepoint wait to
         // a MutationBoundary if one is currently held
-        // by the active thread. The C-linkage shim
-        // returns the current depth; if > 0, the
-        // wait is attributable to the active
-        // MutationBoundary guard.
-        if (aura_evaluator_mutation_boundary_depth() > 0) {
+        // by the active thread.
+        if (holding_mutation) {
             static_gc_pause_attributed_to_mutation_count_.fetch_add(1, std::memory_order_relaxed);
+            gc->safepoint_wait_while_mutation_held.fetch_add(1, std::memory_order_relaxed);
         }
     }
     if (phase == GCPhase::Requested) {
         // Arrive at safepoint: increment counter
         gc->fibers_at_safepoint.fetch_add(1, std::memory_order_release);
-        // Spin-wait until GC completes
+        // Issue #1256: high-res timer around eventfd / spin wait
+        // so production can see GC tail latency under mutation hold.
+        const auto t0 = std::chrono::steady_clock::now();
         gc->wait_for_resume();
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dt).count();
+        gc->eventfd_wakeup_latency_us.fetch_add(us, std::memory_order_relaxed);
+        if (holding_mutation && us > 1'000) {
+            // >1ms wait while holding mutation → long-mutation GC block signal.
+            gc->safepoint_blocked_by_long_mutation.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 }
 

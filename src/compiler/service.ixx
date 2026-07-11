@@ -1094,6 +1094,14 @@ public:
         // must be cleared after arena reset to avoid dangling pointers.
         ir_cache_.clear();
         ir_cache_strings_.clear();
+        // Issue #1258: force full dirty on ir_cache_v2_ SoA entries
+        // before clear so any concurrent reader sees dirty (not stale
+        // clean) state across arena reset / hot-swap.
+        for (auto& [_, entry] : ir_cache_v2_) {
+            entry.dirty = true;
+            entry.mark_all_blocks_dirty();
+        }
+        ir_cache_v2_.clear();
         // Issue #225 cycle 3: explicitly clear all bridge data.
         // The shared_ptr-based bridges (Issue #224) hold a
         // non-owning view of the FlatAST, but the FlatAST's
@@ -1106,7 +1114,7 @@ public:
         ir_define_closure_owner_.clear();
         ir_value_cell_bindings_.clear();
         ir_disk_snapshots_.clear();
-        // Issue #223: bump mutation_epoch_ so any stale
+        // Issue #223 + #1258: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
         // by the bridge callback / apply_closure. The bridge_epoch_
         // field on ClosureBridgeData captures this at construction
@@ -1114,6 +1122,7 @@ public:
         // dangling (the arena was reset). The bridge falls back
         // to re-parse from body_source (or invalidates the closure).
         mutation_epoch_.fetch_add(1, std::memory_order_release);
+        metrics_.ir_soa_cache_reset_epoch_bumps.fetch_add(1, std::memory_order_relaxed);
         // Re-install lowering hooks after reset so the live service
         // continues to observe bridge epoch / linear metadata.
         install_lowering_compiler_core_hooks();

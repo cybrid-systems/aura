@@ -375,6 +375,10 @@ export struct LowerSoAEmitSnapshot {
     std::uint64_t instructions_emitted = 0;
     std::uint64_t functions_emitted = 0;
     std::uint64_t type_metadata_stamped = 0;
+    // Issue #1258: dual-emit / cache consistency observability.
+    bool consistency_ok = true;
+    std::uint64_t consistency_checks = 0;
+    std::uint64_t consistency_mismatches = 0;
     IRModuleV2 module;
 };
 

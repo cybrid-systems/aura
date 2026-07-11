@@ -5698,6 +5698,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> defuse_incremental_updates_total{0};       // #1255
     std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};    // #1255
     std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};   // #1255
+
+    // ── Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1256_1260_active{1};
+    std::atomic<std::uint64_t> gc_safepoint_mutation_metrics{1};              // #1256
+    std::atomic<std::uint64_t> workspace_provenance_auto_remapped{0};         // #1257
+    std::atomic<std::uint64_t> workspace_cross_layer_validations_on_merge{0}; // #1257
+    std::atomic<std::uint64_t> workspace_merge_mismatch_prevented{0};         // #1257
+    std::atomic<std::uint64_t> ir_soa_cache_consistency_enforced{1};          // #1258
+    std::atomic<std::uint64_t> ir_soa_cache_reset_epoch_bumps{0};             // #1258
+    std::atomic<std::uint64_t> mutate_guard_enforced{0};                      // #1259
+    std::atomic<std::uint64_t> naked_mutate_attempt{0};                       // #1259
+    std::atomic<std::uint64_t> panic_transfer_on_steal{0};                    // #1260
+    std::atomic<std::uint64_t> panic_transfer_failed{0};                      // #1260
+    std::atomic<std::uint64_t> panic_checkpoint_steal_hardened{1};            // #1260
 };
 
 
