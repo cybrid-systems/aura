@@ -41,6 +41,9 @@ int aura_issue_684_run() {
     std::println("=== Issue #684: IRSoA full wiring incremental ===");
 
     aura::compiler::CompilerService cs;
+    // Issue #1377: dual-emit is opt-in; this test verifies the #684
+    // wiring surface and must enable it explicitly.
+    cs.set_soa_dual_emit(true);
 
     // AC1: stats hash fields
     {

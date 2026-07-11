@@ -344,6 +344,11 @@ aura_add_issue_test(test_dep_graph_concurrent)
 aura_issue_test_link_llvm_jit(test_dep_graph_concurrent)
 add_dependencies(all_test_issue_targets test_dep_graph_concurrent)
 
+# Issue #1377: SoA dual-emit opt-in gate (default off)
+aura_add_issue_test(test_ir_soa_dual_emit)
+aura_issue_test_link_llvm_jit(test_ir_soa_dual_emit)
+add_dependencies(all_test_issue_targets test_ir_soa_dual_emit)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

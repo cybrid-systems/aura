@@ -249,18 +249,21 @@ bool test_no_regression() {
     } else {
         CHECK(true, "eval (x = 42) returns 42 (dual-emit off path intact)");
     }
-    // Confirm the eval path now DOES dual-emit (Issue #684 wired
-    // absorb_lower_soa_snapshot to lower()). The original test
-    // was written before that hookup; today the counters are
-    // non-zero after eval-current. The "scope-limited foundation"
-    // contract is now "evaluator still works with dual-emit on
-    // by default", which is what the post-eval check verifies
-    // (eval result == 42 was already PASS above).
+    // Issue #1377: dual-emit is opt-in (default off). Default path
+    // keeps eval correct with zero SoA cost; opt-in still feeds
+    // absorb_lower_soa_snapshot counters (Issue #684 hookup).
+    auto snap_off = cs.snapshot();
+    CHECK(snap_off.ir_soa_instructions_emitted == 0,
+          "default-off: ir_soa_instructions_emitted == 0 after eval");
+    cs.set_soa_dual_emit(true);
+    (void)cs.eval("(set-code \"(define y 7)\")");
+    (void)cs.eval("(eval-current)");
     auto snap = cs.snapshot();
     CHECK(snap.ir_soa_instructions_emitted > 0,
-          "ir_soa_instructions_emitted > 0 after eval-current (Issue #684 hookup)");
+          "opt-in dual-emit: ir_soa_instructions_emitted > 0 (Issue #684 hookup)");
     CHECK(snap.ir_soa_functions_emitted >= 0,
           "ir_soa_functions_emitted non-negative after eval-current");
+    cs.set_soa_dual_emit(false);
     return true;
 }
 

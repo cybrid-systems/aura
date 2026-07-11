@@ -1557,10 +1557,20 @@ static IRModule lower_to_ir_impl(
     const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
     std::uint32_t narrowing_evidence = 0) { // Issue #280
     LoweringState state(arena);
-    // Issue #684: production dual-emit to IRFunctionSoA columns.
-    state.enable_soa_dual_emit();
-    // Issue #1318 Phase 1: track dual-emit bridge usage toward full SoA primary path.
-    aura::compiler::ir_soa_migration::record_dual_emit_bridge();
+    // Issue #684 dual-emit scaffold + #1318 bridge counter.
+    // Issue #1377: default OFF — dual-emit paid ~50% memory / 10-30% lower
+    // time with no production consumer (SoA only fed metrics + convert-back).
+    // Opt-in via ir_soa_migration::set_soa_dual_emit_enabled(true) /
+    // CompilerService::set_soa_dual_emit(true).
+    if (aura::compiler::ir_soa_migration::soa_dual_emit_enabled()) {
+        state.enable_soa_dual_emit();
+        aura::compiler::ir_soa_migration::record_dual_emit_bridge();
+    } else {
+        aura::compiler::ir_soa_migration::record_dual_emit_skipped();
+        // Clear thread-local snapshot so absorb_lower_soa_snapshot does
+        // not re-absorb a previous opt-in lower's SoA columns.
+        g_last_soa_snapshot = {};
+    }
     state.instruction_reserve_hint = flat.size();
     state.value_cells = value_cells;
     state.current_narrowing_evidence = narrowing_evidence;

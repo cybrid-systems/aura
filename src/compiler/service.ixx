@@ -8020,7 +8020,11 @@ private:
     }
 
     // Issue #684: absorb dual-emit snapshot after lowering.
+    // Issue #1377: no-op when dual-emit is off (snapshot cleared /
+    // zero-emitted) — skips metric updates and pending_soa_snapshot_.
     void absorb_lower_soa_snapshot() {
+        if (!aura::compiler::ir_soa_migration::soa_dual_emit_enabled())
+            return;
         if (const auto* snap = aura::compiler::lower_last_soa_snapshot()) {
             if (snap->instructions_emitted == 0 && snap->functions_emitted == 0)
                 return;
@@ -8303,6 +8307,16 @@ public:
     // (mutate:rebind) EDSL surface, which would also rebuild the function
     // body (mixing the traversal test with the rebind path).
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
+
+    // Issue #1377: opt-in SoA dual-emit (default off). When false,
+    // lower_to_ir skips IRFunctionSoA columns + bridge counters.
+    void set_soa_dual_emit(bool enable) noexcept {
+        enable_soa_dual_emit_.store(enable, std::memory_order_relaxed);
+        aura::compiler::ir_soa_migration::set_soa_dual_emit_enabled(enable);
+    }
+    [[nodiscard]] bool soa_dual_emit_enabled() const noexcept {
+        return enable_soa_dual_emit_.load(std::memory_order_relaxed);
+    }
 
     // Issue #401: public test accessors for the dep_graph_.
     //
@@ -8647,6 +8661,11 @@ public:
     // cascade BFS) take shared_lock. Lock order when both needed:
     // mutate_mtx_ first, then dep_graph_mtx_ (never reverse).
     mutable std::shared_mutex dep_graph_mtx_;
+
+    // Issue #1377: SoA dual-emit opt-in (default off). Mirrors the
+    // process-wide ir_soa_migration::g_enable_soa_dual_emit flag so
+    // per-service set_soa_dual_emit stays discoverable for agents/tests.
+    std::atomic<bool> enable_soa_dual_emit_{false};
 
     // Try to execute an IRModule via LLVM JIT
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
