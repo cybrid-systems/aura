@@ -54,9 +54,25 @@ std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version);
 std::uint64_t aura_aot_last_commit_epoch(void);
 
 // Issue #708 — region isolation + func_table refcount tracking.
+// Global (default) APIs — equivalent to for_eval(nullptr, ...).
 void aura_set_aot_region_mask(std::uint64_t mask);
 std::uint64_t aura_get_aot_region_mask(void);
 void aura_set_aot_emit_region_mask(std::uint64_t mask);
+
+// Issue #1367: per-evaluator AOT state (multi-agent isolation).
+// eval_ptr is typically Evaluator*; nullptr selects the process default state.
+void aura_set_aot_region_mask_for_eval(void* eval_ptr, std::uint64_t mask);
+std::uint64_t aura_get_aot_region_mask_for_eval(void* eval_ptr);
+void aura_set_module_version_for_eval(void* eval_ptr, std::uint64_t v);
+std::uint64_t aura_get_module_version_for_eval(void* eval_ptr);
+void aura_set_aot_defuse_version_for_eval(void* eval_ptr, std::uint64_t v);
+std::uint64_t aura_get_aot_defuse_version_for_eval(void* eval_ptr);
+bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path, std::uint64_t version);
+// Drop per-eval AotState entry (call from ~Evaluator).
+void aura_cleanup_aot_state(void* eval_ptr);
+// Diagnostics: number of non-default AotState entries currently live.
+std::uint64_t aura_aot_state_map_size(void);
+
 void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
 std::uint64_t aura_aot_func_table_epoch(void);
 bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);

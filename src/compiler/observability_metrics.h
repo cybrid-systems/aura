@@ -5237,6 +5237,10 @@ struct CompilerMetrics {
     // Issue #1366: reloads requested via Aura (aot:reload) primitive
     std::atomic<std::uint64_t> aot_reload_attempts_via_primitive{0};
     std::atomic<std::uint64_t> aot_reload_success_via_primitive{0};
+    // Issue #1367: per-evaluator AotState map telemetry
+    std::atomic<std::uint64_t> aot_per_eval_state_creates{0};
+    std::atomic<std::uint64_t> aot_per_eval_state_clears{0};
+    std::atomic<std::uint64_t> aot_per_eval_region_sets{0};
     std::atomic<std::uint64_t> aot_refcount_swaps_{0};
     std::atomic<std::uint64_t> aot_deopt_on_steal_{0};
     std::atomic<std::uint64_t> aot_concurrent_safe_reloads_{0};
