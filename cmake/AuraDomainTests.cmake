@@ -339,6 +339,11 @@ aura_add_issue_test(test_mutation_hold_time)
 aura_issue_test_link_llvm_jit(test_mutation_hold_time)
 add_dependencies(all_test_issue_targets test_mutation_hold_time)
 
+# Issue #1376: dep_graph_ mutex + concurrent record_dependency
+aura_add_issue_test(test_dep_graph_concurrent)
+aura_issue_test_link_llvm_jit(test_dep_graph_concurrent)
+add_dependencies(all_test_issue_targets test_dep_graph_concurrent)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

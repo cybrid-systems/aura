@@ -665,6 +665,7 @@ public:
         });
         evaluator_.set_get_dependents_fn(
             [this](const std::string& name) -> std::vector<std::string> {
+                std::shared_lock dep_read(dep_graph_mtx_);
                 auto it = dep_graph_.find(name);
                 if (it == dep_graph_.end())
                     return {};
@@ -737,9 +738,12 @@ public:
             }
             std::uint64_t epoch = mutation_epoch_.load(std::memory_order_acquire);
             std::uint64_t edges = 0;
-            for (auto& [_, dep_entry] : dep_graph_) {
-                edges += static_cast<std::uint64_t>(dep_entry.calls.size());
-                edges += static_cast<std::uint64_t>(dep_entry.called_by.size());
+            {
+                std::shared_lock dep_read(dep_graph_mtx_);
+                for (auto& [_, dep_entry] : dep_graph_) {
+                    edges += static_cast<std::uint64_t>(dep_entry.calls.size());
+                    edges += static_cast<std::uint64_t>(dep_entry.called_by.size());
+                }
             }
             // Pack into a single uint64 — simpler than a struct
             // crossing the module boundary.
@@ -3558,11 +3562,14 @@ public:
         auto& state = module_states_[name];
         state.dirty = false;
         state.deps.clear();
-        for (auto& [fname, _] : finder) {
-            auto dit = dep_graph_.find(fname);
-            if (dit != dep_graph_.end()) {
-                for (auto& callee : dit->second.calls)
-                    state.deps.insert(callee);
+        {
+            std::shared_lock dep_read(dep_graph_mtx_);
+            for (auto& [fname, _] : finder) {
+                auto dit = dep_graph_.find(fname);
+                if (dit != dep_graph_.end()) {
+                    for (auto& callee : dit->second.calls)
+                        state.deps.insert(callee);
+                }
             }
         }
 
@@ -4219,10 +4226,15 @@ public:
         while (!bfs.empty()) {
             auto cur = bfs.front();
             bfs.pop();
-            auto dit = dep_graph_.find(cur);
-            if (dit == dep_graph_.end())
-                continue;
-            for (auto& dependent : dit->second.called_by) {
+            std::vector<std::string> called_by_snap;
+            {
+                std::shared_lock dep_read(dep_graph_mtx_);
+                auto dit = dep_graph_.find(cur);
+                if (dit == dep_graph_.end())
+                    continue;
+                called_by_snap = dit->second.called_by;
+            }
+            for (auto& dependent : called_by_snap) {
                 if (!visited.insert(dependent).second)
                     continue;
                 bfs.push(dependent);
@@ -4932,16 +4944,19 @@ public:
                 jit_cache_.erase(fname);
             }
             function_sources_.erase(fname);
-            // Clean dep_graph
-            auto dit = dep_graph_.find(fname);
-            if (dit != dep_graph_.end()) {
-                for (auto& callee : dit->second.calls) {
-                    dep_graph_[callee].called_by.erase(
-                        std::remove(dep_graph_[callee].called_by.begin(),
-                                    dep_graph_[callee].called_by.end(), fname),
-                        dep_graph_[callee].called_by.end());
+            // Clean dep_graph (Issue #1376: exclusive lock)
+            {
+                std::unique_lock dep_write(dep_graph_mtx_);
+                auto dit = dep_graph_.find(fname);
+                if (dit != dep_graph_.end()) {
+                    for (auto& callee : dit->second.calls) {
+                        dep_graph_[callee].called_by.erase(
+                            std::remove(dep_graph_[callee].called_by.begin(),
+                                        dep_graph_[callee].called_by.end(), fname),
+                            dep_graph_[callee].called_by.end());
+                    }
+                    dep_graph_.erase(dit);
                 }
-                dep_graph_.erase(dit);
             }
         }
 
@@ -7611,13 +7626,21 @@ private:
         // function. The walker uses a per-name `seen` set,
         // but cache_define's cache_hits vector does not,
         // leading to 2× edge counts.
+        //
+        // Issue #1376: the #687 find+push TOCTOU is only safe under
+        // an exclusive lock. Concurrent populate / cache_define /
+        // invalidate_function writers race on dep_graph_ without it.
+        metrics_.dep_graph_record_total.fetch_add(1, std::memory_order_relaxed);
+        std::unique_lock write(dep_graph_mtx_);
         auto& caller_entry = dep_graph_[caller];
         if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) !=
             caller_entry.calls.end()) {
+            metrics_.dep_graph_record_dedup_total.fetch_add(1, std::memory_order_relaxed);
             return; // already recorded — skip duplicate
         }
         caller_entry.calls.push_back(callee);
         dep_graph_[callee].called_by.push_back(caller);
+        metrics_.dep_graph_record_inserted.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Scan FlatAST from the given node for Variable nodes that reference cached functions.
@@ -7640,13 +7663,11 @@ private:
                 if (nv.tag == aura::ast::NodeTag::Variable) {
                     auto name = pool.resolve(nv.sym_id);
                     auto name_str = std::string(name);
-                    // Don't record self-reference
+                    // Don't record self-reference. Idempotence + lock
+                    // live inside record_dependency (#687 + #1376) —
+                    // never touch dep_graph_ directly from this walker.
                     if (name_str != def_name && self->ir_cache_.count(name_str)) {
-                        // Check if we already recorded this dep
-                        auto& calls = self->dep_graph_[def_name].calls;
-                        if (std::find(calls.begin(), calls.end(), name_str) == calls.end()) {
-                            self->record_dependency(def_name, name_str);
-                        }
+                        self->record_dependency(def_name, name_str);
                     }
                 }
                 for (auto c : nv.children)
@@ -7723,50 +7744,53 @@ private:
         // the dependents vector lexicographically before re-lower. Sorting
         // gives a stable iteration order regardless of the underlying
         // unordered_map bucket layout.
+        //
+        // Issue #1376: exclusive dep_graph_mtx_ for the BFS + erase window
+        // (lock order: mutate_mtx_ already held, then dep_graph_mtx_).
+        // Snapshot dependents under the lock so re-lower below can proceed
+        // without holding the graph mutex across IR work.
         std::vector<std::string> dependents;
-        std::deque<std::string> bfs;
-        std::unordered_set<std::string> visited;
+        {
+            std::unique_lock dep_write(dep_graph_mtx_);
+            std::deque<std::string> bfs;
+            std::unordered_set<std::string> visited;
 
-        bfs.push_back(name);
-        visited.insert(name);
+            bfs.push_back(name);
+            visited.insert(name);
 
-        while (!bfs.empty()) {
-            auto current = bfs.front();
-            bfs.pop_front();
+            while (!bfs.empty()) {
+                auto current = bfs.front();
+                bfs.pop_front();
 
-            auto it = dep_graph_.find(current);
-            if (it == dep_graph_.end())
-                continue;
-
-            for (auto& dependent : it->second.called_by) {
-                if (!visited.insert(dependent).second)
+                auto it = dep_graph_.find(current);
+                if (it == dep_graph_.end())
                     continue;
-                dependents.push_back(dependent);
-                bfs.push_back(dependent);
-            }
-        }
 
-        // Issue #401: stable re-lower order. Sort dependents lexicographically
-        // so the iteration below doesn't depend on the unordered_map hash
-        // layout. This is the determinism contract for the follow-up
-        // record_dependency edge-creation order.
-        std::sort(dependents.begin(), dependents.end());
-
-        // Debug: check if any dependents found
-        if (dependents.empty()) {
-            // No dependents, nothing to re-lower
-        }
-
-        // Clean up old dependency info for all affected functions
-        // (the redefined function and all its transitives)
-        for (auto& f : dependents) {
-            auto fit = dep_graph_.find(f);
-            if (fit != dep_graph_.end()) {
-                for (auto& callee : fit->second.calls) {
-                    auto& cb = dep_graph_[callee].called_by;
-                    cb.erase(std::remove(cb.begin(), cb.end(), f), cb.end());
+                for (auto& dependent : it->second.called_by) {
+                    if (!visited.insert(dependent).second)
+                        continue;
+                    dependents.push_back(dependent);
+                    bfs.push_back(dependent);
                 }
-                dep_graph_.erase(f);
+            }
+
+            // Issue #401: stable re-lower order. Sort dependents lexicographically
+            // so the iteration below doesn't depend on the unordered_map hash
+            // layout. This is the determinism contract for the follow-up
+            // record_dependency edge-creation order.
+            std::sort(dependents.begin(), dependents.end());
+
+            // Clean up old dependency info for all affected functions
+            // (the redefined function and all its transitives)
+            for (auto& f : dependents) {
+                auto fit = dep_graph_.find(f);
+                if (fit != dep_graph_.end()) {
+                    for (auto& callee : fit->second.calls) {
+                        auto& cb = dep_graph_[callee].called_by;
+                        cb.erase(std::remove(cb.begin(), cb.end(), f), cb.end());
+                    }
+                    dep_graph_.erase(f);
+                }
             }
         }
         // Invalidate JIT cache for affected functions
@@ -7887,13 +7911,16 @@ private:
             clear_ir_define_env_binding(dep_name);
 
         // Clean up the original function's dep info
-        auto it = dep_graph_.find(name);
-        if (it != dep_graph_.end()) {
-            for (auto& callee : it->second.calls) {
-                auto& cb = dep_graph_[callee].called_by;
-                cb.erase(std::remove(cb.begin(), cb.end(), name), cb.end());
+        {
+            std::unique_lock dep_write(dep_graph_mtx_);
+            auto it = dep_graph_.find(name);
+            if (it != dep_graph_.end()) {
+                for (auto& callee : it->second.calls) {
+                    auto& cb = dep_graph_[callee].called_by;
+                    cb.erase(std::remove(cb.begin(), cb.end(), name), cb.end());
+                }
+                dep_graph_.erase(name);
             }
-            dep_graph_.erase(name);
         }
 
         // Re-lower each dependent with current cache. The dependents vector
@@ -8290,15 +8317,20 @@ public:
     // the unordered_map layout.
 
     // Number of entries currently in dep_graph_ (post-cleanup state).
-    [[nodiscard]] std::size_t public_dep_graph_size() const noexcept { return dep_graph_.size(); }
+    [[nodiscard]] std::size_t public_dep_graph_size() const noexcept {
+        std::shared_lock dep_read(dep_graph_mtx_);
+        return dep_graph_.size();
+    }
 
     // Whether a name is in dep_graph_.
     [[nodiscard]] bool public_dep_graph_contains(const std::string& name) const noexcept {
+        std::shared_lock dep_read(dep_graph_mtx_);
         return dep_graph_.find(name) != dep_graph_.end();
     }
 
     // Outgoing-edge count (this name calls N functions).
     [[nodiscard]] std::size_t public_dep_graph_calls_for(const std::string& name) const noexcept {
+        std::shared_lock dep_read(dep_graph_mtx_);
         auto it = dep_graph_.find(name);
         if (it == dep_graph_.end())
             return 0;
@@ -8308,6 +8340,7 @@ public:
     // Incoming-edge count (N functions call this name).
     [[nodiscard]] std::size_t
     public_dep_graph_called_by_for(const std::string& name) const noexcept {
+        std::shared_lock dep_read(dep_graph_mtx_);
         auto it = dep_graph_.find(name);
         if (it == dep_graph_.end())
             return 0;
@@ -8317,6 +8350,7 @@ public:
     // Whether a directed edge caller → callee is recorded.
     [[nodiscard]] bool public_dep_graph_has_edge(const std::string& caller,
                                                  const std::string& callee) const noexcept {
+        std::shared_lock dep_read(dep_graph_mtx_);
         auto cit = dep_graph_.find(caller);
         if (cit == dep_graph_.end())
             return false;
@@ -8325,6 +8359,22 @@ public:
                 return true;
         }
         return false;
+    }
+
+    // Issue #1376: test hook — route through locked record_dependency.
+    void public_record_dependency(const std::string& caller, const std::string& callee) {
+        record_dependency(caller, callee);
+    }
+
+    // Issue #1376: record path counters (for concurrent dedup assertions).
+    [[nodiscard]] std::uint64_t public_dep_graph_record_total() const noexcept {
+        return metrics_.dep_graph_record_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_dep_graph_record_dedup_total() const noexcept {
+        return metrics_.dep_graph_record_dedup_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_dep_graph_record_inserted() const noexcept {
+        return metrics_.dep_graph_record_inserted.load(std::memory_order_relaxed);
     }
 
     // Issue #272: test/observability accessor.
@@ -8590,6 +8640,13 @@ public:
     // Simpler: we use a plain mutex that both hold exclusively. The
     // critical section is sub-ms in practice.
     std::shared_mutex mutate_mtx_;
+
+    // Issue #1376: protects dep_graph_ (calls / called_by edges).
+    // Writers (record_dependency, invalidate_function erase, unload_module)
+    // take unique_lock; readers (public_dep_graph_*, get_dependents,
+    // cascade BFS) take shared_lock. Lock order when both needed:
+    // mutate_mtx_ first, then dep_graph_mtx_ (never reverse).
+    mutable std::shared_mutex dep_graph_mtx_;
 
     // Try to execute an IRModule via LLVM JIT
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
@@ -9119,6 +9176,7 @@ public:
             }
         }
         if (name.empty()) {
+            std::shared_lock dep_read(dep_graph_mtx_);
             for (const auto& [n, _] : dep_graph_) {
                 if (shape::make_fn_key(session_id_, n) == fn_key) {
                     name = n;
