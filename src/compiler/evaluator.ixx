@@ -1810,18 +1810,29 @@ public:
     // false for invalid ids is the same safety net as
     // is_env_frame_stale (treat invalid as the worst case).
     [[nodiscard]] bool is_env_frame_invalid(EnvId id) const;
-    // Issue #356: invalidate_post_rollback_env_frames — call
-    // after restore_panic_checkpoint to mark every env_frames_
-    // entry allocated during the doomed transaction (indices
-    // [panic_safe_env_frames_size_, env_frames_.size())) as
-    // INVALID_VERSION. The frames stay allocated (avoiding
-    // Closure::env_id invalidation), but any closure body that
-    // tries to materialize or walk into them is refused with a
-    // distinct [#356 warning] — preserving the invariant
-    // "any frame reachable from a live Closure is usable".
-    // Bumps envframe_post_rollback_invalidations_ so
-    // (query:envframe-dualpath-stats) can report the count.
+    // Issue #356: invalidate_post_rollback_env_frames — mark
+    // doomed frames INVALID_VERSION without shrinking the deque
+    // (helper retained for tests + pre-#1360 behavior).
+    // Prefer truncate_env_frames_to_checkpoint() on restore.
     void invalidate_post_rollback_env_frames();
+    // Issue #1360: actually shrink env_frames_ to
+    // panic_safe_env_frames_size_. Append-only EnvId means
+    // indices [0, checkpoint) stay valid; post-checkpoint
+    // EnvIds become OOB and resolve to nullptr. Bumps
+    // env_generation_ + envframe_truncate counters.
+    // Returns number of frames dropped.
+    std::size_t truncate_env_frames_to_checkpoint();
+    // Issue #1360: stable resolve — nullptr if id is NULL, OOB,
+    // or (future) generation-mismatched free slot.
+    [[nodiscard]] const EnvFrame* resolve_env_frame(EnvId id) const noexcept;
+    [[nodiscard]] EnvFrame* resolve_env_frame_mut(EnvId id) noexcept;
+    [[nodiscard]] std::uint64_t env_generation() const noexcept { return env_generation_; }
+    [[nodiscard]] std::uint64_t get_envframe_truncate_count() const noexcept {
+        return envframe_truncate_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_truncated_frames() const noexcept {
+        return envframe_truncated_frames_.load(std::memory_order_relaxed);
+    }
     // Accessor for the post-rollback invalidation count
     // (observability for (query:envframe-dualpath-stats)).
     // Defined near the other envframe_*_ accessors below.
@@ -1853,10 +1864,12 @@ public:
     // a concurrent writer holding the exclusive lock would race
     // — by design the exclusive lock excludes walker threads.
     void refresh_stale_frame_in_walk(EnvId id, const char* site) const;
-    // Look up an EnvFrame by id. UB if id is invalid.
+    // Look up an EnvFrame by id. UB if id is invalid — prefer
+    // resolve_env_frame() when the id may be post-truncate stale (#1360).
     const EnvFrame& env_frame(EnvId id) const pre(id != NULL_ENV_ID) { return env_frames_[id]; }
     EnvFrame& env_frame_mut(EnvId id) pre(id != NULL_ENV_ID) { return env_frames_[id]; }
-    // Validity check (test-only helper; cheap).
+    // Validity check (cheap). After #1360 truncate, post-checkpoint
+    // EnvIds fail this check (OOB) instead of lingering as INVALID_VERSION.
     [[nodiscard]] bool is_valid_env_id(EnvId id) const {
         return id != NULL_ENV_ID && id < env_frames_.size();
     }
@@ -1955,10 +1968,13 @@ public:
     void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
-            const EnvFrame& fr = env_frames_[cur];
-            if (!std::forward<F>(f)(cur, fr))
+            // Issue #1360: skip/stop on stale (truncated) EnvIds
+            const EnvFrame* frp = resolve_env_frame(cur);
+            if (!frp)
                 return;
-            cur = fr.parent_id;
+            if (!std::forward<F>(f)(cur, *frp))
+                return;
+            cur = frp->parent_id;
         }
     }
     // Introspection: number of frames in the parent chain
@@ -2369,25 +2385,22 @@ private:
     std::uint64_t resource_quota_fibers_ = 0;
     std::uint64_t resource_quota_time_us_ = 0;
 
-    // Issue #242: panic checkpoint for the 4 pmr/append-only
-    // arenas. save_panic_checkpoint() snapshots each size; on
-    // restore, we truncate each arena back to its checkpoint
-    // size (except env_frames_ which we leave alone — see
-    // restore_panic_checkpoint for why).
+    // Issue #242 / #1360: panic checkpoint for append-only arenas.
+    // save_panic_checkpoint() snapshots each size; on restore we
+    // truncate cells_/pairs_/string_heap_/env_frames_ back.
     //
-    // cells_/pairs_/string_heap_ are append-only arenas with
-    // no external EnvId-style references, so truncating them
-    // is safe. env_frames_ stores EnvId-referenced frames
-    // (Closure::env_id), so truncating could invalidate live
-    // references; instead we leave the deque size alone and
-    // rely on #242's version stamping (EnvFrame::version_) to
-    // detect stale captures in materialize_call_env.
+    // env_frames_ (#1360): EnvId is an append-only deque index.
+    // End-truncating to panic_safe_env_frames_size_ keeps all
+    // pre-checkpoint EnvIds valid (indices 0..N-1 unchanged).
+    // Post-checkpoint EnvIds become OOB; resolve_env_frame →
+    // nullptr (no UAF). Full free-list stable-id (slot+gen pack)
+    // remains a follow-up if mid-arena reclaim is needed.
     std::size_t panic_safe_cells_size_ = 0;
     std::size_t panic_safe_pairs_size_ = 0;
     std::size_t panic_safe_string_heap_size_ = 0;
-    // panic_safe_env_frames_size_ is recorded for diagnostics
-    // but NOT used to truncate the deque on restore.
     std::size_t panic_safe_env_frames_size_ = 0;
+    // Bumped each time env_frames_ is truncated on panic restore.
+    std::uint64_t env_generation_ = 0;
 
     // ── EDSL set-code error propagation ──────────────────────────
     // Stores (kind, message) for structured diagnostic return
@@ -2735,6 +2748,9 @@ private:
     // checkpoint restore. Stats-only (relaxed-ordering).
     // Surfaced by (query:envframe-dualpath-stats).
     mutable std::atomic<std::uint64_t> envframe_post_rollback_invalidations_{0};
+    // Issue #1360: truncate_env_frames_to_checkpoint observability.
+    mutable std::atomic<std::uint64_t> envframe_truncate_count_{0};
+    mutable std::atomic<std::uint64_t> envframe_truncated_frames_{0};
     // Issue #458: query hygiene metrics. Bumped by query:pattern
     // (and friends) when they skip a MacroIntroduced node during
     // traversal. Stats-only (relaxed-ordering). Exposed via
@@ -9018,6 +9034,10 @@ public:
     }
     void bump_envframe_post_rollback_invalidations(std::uint64_t n = 1) const noexcept {
         envframe_post_rollback_invalidations_.fetch_add(n, std::memory_order_relaxed);
+    }
+    void bump_envframe_truncate(std::uint64_t frames_dropped) const noexcept {
+        envframe_truncate_count_.fetch_add(1, std::memory_order_relaxed);
+        envframe_truncated_frames_.fetch_add(frames_dropped, std::memory_order_relaxed);
     }
     // Issue #418: bindings_ vs bindings_symid_ length consistency
     // probe for EnvFrame SoA dual-path + stale policy paths.
