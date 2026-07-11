@@ -264,6 +264,11 @@ aura_add_issue_test(test_envframe_stableid)
 aura_issue_test_link_llvm_jit(test_envframe_stableid)
 add_dependencies(all_test_issue_targets test_envframe_stableid)
 
+# Issue #1361: aura_free_closure + closure:free! + ID reuse
+aura_add_issue_test(test_closure_free)
+aura_issue_test_link_llvm_jit(test_closure_free)
+add_dependencies(all_test_issue_targets test_closure_free)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

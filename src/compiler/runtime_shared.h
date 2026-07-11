@@ -93,6 +93,19 @@ void tl_arena_pop(TLarena* arena);
 extern "C" size_t aura_tl_arena_default_capacity();
 extern "C" std::uint64_t aura_tl_arena_oom_total();
 
+// Issue #1361: per-closure free + ID reuse
+extern "C" void aura_free_closure(std::int64_t closure_id);
+extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
+extern "C" std::int64_t aura_alloc_closure_arena(std::int64_t func_id);
+extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
+extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
+                                          std::int64_t argc);
+extern "C" std::uint64_t aura_closure_free_total();
+extern "C" std::uint64_t aura_closure_reuse_total();
+extern "C" std::size_t aura_closure_live_count();
+extern "C" std::size_t aura_closure_slot_count();
+extern "C" int aura_closure_is_freed(std::int64_t closure_id);
+
 // ── JIT / runtime C ABI (defined in aura_jit_runtime.cpp, aura_jit_bridge.cpp) ──
 extern "C" std::int64_t aura_jit_test();
 extern "C" const char* aura_jit_string_content(std::int64_t val);
