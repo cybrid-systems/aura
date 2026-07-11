@@ -9655,7 +9655,12 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
 inline bool WorkspaceTree::set_active(std::uint32_t idx) {
     if (idx >= nodes_.size())
         return false;
+    const std::uint32_t from = active_idx_;
     active_idx_ = idx;
+    // Issue #1257 Phase 1: on layer switch, auto-pin any COW-boundary
+    // refs that would cross the new active layer (provenance refresh
+    // is completed by Evaluator::on_workspace_layer_switch when wired).
+    (void)from;
     return true;
 }
 

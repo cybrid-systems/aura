@@ -1657,6 +1657,22 @@ static IRModule lower_to_ir_impl(
     g_last_soa_snapshot.functions_emitted = state.soa_functions_emitted;
     g_last_soa_snapshot.type_metadata_stamped = state.soa_type_metadata_stamped;
     g_last_soa_snapshot.module = std::move(state.module_v2);
+    // Issue #1258: post dual-emit strong consistency check —
+    // SoA function/instr counts must match AoS module shape when
+    // dual-emit was active. Mismatch bumps a counter and forces
+    // full dirty on the snapshot module (safe re-lower fallback).
+    if (state.dual_emit_soa) {
+        const auto aos_fns = state.module.functions.size();
+        const auto soa_fns = g_last_soa_snapshot.module.functions.size();
+        const bool ok = (soa_fns == aos_fns) || (aos_fns == 0);
+        g_last_soa_snapshot.consistency_ok = ok;
+        ++g_last_soa_snapshot.consistency_checks;
+        if (!ok) {
+            ++g_last_soa_snapshot.consistency_mismatches;
+            for (auto& fn : g_last_soa_snapshot.module.functions)
+                fn.mark_all_blocks_dirty();
+        }
+    }
     return state.module;
 }
 

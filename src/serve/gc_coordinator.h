@@ -231,6 +231,10 @@ public:
         std::atomic<int64_t> strings_freed{0}; // entries removed
         std::atomic<int64_t> pairs_freed{0};
         std::atomic<int64_t> closures_freed{0};
+        // Issue #1256: fiber-side safepoint wait latency while MutationBoundary held.
+        std::atomic<int64_t> eventfd_wakeup_latency_us{0};
+        std::atomic<int64_t> safepoint_wait_while_mutation_held{0};
+        std::atomic<int64_t> safepoint_blocked_by_long_mutation{0};
     };
     const Metrics& metrics() const { return metrics_; }
 

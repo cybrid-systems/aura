@@ -6,6 +6,7 @@ module;
 #include "messaging_bridge.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
+#include "observability_metrics.h"
 #include <cassert>
 
 module aura.compiler.evaluator;
@@ -353,7 +354,33 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         bump_guard_panic_reflect_boundary_violation_prevented();
         if (outermost_mutation_success_flag_)
             *outermost_mutation_success_flag_ = false;
+        // Issue #1260: transfer pending panic checkpoint across steal/resume
+        // mismatch so panic signals survive fiber migration.
+        if (pending_panic_checkpoint()) {
+            bump_panic_checkpoint_transfer_count();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->panic_transfer_on_steal.fetch_add(1, std::memory_order_relaxed);
+            if (Evaluator::g_current_fiber_void != nullptr) {
+                auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
+                fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
+            }
+            // Force rollback path via success flag so Guard dtor restores.
+            if (panic_auto_rollback_ && outermost_mutation_success_flag_)
+                *outermost_mutation_success_flag_ = false;
+        } else if (cp.had_active_boundary) {
+            // Had boundary but lost checkpoint — record lost-on-steal.
+            bump_panic_checkpoint_lost_on_steal();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->panic_transfer_failed.fetch_add(1, std::memory_order_relaxed);
+        }
         return false;
+    }
+    // Issue #1260 happy path: successful resume with pending checkpoint —
+    // restamp so the new fiber owns the checkpoint provenance.
+    if (pending_panic_checkpoint() && cp.had_active_boundary) {
+        bump_panic_checkpoint_transfer_count();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->panic_transfer_on_steal.fetch_add(1, std::memory_order_relaxed);
     }
     return true;
 }

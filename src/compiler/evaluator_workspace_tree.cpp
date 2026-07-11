@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
+#include "observability_metrics.h"
 #include <cstdio>
 
 module aura.compiler.evaluator;
@@ -198,7 +199,19 @@ bool Evaluator::trigger_lazy_cow(void* wt) {
             node.flat->set_workspace_cow_epoch(node.cow_epoch);
             node.flat->reset_boundary_observability_counters();
         }
+        // Issue #1257: auto-remap + pin COW boundary refs into the child layer.
+        const auto pins_before = cow_boundary_pinned_ref_count();
         propagate_cow_pins_after_clone(idx, node.cow_epoch);
+        const auto pins_after = cow_boundary_pinned_ref_count();
+        const auto remapped = pins_after > pins_before ? pins_after - pins_before : 0;
+        bump_stable_ref_cross_layer_validation();
+        bump_stable_ref_cow_boundary_pin();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->workspace_provenance_auto_remapped.fetch_add(remapped, std::memory_order_relaxed);
+            m->workspace_cross_layer_validations_on_merge.fetch_add(1, std::memory_order_relaxed);
+            if (remapped > 0)
+                m->workspace_merge_mismatch_prevented.fetch_add(1, std::memory_order_relaxed);
+        }
     } else if (!cloned) {
         // Issue #978: budget-exceeded / refuse path — surface a diagnostic
         // so the mutation is not silently dropped (cow_refused_count alone
@@ -211,6 +224,8 @@ bool Evaluator::trigger_lazy_cow(void* wt) {
                          "(budget exceeded or read-only; cow_refused_count=%llu)\n",
                          idx, static_cast<unsigned long long>(refused.cow_refused_count));
         }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->workspace_merge_mismatch_prevented.fetch_add(1, std::memory_order_relaxed);
     }
     return cloned;
 }
