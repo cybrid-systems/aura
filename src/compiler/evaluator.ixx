@@ -8964,6 +8964,9 @@ public:
                     constexpr std::int64_t kMaxMutationDurationUs = 500'000;
                     if (us > kMaxMutationDurationUs) {
                         m->mutation_too_long_total.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #1272: contention histogram sample (µs held).
+                        m->mutation_boundary_contention_us_hist.fetch_add(
+                            static_cast<std::uint64_t>(us), std::memory_order_relaxed);
                         if (us > static_cast<std::int64_t>(m->mutation_hold_duration_us_max.load(
                                      std::memory_order_relaxed))) {
                             m->mutation_hold_duration_us_max.store(static_cast<std::uint64_t>(us),
@@ -8978,6 +8981,7 @@ public:
                                    std::memory_order_relaxed)) {
                         }
                     }
+                    m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);
                 }
             }
             ev_->exit_mutation_boundary(success);

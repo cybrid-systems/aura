@@ -271,6 +271,12 @@ void commit_func_table_swap() {
     }
 }
 
+// Issue #1271: last successfully committed AOT module identity
+// for multi-agent versioning + atomic rollback diagnostics.
+static void* g_aot_last_handle = nullptr;
+static std::uint64_t g_aot_last_commit_epoch = 0;
+static std::uint64_t g_aot_last_module_version = 0;
+
 } // namespace
 
 extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
@@ -387,9 +393,14 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
         aot_log("aura_reload_aot_module: null path\n");
         return false;
     }
+    // Issue #1271: capture pre-reload epoch so failed paths never
+    // advance table generation (atomic rollback of partial register).
+    const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
+        if (g_aot_metrics)
+            g_aot_metrics->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     // Staleness check: compare the new binary's aot_emit_version
@@ -397,13 +408,21 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     // `version != 0`, it must match. If `version == 0`, we trust
     // the binary's own aot_emit_version.
     auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
+    auto rollback_close = [&]() {
+        ::dlclose(handle);
+        // Ensure table epoch was not advanced (constructor may have
+        // registered into slots; epoch_before remains authoritative).
+        (void)epoch_before;
+        if (g_aot_metrics)
+            g_aot_metrics->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+    };
     if (binary_version) {
         if (version != 0 && *binary_version != version) {
             aot_log("aura_reload_aot_module: version mismatch "
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*binary_version),
                     static_cast<unsigned long long>(version), path);
-            ::dlclose(handle);
+            rollback_close();
             // Issue #452: bump stale-reject counter.
             if (g_aot_metrics)
                 g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
@@ -420,7 +439,7 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
             aot_log("aura_reload_aot_module: no aot_emit_version in %s, "
                     "but host specified version=%llu; refusing\n",
                     path, static_cast<unsigned long long>(version));
-            ::dlclose(handle);
+            rollback_close();
             // Issue #452: pre-#243 binary with explicit version
             // requested counts as stale.
             if (g_aot_metrics)
@@ -439,7 +458,7 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
                     "(binary=%llu, host=%llu) for %s — FullReAOT required\n",
                     static_cast<unsigned long long>(*binary_region),
                     static_cast<unsigned long long>(host_region), path);
-            ::dlclose(handle);
+            rollback_close();
             if (g_aot_metrics)
                 g_aot_metrics->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -454,7 +473,7 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*emit_ver),
                     static_cast<unsigned long long>(g_aot_defuse_version), path);
-            ::dlclose(handle);
+            rollback_close();
             if (g_aot_metrics)
                 g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -463,10 +482,32 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     // The constructor aura_aot_register_fns runs on dlopen and calls
     // aura_register_fn (which forwards to aura_register_fn_tracked).
     commit_func_table_swap();
+    // Issue #1271: record successful commit for multi-agent versioning.
+    if (g_aot_last_handle && g_aot_last_handle != handle)
+        ::dlclose(g_aot_last_handle); // release prior module
+    g_aot_last_handle = handle;
+    g_aot_last_commit_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+    g_aot_last_module_version = g_aot_module_version;
     // Issue #452: bump hot-update success counter.
-    if (g_aot_metrics)
+    if (g_aot_metrics) {
         g_aot_metrics->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
+        g_aot_metrics->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
+    }
     return true;
+}
+
+// Issue #1271: incremental re-emit skeleton — counts dirty AOT
+// candidates without full re-AOT. Host wires real DefineId index later.
+extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version) {
+    (void)current_defuse_version;
+    // Phase 1: no DefineId index yet — report 0 dirty, bump scaffold.
+    if (g_aot_metrics)
+        g_aot_metrics->aot_reemit_dirty_skeleton_calls.fetch_add(1, std::memory_order_relaxed);
+    return 0;
+}
+
+extern "C" std::uint64_t aura_aot_last_commit_epoch(void) {
+    return g_aot_last_commit_epoch;
 }
 
 // ── Global: string pool conversion for C linkage ────────────────

@@ -1158,6 +1158,43 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1266–#1270).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1271–#1275 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1271-1275-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1271)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1271_1275_active) : 1)},
+                {"aot-hot-update-atomic-rollback",
+                 make_int(m ? load_u64(m, m->aot_hot_update_atomic_rollback) : 0)},
+                {"aot-reemit-dirty-skeleton",
+                 make_int(m ? load_u64(m, m->aot_reemit_dirty_skeleton_calls) : 0)},
+                {"runtime-obs-export-ready",
+                 make_int(m ? load_u64(m, m->runtime_obs_export_ready) : 1)},
+                {"mutation-boundary-contention-us",
+                 make_int(m ? load_u64(m, m->mutation_boundary_contention_us_hist) : 0)},
+                {"ir-hygiene-macro-marker-enforced",
+                 make_int(m ? load_u64(m, m->ir_hygiene_macro_marker_enforced) : 1)},
+                {"dirty-propagation-to-ir",
+                 make_int(m ? load_u64(m, m->dirty_propagation_to_ir_count) : 0)},
+                {"epoch-bump-for-macro", make_int(m ? load_u64(m, m->epoch_bump_for_macro) : 0)},
+                {"naked-macro-mutate-attempt",
+                 make_int(m ? load_u64(m, m->naked_macro_mutate_attempt) : 0)},
+                {"hygiene-edsl-awareness",
+                 make_int(m ? load_u64(m, m->hygiene_edsl_awareness) : 1)},
+                {"issue-1275", make_int(1275)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1271–#1275).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

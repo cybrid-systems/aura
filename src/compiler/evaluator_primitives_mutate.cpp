@@ -206,6 +206,10 @@ namespace {
                 continue;
             if (flat.is_macro_introduced(id)) {
                 ev.record_hygiene_violation_attempt();
+                // Issue #1275: EDSL hygiene awareness — naked macro
+                // mutate without :allow-macro? / global opt-out.
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
                 return mev("hygiene-protected",
                            "target node " + std::to_string(id) +
                                " was produced by a hygienic macro expansion; "

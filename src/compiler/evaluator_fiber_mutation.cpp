@@ -615,20 +615,27 @@ void Evaluator::flush_mutation_boundary() {
     // Issue #1268: outermost-only panic checkpoint lifecycle restamp
     // on flush (steal/yield boundary). Ensures defuse_version_ +
     // pending checkpoint visibility before fiber migration.
-    if (mutation_boundary_depth() == 0 ||
-        !mutation_boundary_held_.load(std::memory_order_acquire)) {
-        // depth slot may already be mid-exit; still restamp if pending.
+    const bool outermost_active = mutation_boundary_depth() == 1 ||
+                                  (mutation_boundary_depth() == 0 &&
+                                   !mutation_boundary_held_.load(std::memory_order_acquire));
+    if (outermost_active || mutation_boundary_depth() == 1) {
         if (pending_panic_checkpoint()) {
             bump_panic_checkpoint_transfer_count();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
                 m->panic_checkpoint_flush_outermost.fetch_add(1, std::memory_order_relaxed);
         }
-    } else if (mutation_boundary_depth() == 1) {
-        // Outermost guard still active (depth 1) — flush restamps
-        // checkpoint provenance for concurrent steal observers.
-        if (pending_panic_checkpoint()) {
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
-                m->panic_checkpoint_flush_outermost.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1274: outermost flush feeds macro dirty → IR cache
+        // invalidation + epoch bump so typecheck/lower never hit stale IR.
+        if (mark_all_defines_dirty_fn_) {
+            mark_all_defines_dirty_fn_();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+                m->dirty_propagation_to_ir_count.fetch_add(1, std::memory_order_relaxed);
+                m->epoch_bump_for_macro.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        // Issue #1272: structured observability sample on flush.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->runtime_obs_mutation_boundary_flush_samples.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
