@@ -29,7 +29,7 @@
 //   AC6:  consteval invariants in cxx26_invariants.ixx compile
 //         (the file fails to compile if any static_assert fires)
 //   AC7:  (query:cxx26-invariants) returns a hash with 5 fields
-//   AC8:  consteval-invariants == 22 (matches the actual
+//   AC8:  consteval-invariants == 24 (matches the actual
 //         static_assert count in cxx26_invariants.ixx)
 //   AC9:  concept-count == 13 (10 pre-#431 + 3 new)
 //   AC10: contract-hot-paths == 26 (Arena + Value + SoA + Pass sum)
@@ -125,7 +125,7 @@ bool test_query_cxx26_invariants() {
     auto contracts = hash_int(cs, "contract-hot-paths");
     auto self_checks = hash_int(cs, "concept-self-checks");
     auto targets_doc = hash_int(cs, "concept-targets-documented");
-    CHECK(consteval_count == 22, "consteval-invariants == 22");
+    CHECK(consteval_count == 24, "consteval-invariants == 24");
     CHECK(concept_count == 13, "concept-count == 13 (10 + 3 new)");
     CHECK(contracts == 26, "contract-hot-paths == 26 (Arena + Value + SoA + Pass sum)");
     CHECK(self_checks == 1, "concept-self-checks == 1");

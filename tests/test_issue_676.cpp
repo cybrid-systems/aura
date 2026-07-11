@@ -96,11 +96,15 @@ int aura_issue_676_run() {
         CHECK(sec_int(cs, "capability-denials") >= 1, "denial counter bumped");
     }
 
-    // AC3: grant io-write — write allowed
+    // AC3: grant io-write — write allowed.
+    // Issue #1020: grant / leave-sandbox while sandboxed require wildcard.
+    // Pre-grant caps on a fresh service before enabling sandbox.
     {
         std::println("\n--- AC3: write-file with io-write grant ---");
-        run_on(cs, "(security:grant-capability! \"io-write\")");
-        auto r = run_on(cs, std::format("(write-file {} \"granted\")", path_lit));
+        aura::compiler::CompilerService cs_grant;
+        run_on(cs_grant, "(security:grant-capability! \"io-write\")");
+        run_on(cs_grant, "(security:set-sandbox-mode! #t)");
+        auto r = run_on(cs_grant, std::format("(write-file {} \"granted\")", path_lit));
         CHECK(!is_error_val(r), "write-file succeeds with io-write grant");
         std::ifstream in(tmp);
         std::string content;
@@ -111,25 +115,34 @@ int aura_issue_676_run() {
     // AC4/AC5: mutate sandbox + audit
     {
         std::println("\n--- AC4/AC5: mutate capability + audit log ---");
-        run_on(cs, std::format("(set-code \"(define x 1)\")"));
-        run_on(cs, "(eval-current)");
-        const auto before = sec_int(cs, "mutation-audit-total");
-        const auto denials_before = sec_int(cs, "capability-denials");
-        auto denied = run_on(cs, "(mutate:rebind \"x\" \"2\")");
-        const auto denials_after = sec_int(cs, "capability-denials");
+        // Denial path: sandboxed, no mutate grant.
+        aura::compiler::CompilerService cs_deny;
+        run_on(cs_deny, "(security:set-sandbox-mode! #t)");
+        run_on(cs_deny, std::format("(set-code \"(define x 1)\")"));
+        run_on(cs_deny, "(eval-current)");
+        const auto denials_before = sec_int(cs_deny, "capability-denials");
+        auto denied = run_on(cs_deny, "(mutate:rebind \"x\" \"2\")");
+        const auto denials_after = sec_int(cs_deny, "capability-denials");
         CHECK(denials_after > denials_before,
               "mutate:rebind denied without mutate capability (denial counter)");
         CHECK(!aura::compiler::types::is_int(denied),
               "mutate:rebind does not return success int when denied");
-        run_on(cs, "(security:grant-capability! \"mutate\")");
-        run_on(cs, "(mutate:rebind \"x\" \"99\")");
-        run_on(cs, "(eval-current)");
-        auto val = run_on(cs, "x");
+
+        // Grant path: pre-grant mutate, then sandbox (#1020).
+        aura::compiler::CompilerService cs_ok;
+        run_on(cs_ok, "(security:grant-capability! \"mutate\")");
+        run_on(cs_ok, "(security:set-sandbox-mode! #t)");
+        run_on(cs_ok, std::format("(set-code \"(define x 1)\")"));
+        run_on(cs_ok, "(eval-current)");
+        const auto before = sec_int(cs_ok, "mutation-audit-total");
+        run_on(cs_ok, "(mutate:rebind \"x\" \"99\")");
+        run_on(cs_ok, "(eval-current)");
+        auto val = run_on(cs_ok, "x");
         CHECK(aura::compiler::types::is_int(val) && aura::compiler::types::as_int(val) == 99,
               "mutate:rebind succeeds with mutate grant (x == 99)");
-        const auto after = sec_int(cs, "mutation-audit-total");
+        const auto after = sec_int(cs_ok, "mutation-audit-total");
         CHECK(after > before, std::format("mutation-audit-total grew ({} -> {})", before, after));
-        auto log = run_on(cs, "(query:mutation-audit-log 5)");
+        auto log = run_on(cs_ok, "(query:mutation-audit-log 5)");
         CHECK(aura::compiler::types::is_pair(log) || aura::compiler::types::is_void(log),
               "query:mutation-audit-log returns list");
     }
