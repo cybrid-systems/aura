@@ -5090,6 +5090,8 @@ public:
         mark_dirty_upward(node);
         if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
             node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
+        // Issue #1362: auto-compact committed prefix when log is huge
+        maybe_auto_compact_mutation_log();
         return mid;
     }
 
@@ -5182,6 +5184,8 @@ public:
             mark_dirty_upward(parent_id);
         if (target_node < node_first_mutation_.size() && node_first_mutation_[target_node] == 0)
             node_first_mutation_[target_node] = static_cast<std::uint32_t>(mutation_log_.size());
+        // Issue #1362: auto-compact committed prefix when log is huge
+        maybe_auto_compact_mutation_log();
         return mid;
     }
 
@@ -6375,6 +6379,61 @@ public:
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #1362: drop old Committed records so long-running agents
+    // do not accumulate ~200 bytes/mutation forever. keep_recent tail
+    // is always retained. When keep_all_rolledback is true, older
+    // RolledBack records are also retained (diagnostics for #1299).
+    // Returns number of records dropped. Idempotent when log is small.
+    // Default keep_recent=1000 bounds log to ~1K + RolledBack count.
+    [[nodiscard]] std::size_t compact_mutation_log(std::size_t keep_recent = 1000,
+                                                   bool keep_all_rolledback = true) {
+        if (mutation_log_.size() <= keep_recent)
+            return 0;
+        const std::size_t drop_to = mutation_log_.size() - keep_recent;
+        std::size_t dropped = 0;
+        std::pmr::vector<MutationRecord> kept{mutation_log_.get_allocator()};
+        kept.reserve(mutation_log_.size());
+        if (keep_all_rolledback) {
+            for (std::size_t i = 0; i < drop_to; ++i) {
+                if (mutation_log_[i].status == MutationStatus::RolledBack)
+                    kept.push_back(std::move(mutation_log_[i]));
+                else
+                    ++dropped;
+            }
+            for (std::size_t i = drop_to; i < mutation_log_.size(); ++i)
+                kept.push_back(std::move(mutation_log_[i]));
+        } else {
+            for (std::size_t i = drop_to; i < mutation_log_.size(); ++i)
+                kept.push_back(std::move(mutation_log_[i]));
+            dropped = drop_to;
+        }
+        mutation_log_ = std::move(kept);
+        // Rebuild node_first_mutation_ indices (old offsets are invalid).
+        std::fill(node_first_mutation_.begin(), node_first_mutation_.end(), 0);
+        for (std::size_t i = 0; i < mutation_log_.size(); ++i) {
+            const NodeId n = mutation_log_[i].target_node;
+            if (n < node_first_mutation_.size() && node_first_mutation_[n] == 0)
+                node_first_mutation_[n] = static_cast<std::uint32_t>(i + 1);
+        }
+        if (dropped > 0) {
+            mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);
+            mutation_log_compact_ops_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return dropped;
+    }
+
+    // Issue #1362: auto-trigger threshold (log size) — public for tests/tuning.
+    static constexpr std::size_t kMutationLogAutoCompactThreshold = 10'000;
+    static constexpr std::size_t kMutationLogAutoCompactKeepRecent = 1000;
+
+    // Issue #1362: auto-compact when log exceeds threshold (called after append).
+    void maybe_auto_compact_mutation_log() {
+        if (mutation_log_.size() > kMutationLogAutoCompactThreshold) {
+            (void)compact_mutation_log(kMutationLogAutoCompactKeepRecent,
+                                       /*keep_all_rolledback=*/true);
+        }
     }
 
     // ── Type ID access ─────────────────────────────────────────
