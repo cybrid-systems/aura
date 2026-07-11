@@ -1,0 +1,24 @@
+; lib/std/tests/test_persist_round_trip.aura — Issue #1381
+
+(require "std/persist" all:)
+
+(define (test-persist-round-trip)
+  (let* ((path "/tmp/aura_persist_rt_1381.bin")
+         (_ (set-code "(define (f x) (+ x 1)) (define y 42)"))
+         (ok-save (persist:save path))
+         (info (persist:info path))
+         (fv (hash-ref info "format-version"))
+         (magic (hash-ref info "magic-ok"))
+         (crc (hash-ref info "crc-ok"))
+         (srcb (hash-ref info "source-bytes"))
+         (ok-load (persist:load path))
+         (fmt (persist:format-version)))
+    (and ok-save
+         ok-load
+         (= fv 1)
+         (= magic 1)
+         (= crc 1)
+         (> srcb 0)
+         (= fmt 1))))
+
+(test-persist-round-trip)

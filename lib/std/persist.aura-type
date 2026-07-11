@@ -1,0 +1,6 @@
+persist:save: Any -> Any
+persist:load: Any -> Any
+persist:info: Any -> Any
+persist:version: -> Any
+persist:format-version: -> Any
+persist:round-trip?: Any -> Any

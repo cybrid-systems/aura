@@ -1,0 +1,44 @@
+; lib/std/persist.aura — Issue #1381
+; High-level save/load of evaluator workspace state to binary files.
+;
+; Builds on C primitives:
+;   (serialize-workspace path) → #t/#f
+;   (deserialize-workspace path) → #t/#f
+;   (workspace-persist-info path) → hash | #f
+;   (workspace-persist-format-version) → int
+;
+; Usage:
+;   (require "std/persist" all:)
+;   (persist:save "/tmp/session.aura-soul")
+;   (persist:load "/tmp/session.aura-soul")
+;   (persist:info "/tmp/session.aura-soul")
+
+(export persist:save
+        persist:load
+        persist:info
+        persist:version
+        persist:format-version
+        persist:round-trip?)
+
+(define (persist:format-version)
+  (workspace-persist-format-version))
+
+(define (persist:version)
+  (persist:format-version))
+
+; Save workspace + AOT meta + mutation log to path.
+(define (persist:save path)
+  (serialize-workspace path))
+
+; Restore from path. Returns #t on success.
+(define (persist:load path)
+  (deserialize-workspace path))
+
+; Header peek without restoring (hash with schema=1381).
+(define (persist:info path)
+  (workspace-persist-info path))
+
+; Round-trip helper for tests: save → load → #t/#f
+(define (persist:round-trip? path)
+  (and (persist:save path)
+       (persist:load path)))

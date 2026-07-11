@@ -129,6 +129,9 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_workspace_primitives(
         prim_registrar(), *this, [this]() { defuse_index_destroy(&defuse_index_); });
 
+    // Issue #1381: workspace FlatAST + AOT meta + mutation log binary persist
+    primitives_detail::register_persist_primitives(prim_registrar(), *this);
+
     primitives_detail::register_eval_primitives(prim_registrar(), *this, mev,
                                                 [this]() { defuse_index_destroy(&defuse_index_); });
 

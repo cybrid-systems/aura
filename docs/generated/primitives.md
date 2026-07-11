@@ -2,15 +2,15 @@
 
 # Primitives (generated)
 
-**987** registrations scanned from `src/**/*.cpp`.
+**991** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 123 primitives (12%)
+- **mutation-safety**: 125 primitives (13%)
 - **core**: 255 primitives (26%)
 - **internal-observable**: 441 primitives (45%)
-- **convenience**: 168 primitives (17%)
+- **convenience**: 170 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
@@ -624,7 +624,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (269)
+## Core builtins (273)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -689,6 +689,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `declare-type` *[convenience]* — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `define-strategy` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `deserialize-workspace` *[convenience]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `directory-list` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
 - `display` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -837,6 +838,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `round` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `run-tests` *[convenience]* — `src/compiler/evaluator_primitives_test.cpp`
 - `send` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `serialize-workspace` *[convenience]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `session-active?` *[convenience]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `set-car!` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
@@ -892,6 +894,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `void?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `while` *[core]* — `src/compiler/evaluator_primitives_control.cpp`
 - `with-capability` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `workspace-persist-format-version` *[mutation-safety]* — `src/compiler/evaluator_primitives_persist.cpp`
+- `workspace-persist-info` *[mutation-safety]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` *[mutation-safety]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `write` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
@@ -1141,7 +1145,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (123)
+### Mutation safety (must remain primitive) (125)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1242,6 +1246,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-restore` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-safe-source` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `workspace-persist-format-version` — `src/compiler/evaluator_primitives_persist.cpp`
+- `workspace-persist-info` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -1969,7 +1975,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
-### Convenience (candidates for stdlib migration) (168)
+### Convenience (candidates for stdlib migration) (170)
 
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -2009,6 +2015,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `coverage-report` — `src/compiler/evaluator_primitives_memory.cpp`
 - `current-time` — `src/compiler/evaluator_primitives_misc.cpp`
 - `declare-type` — `src/compiler/evaluator_primitives_types.cpp`
+- `deserialize-workspace` — `src/compiler/evaluator_primitives_persist.cpp`
 - `directory-list` — `src/compiler/evaluator_primitives_file.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`
 - `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -2096,6 +2103,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `render-prim-latency-samples` — `src/compiler/evaluator_primitives_memory.cpp`
 - `rollback-since` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `run-tests` — `src/compiler/evaluator_primitives_test.cpp`
+- `serialize-workspace` — `src/compiler/evaluator_primitives_persist.cpp`
 - `session-active?` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`

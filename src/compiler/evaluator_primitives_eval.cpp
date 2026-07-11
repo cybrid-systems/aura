@@ -132,6 +132,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             flat_ptr->root = pr.root;
             ev.workspace_flat_ = flat_ptr;
             ev.workspace_pool_ = pool_ptr;
+            // Issue #1381: retain source for serialize-workspace.
+            ev.workspace_source_text_ = ev.string_heap_[idx];
             // Issue #211: invalidate the (tag, arity) index
             // when the workspace changes. (The set_workspace_flat
             // hook would do this, but set-code assigns directly
