@@ -186,6 +186,11 @@ aura_add_issue_test(test_production_sweep_1321_1324)
 aura_issue_test_link_llvm_jit(test_production_sweep_1321_1324)
 add_dependencies(all_test_issue_targets test_production_sweep_1321_1324)
 
+# Issues #1325–#1330: primitive surface reduction architecture (META + phases 1–5)
+aura_add_issue_test(test_production_sweep_1325_1330)
+aura_issue_test_link_llvm_jit(test_production_sweep_1325_1330)
+add_dependencies(all_test_issue_targets test_production_sweep_1325_1330)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

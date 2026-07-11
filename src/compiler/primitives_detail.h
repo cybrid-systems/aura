@@ -71,6 +71,13 @@ namespace primitives_detail {
             m->primitive_fastpath_hits_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #1326 Phase 1: write-side compile/jit primitives on deprecation path.
+    // Call at the top of dangerous write-side prim bodies (still functional 1 cycle).
+    inline void record_write_side_prim_deprecation(CompilerMetrics* m) noexcept {
+        if (m)
+            m->prim_write_side_deprecation_hits.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #479: bump BOTH the aggregate counter and the
     // per-slot counter. The slow path (lazy-grow on first
     // hit for a new slot) may allocate and could throw

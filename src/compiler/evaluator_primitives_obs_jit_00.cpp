@@ -147,12 +147,17 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
     // Issue #1295 (P0): requires kCapExceptionControl in sandbox —
     // process-global clear can corrupt in-flight try/catch on other fibers.
     add("jit:exception-fibers-clear", [&ev](const auto&) -> EvalValue {
+        // Issue #1326 Phase 1: deprecation path (cross-fiber race; prefer C++ reset).
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            record_write_side_prim_deprecation(m);
         if (ev.sandbox_mode() &&
             !ev.has_capability(aura::compiler::security::kCapExceptionControl) &&
             !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->capability_exception_control_denials.fetch_add(1, std::memory_order_relaxed);
+                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+            }
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "capability denied: exception-control required",
                                         ev.primitive_error_counter_ptr());

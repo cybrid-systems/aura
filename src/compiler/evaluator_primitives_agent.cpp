@@ -246,6 +246,35 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ev.auto_evolve_total_fixed_));
     });
 
+    // ── Issues #1327 Phase 1: agent service bridge (single entry points) ──
+    // Full SelfEvolutionService C++ move is multi-week; Phase 1 exposes
+    // agent:tick / agent:running? as the stable Aura surface that forwards
+    // to the existing auto-evolve machinery (legacy names still work).
+    add("agent:running?", [&ev](const auto&) -> EvalValue {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->agent_legacy_auto_evolve_hits.fetch_add(1, std::memory_order_relaxed);
+        return make_bool(ev.auto_evolve_running_);
+    });
+
+    add("agent:tick", [&ev](const auto& a) -> EvalValue {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->agent_tick_total.fetch_add(1, std::memory_order_relaxed);
+        // Prefer the background-loop tick if running; else accept
+        // (detect-fn fix-fn) like auto-evolve-once for one-shot.
+        if (ev.auto_evolve_running_) {
+            auto tick = ev.primitives().lookup("auto-evolve-tick");
+            if (tick)
+                return (*tick)(a);
+            return make_bool(false);
+        }
+        if (a.size() >= 2) {
+            auto once = ev.primitives().lookup("auto-evolve-once");
+            if (once)
+                return (*once)(a);
+        }
+        return make_int(0);
+    });
+
     // ── Issue #444: strategy evolution controller ────────
     //
     // 3 built-in strategies. Each mutation success bumps

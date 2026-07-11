@@ -25,6 +25,7 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
+using types::is_int;
 using types::make_bool;
 using types::make_hash;
 using types::make_int;
@@ -1705,6 +1706,108 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .perf_tier = kPrimPerfHot,
                  .security_level = kPrimSecSafe,
                  .doc = "Phase 1 production sweep (#1321–#1324).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // ── Issues #1325–#1330 Phase 1: primitive surface reduction architecture ──
+    // Preferred :stats-* namespace aliases (#1326) for read-only essentials.
+    ev.primitives().add(
+        "stats:dirty-count",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->prim_stats_alias_hits.fetch_add(1, std::memory_order_relaxed);
+            auto legacy = ev.primitives().lookup("compile:dirty-count");
+            if (legacy)
+                return (*legacy)({});
+            return make_int(0);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Read-only dirty IR count (#1326 stats namespace).",
+                 .category = "general",
+                 .schema = "() -> int"});
+
+    ev.primitives().add(
+        "stats:deopt-count",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->prim_stats_alias_hits.fetch_add(1, std::memory_order_relaxed);
+            // Prefer structured JIT stats if present.
+            auto legacy = ev.primitives().lookup("jit:deopt-count");
+            if (!legacy)
+                legacy = ev.primitives().lookup("query:jit-deopt-count");
+            if (legacy) {
+                auto v = (*legacy)({});
+                if (is_int(v))
+                    return v;
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                return make_int(static_cast<std::int64_t>(
+                    m->jit_deopt_on_mutate_total.load(std::memory_order_relaxed)));
+            return make_int(0);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Read-only JIT deopt count (#1326 stats namespace).",
+                 .category = "general",
+                 .schema = "() -> int"});
+
+    ev.primitives().add(
+        "query:production-sweep-1325-1330-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1325)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1325_1330_active) : 1)},
+                // #1325 META
+                {"prim-surface-reduction-plan",
+                 make_int(m ? load_u64(m, m->prim_surface_reduction_plan_active) : 1)},
+                {"prim-surface-target-count",
+                 make_int(m ? load_u64(m, m->prim_surface_target_count) : 50)},
+                {"prim-surface-phases-total",
+                 make_int(m ? load_u64(m, m->prim_surface_phases_total) : 5)},
+                // #1326 write-side demotion
+                {"write-side-demotion-active",
+                 make_int(m ? load_u64(m, m->prim_write_side_compile_jit_demotion_active) : 1)},
+                {"write-side-deprecation-hits",
+                 make_int(m ? load_u64(m, m->prim_write_side_deprecation_hits) : 0)},
+                {"stats-namespace-active",
+                 make_int(m ? load_u64(m, m->prim_stats_namespace_active) : 1)},
+                {"stats-alias-hits", make_int(m ? load_u64(m, m->prim_stats_alias_hits) : 0)},
+                // #1327 agent bridge
+                {"agent-service-bridge",
+                 make_int(m ? load_u64(m, m->agent_service_bridge_active) : 1)},
+                {"agent-tick-total", make_int(m ? load_u64(m, m->agent_tick_total) : 0)},
+                // #1328 query essentials
+                {"query-essentials-plan",
+                 make_int(m ? load_u64(m, m->query_essentials_plan_active) : 1)},
+                {"query-essentials-keep-count",
+                 make_int(m ? load_u64(m, m->query_essentials_keep_count) : 10)},
+                // #1329 sys bindings
+                {"stdlib-sys-bindings",
+                 make_int(m ? load_u64(m, m->stdlib_sys_bindings_active) : 1)},
+                {"sys-open-calls", make_int(m ? load_u64(m, m->sys_open_calls) : 0)},
+                {"sys-read-calls", make_int(m ? load_u64(m, m->sys_read_calls) : 0)},
+                {"sys-write-calls", make_int(m ? load_u64(m, m->sys_write_calls) : 0)},
+                // #1330 cap retrofit
+                {"cap-retrofit-scaffold",
+                 make_int(m ? load_u64(m, m->cap_retrofit_scaffold_active) : 1)},
+                {"cap-capability-constant-count",
+                 make_int(m ? load_u64(m, m->cap_capability_constant_count) : 8)},
+                {"cap-denial-total", make_int(m ? load_u64(m, m->cap_denial_total) : 0)},
+                {"issue-1330", make_int(1330)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1325–#1330 architecture reduction).",
                  .category = "general",
                  .schema = "() -> hash"});
 }

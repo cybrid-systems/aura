@@ -15,6 +15,7 @@ module;
 #include "observability_metrics.h"
 #include "primitives_detail.h"
 #include "primitives_meta.h"
+#include "security_capabilities.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
@@ -969,6 +970,83 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::memory_order_relaxed);
         }
         return make_int(static_cast<std::int64_t>(gb.size()));
+    });
+
+    // ── Issues #1329 Phase 1: minimal sys-* C++ bindings for stdlib migration ──
+    // Full Phase 4 rewrites lib/std/fs.aura etc. to use these; Phase 1 lands
+    // the syscall surface with capability gates (sandbox denies without cap).
+    auto deny_sys = [&ev](const char* cap, const char* msg) -> EvalValue {
+        if (!ev.sandbox_mode() || ev.has_capability(cap) ||
+            ev.has_capability(aura::compiler::security::kCapIo) ||
+            ev.has_capability(aura::compiler::security::kCapWildcard))
+            return make_void(); // not denied
+        ev.bump_capability_denial();
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                    ev.primitive_error_counter_ptr());
+    };
+
+    add("sys-open", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+        // (sys-open path [flags]) → fd | -1
+        if (auto d = deny_sys(aura::compiler::security::kCapSysOpen,
+                              "capability denied: sys-open required");
+            !is_void(d))
+            return d;
+        if (a.empty() || !is_string(a[0]))
+            return make_int(-1);
+        auto sidx = as_string_idx(a[0]);
+        if (sidx >= ev.string_heap_.size())
+            return make_int(-1);
+        int flags = O_RDONLY;
+        if (a.size() >= 2 && is_int(a[1]))
+            flags = static_cast<int>(as_int(a[1]));
+        int fd = ::open(ev.string_heap_[sidx].c_str(), flags, 0644);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sys_open_calls.fetch_add(1, std::memory_order_relaxed);
+        return make_int(fd);
+    });
+
+    add("sys-read", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+        // (sys-read fd n) → string | ""
+        if (auto d = deny_sys(aura::compiler::security::kCapSysRead,
+                              "capability denied: sys-read required");
+            !is_void(d))
+            return d;
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_string(ev.push_string_heap(""));
+        int fd = static_cast<int>(as_int(a[0]));
+        auto n = as_int(a[1]);
+        if (n < 0 || n > 1 << 20)
+            return make_string(ev.push_string_heap(""));
+        std::string buf(static_cast<std::size_t>(n), '\0');
+        auto got = ::read(fd, buf.data(), static_cast<std::size_t>(n));
+        if (got < 0)
+            buf.clear();
+        else
+            buf.resize(static_cast<std::size_t>(got));
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sys_read_calls.fetch_add(1, std::memory_order_relaxed);
+        return make_string(ev.push_string_heap(buf));
+    });
+
+    add("sys-write", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+        // (sys-write fd data) → bytes-written | -1
+        if (auto d = deny_sys(aura::compiler::security::kCapSysWrite,
+                              "capability denied: sys-write required");
+            !is_void(d))
+            return d;
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+            return make_int(-1);
+        int fd = static_cast<int>(as_int(a[0]));
+        auto sidx = as_string_idx(a[1]);
+        if (sidx >= ev.string_heap_.size())
+            return make_int(-1);
+        const auto& s = ev.string_heap_[sidx];
+        auto n = ::write(fd, s.data(), s.size());
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sys_write_calls.fetch_add(1, std::memory_order_relaxed);
+        return make_int(n >= 0 ? static_cast<std::int64_t>(n) : -1);
     });
 }
 
