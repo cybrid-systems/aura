@@ -195,6 +195,10 @@ public:
         // outputs). Starts at 0; the harness bumps it when
         // results differ.
         std::atomic<std::uint64_t> consistency_violations{0};
+        // Issue #1285: exception opcode coverage (TryBegin/End/Raise/IsError).
+        // Bumped each time lower() handles those opcodes so Agents can
+        // confirm JIT EH coverage vs unhandled_opcode_count.
+        std::atomic<std::uint64_t> exception_opcode_lowered{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.

@@ -5760,6 +5760,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stable_ref_auto_refresh_enforced{1}; // #1279
     std::atomic<std::uint64_t> pattern_hygiene_default_exclude{0};  // #1280
     std::atomic<std::uint64_t> pattern_hygiene_end_to_end{1};       // #1280
+
+    // ── Issues #1281–#1285: children rollback / gen wrap / provenance / fallback / JIT EH ──
+    std::atomic<std::uint64_t> production_sweep_1281_1285_active{1};
+    std::atomic<std::uint64_t> children_topology_rollback_fidelity{1}; // #1281 scaffold
+    std::atomic<std::uint64_t> children_topology_rollback_count{0};    // #1281
+    std::atomic<std::uint64_t> generation_auto_restamp_on_wrap{0};     // #1282
+    std::atomic<std::uint64_t> generation_wrap_restamp_policy{1};      // #1282 auto-restamp on
+    std::atomic<std::uint64_t> provenance_boundary_hooks_active{1};    // #1283
+    std::atomic<std::uint64_t> provenance_boundary_capture_count{0};   // #1283
+    std::atomic<std::uint64_t> dirty_provenance_stats_active{1};       // #1283
+    std::atomic<std::uint64_t> tree_walker_define_cache_hits{0};       // #1284
+    std::atomic<std::uint64_t> tree_walker_fallback_reduction{1};      // #1284
+    std::atomic<std::uint64_t> jit_exception_opcodes_covered{1};       // #1285
+    std::atomic<std::uint64_t> jit_exception_opcode_lowered{0};        // #1285
 };
 
 

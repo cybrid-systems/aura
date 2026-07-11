@@ -168,6 +168,10 @@ struct CompilerSnapshot {
     std::uint64_t children_safe_view_count = 0;
     // Issue #678: parent_safe_view call counter.
     std::uint64_t parent_safe_view_count = 0;
+    // Issue #1281: children_ PCV topology restore count.
+    std::uint64_t children_topology_restore_count = 0;
+    // Issue #1282: auto-restamp after generation wrap recovery count.
+    std::uint64_t auto_restamp_on_wrap_count = 0;
     // Issue #256: AST operation observability. Mirrors
     // CompilerMetrics::{children_call_count,
     // parent_of_call_count, mark_dirty_upward_call_count,
