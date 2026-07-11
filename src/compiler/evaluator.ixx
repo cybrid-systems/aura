@@ -2885,19 +2885,57 @@ private:
     std::atomic<std::uint64_t> stable_ref_workspace_resolves_{0};
     std::atomic<std::uint64_t> stable_ref_workspace_resolve_misses_{0};
     mutable std::atomic<std::uint64_t> stable_ref_workspace_tree_violations_{0};
-    // Issue #354: set by outermost MutationBoundaryGuard
-    // ctor; cleared by dtor. The Fiber::yield path
-    // checks this flag to detect "yield while holding
-    // a mutation boundary" — a programmer error that
-    // could deadlock or starve competing fibers. The
-    // flag is per-Evaluator (set by the Guard ctor when
-    // outermost; nested guards don't reset it). The
-    // fiber's yield check reads this and asserts in
-    // debug builds / logs in release builds.
+    // ── Cross-fiber yield × MutationBoundaryGuard (Issue #1373) ──
+    //
+    // mutation_boundary_held_: set by the OUTERMOST
+    // MutationBoundaryGuard ctor; cleared by that Guard's dtor.
+    // Nested guards do not clear/reset the flag.
+    //
+    // Fiber::yield (src/serve/fiber.cpp) reads this via
+    // messaging::g_mutation_boundary_held:
+    //   - debug: assert(false) if true (yield-under-lock is a bug)
+    //   - release: WARNING log, then continue
+    //
+    // Yield / restore paths (documented behavior):
+    //
+    // 1) Same-thread yield (Fiber::yield / fiber_resume):
+    //    - Guard remains alive on the caller's stack frame.
+    //    - workspace_mtx_ still held by this thread (unique_lock
+    //      is thread-affine and not released by yield).
+    //    - checkpoint_yield_boundary records defuse_version +
+    //      depths; restore_post_yield_or_rollback typically
+    //      returns true (no rollback).
+    //    - Counter: mutation_boundary_yield_same_thread_total
+    //
+    // 2) Cross-thread migration (worker steal while boundary
+    //    was active at yield):
+    //    - DANGEROUS: shared_mutex unique_lock has thread affinity;
+    //      the Guard must not be held across a true thread move
+    //      of the lock owner.
+    //    - restore_post_yield_or_rollback() detects thread_id
+    //      mismatch on the yield checkpoint, restamps metadata,
+    //      and may force *outermost_mutation_success_flag_ = false
+    //      so the Guard dtor rolls back batched mutations when
+    //      version/depth still drift after restamp (or panic path).
+    //    - Counters: mutation_boundary_cross_thread_migration_total,
+    //      mutation_boundary_yield_rollback_total (on rollback)
+    //
+    // 3) Fiber exit while Guard is live:
+    //    - CRITICAL: RAII requires ~MutationBoundaryGuard to run
+    //      before fiber storage is freed (stack-frame Guard).
+    //    - Verified by tests/test_mutate_cross_thread_migration.cpp
+    //
+    // Production guidance:
+    //   - Prefer not yielding inside mutate:* / Guard scopes.
+    //   - Fiber pool may pin work to avoid path (2); agents should
+    //     keep mutation sections short (see hold-time counters).
+    //
+    // Hold-time: outermost Guard records enter_ts_; dtor updates
+    // mutation_boundary_hold_* / mutation_hold_* CompilerMetrics.
     std::atomic<bool> mutation_boundary_held_{false};
     // Set by outermost MutationBoundaryGuard; used by
     // restore_post_yield_or_rollback to signal rollback on
-    // cross-thread migration during an active boundary.
+    // cross-thread migration / yield desync during an active boundary.
     bool* outermost_mutation_success_flag_ = nullptr;
     // (#10) Track mutation-affected symbols for targeted index rebuild
     // Mutation primitives push affected sym names here; ensure_defuse
@@ -9265,33 +9303,38 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = (*slot)--;
             bool outermost = (prev == 1);
-            // Issue #1253: observe outermost mutation hold duration.
+            // Issue #1253 / #1373: observe outermost mutation hold duration.
             if (outermost && enter_ts_.time_since_epoch().count() != 0) {
                 const auto dur = std::chrono::steady_clock::now() - enter_ts_;
                 const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+                const auto uus = static_cast<std::uint64_t>(us > 0 ? us : 0);
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-                    m->mutation_hold_duration_us_total.fetch_add(
-                        static_cast<std::uint64_t>(us > 0 ? us : 0), std::memory_order_relaxed);
+                    m->mutation_hold_duration_us_total.fetch_add(uus, std::memory_order_relaxed);
                     m->mutation_hold_samples.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #1373: Agent-facing hold counters (query:mutation-boundary-hold-stats).
+                    m->mutation_boundary_hold_time_total_us.fetch_add(uus,
+                                                                      std::memory_order_relaxed);
+                    m->mutation_boundary_holds_total.fetch_add(1, std::memory_order_relaxed);
+                    if (uus > 1000)
+                        m->mutation_boundary_holds_over_1ms_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     // Default policy: 500ms — metric-only (no force-yield yet).
                     constexpr std::int64_t kMaxMutationDurationUs = 500'000;
                     if (us > kMaxMutationDurationUs) {
                         m->mutation_too_long_total.fetch_add(1, std::memory_order_relaxed);
                         // Issue #1272: contention histogram sample (µs held).
                         m->mutation_boundary_contention_us_hist.fetch_add(
-                            static_cast<std::uint64_t>(us), std::memory_order_relaxed);
+                            uus, std::memory_order_relaxed);
                         if (us > static_cast<std::int64_t>(m->mutation_hold_duration_us_max.load(
                                      std::memory_order_relaxed))) {
-                            m->mutation_hold_duration_us_max.store(static_cast<std::uint64_t>(us),
-                                                                   std::memory_order_relaxed);
+                            m->mutation_hold_duration_us_max.store(uus, std::memory_order_relaxed);
                         }
                     } else {
                         auto prev_max =
                             m->mutation_hold_duration_us_max.load(std::memory_order_relaxed);
-                        while (static_cast<std::uint64_t>(us) > prev_max &&
+                        while (uus > prev_max &&
                                !m->mutation_hold_duration_us_max.compare_exchange_weak(
-                                   prev_max, static_cast<std::uint64_t>(us),
-                                   std::memory_order_relaxed)) {
+                                   prev_max, uus, std::memory_order_relaxed)) {
                         }
                     }
                     m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);

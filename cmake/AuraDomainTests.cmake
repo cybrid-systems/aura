@@ -324,6 +324,11 @@ aura_add_issue_test(test_query_pattern_concurrent)
 aura_issue_test_link_llvm_jit(test_query_pattern_concurrent)
 add_dependencies(all_test_issue_targets test_query_pattern_concurrent)
 
+# Issue #1373: mutation boundary hold + cross-thread migration counters
+aura_add_issue_test(test_mutate_cross_thread_migration)
+aura_issue_test_link_llvm_jit(test_mutate_cross_thread_migration)
+add_dependencies(all_test_issue_targets test_mutate_cross_thread_migration)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
