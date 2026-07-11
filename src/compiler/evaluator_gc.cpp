@@ -219,6 +219,11 @@ static void record_linear_gc_probe(Evaluator& ev, bool violation,
     }
 }
 
+// Issue #1364: called at GC safepoint. Linear ownership probe only.
+// Mutation × safepoint contract (docs/development/safepoint-mutation.md):
+//   - STW window advertised via gc_hooks::in_gc_safepoint() / ScopedSafepoint
+//   - Concurrent mutate is benign: workspace_mtx_ serializes AST writes
+//   - Telemetry: mutation_in_safepoint_total on MutationBoundaryGuard entry
 void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     const auto current_ver = defuse_version_snapshot();
     const auto current_bridge = current_bridge_epoch();

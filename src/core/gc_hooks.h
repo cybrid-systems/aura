@@ -75,6 +75,45 @@ inline bool fiber_active() noexcept {
     return fn ? fn() : false;
 }
 
+// ── Safepoint active flag (Issue #1364) ───────────────────
+// Set true for the duration of a STW GC pause (after all fibers
+// arrived, until resume). Mutation primitives consult this via
+// in_gc_safepoint() for telemetry (benign race — workspace_mtx_
+// still serializes AST writes; see docs/development/safepoint-mutation.md).
+inline std::atomic<bool> g_arena_safepoint_active{false};
+
+[[nodiscard]] inline bool in_gc_safepoint() noexcept {
+    return g_arena_safepoint_active.load(std::memory_order_acquire);
+}
+
+// RAII: nestable set of g_arena_safepoint_active for the pause window.
+class ScopedSafepoint {
+public:
+    ScopedSafepoint() noexcept {
+        prev_ = g_arena_safepoint_active.exchange(true, std::memory_order_acq_rel);
+    }
+    ~ScopedSafepoint() noexcept {
+        g_arena_safepoint_active.store(prev_, std::memory_order_release);
+    }
+    ScopedSafepoint(const ScopedSafepoint&) = delete;
+    ScopedSafepoint& operator=(const ScopedSafepoint&) = delete;
+
+private:
+    bool prev_ = false;
+};
+
+// Process-wide: fiber waited at safepoint while holding a mutation boundary.
+// Bumped from Fiber::check_gc_safepoint (does not require CompilerMetrics).
+inline std::atomic<std::uint64_t> g_safepoint_yield_on_mutation_total{0};
+
+inline void note_safepoint_yield_on_mutation() noexcept {
+    g_safepoint_yield_on_mutation_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t safepoint_yield_on_mutation_total() noexcept {
+    return g_safepoint_yield_on_mutation_total.load(std::memory_order_relaxed);
+}
+
 // ── Arena auto-compact notification (Issue #743) ────────────
 // Called from arena.ixx when allocate_raw auto-compact fires
 // or fiber-safe compact/defrag coordinates a safepoint.

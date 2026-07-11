@@ -4,6 +4,7 @@
 #include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
 #include "../compiler/shape.h"            // Issue #570: record_shape_fiber_refresh
 #include "aura_platform.h"
+#include "core/gc_hooks.h" // Issue #1364
 
 #include <sys/mman.h>
 #include <cassert> // Issue #354: assert for yield-during-boundary check
@@ -137,6 +138,8 @@ void Fiber::check_gc_safepoint() {
         if (holding_mutation) {
             static_gc_pause_attributed_to_mutation_count_.fetch_add(1, std::memory_order_relaxed);
             gc->safepoint_wait_while_mutation_held.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1364: process-wide + optional CompilerMetrics mirror
+            aura::gc_hooks::note_safepoint_yield_on_mutation();
         }
     }
     if (phase == GCPhase::Requested) {

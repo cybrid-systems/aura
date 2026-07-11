@@ -1,6 +1,7 @@
 // serve/gc_coordinator.cpp — GC coordinator implementation
 #include "gc_coordinator.h"
 #include "scheduler.h"
+#include "core/gc_hooks.h"
 
 import std;
 namespace aura::serve {
@@ -86,62 +87,69 @@ bool GCCollector::collect() {
         std::chrono::duration_cast<std::chrono::microseconds>(safepoint_end - safepoint_start)
             .count();
 
-    // ── Phase 2: Collect roots from all registered sources ──
-    auto roots_start = std::chrono::steady_clock::now();
-    GCRootSet roots;
-    collect_roots(roots);
-    auto roots_end = std::chrono::steady_clock::now();
-    auto roots_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(roots_end - roots_start).count();
+    // Issue #1364: advertise STW window to mutators (in_gc_safepoint).
+    // Scope covers mark+sweep until resume_from_gc below.
+    {
+        aura::gc_hooks::ScopedSafepoint safepoint_active_guard;
 
-    metrics_.root_count.store(
-        static_cast<int64_t>(roots.string_roots.size() + roots.pair_roots.size() +
-                             roots.closure_roots.size() + roots.fiber_result_roots.size() +
-                             roots.workspace_roots.size() + roots.compiler_closure_roots.size() +
-                             roots.compiler_env_roots.size()),
-        std::memory_order_relaxed);
-    metrics_.root_collect_us.fetch_add(roots_us, std::memory_order_relaxed);
+        // ── Phase 2: Collect roots from all registered sources ──
+        auto roots_start = std::chrono::steady_clock::now();
+        GCRootSet roots;
+        collect_roots(roots);
+        auto roots_end = std::chrono::steady_clock::now();
+        auto roots_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(roots_end - roots_start).count();
 
-    // ── Phase 3: Mark from roots ──────────────────────
-    auto mark_start = std::chrono::steady_clock::now();
-    // Size hints: default to root count estimate.
-    // In full integration, evaluator provides actual heap sizes.
-    mark_from_roots(roots, 0, 0, 0);
-    auto mark_end = std::chrono::steady_clock::now();
-    auto mark_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(mark_end - mark_start).count();
-    metrics_.mark_us.fetch_add(mark_us, std::memory_order_relaxed);
+        metrics_.root_count.store(
+            static_cast<int64_t>(
+                roots.string_roots.size() + roots.pair_roots.size() + roots.closure_roots.size() +
+                roots.fiber_result_roots.size() + roots.workspace_roots.size() +
+                roots.compiler_closure_roots.size() + roots.compiler_env_roots.size()),
+            std::memory_order_relaxed);
+        metrics_.root_collect_us.fetch_add(roots_us, std::memory_order_relaxed);
 
-    // Issue #205: env-walk. The evaluator walks env_frames_
-    // (O(frames) SoA linear pass, replacing the old pointer
-    // chase). Produces pair/closure index lists. We then
-    // call mark_env_frame_roots to set the bits. The walk
-    // runs AFTER mark_from_roots so the mark vectors are
-    // already sized (mark_env_frame_roots is a no-op if the
-    // vectors aren't sized yet). The walk is also additive:
-    // it doesn't replace the explicit root sources, it
-    // ADDS to them (env chains are not always reachable from
-    // the root sources, e.g., a frame that's only reachable
-    // through another frame's parent_id).
-    if (env_walk_fn_) {
-        EnvFrameRoots env_roots;
-        env_walk_fn_(env_roots);
-        mark_env_frame_roots(env_roots.pair_roots, env_roots.closure_roots);
-    }
+        // ── Phase 3: Mark from roots ──────────────────────
+        auto mark_start = std::chrono::steady_clock::now();
+        // Size hints: default to root count estimate.
+        // In full integration, evaluator provides actual heap sizes.
+        mark_from_roots(roots, 0, 0, 0);
+        auto mark_end = std::chrono::steady_clock::now();
+        auto mark_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(mark_end - mark_start).count();
+        metrics_.mark_us.fetch_add(mark_us, std::memory_order_relaxed);
 
-    // ── Phase 4: Sweep (skeleton) ─────────────────────
-    auto sweep_start = std::chrono::steady_clock::now();
-    auto sweep_result = sweep();
-    auto sweep_end = std::chrono::steady_clock::now();
-    auto sweep_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(sweep_end - sweep_start).count();
-    metrics_.sweep_us.fetch_add(sweep_us, std::memory_order_relaxed);
-    metrics_.strings_freed.fetch_add(static_cast<int64_t>(sweep_result.strings_freed),
-                                     std::memory_order_relaxed);
-    metrics_.pairs_freed.fetch_add(static_cast<int64_t>(sweep_result.pairs_freed),
-                                   std::memory_order_relaxed);
-    metrics_.closures_freed.fetch_add(static_cast<int64_t>(sweep_result.closures_freed),
-                                      std::memory_order_relaxed);
+        // Issue #205: env-walk. The evaluator walks env_frames_
+        // (O(frames) SoA linear pass, replacing the old pointer
+        // chase). Produces pair/closure index lists. We then
+        // call mark_env_frame_roots to set the bits. The walk
+        // runs AFTER mark_from_roots so the mark vectors are
+        // already sized (mark_env_frame_roots is a no-op if the
+        // vectors aren't sized yet). The walk is also additive:
+        // it doesn't replace the explicit root sources, it
+        // ADDS to them (env chains are not always reachable from
+        // the root sources, e.g., a frame that's only reachable
+        // through another frame's parent_id).
+        if (env_walk_fn_) {
+            EnvFrameRoots env_roots;
+            env_walk_fn_(env_roots);
+            mark_env_frame_roots(env_roots.pair_roots, env_roots.closure_roots);
+        }
+
+        // ── Phase 4: Sweep (skeleton) ─────────────────────
+        auto sweep_start = std::chrono::steady_clock::now();
+        auto sweep_result = sweep();
+        auto sweep_end = std::chrono::steady_clock::now();
+        auto sweep_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(sweep_end - sweep_start).count();
+        metrics_.sweep_us.fetch_add(sweep_us, std::memory_order_relaxed);
+        metrics_.strings_freed.fetch_add(static_cast<int64_t>(sweep_result.strings_freed),
+                                         std::memory_order_relaxed);
+        metrics_.pairs_freed.fetch_add(static_cast<int64_t>(sweep_result.pairs_freed),
+                                       std::memory_order_relaxed);
+        metrics_.closures_freed.fetch_add(static_cast<int64_t>(sweep_result.closures_freed),
+                                          std::memory_order_relaxed);
+
+    } // end ScopedSafepoint — clear active flag before resume
 
     // ── Phase 1e: Resume workers ──────────────────────
     scheduler_->resume_from_gc();

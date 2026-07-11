@@ -7,6 +7,8 @@ module;
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 #include "hash_meta.h" // FNV constants (#901)
+#include "observability_metrics.h"
+#include "core/gc_hooks.h"
 
 module aura.compiler.evaluator;
 
@@ -62,6 +64,61 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.workspace_flat_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
+    });
+
+    // Issue #1364: (query:safepoint-mutation-stats) — mutation × GC safepoint telemetry
+    add("query:safepoint-mutation-stats", [&ev](const auto&) -> EvalValue {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto put = [&](const char* k, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            EvalValue val_ev = make_int(v);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = val_ev.val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        put("in-gc-safepoint", aura::gc_hooks::in_gc_safepoint() ? 1 : 0);
+        put("mutation-in-safepoint-total",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_in_safepoint_total.load(std::memory_order_relaxed))
+              : 0);
+        // Prefer process-wide fiber counter; also fold CompilerMetrics mirror.
+        const auto yield_hooks =
+            static_cast<std::int64_t>(aura::gc_hooks::safepoint_yield_on_mutation_total());
+        const auto yield_metrics =
+            m ? static_cast<std::int64_t>(
+                    m->safepoint_yield_on_mutation_total.load(std::memory_order_relaxed))
+              : 0;
+        put("safepoint-yield-on-mutation-total",
+            yield_hooks > yield_metrics ? yield_hooks : yield_metrics);
+        put("safepoint-collision-total",
+            m ? static_cast<std::int64_t>(
+                    m->safepoint_collision_total.load(std::memory_order_relaxed))
+              : 0);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #1362: compact committed mutation log prefix (keep recent tail).
