@@ -928,6 +928,35 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1229–#1240).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1241–#1245 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1241-1245-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1241)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1241_1245_active) : 1)},
+                {"soa-view-concept-enforced",
+                 make_int(m ? load_u64(m, m->soa_view_concept_enforced) : 1)},
+                {"arena-shrink-tier-hardened",
+                 make_int(m ? load_u64(m, m->arena_shrink_tier_hardened) : 1)},
+                {"soa-view-eval-helpers", make_int(m ? load_u64(m, m->soa_view_eval_helpers) : 1)},
+                {"hygiene-ir-marker-propagation",
+                 make_int(m ? load_u64(m, m->hygiene_ir_marker_propagation) : 1)},
+                {"macro-clone-concurrent-hygiene",
+                 make_int(m ? load_u64(m, m->macro_clone_concurrent_hygiene) : 1)},
+                {"issue-1245", make_int(1245)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1241–#1245).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

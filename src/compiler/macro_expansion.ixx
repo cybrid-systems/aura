@@ -4,6 +4,8 @@
 
 module;
 
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +22,10 @@ namespace aura::compiler::macro_exp {
 // can read it (and so operators can detect when their macros
 // are close to the limit via compile-time diagnostic).
 export constexpr int MAX_HYGIENE_DEPTH = 256;
+
+// Issue #1245 Phase 1: concurrent macro-clone hygiene counters (defined in .cpp).
+export extern std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total;
+export extern std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;

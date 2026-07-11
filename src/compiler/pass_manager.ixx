@@ -115,6 +115,17 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
     return pass_pipeline_detail::g_pipeline_yield_hook;
 }
 
+// Issue #1241 Phase 1: SoAView-friendly pass marker (DOD / columnar consult).
+// Passes may optionally expose uses_soa_view() = true when their hot path
+// iterates IRFunctionSoA columns / IRInstructionView rather than AoS IR.
+export template <typename P>
+concept SoAViewAwarePass = Pass<P> && requires(const P& p) {
+    { p.uses_soa_view() } -> std::convertible_to<bool>;
+};
+
+// Metric: pipeline stages that report SoAView awareness (#1241).
+export inline std::atomic<std::uint64_t> passes_soa_view_aware_total{0};
+
 // ── run_pipeline — fold over passes with short-circuit ──────────
 //
 // Issue #381: added a contract on the parameter pack. C++26
@@ -134,6 +145,15 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
     // here (NOT gated on dirty awareness) so it captures the
     // whole-pipeline-run rate including compact / pure-run cases.
     pass_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1241: count SoAView-aware passes in the pack (zero overhead
+    // when no pass exposes uses_soa_view).
+    auto count_soa = [](auto& p) {
+        if constexpr (SoAViewAwarePass<std::remove_cvref_t<decltype(p)>>) {
+            if (p.uses_soa_view())
+                passes_soa_view_aware_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    (count_soa(passes), ...);
     return (run_one(mod, passes) && ...);
 }
 

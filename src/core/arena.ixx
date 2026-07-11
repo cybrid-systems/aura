@@ -137,18 +137,23 @@ public:
 
     // Allocate from the best-fitting tier. Returns nullptr if too large
     // or if the tier is exhausted (caller should fallback).
+    // Issue #1242: also clamp against absolute buffer_.data()+size so a
+    // stale tier.end after shrink/rebind cannot yield an out-of-buffer pointer.
     void* try_allocate(std::size_t size) pre(size > 0) pre(size <= kMaxSmallSize) {
+        const auto* buf_end = buffer_.data() + buffer_.size();
         for (auto& c : classes_) {
             if (size <= c.obj_sz) {
+                // Hard cap: bump must stay within both tier.end and buffer.
+                std::byte* hard_end = c.end < buf_end ? c.end : const_cast<std::byte*>(buf_end);
                 void* ptr = c.bump;
-                c.bump += c.obj_sz;
-                if (c.bump <= c.end) {
+                auto* next = c.bump + c.obj_sz;
+                if (next <= hard_end && next >= c.start) {
+                    c.bump = next;
                     allocated_from_small_ += c.obj_sz;
                     aura::core::cpp26::record_hotpath_invariant_hit();
                     return ptr;
                 }
-                // This tier is exhausted — reset bump and signal overflow
-                c.bump -= c.obj_sz; // undo
+                // This tier is exhausted — signal overflow (no bump advance).
                 aura::core::cpp26::record_hotpath_invariant_hit();
                 return nullptr;
             }
@@ -164,21 +169,37 @@ public:
         allocated_from_small_ = 0;
     }
 
-    // Issue #974: re-bind tier start/end after parent buffer reallocation
-    // or shrink. SmallObjectPool owns its own buffer_ (not the ASTArena
-    // main buffer), so this is a no-op for layout unless buffer_ itself
-    // was moved. Kept as a public refresh for ASTArena::shrink_to_fit.
+    // Issue #974 / #1242: re-bind tier start/end after buffer reallocation
+    // or shrink. Clamps end to buffer_.size() so try_allocate cannot race
+    // past the real allocation. If used exceeds tier region, bump is
+    // clamped to end (tier treated exhausted until reset).
     void rebind_tiers() noexcept {
         if (buffer_.empty())
             return;
+        const auto buf_bytes = buffer_.size();
         for (std::size_t i = 0; i < kNumTiers; ++i) {
-            auto* start = buffer_.data() + i * kPerTierSize;
-            const auto used = static_cast<std::size_t>(classes_[i].bump - classes_[i].start);
+            const auto tier_off = i * kPerTierSize;
+            auto* start = buffer_.data() + tier_off;
+            // Tier span cannot exceed remaining buffer bytes.
+            const auto tier_cap =
+                std::min(kPerTierSize, buf_bytes > tier_off ? buf_bytes - tier_off : 0);
+            std::size_t used = 0;
+            if (classes_[i].start != nullptr && classes_[i].bump >= classes_[i].start)
+                used = static_cast<std::size_t>(classes_[i].bump - classes_[i].start);
+            if (used > tier_cap)
+                used = tier_cap;
             classes_[i].start = start;
-            classes_[i].end = start + kPerTierSize;
-            classes_[i].bump = start + std::min(used, kPerTierSize);
+            classes_[i].end = start + tier_cap;
+            classes_[i].bump = start + used;
             classes_[i].obj_sz = kTierSizes[i];
         }
+    }
+
+    // Issue #1242: after shrink, zero bumps so subsequent allocs re-evaluate
+    // cleanly against rebinding (acceptable: loses in-pool live data on shrink path).
+    void reset_small_pool_tiers() noexcept {
+        rebind_tiers();
+        reset();
     }
 
     // Total bytes consumed from the small pool
@@ -535,9 +556,9 @@ public:
             std::size_t before = buffer_.size();
             buffer_.resize(initial_size_);
             rebuild_resource_();
-            // Issue #974: SmallObjectPool has its own buffer — rebind tier
-            // pointers in case vector reallocation invalidated them
-            // (defensive; pool buffer is independent of main buffer_).
+            // Issue #974/#1242: rebind + clamp tier ends to current buffer size.
+            // SmallObjectPool owns its own buffer — rebind still required if
+            // its buffer moved; clamp hardens try_allocate against stale ends.
             small_pool_.rebind_tiers();
             std::size_t saved = before - initial_size_;
             stats_.compaction_count++;

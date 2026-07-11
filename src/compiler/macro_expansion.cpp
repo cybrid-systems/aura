@@ -3,7 +3,9 @@
 
 module;
 
+#include <atomic>
 #include <cstdio>
+#include <cstdint>
 
 module aura.compiler.macro_expansion;
 
@@ -13,6 +15,7 @@ import aura.compiler.evaluator_pure;
 
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
+extern "C" std::uint64_t aura_fiber_current_id();
 
 namespace aura::compiler::macro_exp {
 
@@ -163,6 +166,10 @@ namespace detail {
 // own recursion chain (no concurrent re-entry from other
 // fibers / threads on the same Evaluator).
 thread_local int s_hygiene_depth = 0;
+
+// Issue #1245 Phase 1: concurrent hygiene / dirty observability.
+std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total{0};
+std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
 
 aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                                    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
@@ -453,6 +460,14 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
         if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
             if (aura_evaluator_mutation_boundary_depth() > 0)
                 aura_evaluator_bump_macro_expand_checkpoint_save();
+            // Issue #1245 Phase 1: fiber-aware hygiene provenance counter for
+            // concurrent clone_macro_body (steal/GC/hot-swap contexts).
+            // Full dirty-to-fiber peel follows; metric makes the path visible.
+            const auto fiber_id = aura_fiber_current_id();
+            if (fiber_id != 0)
+                g_macro_clone_concurrent_fiber_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_clone_hygiene_dirty_total.fetch_add(1, std::memory_order_relaxed);
+            (void)fiber_id;
             std::vector<aura::ast::NodeId> stack;
             stack.push_back(new_id);
             while (!stack.empty()) {

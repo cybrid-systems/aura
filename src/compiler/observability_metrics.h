@@ -5661,6 +5661,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sva_semantic_eval_scaffold{1};        // #1238
     std::atomic<std::uint64_t> panic_checkpoint_raii_scaffold{1};    // #1239
     std::atomic<std::uint64_t> value_tag_consteval_contracts{1};     // #1240
+
+    // ── Issues #1241–#1245: SoAView / arena / hygiene concurrent Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1241_1245_active{1};
+    std::atomic<std::uint64_t> soa_view_concept_enforced{1};      // #1241
+    std::atomic<std::uint64_t> arena_shrink_tier_hardened{1};     // #1242
+    std::atomic<std::uint64_t> soa_view_eval_helpers{1};          // #1243
+    std::atomic<std::uint64_t> hygiene_ir_marker_propagation{1};  // #1244
+    std::atomic<std::uint64_t> macro_clone_concurrent_hygiene{1}; // #1245
 };
 
 
