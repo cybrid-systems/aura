@@ -7,7 +7,7 @@
 //
 //   - AC1: query:cpp26-contracts-stats reachable (schema 742)
 //   - AC2: eval/mutate bumps hotpath-invariant-hits
-//   - AC3: consteval-checks == 32 (compile-time baked)
+//   - AC3: consteval-checks == 36 (compile-time baked; #1321 expanded)
 //   - AC4: contract-violations-caught readable (zero in normal path)
 //   - AC5: multi-round mutate — hotpath hits monotonic
 //   - AC6: query regression (highperf-cpp26, cxx26-invariants)
@@ -74,8 +74,8 @@ static void run_matrix(CompilerService& cs) {
     std::println("  hotpath-invariant-hits: {} -> {}", hotpath0, hotpath1);
     CHECK(hotpath1 > hotpath0, "hotpath-invariant-hits grew after eval/mutate");
 
-    std::println("\n--- AC3: consteval-checks baked at 32 ---");
-    CHECK(contract_hash(cs, "consteval-checks") == 32, "consteval-checks == 32");
+    std::println("\n--- AC3: consteval-checks baked at 36 ---");
+    CHECK(contract_hash(cs, "consteval-checks") == 36, "consteval-checks == 36");
 
     std::println("\n--- AC4: contract-violations-caught zero in normal path ---");
     CHECK(contract_hash(cs, "contract-violations-caught") == 0,

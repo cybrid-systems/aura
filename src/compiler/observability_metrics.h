@@ -5864,6 +5864,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_defrag_saved_bytes_total{0};
     std::atomic<std::uint64_t> arena_compact_soft_gated_render{0};
     std::atomic<std::uint64_t> arena_defrag_now_calls{0};
+
+    // ── Issues #1321–#1324: contracts expand, dirty pipeline, JIT map races ──
+    std::atomic<std::uint64_t> production_sweep_1321_1324_active{1};
+    // #1321 C++26 contracts + consteval hot-path expansion
+    std::atomic<std::uint64_t> hotpath_contracts_expanded{1};
+    std::atomic<std::uint64_t> soa_view_bounds_contracts{1};
+    std::atomic<std::uint64_t> flatast_column_contracts{1};
+    std::atomic<std::uint64_t> consteval_checks_total{36};
+    // #1322 DirtyAware + SoAView pipeline short-circuit
+    std::atomic<std::uint64_t> pipeline_dirty_short_circuit_active{1};
+    std::atomic<std::uint64_t> pipeline_dirty_short_circuit_total{0};
+    std::atomic<std::uint64_t> pipeline_epoch_sync_total{0};
+    std::atomic<std::uint64_t> pipeline_soa_view_aware_total{0};
+    std::atomic<std::uint64_t> pipeline_hotpath_light_analysis_total{0};
+    // #1323 fn_unhandled_counts_ query lock
+    std::atomic<std::uint64_t> jit_fn_unhandled_counts_query_locked{1};
+    // #1324 invalidate / invalidate_prefix lock-before-erase
+    std::atomic<std::uint64_t> jit_invalidate_lock_before_erase{1};
 };
 
 

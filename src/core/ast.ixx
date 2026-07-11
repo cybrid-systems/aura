@@ -3112,9 +3112,20 @@ public:
     // on const ast). Used by find_first_node_with<Id, const
     // FlatAST, P> when called from const methods like
     // FlatAST::subtree_uses_sym.
-    [[nodiscard]] NodeTag tag(NodeId id) const noexcept { return tag_[id]; }
-    [[nodiscard]] std::int64_t int_val(NodeId id) const noexcept { return int_val_[id]; }
-    [[nodiscard]] SymId sym_id(NodeId id) const noexcept { return sym_id_[id]; }
+    // Issue #1321: hot SoA column accessors — contract pre(id valid) in debug
+    // so AI mutation corruption is caught early (release: no-op).
+    [[nodiscard]] NodeTag tag(NodeId id) const noexcept {
+        contract_assert(id < tag_.size());
+        return tag_[id];
+    }
+    [[nodiscard]] std::int64_t int_val(NodeId id) const noexcept {
+        contract_assert(id < int_val_.size());
+        return int_val_[id];
+    }
+    [[nodiscard]] SymId sym_id(NodeId id) const noexcept {
+        contract_assert(id < sym_id_.size());
+        return sym_id_[id];
+    }
 
     // ── Parent access ──────────────────────────────────────────
     NodeId parent_of(NodeId id) const {

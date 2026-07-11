@@ -181,6 +181,11 @@ aura_add_issue_test(test_production_sweep_1316_1320)
 aura_issue_test_link_llvm_jit(test_production_sweep_1316_1320)
 add_dependencies(all_test_issue_targets test_production_sweep_1316_1320)
 
+# Issues #1321–#1324: C++26 contracts expand, dirty pipeline, JIT map races
+aura_add_issue_test(test_production_sweep_1321_1324)
+aura_issue_test_link_llvm_jit(test_production_sweep_1321_1324)
+add_dependencies(all_test_issue_targets test_production_sweep_1321_1324)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

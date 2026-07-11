@@ -102,9 +102,34 @@ export inline std::atomic<std::uint64_t> passes_skipped_shape_stable_blocks{0};
 // passes_skipped_dirty_pipeline so the Agent can compute the
 // short-circuit ratio (skips / runs * average-fns-per-run).
 export inline std::atomic<std::uint64_t> pass_pipeline_runs_total{0};
+// Issue #1322 Phase 1: DirtyAware + SoAView + epoch coordination metrics.
+export inline std::atomic<std::uint64_t> pipeline_dirty_short_circuit_total{0};
+export inline std::atomic<std::uint64_t> pipeline_epoch_sync_total{0};
+export inline std::atomic<std::uint64_t> pipeline_hotpath_light_analysis_total{0};
 
 namespace pass_pipeline_detail {
     inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
+    // Issue #1322: execution context — fiber/render hot-path soft gate for run_one.
+    inline thread_local int g_pipeline_hotpath_depth = 0;
+    inline thread_local std::uint64_t g_pipeline_mutation_epoch = 0;
+} // namespace pass_pipeline_detail
+
+export void enter_pipeline_hotpath_context() noexcept {
+    ++pass_pipeline_detail::g_pipeline_hotpath_depth;
+}
+export void exit_pipeline_hotpath_context() noexcept {
+    if (pass_pipeline_detail::g_pipeline_hotpath_depth > 0)
+        --pass_pipeline_detail::g_pipeline_hotpath_depth;
+}
+export [[nodiscard]] bool in_pipeline_hotpath_context() noexcept {
+    return pass_pipeline_detail::g_pipeline_hotpath_depth > 0;
+}
+export void set_pipeline_mutation_epoch(std::uint64_t epoch) noexcept {
+    pass_pipeline_detail::g_pipeline_mutation_epoch = epoch;
+    pipeline_epoch_sync_total.fetch_add(1, std::memory_order_relaxed);
+}
+export [[nodiscard]] std::uint64_t pipeline_mutation_epoch() noexcept {
+    return pass_pipeline_detail::g_pipeline_mutation_epoch;
 }
 
 export void set_pipeline_yield_hook(PipelineYieldHook hook) noexcept {
@@ -173,6 +198,21 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
         pass_pipeline_detail::g_pipeline_yield_hook()) {
         pipeline_yield_count.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1322: sync JITFriendlyPass epoch hint when pipeline context set.
+    if constexpr (requires(P& p) {
+                      p.set_pipeline_epoch(std::uint64_t{});
+                      { p.pipeline_epoch_hint() } -> std::convertible_to<std::uint64_t>;
+                  }) {
+        const auto epoch = pass_pipeline_detail::g_pipeline_mutation_epoch;
+        if (epoch != 0) {
+            pass.set_pipeline_epoch(epoch);
+            pipeline_epoch_sync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1322: under render/JIT hot path, count light-analysis samples
+    // (full pass still runs in Phase 1; lighter skip policy is follow-up).
+    if (pass_pipeline_detail::g_pipeline_hotpath_depth > 0)
+        pipeline_hotpath_light_analysis_total.fetch_add(1, std::memory_order_relaxed);
     pass.run(mod);
     return !pass.has_error();
 }
@@ -347,6 +387,8 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
         }
         if (!any_dirty) {
             passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1322: unified dirty short-circuit counter for Agent dashboards.
+            pipeline_dirty_short_circuit_total.fetch_add(1, std::memory_order_relaxed);
             if (fn_shape_stable)
                 passes_skipped_shape_stable_blocks.fetch_add(
                     static_cast<std::uint64_t>(func.blocks.size()), std::memory_order_relaxed);

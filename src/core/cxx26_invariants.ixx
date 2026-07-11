@@ -141,7 +141,23 @@ inline constexpr std::uint64_t kShapeInlinePairId = 10;
 static_assert(kShapeInlineIntId < kShapeInlinePairId,
               "Issue #742: inline ShapeID ranges must be ordered");
 
+// ── Issue #1321 Phase 1: expanded hot-path consteval invariants ──
+// Dirty bitmask: low 8 bits reserved for structural reasons (set_child etc.).
+inline constexpr std::uint32_t kDirtyReasonStructuralMask = 0xFFu;
+static_assert((kDirtyReasonStructuralMask & 0xFFu) == 0xFFu,
+              "Issue #1321: dirty structural reason mask must be 8 bits");
+// Tag arity index packing (soa_view::tag_arity_index): tag in high 8, arity low 8.
+inline constexpr std::uint32_t kTagArityIndexPack = (static_cast<std::uint32_t>(1) << 8) | 3;
+static_assert(kTagArityIndexPack == 0x103u,
+              "Issue #1321: tag_arity_index packing must be (tag<<8)|arity");
+// EvalValue fixnum bias encoding: low 2 bits of fixnum tag class.
+static_assert(kFixnumTagLow2 == 0, "Issue #1321: fixnum low2 must remain 0 for hot as_int path");
+// Arena tier max is 64 — allocate pre(size <= kMax) relies on this.
+static_assert(kExpectedTierSizes[2] == 64,
+              "Issue #1321: max SmallObjectPool tier must stay 64 for allocate contracts");
+
 // Exported count for (query:cpp26-contracts-stats) consteval_checks field.
-inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 32;
+// Bumped #1321 (+4 static_asserts above; total consteval surface).
+inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 36;
 
 } // namespace aura::core
