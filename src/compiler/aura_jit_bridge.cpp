@@ -96,25 +96,67 @@ extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
 //   2. A build from a pre-mutation epoch (lower defuse_version) —
 //      stale, must not be loaded into a mutated runtime
 //
-// The generated registration .c emits `aura_set_module_version(v)`
-// at the top of the constructor so the runtime records the
-// build's user-facing version alongside the internal one.
-static std::uint64_t g_aot_module_version = 0;
+// Issue #708 / #1367: per-agent AOT isolation state.
+// Previously region_mask + module_version were process-global, so multi-agent
+// sharing one process could not isolate AOT modules. Now each Evaluator* (or
+// the nullptr default key) has its own AotState; global C APIs use nullptr.
+struct AotState {
+    std::atomic<std::uint64_t> region_mask{0};
+    std::atomic<std::uint64_t> module_version{0};
+    // 0 = fall back to process g_aot_defuse_version for reload stale checks
+    std::atomic<std::uint64_t> defuse_version{0};
+};
 
-// Issue #708: per-agent region isolation mask for hot-reload filtering.
+static std::mutex g_aot_state_mtx;
+static std::unordered_map<void*, std::unique_ptr<AotState>> g_aot_state_map;
+static AotState g_aot_default_state; // key = nullptr (backward-compat global)
+
+static AotState& aot_state_for(void* eval_ptr) {
+    if (!eval_ptr)
+        return g_aot_default_state;
+    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    auto& slot = g_aot_state_map[eval_ptr];
+    if (!slot) {
+        slot = std::make_unique<AotState>();
+        if (g_aot_metrics)
+            g_aot_metrics->aot_per_eval_state_creates.fetch_add(1, std::memory_order_relaxed);
+    }
+    return *slot;
+}
+
+// Issue #708: emit-time region mask (process-wide; AOT emit is not multi-tenant).
 static std::uint64_t g_aot_emit_region_mask = 0;
-static std::atomic<std::uint64_t> g_aot_host_region_mask{0};
+
+// Backward-compat aliases for emit / log sites that still read "module version"
+// of the default state.
+static std::uint64_t g_aot_module_version_default() {
+    return g_aot_default_state.module_version.load(std::memory_order_relaxed);
+}
 
 extern "C" void aura_set_module_version(std::uint64_t v) {
-    g_aot_module_version = v;
+    g_aot_default_state.module_version.store(v, std::memory_order_relaxed);
+}
+
+extern "C" void aura_set_module_version_for_eval(void* eval_ptr, std::uint64_t v) {
+    aot_state_for(eval_ptr).module_version.store(v, std::memory_order_relaxed);
 }
 
 extern "C" void aura_set_aot_region_mask(std::uint64_t mask) {
-    g_aot_host_region_mask.store(mask, std::memory_order_relaxed);
+    g_aot_default_state.region_mask.store(mask, std::memory_order_relaxed);
+}
+
+extern "C" void aura_set_aot_region_mask_for_eval(void* eval_ptr, std::uint64_t mask) {
+    aot_state_for(eval_ptr).region_mask.store(mask, std::memory_order_relaxed);
+    if (g_aot_metrics)
+        g_aot_metrics->aot_per_eval_region_sets.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_get_aot_region_mask(void) {
-    return g_aot_host_region_mask.load(std::memory_order_relaxed);
+    return g_aot_default_state.region_mask.load(std::memory_order_acquire);
+}
+
+extern "C" std::uint64_t aura_get_aot_region_mask_for_eval(void* eval_ptr) {
+    return aot_state_for(eval_ptr).region_mask.load(std::memory_order_acquire);
 }
 
 extern "C" void aura_set_aot_emit_region_mask(std::uint64_t mask) {
@@ -122,7 +164,35 @@ extern "C" void aura_set_aot_emit_region_mask(std::uint64_t mask) {
 }
 
 extern "C" std::uint64_t aura_get_module_version(void) {
-    return g_aot_module_version;
+    return g_aot_module_version_default();
+}
+
+extern "C" std::uint64_t aura_get_module_version_for_eval(void* eval_ptr) {
+    return aot_state_for(eval_ptr).module_version.load(std::memory_order_acquire);
+}
+
+extern "C" void aura_set_aot_defuse_version_for_eval(void* eval_ptr, std::uint64_t v) {
+    aot_state_for(eval_ptr).defuse_version.store(v, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_get_aot_defuse_version_for_eval(void* eval_ptr) {
+    const auto d = aot_state_for(eval_ptr).defuse_version.load(std::memory_order_acquire);
+    if (d != 0)
+        return d;
+    return g_aot_defuse_version;
+}
+
+extern "C" void aura_cleanup_aot_state(void* eval_ptr) {
+    if (!eval_ptr)
+        return;
+    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    if (g_aot_state_map.erase(eval_ptr) > 0 && g_aot_metrics)
+        g_aot_metrics->aot_per_eval_state_clears.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_aot_state_map_size(void) {
+    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    return static_cast<std::uint64_t>(g_aot_state_map.size());
 }
 
 // ── Issue #358: incremental re-AOT foundation ───────────────────
@@ -387,12 +457,22 @@ static void aot_log(const char* fmt, ...) {
     va_end(ap);
 }
 
-extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
+// Issue #1367: eval_ptr selects per-agent AotState (nullptr = process default).
+extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
+                                                std::uint64_t version) {
     bump_reload_attempt();
     if (!path) {
         aot_log("aura_reload_aot_module: null path\n");
         return false;
     }
+    AotState& st = aot_state_for(eval_ptr);
+    const std::uint64_t host_module_ver = st.module_version.load(std::memory_order_acquire);
+    const std::uint64_t host_region = st.region_mask.load(std::memory_order_acquire);
+    const std::uint64_t host_defuse = [&]() -> std::uint64_t {
+        const auto d = st.defuse_version.load(std::memory_order_acquire);
+        return d != 0 ? d : g_aot_defuse_version;
+    }();
+
     // Issue #1271: capture pre-reload epoch so failed paths never
     // advance table generation (atomic rollback of partial register).
     const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
@@ -431,7 +511,7 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
         aot_log("aura_reload_aot_module: loaded %s (aot_emit_version=%llu, "
                 "module_version=%llu)\n",
                 path, static_cast<unsigned long long>(*binary_version),
-                static_cast<unsigned long long>(g_aot_module_version));
+                static_cast<unsigned long long>(host_module_ver));
     } else {
         // No aot_emit_version symbol: pre-#243 binary, treat as
         // version 0 (unversioned baseline).
@@ -447,10 +527,7 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
             return false;
         }
     }
-    // Issue #708 + #1262: region isolation — reject reload when binary region
-    // mask disagrees with the host's expected agent/workspace region.
-    // Non-matching region forces FullReAOT policy (no silent wrong-region load).
-    const std::uint64_t host_region = g_aot_host_region_mask.load(std::memory_order_acquire);
+    // Issue #708 + #1262 + #1367: region isolation from per-eval AotState.
     if (host_region != 0) {
         auto* binary_region = static_cast<std::uint64_t*>(::dlsym(handle, "aot_region_mask"));
         if (binary_region && *binary_region != host_region) {
@@ -468,11 +545,11 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     // binary emit version is behind host defuse_version (stale AOT symbols).
     {
         auto* emit_ver = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
-        if (emit_ver && g_aot_defuse_version != 0 && *emit_ver < g_aot_defuse_version) {
+        if (emit_ver && host_defuse != 0 && *emit_ver < host_defuse) {
             aot_log("aura_reload_aot_module: stale defuse_version "
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*emit_ver),
-                    static_cast<unsigned long long>(g_aot_defuse_version), path);
+                    static_cast<unsigned long long>(host_defuse), path);
             rollback_close();
             if (g_aot_metrics)
                 g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
@@ -487,13 +564,17 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
         ::dlclose(g_aot_last_handle); // release prior module
     g_aot_last_handle = handle;
     g_aot_last_commit_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
-    g_aot_last_module_version = g_aot_module_version;
+    g_aot_last_module_version = host_module_ver;
     // Issue #452: bump hot-update success counter.
     if (g_aot_metrics) {
         g_aot_metrics->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
         g_aot_metrics->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
     }
     return true;
+}
+
+extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
+    return aura_reload_aot_module_for_eval(nullptr, path, version);
 }
 
 // Issue #1271: incremental re-emit skeleton — counts dirty AOT
@@ -689,7 +770,7 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
             static_cast<unsigned long long>(g_aot_emit_region_mask));
 
     // Issue #287: AOT module version (hot-reload / multi-agent).
-    // The host sets `g_aot_module_version` before
+    // The host sets default-state module_version before
     // `aura_emit_native_file` to identify a specific build.
     // The registration .c forwards it to the runtime via
     // `aura_set_module_version(v)` so the runtime can track
@@ -713,7 +794,7 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     // register a function for a stale module (defensive — the
     // check itself is a follow-up to #287).
     fprintf(f, "    aura_set_module_version(%llull);\n",
-            static_cast<unsigned long long>(g_aot_module_version));
+            static_cast<unsigned long long>(g_aot_module_version_default()));
 
     for (unsigned int i = 0; i < num_functions; ++i) {
         fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i],

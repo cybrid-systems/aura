@@ -294,6 +294,11 @@ aura_add_issue_test(test_aot_reload_primitive)
 aura_issue_test_link_llvm_jit(test_aot_reload_primitive)
 add_dependencies(all_test_issue_targets test_aot_reload_primitive)
 
+# Issue #1367: per-evaluator AOT region / module isolation
+aura_add_issue_test(test_aot_region_per_eval)
+aura_issue_test_link_llvm_jit(test_aot_region_per_eval)
+add_dependencies(all_test_issue_targets test_aot_region_per_eval)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

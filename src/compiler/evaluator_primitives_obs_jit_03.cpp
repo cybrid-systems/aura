@@ -1452,7 +1452,8 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
             aura_set_aot_metrics(static_cast<CompilerMetrics*>(ev.compiler_metrics()));
         }
         const std::string& path = ev.string_heap_[path_idx];
-        const bool ok = aura_reload_aot_module(path.c_str(), version);
+        // Issue #1367: use this Evaluator's AotState (region/version isolation)
+        const bool ok = aura_reload_aot_module_for_eval(&ev, path.c_str(), version);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->aot_reload_attempts_via_primitive.fetch_add(1, std::memory_order_relaxed);
             if (ok)
@@ -1461,32 +1462,32 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
         return make_bool(ok);
     });
 
-    // (aot:set-region-mask mask) → bool
-    add("aot:set-region-mask", [](std::span<const EvalValue> a) -> EvalValue {
+    // (aot:set-region-mask mask) → bool — per-evaluator (#1367)
+    add("aot:set-region-mask", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto v = as_int(a[0]);
-        aura_set_aot_region_mask(v < 0 ? 0 : static_cast<std::uint64_t>(v));
+        aura_set_aot_region_mask_for_eval(&ev, v < 0 ? 0 : static_cast<std::uint64_t>(v));
         return make_bool(true);
     });
 
-    // (aot:get-region-mask) → int
-    add("aot:get-region-mask", [](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(aura_get_aot_region_mask()));
+    // (aot:get-region-mask) → int — this Evaluator's mask
+    add("aot:get-region-mask", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(aura_get_aot_region_mask_for_eval(&ev)));
     });
 
-    // (aot:set-module-version v) → bool
-    add("aot:set-module-version", [](std::span<const EvalValue> a) -> EvalValue {
+    // (aot:set-module-version v) → bool — per-evaluator (#1367)
+    add("aot:set-module-version", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto v = as_int(a[0]);
-        aura_set_module_version(v < 0 ? 0 : static_cast<std::uint64_t>(v));
+        aura_set_module_version_for_eval(&ev, v < 0 ? 0 : static_cast<std::uint64_t>(v));
         return make_bool(true);
     });
 
-    // (aot:get-module-version) → int
-    add("aot:get-module-version", [](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(aura_get_module_version()));
+    // (aot:get-module-version) → int — this Evaluator's version
+    add("aot:get-module-version", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(aura_get_module_version_for_eval(&ev)));
     });
 
     // (query:aot-reload-primitive-stats) → hash
@@ -1533,8 +1534,12 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
         put("stale-rejects", m ? static_cast<std::int64_t>(
                                      m->aot_stale_reject_count_.load(std::memory_order_relaxed))
                                : 0);
-        put("region-mask", static_cast<std::int64_t>(aura_get_aot_region_mask()));
-        put("module-version", static_cast<std::int64_t>(aura_get_module_version()));
+        put("region-mask", static_cast<std::int64_t>(aura_get_aot_region_mask_for_eval(&ev)));
+        put("module-version", static_cast<std::int64_t>(aura_get_module_version_for_eval(&ev)));
+        put("per-eval-state-map-size", static_cast<std::int64_t>(aura_aot_state_map_size()));
+        put("per-eval-region-sets", m ? static_cast<std::int64_t>(m->aot_per_eval_region_sets.load(
+                                            std::memory_order_relaxed))
+                                      : 0);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

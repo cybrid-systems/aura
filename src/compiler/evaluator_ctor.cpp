@@ -7,6 +7,7 @@ module;
 #include "observability_metrics.h"
 #include "primitives_detail.h"
 #include "primitives_meta.h"
+#include "compiler/aura_jit_bridge.h" // Issue #1367: aura_cleanup_aot_state
 
 module aura.compiler.evaluator;
 
@@ -253,6 +254,9 @@ Evaluator::~Evaluator() {
     // exposed via a similar helper in evaluator_fiber_mutation.cpp.
     unbind_yield_hook_evaluator();
     unbind_query_evaluator();
+
+    // Issue #1367: drop per-evaluator AotState (region/module masks)
+    aura_cleanup_aot_state(this);
 
     // Issue #1352: drop process-wide terminal buffers when the last Evaluator
     // is destroyed (refcount). Concurrent multi-CS tests share the registry.
