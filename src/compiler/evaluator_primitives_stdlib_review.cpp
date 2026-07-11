@@ -1407,6 +1407,36 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1291–#1295).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1296–#1300 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1296-1300-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1296)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1296_1300_active) : 1)},
+                {"custom-predicate-registry-mutex",
+                 make_int(m ? load_u64(m, m->custom_predicate_registry_mutex) : 1)},
+                {"inline-max-slot-includes-params",
+                 make_int(m ? load_u64(m, m->inline_max_slot_includes_params) : 1)},
+                {"ghost-orphan-free-on-rollback",
+                 make_int(m ? load_u64(m, m->ghost_orphan_free_on_rollback) : 1)},
+                {"issue-1300", make_int(1300)},
+            };
+            if (auto* ws = ev.workspace_flat()) {
+                kv.emplace_back("ghost-orphan-nodes-freed", make_int(static_cast<std::int64_t>(
+                                                                ws->ghost_orphan_nodes_freed())));
+            }
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1296–#1300).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

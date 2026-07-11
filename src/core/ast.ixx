@@ -808,14 +808,15 @@ export template <typename Id, typename C, typename Tag>
 }
 
 export class FlatAST {
-private:
-    // Issue #261: node_gen_[id] == 0 marks a recycled (free-list) slot.
-    // Live slots always carry the generation_ active when the slot was
-    // last allocated or reset.
+public:
+    // Issue #261 / #1299: node_gen_[id] == 0 marks a recycled (free-list)
+    // or ghost-orphan slot. Public so query:* can skip freed ghosts after
+    // mutation rollback (Phase 1 #1299/#1300).
     [[nodiscard]] bool is_free_slot(NodeId id) const noexcept {
         return id >= node_gen_.size() || node_gen_[id] == 0;
     }
 
+private:
     void reset_node_slot(NodeId id, NodeTag tag, SyntaxMarker m) {
         tag_[id] = tag;
         int_val_[id] = 0;
@@ -1444,6 +1445,8 @@ public:
     mutable std::atomic<std::uint64_t> auto_restamp_on_wrap_count_{0};
     // Issue #1281: children topology restore via PCV snapshot count.
     mutable std::atomic<std::uint64_t> children_topology_restore_count_{0};
+    // Issue #1299/#1300: orphan ghost nodes freed on rollback.
+    mutable std::atomic<std::uint64_t> ghost_orphan_nodes_freed_{0};
     // Issue #370: lifetime-safe view counter. Bumped in
     // children_safe(NodeId). Mirrors children_call_count_ for
     // the raw children(NodeId) accessor. AI agents can use
@@ -3396,15 +3399,48 @@ public:
         // The padding is cheap (empty PCVs are zero-sized; the
         // per-node COW means a moved-empty PCV is a single
         // shared_ptr that doesn't allocate).
+        // Issue #1299/#1300: nodes allocated during the failed mutation
+        // (id >= pre-mutation size) become orphan "ghosts" if we only
+        // pad children_ with empty PCVs. Free those slots so queries
+        // and restamp_all_node_generations skip them.
+        const std::size_t pre_size = snapshot.size();
+        const std::size_t post_size = children_.size();
         if (snapshot.size() < children_.size()) {
             snapshot.resize(children_.size());
         }
         children_ = std::move(snapshot);
+        if (post_size > pre_size)
+            free_orphan_nodes_from(static_cast<NodeId>(pre_size));
         // Issue #1281: every PCV topology restore is a fidelity event.
         children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
         bump_generation();
         // Issue #1282: if a wrap was observed mid-mutation, restamp now.
         maybe_auto_restamp_on_wrap();
+    }
+
+    // Issue #1299/#1300: mark nodes [begin, size()) as free (node_gen_=0)
+    // and push onto free_list_. Used after rollback when mutations added
+    // nodes that are no longer reachable after children_ restore.
+    std::size_t free_orphan_nodes_from(NodeId begin) {
+        std::size_t freed = 0;
+        for (NodeId id = begin; id < size(); ++id) {
+            if (id >= node_gen_.size())
+                break;
+            if (node_gen_[id] == 0)
+                continue; // already free
+            node_gen_[id] = 0;
+            free_list_.push_back(id);
+            ++freed;
+        }
+        if (freed > 0) {
+            node_recycle_total_.fetch_add(freed, std::memory_order_relaxed);
+            ghost_orphan_nodes_freed_.fetch_add(freed, std::memory_order_relaxed);
+        }
+        return freed;
+    }
+
+    [[nodiscard]] std::uint64_t ghost_orphan_nodes_freed() const noexcept {
+        return ghost_orphan_nodes_freed_.load(std::memory_order_relaxed);
     }
 
     // Issue #266: capture / restore sym_id_ for fine-grained rollback
