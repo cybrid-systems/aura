@@ -5734,6 +5734,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_dualpath_materialize_refresh{0}; // #1269
     std::atomic<std::uint64_t> envframe_dualpath_enforced{1};            // #1269
     std::atomic<std::uint64_t> steal_starvation_mitigation{1};           // #1270
+
+    // ── Issues #1271–#1275: AOT/obs/hygiene-IR/dirty/EDSL Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1271_1275_active{1};
+    std::atomic<std::uint64_t> aot_hot_update_atomic_rollback{0};              // #1271
+    std::atomic<std::uint64_t> aot_hot_update_multi_agent_versioned{0};        // #1271
+    std::atomic<std::uint64_t> aot_reemit_dirty_skeleton_calls{0};             // #1271
+    std::atomic<std::uint64_t> mutation_boundary_contention_us_hist{0};        // #1272
+    std::atomic<std::uint64_t> runtime_obs_mutation_boundary_flush_samples{0}; // #1272
+    std::atomic<std::uint64_t> runtime_obs_export_ready{1};                    // #1272
+    std::atomic<std::uint64_t> ir_hygiene_macro_marker_enforced{1};            // #1273
+    std::atomic<std::uint64_t> dirty_propagation_to_ir_count{0};               // #1274
+    std::atomic<std::uint64_t> epoch_bump_for_macro{0};                        // #1274
+    std::atomic<std::uint64_t> naked_macro_mutate_attempt{0};                  // #1275
+    std::atomic<std::uint64_t> hygiene_edsl_awareness{1};                      // #1275
 };
 
 

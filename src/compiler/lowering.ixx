@@ -192,7 +192,11 @@ export struct LoweringState {
             if (mk == aura::ast::SyntaxMarker::MacroIntroduced) {
                 // Observability for hygiene-IR propagation (CompilerMetrics
                 // not always available in lowering TU — bump local atomic).
+                // Issue #1273: full MacroIntroduced enforcement path for
+                // InlinePass / query:pattern / JIT (source_marker == 1).
                 hygiene_ir_macro_marker_total.fetch_add(1, std::memory_order_relaxed);
+                if (cur_func)
+                    cur_func->marker = 1; // IRFunction-level MacroIntroduced
             }
         }
         // Issue #254: dual-emit to SoA (when enabled). Mirrors
@@ -210,6 +214,10 @@ export struct LoweringState {
                 cur_func_v2_idx, op, {op0, op1, op2, op3}, last_aos.source_ast_node_id,
                 last_aos.type_id, last_aos.shape_id, last_aos.linear_ownership_state,
                 last_aos.adt_variant_id, last_aos.narrow_evidence, coercion_tag);
+            // Issue #1273: mirror source_marker into SoA function when present.
+            if (last_aos.source_marker == 1 && cur_func_v2_idx < module_v2.functions.size()) {
+                module_v2.functions[cur_func_v2_idx].marker = 1;
+            }
             if (last_aos.narrow_evidence != 0 || last_aos.type_id != 0)
                 ++soa_type_metadata_stamped;
             ++soa_instructions_emitted;

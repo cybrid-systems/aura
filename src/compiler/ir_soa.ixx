@@ -75,6 +75,8 @@ export struct IRFunctionSoA {
     // SoA→AoS view conversion in the SoAtoAoSBridgePass.
     std::string name;
     std::uint32_t local_count = 0;
+    // Issue #1273: SyntaxMarker mirror (0=User, 1=MacroIntroduced).
+    std::uint8_t marker = 0;
 
     // Opcode stream (the most-frequently-touched column)
     std::vector<aura::ir::IROpcode> opcodes_;

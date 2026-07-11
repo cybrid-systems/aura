@@ -48,6 +48,11 @@ std::uint64_t aura_get_module_version(void);
 // passed). On failure, logs to stderr and returns false.
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
 
+// Issue #1271: incremental re-emit skeleton + last commit epoch.
+// Returns count of dirty functions re-emitted (0 in Phase 1 skeleton).
+std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version);
+std::uint64_t aura_aot_last_commit_epoch(void);
+
 // Issue #708 — region isolation + func_table refcount tracking.
 void aura_set_aot_region_mask(std::uint64_t mask);
 std::uint64_t aura_get_aot_region_mask(void);
