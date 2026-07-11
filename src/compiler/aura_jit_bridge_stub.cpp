@@ -28,9 +28,33 @@ extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
 
 // Additional stubs for symbols that aura_jit.cpp may reference.
 // Add as needed when new tests fail to link.
+static void* g_aot_metrics_stub = nullptr;
+static std::uint64_t g_aot_metrics_lazy_stub = 0;
+static std::uint64_t g_aot_metrics_explicit_stub = 0;
+
 extern "C" void aura_set_aot_metrics(void* metrics) {
-    (void)metrics;
-    // Stub.
+    g_aot_metrics_stub = metrics;
+    if (metrics)
+        ++g_aot_metrics_explicit_stub;
+}
+
+extern "C" void aura_ensure_aot_metrics(void* metrics) {
+    if (metrics && !g_aot_metrics_stub) {
+        g_aot_metrics_stub = metrics;
+        ++g_aot_metrics_lazy_stub;
+    }
+}
+
+extern "C" void* aura_get_aot_metrics(void) {
+    return g_aot_metrics_stub;
+}
+
+extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
+    return g_aot_metrics_lazy_stub;
+}
+
+extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
+    return g_aot_metrics_explicit_stub;
 }
 
 extern "C" void aura_jit_epoch_acquire_fence(void) {

@@ -299,6 +299,11 @@ aura_add_issue_test(test_aot_region_per_eval)
 aura_issue_test_link_llvm_jit(test_aot_region_per_eval)
 add_dependencies(all_test_issue_targets test_aot_region_per_eval)
 
+# Issue #1368: lazy g_aot_metrics from Evaluator.compiler_metrics_
+aura_add_issue_test(test_aot_metrics_lazy)
+aura_issue_test_link_llvm_jit(test_aot_metrics_lazy)
+add_dependencies(all_test_issue_targets test_aot_metrics_lazy)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

@@ -1447,10 +1447,9 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
             auto v = as_int(a[1]);
             version = v < 0 ? 0 : static_cast<std::uint64_t>(v);
         }
-        // Lazy metrics bind (service usually already did this at startup)
-        if (ev.compiler_metrics()) {
-            aura_set_aot_metrics(static_cast<CompilerMetrics*>(ev.compiler_metrics()));
-        }
+        // Issue #1368: lazy bind only if host has not already wired metrics
+        if (ev.compiler_metrics())
+            aura_ensure_aot_metrics(ev.compiler_metrics());
         const std::string& path = ev.string_heap_[path_idx];
         // Issue #1367: use this Evaluator's AotState (region/version isolation)
         const bool ok = aura_reload_aot_module_for_eval(&ev, path.c_str(), version);

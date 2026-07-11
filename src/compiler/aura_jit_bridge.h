@@ -48,6 +48,15 @@ std::uint64_t aura_get_module_version(void);
 // passed). On failure, logs to stderr and returns false.
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
 
+// Issue #1368: AOT metrics pointer lifecycle
+//   aura_set_aot_metrics — explicit host wire-up (overwrites)
+//   aura_ensure_aot_metrics — lazy bind only if currently null
+//   aura_get_aot_metrics — current pointer (may be null)
+void aura_ensure_aot_metrics(void* metrics);
+void* aura_get_aot_metrics(void);
+std::uint64_t aura_aot_metrics_lazy_init_total(void);
+std::uint64_t aura_aot_metrics_explicit_sets_total(void);
+
 // Issue #1271: incremental re-emit skeleton + last commit epoch.
 // Returns count of dirty functions re-emitted (0 in Phase 1 skeleton).
 std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version);

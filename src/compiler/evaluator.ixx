@@ -18,6 +18,8 @@ module;
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+// Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
+#include "runtime_shared.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -1123,7 +1125,13 @@ public:
     // metrics struct. The IR's IROpcode::Call/Apply also
     // writes to the same metrics struct (via IRContext).
     // Both paths use the same single source of truth.
-    void set_compiler_metrics(void* m) { compiler_metrics_ = m; }
+    // Issue #1368: also auto-wire AOT bridge metrics so bare Evaluator
+    // (no CompilerService) does not silently disable hot-update counters.
+    void set_compiler_metrics(void* m) {
+        compiler_metrics_ = m;
+        if (m)
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(m));
+    }
     [[nodiscard]] void* compiler_metrics() const noexcept { return compiler_metrics_; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     // Issue #612: optional post-mutate ADT registry sync (wired by CompilerService).
