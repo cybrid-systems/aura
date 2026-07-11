@@ -1002,12 +1002,11 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_constraints_processed_total.fetch_add(worklist.size(), std::memory_order_relaxed);
         m->delta_constraints_total.fetch_add(dirty_count_, std::memory_order_relaxed);
-        // Issue #1336: soft-cap large worklists so multi-round
-        // AI mutation never explodes p99. Excess dirty constraints
-        // remain dirty for the next solve_delta / full solve.
+        // Issue #1336: soft-cap is a metrics threshold only — never
+        // truncate the worklist (incomplete delta solves break typed
+        // mutate / nested-closure rebind under multi-define).
         const auto cap = m->solve_delta_worklist_soft_cap.load(std::memory_order_relaxed);
         if (cap > 0 && worklist.size() > cap) {
-            worklist.resize(static_cast<std::size_t>(cap));
             m->solve_delta_worklist_limited_total.fetch_add(1, std::memory_order_relaxed);
         }
     }

@@ -4872,16 +4872,18 @@ public:
     // and stop_at_boundary (Define/Interface/Module/Modport prune).
     void mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons = kGeneralDirty,
                                 std::uint8_t ppa_reasons = 0, int max_depth = -1,
-                                bool stop_at_boundary = true) pre(id < tag_.size()) {
+                                bool stop_at_boundary = false) pre(id < tag_.size()) {
         mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
         std::uint64_t touched = 0;
         std::uint64_t fixed_point_hits = 0;
+        // max_depth < 0 → unlimited (must not silently use kMarkDirtyMaxDepth).
+        const bool limit_depth = max_depth >= 0;
         const std::uint64_t depth_cap =
-            max_depth < 0 ? kMarkDirtyMaxDepth : static_cast<std::uint64_t>(max_depth);
+            limit_depth ? static_cast<std::uint64_t>(max_depth) : UINT64_MAX;
         std::deque<NodeId> queue;
         queue.push_back(id);
         while (!queue.empty()) {
-            if (touched >= depth_cap) {
+            if (limit_depth && touched >= depth_cap) {
                 mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
                 break;
             }
@@ -6259,12 +6261,14 @@ public:
                     ++count;
             }
         }
-        // Issue #1301 (P1): shrink the log after rollback so RolledBack
-        // records do not accumulate unboundedly in long AI self-evo
-        // sessions. Size-based checkpoints (mutation_log_size at Guard
-        // entry) make truncating to checkpoint_size correct — callers
-        // never index into the rolled-back suffix.
-        if (mutation_log_.size() > checkpoint_size) {
+        // Issue #1301 (P1) + #213: keep RolledBack records for audit
+        // by default (status already set by rollback()). Only truncate
+        // the rolled-back suffix when the log is huge so long AI
+        // sessions cannot OOM. Small rollbacks must retain entries —
+        // test_issue_213 and tooling inspect RolledBack status in-place.
+        static constexpr std::size_t kMutationLogTruncateThreshold = 10'000;
+        if (mutation_log_.size() > checkpoint_size &&
+            mutation_log_.size() > kMutationLogTruncateThreshold) {
             const std::size_t dropped = mutation_log_.size() - checkpoint_size;
             mutation_log_.resize(checkpoint_size);
             mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);

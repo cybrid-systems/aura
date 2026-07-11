@@ -1600,12 +1600,16 @@ bool test_exec_mixed_schedule() {
     ow.start();
 
     std::thread t([&sched]() { sched.run(); });
-    // Issue: replaced fixed sleep_for with wait_for_atomic
-    // for robustness under CPU load (5s deadline vs 2-3s fixed).
-    bool _wait_ok_16 = wait_for_atomic(solo, 2);
+    // Wait for BOTH solo and group completions before stop().
+    // Waiting only on solo (pre-fix) raced under CI load: sched.stop()
+    // could fire while when_all group fibers were still queued → flake
+    // "group fibers: 3 / 5".
+    bool _wait_ok_16 = wait_for_atomic(solo, 2) && wait_for_atomic(group, 5);
     sched.stop();
     t.join();
 
+    CHECK(_wait_ok_16, "mixed schedule wait timed out (solo=" + std::to_string(solo.load()) +
+                           " group=" + std::to_string(group.load()) + ")");
     CHECK(solo.load() == 2, "solo fibers: " + std::to_string(solo.load()) + " / 2");
     CHECK(group.load() == 5, "group fibers: " + std::to_string(group.load()) + " / 5");
     return true;

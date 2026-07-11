@@ -52,20 +52,11 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
         }
         case aura::ast::NodeTag::Move: {
             // (move e): move ownership (Moved=4)
+            // #1339: do not elide MoveOp based on narrow_evidence (type
+            // narrowing ≠ escape analysis). Keep MoveOp for ownership IR.
             auto inner = lower_inner(v.child(0));
-            const auto narrow = state.current_narrowing_evidence;
-            // Issue #1339: escape-analysis elision — when occurrence
-            // narrowing already proved the transfer is non-escaping
-            // (narrow_evidence != 0 on owned path), skip MoveOp and
-            // emit Local alias. Matches ShapeAwareFoldingPass elision.
-            if (narrow != 0) {
-                auto slot = state.alloc_local();
-                state.emit_with_metadata(aura::ir::IROpcode::Local, 0, 0, 0, narrow, slot, inner);
-                ++state.linear_move_elided;
-                g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
-                return slot;
-            }
             auto slot = state.alloc_local();
+            const auto narrow = state.current_narrowing_evidence;
             state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 4, 0, narrow, slot, inner);
             return slot;
         }
