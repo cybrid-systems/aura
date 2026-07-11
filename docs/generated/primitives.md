@@ -2,19 +2,19 @@
 
 # Primitives (generated)
 
-**980** registrations scanned from `src/**/*.cpp`.
+**986** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 123 primitives (13%)
-- **core**: 250 primitives (26%)
-- **internal-observable**: 439 primitives (45%)
+- **mutation-safety**: 123 primitives (12%)
+- **core**: 255 primitives (26%)
+- **internal-observable**: 440 primitives (45%)
 - **convenience**: 168 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
-## Query: (439)
+## Query: (440)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -28,6 +28,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:aot-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:aot-production-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-reload-func-table-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:aot-reload-primitive-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:aot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:arena-auto-compact-defrag-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
@@ -899,6 +900,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `_agent:list` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
+## Aot: (5)
+
+- `aot:get-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:get-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:reload` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:set-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:set-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+
 ## Arena: (17)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1257,7 +1266,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (250)
+### Core builtins (must remain primitive) (255)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1266,6 +1275,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
 - `agent:running?` — `src/compiler/evaluator_primitives_agent.cpp`
 - `agent:tick` — `src/compiler/evaluator_primitives_agent.cpp`
+- `aot:get-module-version` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:get-region-mask` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:reload` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:set-module-version` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:set-region-mask` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `append` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
@@ -1510,7 +1524,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (439)
+### Internal observable (stats/counters) (440)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1524,6 +1538,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:aot-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:aot-production-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:aot-reload-primitive-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:aot-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:arena-auto-compact-defrag-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`

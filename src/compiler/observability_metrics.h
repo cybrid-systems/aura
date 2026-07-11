@@ -5234,6 +5234,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_env_version_sync_on_reload_total{0};
     // Issue #708: AOT hot-reload refcount swap + checkpoint version drift.
     std::atomic<std::uint64_t> aot_reload_attempts_{0};
+    // Issue #1366: reloads requested via Aura (aot:reload) primitive
+    std::atomic<std::uint64_t> aot_reload_attempts_via_primitive{0};
+    std::atomic<std::uint64_t> aot_reload_success_via_primitive{0};
     std::atomic<std::uint64_t> aot_refcount_swaps_{0};
     std::atomic<std::uint64_t> aot_deopt_on_steal_{0};
     std::atomic<std::uint64_t> aot_concurrent_safe_reloads_{0};
