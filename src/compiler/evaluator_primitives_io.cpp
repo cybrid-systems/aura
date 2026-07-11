@@ -19,6 +19,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
+#include "renderer/batch_terminal.hh"
 
 #if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
@@ -834,10 +835,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         RENDER_PRIMITIVE_META(2, "Count changed cells between two buffers.", "(int int) -> int"));
 
+    // Shared frame builder for present-batch and frame-ansi (#1349).
+    auto build_present_frame = [](const TermBuf& b, std::string& out) -> std::uint64_t {
+        return aura::renderer::build_terminal_frame_ansi(out, b.w, b.h, b.cells.data());
+    };
+
     add_render(
         "terminal-present-batch",
-        [&ev](std::span<const EvalValue> a) -> EvalValue {
-            // Issue #1314/#1316: (terminal-present-batch buf-id [fd]) → bytes-written
+        [&ev, build_present_frame](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #1314/#1316/#1349: (terminal-present-batch buf-id [fd]) → bytes-written
+            // Emits ANSI SGR colors + CSI H positioning + CSI 2026 sync.
             // Marks render hot path so deopt/auto-compact soft-gate apply.
             if (a.empty() || !is_int(a[0]))
                 return make_int(-1);
@@ -847,6 +854,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 fd = static_cast<int>(as_int(a[1]));
             ev.enter_render_hotpath();
             std::string out;
+            std::uint64_t sgr_emits = 0;
+            std::int32_t rows = 0;
             {
                 std::lock_guard<std::mutex> lock(s_term_mtx);
                 if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
@@ -855,21 +864,18 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     return make_int(-1);
                 }
                 auto& b = *s_term_bufs[id];
-                out.reserve(static_cast<std::size_t>(b.w * b.h + b.h));
-                for (std::int32_t y = 0; y < b.h; ++y) {
-                    for (std::int32_t x = 0; x < b.w; ++x) {
-                        auto cell = b.cells[static_cast<std::size_t>(y * b.w + x)];
-                        char c = static_cast<char>(cell & 0xFF);
-                        out.push_back(c >= 32 ? c : ' ');
-                    }
-                    out.push_back('\n');
-                }
+                rows = b.h;
+                sgr_emits = build_present_frame(b, out);
             }
             auto n = ::write(fd, out.data(), out.size());
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_present_batch_total.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_present_bytes_total.fetch_add(n > 0 ? static_cast<std::uint64_t>(n) : 0,
                                                           std::memory_order_relaxed);
+                m->terminal_present_sgr_emits_total.fetch_add(sgr_emits, std::memory_order_relaxed);
+                m->terminal_present_csi_h_rows_total.fetch_add(
+                    static_cast<std::uint64_t>(rows > 0 ? rows : 0), std::memory_order_relaxed);
+                m->terminal_present_sync_frames_total.fetch_add(1, std::memory_order_relaxed);
                 m->render_hotpath_samples.fetch_add(1, std::memory_order_relaxed);
                 // #1316: prefer AOT-stable path accounting for present samples.
                 m->render_jit_aot_prefer_hits.fetch_add(1, std::memory_order_relaxed);
@@ -877,7 +883,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.exit_render_hotpath();
             return make_int(n > 0 ? static_cast<std::int64_t>(n) : 0);
         },
-        RENDER_PRIMITIVE_META(1, "Present terminal buffer as text frame.", "(int [int]) -> int"));
+        RENDER_PRIMITIVE_META(1, "Present terminal buffer as ANSI SGR/CSI frame (#1349).",
+                              "(int [int]) -> int"));
 
     add_render(
         "terminal-present",
@@ -889,6 +896,32 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return (*r)(a);
         },
         RENDER_PRIMITIVE_META(1, "Alias of terminal-present-batch.", "(int [int]) -> int"));
+
+    // Issue #1349: (terminal-frame-ansi buf-id) → string
+    // Returns the full ANSI frame without writing to a fd (test/headless path).
+    add_render(
+        "terminal-frame-ansi",
+        [&ev, build_present_frame](std::span<const EvalValue> a) -> EvalValue {
+            auto push_str = [&ev](std::string s) -> EvalValue {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(s));
+                return make_string(sidx);
+            };
+            if (a.empty() || !is_int(a[0]))
+                return push_str("");
+            auto id = as_int(a[0]);
+            std::string out;
+            {
+                std::lock_guard<std::mutex> lock(s_term_mtx);
+                if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                    !s_term_bufs[id])
+                    return push_str("");
+                (void)build_present_frame(*s_term_bufs[id], out);
+            }
+            return push_str(std::move(out));
+        },
+        RENDER_PRIMITIVE_META(1, "Return ANSI frame string for buffer (no write) (#1349).",
+                              "(int) -> string"));
 
     // ── Issue #1316: render JIT stability probe + stats ──
     add_render(

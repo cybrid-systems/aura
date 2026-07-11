@@ -5829,6 +5829,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> terminal_diff_updates{0};        // #1313
     std::atomic<std::uint64_t> terminal_present_batch_total{0}; // #1314
     std::atomic<std::uint64_t> terminal_present_bytes_total{0}; // #1314
+    // #1349: ANSI SGR + CSI H present path (P0 cyber-cat)
+    std::atomic<std::uint64_t> terminal_present_ansi_active{1};
+    std::atomic<std::uint64_t> terminal_present_sgr_emits_total{0};
+    std::atomic<std::uint64_t> terminal_present_csi_h_rows_total{0};
+    std::atomic<std::uint64_t> terminal_present_sync_frames_total{0};
     std::atomic<std::uint64_t> render_hotpath_samples{0};       // #1314
     std::atomic<std::uint64_t> render_frame_reset_total{0};     // #1315
     std::atomic<std::uint64_t> render_frame_reset_deferred{0};  // #1315
