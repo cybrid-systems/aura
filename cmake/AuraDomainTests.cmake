@@ -284,6 +284,11 @@ aura_add_issue_test(test_safepoint_mutation)
 aura_issue_test_link_llvm_jit(test_safepoint_mutation)
 add_dependencies(all_test_issue_targets test_safepoint_mutation)
 
+# Issue #1365: Closure.bridge_epoch stamp + strict is_bridge_stale
+aura_add_issue_test(test_bridge_epoch_strict)
+aura_issue_test_link_llvm_jit(test_bridge_epoch_strict)
+add_dependencies(all_test_issue_targets test_bridge_epoch_strict)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
