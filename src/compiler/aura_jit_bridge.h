@@ -57,6 +57,18 @@ void* aura_get_aot_metrics(void);
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 
+// Issue #1369: per-function AOT version probe (hot-reload stale detection).
+// aura_aot_probe_fn_version — read version for original_name from a
+//   dlopened module (UINT64_MAX if unavailable).
+// aura_aot_fn_version_is_stale — true when binary version != expected.
+// aura_aot_parse_version_suffix / aura_aot_mangle_version_is_stale —
+//   host-side helpers over mangled symbol names (no dlopen).
+std::uint64_t aura_aot_probe_fn_version(void* dl_handle, const char* original_name);
+bool aura_aot_fn_version_is_stale(void* dl_handle, const char* original_name,
+                                  std::uint64_t expected);
+bool aura_aot_parse_version_suffix(const char* mangled, std::uint64_t* out_version);
+bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint64_t expected);
+
 // Issue #1271: incremental re-emit skeleton + last commit epoch.
 // Returns count of dirty functions re-emitted (0 in Phase 1 skeleton).
 std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version);

@@ -608,6 +608,76 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     return aura_reload_aot_module_for_eval(nullptr, path, version);
 }
 
+// Issue #1369: per-function version probe on a dlopened AOT module.
+// Returns ~uint64_t{0} when the version cannot be resolved.
+// Lookup order:
+//   1. original_name == "__top__" → aot_top_fn_version
+//   2. name match in aot_fn_version_names[] → aot_fn_versions[i]
+//   3. fallback aot_emit_version
+//   4. all-bits-one if nothing present (pre-#1369 / pre-#243 binary)
+static constexpr std::uint64_t kAotFnVersionMissing = ~std::uint64_t{0};
+
+extern "C" std::uint64_t aura_aot_probe_fn_version(void* dl_handle, const char* original_name) {
+    if (!dl_handle)
+        return kAotFnVersionMissing;
+    if (original_name && std::strcmp(original_name, "__top__") == 0) {
+        auto* top_v = static_cast<std::uint64_t*>(::dlsym(dl_handle, "aot_top_fn_version"));
+        if (top_v)
+            return *top_v;
+    }
+    if (original_name) {
+        auto* names = static_cast<const char* const*>(::dlsym(dl_handle, "aot_fn_version_names"));
+        auto* vers = static_cast<const std::uint64_t*>(::dlsym(dl_handle, "aot_fn_versions"));
+        auto* lenp = static_cast<const unsigned*>(::dlsym(dl_handle, "aot_fn_versions_len"));
+        if (names && vers && lenp) {
+            const unsigned n = *lenp;
+            for (unsigned i = 0; i < n; ++i) {
+                if (names[i] && std::strcmp(names[i], original_name) == 0)
+                    return vers[i];
+            }
+        }
+    }
+    auto* emit = static_cast<std::uint64_t*>(::dlsym(dl_handle, "aot_emit_version"));
+    if (emit)
+        return *emit;
+    return kAotFnVersionMissing;
+}
+
+extern "C" bool aura_aot_fn_version_is_stale(void* dl_handle, const char* original_name,
+                                             std::uint64_t expected) {
+    const std::uint64_t got = aura_aot_probe_fn_version(dl_handle, original_name);
+    if (got == kAotFnVersionMissing) {
+        // Missing per-fn + emit version: treat as stale only when host
+        // expects a concrete non-zero epoch (legacy binary vs modern host).
+        if (expected != 0) {
+            if (aot_metrics())
+                aot_metrics()->aot_fn_version_probe_stale_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
+    }
+    if (got != expected) {
+        if (aot_metrics())
+            aot_metrics()->aot_fn_version_probe_stale_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+// Host-side (no dlopen) mangle probe wrappers for C callers / tests.
+extern "C" bool aura_aot_parse_version_suffix(const char* mangled, std::uint64_t* out_version) {
+    if (!mangled || !out_version)
+        return false;
+    return aura::compiler::aot_parse_version_suffix(mangled, out_version);
+}
+
+extern "C" bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint64_t expected) {
+    if (!mangled)
+        return true;
+    return aura::compiler::aot_mangle_version_is_stale(mangled, expected);
+}
+
 // Issue #1271: incremental re-emit skeleton — counts dirty AOT
 // candidates without full re-AOT. Host wires real DefineId index later.
 extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version) {
@@ -747,31 +817,21 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "void aura_register_fn(int64_t func_id, int64_t fn_ptr);\n");
     fprintf(f, "\n");
 
-    // Compute mangled names once (used for both extern decls
-    // and the constructor body).
+    // Compute mangled (identity) + link names once.
     //
-    // Issue #243: mangle_aot_name now takes the defuse_version
-    // as a 3rd arg (defaults to 0 for back-compat). The
-    // emit-time version is captured in the g_aot_defuse_version
-    // global (set by aura_set_aot_defuse_version before
-    // aura_emit_native_file). This way, the .o file's symbols
-    // carry the version, and the registration .c records the
-    // expected version for runtime staleness checks.
+    // Issue #243: mangle_aot_name takes defuse_version (3rd arg).
+    // Issue #1369: mangle always includes `_vN` (including `_v0`).
+    // Link names use aot_link_name so `__top__` stays the exact
+    // symbol runtime.c main() calls, while non-entry functions
+    // carry the versioned mangle identity in the ELF.
     std::vector<std::string> mangled_names(num_functions);
+    std::vector<std::string> link_names(num_functions);
     const std::uint64_t emit_version = g_aot_defuse_version;
     for (unsigned int i = 0; i < num_functions; ++i) {
         mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i, emit_version);
+        link_names[i] = aura::compiler::aot_link_name(functions[i].name, i, emit_version);
     }
-    // Issue #136: detect collisions. The new mangler adds a
-    // disambiguator to every non-__top__ name, so collisions
-    // only happen for __top__ (which is unique by construction).
-    // Still, log a warning if a collision is detected (defensive).
-    //
-    // Issue #243 Phase 3: surface the AOT emit version in the
-    // registration .c so the resulting binary carries an
-    // `aot_emit_version` symbol that runtime code can read to
-    // detect stale AOT binaries (the runtime's current
-    // defuse_version_ won't match the AOT emit version).
+    // Issue #136: detect collisions on mangled identity (versioned).
     std::unordered_set<std::string> seen;
     for (unsigned i = 0; i < num_functions; ++i) {
         if (!seen.insert(mangled_names[i]).second) {
@@ -795,6 +855,27 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "const unsigned long long aot_emit_version = %llull;\n",
             static_cast<unsigned long long>(emit_version));
 
+    // Issue #1369: per-function version probes (entry + table).
+    // aot_top_fn_version always present so `__top__` has version
+    // info even though its ELF link name stays unversioned.
+    fprintf(f, "\n// Issue #1369: per-function AOT versions\n");
+    fprintf(f, "const unsigned long long aot_top_fn_version = %llull;\n",
+            static_cast<unsigned long long>(emit_version));
+    fprintf(f, "const unsigned aot_fn_versions_len = %u;\n", num_functions);
+    fprintf(f, "const unsigned long long aot_fn_versions[] = {\n");
+    for (unsigned int i = 0; i < num_functions; ++i) {
+        fprintf(f, "    %llull%s\n", static_cast<unsigned long long>(emit_version),
+                (i + 1 < num_functions) ? "," : "");
+    }
+    fprintf(f, "};\n");
+    // Parallel original names (NUL-terminated string table for probe).
+    fprintf(f, "const char* const aot_fn_version_names[] = {\n");
+    for (unsigned int i = 0; i < num_functions; ++i) {
+        // Escape is unnecessary for Aura fn names used in AOT (identifiers).
+        fprintf(f, "    \"%s\"%s\n", functions[i].name, (i + 1 < num_functions) ? "," : "");
+    }
+    fprintf(f, "};\n");
+
     // Issue #708: region mask for multi-agent hot-reload isolation.
     fprintf(f, "\n// Issue #708: AOT region mask (multi-agent isolation)\n");
     fprintf(f, "const unsigned long long aot_region_mask = %llull;\n",
@@ -810,9 +891,9 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "\n// Issue #287: AOT module version (hot-reload / multi-agent)\n");
     fprintf(f, "void aura_set_module_version(unsigned long long v);\n");
 
-    // Generate extern declarations
+    // Generate extern declarations (link names — __top__ unversioned)
     for (unsigned int i = 0; i < num_functions; ++i) {
-        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", mangled_names[i].c_str());
+        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", link_names[i].c_str());
     }
 
     fprintf(f, "\n// Constructor — runs before main()\n");
@@ -828,8 +909,7 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
             static_cast<unsigned long long>(g_aot_module_version_default()));
 
     for (unsigned int i = 0; i < num_functions; ++i) {
-        fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i],
-                mangled_names[i].c_str());
+        fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i], link_names[i].c_str());
     }
 
     fprintf(f, "}\n");

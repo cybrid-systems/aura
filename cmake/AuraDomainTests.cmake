@@ -304,6 +304,11 @@ aura_add_issue_test(test_aot_metrics_lazy)
 aura_issue_test_link_llvm_jit(test_aot_metrics_lazy)
 add_dependencies(all_test_issue_targets test_aot_metrics_lazy)
 
+# Issue #1369: __top__ always _vN + per-function version probe
+aura_add_issue_test(test_aot_mangle_top)
+aura_issue_test_link_llvm_jit(test_aot_mangle_top)
+add_dependencies(all_test_issue_targets test_aot_mangle_top)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

@@ -17,6 +17,9 @@
 #include "aura_jit_bridge.h"
 
 #include <atomic>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 
 extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
     (void)fn_name;
@@ -79,4 +82,41 @@ extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
 
 extern "C" void aura_aot_record_deopt_on_steal(void) {
     // Stub: production increments AOT deopt metrics.
+}
+
+// Issue #1369 stubs — full impl in aura_jit_bridge.cpp
+extern "C" std::uint64_t aura_aot_probe_fn_version(void* dl_handle, const char* original_name) {
+    (void)dl_handle;
+    (void)original_name;
+    return ~std::uint64_t{0};
+}
+
+extern "C" bool aura_aot_fn_version_is_stale(void* dl_handle, const char* original_name,
+                                             std::uint64_t expected) {
+    (void)dl_handle;
+    (void)original_name;
+    (void)expected;
+    return false;
+}
+
+extern "C" bool aura_aot_parse_version_suffix(const char* mangled, std::uint64_t* out_version) {
+    if (!mangled || !out_version)
+        return false;
+    // Minimal parse: trailing _vN
+    const char* p = std::strrchr(mangled, 'v');
+    if (!p || p == mangled || *(p - 1) != '_')
+        return false;
+    char* end = nullptr;
+    unsigned long long v = std::strtoull(p + 1, &end, 10);
+    if (!end || end == p + 1 || *end != '\0')
+        return false;
+    *out_version = static_cast<std::uint64_t>(v);
+    return true;
+}
+
+extern "C" bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint64_t expected) {
+    std::uint64_t got = 0;
+    if (!aura_aot_parse_version_suffix(mangled, &got))
+        return true;
+    return got != expected;
 }

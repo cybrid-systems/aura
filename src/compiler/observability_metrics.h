@@ -5241,6 +5241,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_per_eval_state_creates{0};
     std::atomic<std::uint64_t> aot_per_eval_state_clears{0};
     std::atomic<std::uint64_t> aot_per_eval_region_sets{0};
+    // Issue #1369: per-function version probe reported stale
+    std::atomic<std::uint64_t> aot_fn_version_probe_stale_total{0};
     std::atomic<std::uint64_t> aot_refcount_swaps_{0};
     std::atomic<std::uint64_t> aot_deopt_on_steal_{0};
     std::atomic<std::uint64_t> aot_concurrent_safe_reloads_{0};

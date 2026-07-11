@@ -94,11 +94,11 @@ bool test_mangle_default_version() {
     std::println("\n--- AC1: mangle_aot_name default version is 0 ---");
     g_test_name = "AC1";
 
-    // 2-arg call (old behavior) — must still work, no _v suffix.
+    // Issue #1369: version=0 still appends `_v0` (always versioned).
     auto r_2arg = aura::compiler::mangle_aot_name("foo", 3);
     auto r_3arg_v0 = aura::compiler::mangle_aot_name("foo", 3, 0);
-    CHECK(r_2arg == r_3arg_v0, "2-arg call == 3-arg call with version=0 (back-compat)");
-    CHECK(r_2arg == "foo_3", "result has no _v suffix when version=0");
+    CHECK(r_2arg == r_3arg_v0, "2-arg call == 3-arg call with version=0");
+    CHECK(r_2arg == "foo_3_v0", "result has _v0 suffix when version=0 (#1369)");
     return true;
 }
 
@@ -115,7 +115,7 @@ bool test_mangle_version_0_explicit() {
     auto r_2arg = aura::compiler::mangle_aot_name("bar_baz", 7);
     auto r_v0 = aura::compiler::mangle_aot_name("bar_baz", 7, 0);
     CHECK(r_2arg == r_v0, "2-arg call == 3-arg call with explicit version=0");
-    CHECK(r_v0 == "bar_baz_7", "expected result 'bar_baz_7'");
+    CHECK(r_v0 == "bar_baz_7_v0", "expected result 'bar_baz_7_v0' (#1369)");
     return true;
 }
 

@@ -2,6 +2,7 @@
 #include <bit>
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
+#include "aot_mangle.h"
 #include "jit_typed_mutation_stats.h"
 #include "value_tags.h"
 
@@ -2105,9 +2106,15 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     builder.declare_runtime();
 
     // Build function with unique name (counter disambiguates __lambda__ duplicates).
-    // __top__ is the entry point called by runtime.c's main() — keep exact name.
+    // Issue #1369: non-__top__ symbols use mangle_aot_name (always `_vN`) so
+    // registration .c link names match the LLVM object. `__top__` stays the
+    // exact symbol runtime.c main() calls (version lives in aot_top_fn_version).
     std::string fn_name = fn.name;
-    auto unique_name = (fn_name == "__top__") ? fn_name : fn_name + "_" + std::to_string(my_id);
+    const std::uint64_t emit_ver = aura_get_aot_defuse_version();
+    auto unique_name =
+        (fn_name == "__top__")
+            ? fn_name
+            : aura::compiler::mangle_aot_name(fn_name, static_cast<std::uint32_t>(my_id), emit_ver);
     auto ptr_i64 = llvm::PointerType::getUnqual(local_ctx);
     auto i32_ty = llvm::Type::getInt32Ty(local_ctx);
     auto ret_ty = llvm::Type::getInt64Ty(local_ctx);
