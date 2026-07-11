@@ -5645,6 +5645,22 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> lifetime_pin_scaffold{1};             // #1226
     std::atomic<std::uint64_t> hot_path_primitives_module{1};        // #1227
     std::atomic<std::uint64_t> eda_parse_common_dedup{1};            // #1228
+
+    // ── Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1229_1240_active{1};
+    std::atomic<std::uint64_t> eda_hash_table_creates_total{0};      // #1229
+    std::atomic<std::uint64_t> eda_alloc_bytes_total{0};             // #1229
+    std::atomic<std::uint64_t> ffi_opaque_tracking_hardened{1};      // #1230
+    std::atomic<std::uint64_t> stdlib_hotpath_eda_ffi_dashboard{1};  // #1231
+    std::atomic<std::uint64_t> agent_capability_gates{1};            // #1232
+    std::atomic<std::uint64_t> sv_verification_executor_scaffold{1}; // #1233
+    std::atomic<std::uint64_t> stable_node_ref_eda_scaffold{1};      // #1234
+    std::atomic<std::uint64_t> covergroup_sampling_scaffold{1};      // #1235
+    std::atomic<std::uint64_t> synthesize_json_escape_fixed{1};      // #1236
+    std::atomic<std::uint64_t> eda_commercial_sim_scaffold{1};       // #1237
+    std::atomic<std::uint64_t> sva_semantic_eval_scaffold{1};        // #1238
+    std::atomic<std::uint64_t> panic_checkpoint_raii_scaffold{1};    // #1239
+    std::atomic<std::uint64_t> value_tag_consteval_contracts{1};     // #1240
 };
 
 

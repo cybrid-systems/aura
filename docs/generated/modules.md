@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**57** `export module` declarations in `src/**/*.ixx`.
+**62** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -13,7 +13,9 @@
 | `aura.compiler.coercion_map` | `src/compiler/coercion_map.ixx` |
 | `aura.compiler.compute_kind` | `src/compiler/compute_kind.ixx` |
 | `aura.compiler.constant_folding` | `src/compiler/constant_folding.ixx` |
+| `aura.compiler.covergroup_sampling` | `src/compiler/covergroup_sampling.ixx` |
 | `aura.compiler.dirty_propagation` | `src/compiler/dirty_propagation.ixx` |
+| `aura.compiler.eda_commercial_sim` | `src/compiler/eda_commercial_sim.ixx` |
 | `aura.compiler.eda_parse_common` | `src/compiler/eda_parse_common.ixx` |
 | `aura.compiler.evaluator` | `src/compiler/evaluator.ixx` |
 | `aura.compiler.evaluator_pure` | `src/compiler/evaluator_pure.ixx` |
@@ -34,6 +36,8 @@
 | `aura.compiler.query` | `src/compiler/query.ixx` |
 | `aura.compiler.service` | `src/compiler/service.ixx` |
 | `aura.compiler.sv_ir` | `src/compiler/sv_ir.ixx` |
+| `aura.compiler.sv_verification_executor` | `src/compiler/sv_verification_executor.ixx` |
+| `aura.compiler.sva_semantic_eval` | `src/compiler/sva_semantic_eval.ixx` |
 | `aura.compiler.type_checker` | `src/compiler/type_checker.ixx` |
 | `aura.compiler.type_concepts` | `src/compiler/type_concepts.ixx` |
 | `aura.compiler.typed_mutation_audit_pass` | `src/compiler/typed_mutation_audit_pass.ixx` |
@@ -48,6 +52,7 @@
 | `aura.core.lifetime_pin` | `src/core/lifetime_pin.ixx` |
 | `aura.core.mutation` | `src/core/mutation.ixx` |
 | `aura.core.mutators` | `src/core/mutators.ixx` |
+| `aura.core.panic_checkpoint_raii` | `src/core/panic_checkpoint_raii.ixx` |
 | `aura.core.provenance_tracker` | `src/core/provenance_tracker.ixx` |
 | `aura.core.sandbox` | `src/core/sandbox.ixx` |
 | `aura.core.type` | `src/core/type.ixx` |

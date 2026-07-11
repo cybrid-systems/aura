@@ -153,12 +153,30 @@ public:
     const FFIFunc& func_at(std::size_t i) const { return funcs_[i]; }
     void* lib_at(std::size_t i) const { return libs_[i]; }
 
+    // Issue #1230 Phase 1: opaque resource stats for leak detection.
+    [[nodiscard]] std::size_t opaque_count() const noexcept { return opaque_sizes_.size(); }
+    [[nodiscard]] std::uint64_t opaque_total_bytes() const noexcept {
+        std::uint64_t sum = 0;
+        for (auto& [_, sz] : opaque_sizes_)
+            sum += static_cast<std::uint64_t>(sz);
+        return sum;
+    }
+    [[nodiscard]] std::uint64_t opaque_free_unknown_total() const noexcept {
+        return free_unknown_total_;
+    }
+    [[nodiscard]] std::uint64_t opaque_double_free_total() const noexcept {
+        return double_free_total_;
+    }
+
 private:
     std::vector<void*> libs_;
     std::vector<FFIFunc> funcs_;
     // Issue #980: allocation sizes for c-alloc'd opaques (keyed by pointer).
     // 0 / missing = unknown size (raw c-opaque) — bounds checks skipped.
     std::unordered_map<void*, std::size_t> opaque_sizes_;
+    // Issue #1230: leak / free hygiene counters.
+    std::uint64_t free_unknown_total_ = 0;
+    std::uint64_t double_free_total_ = 0;
 };
 
 } // namespace aura::compiler

@@ -23,6 +23,11 @@ inline constexpr const char* kCapNetwork = "network";
 inline constexpr const char* kCapRender = "render";
 inline constexpr const char* kCapTenantAdmin = "tenant-admin";
 
+// Issue #1232 Phase 1: agent / self-evolution capability gates.
+inline constexpr const char* kCapSelfEvo = "self-evo";
+inline constexpr const char* kCapSynthesize = "synthesize";
+inline constexpr const char* kCapStrategy = "strategy";
+
 // Effect bit tags (mirror aura.core.capability_model Effect enum).
 inline constexpr std::uint16_t kEffectNone = 0;
 inline constexpr std::uint16_t kEffectRead = 1 << 0;

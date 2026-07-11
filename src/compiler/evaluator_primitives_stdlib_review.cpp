@@ -131,6 +131,14 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(m ? load_u64(m, m->stdlib_edsl_hygiene_audit_total) : 0)},
                 {"reflect-type-schema",
                  make_int(m ? load_u64(m, m->stdlib_reflect_type_schema_total) : 0)},
+                // Issue #1231 Phase 1: hot path / EDA / FFI resource signals
+                {"hot-path-hits", make_int(m ? load_u64(m, m->closure_ffi_calls) : 0)},
+                {"eda-parse-total", make_int(m ? load_u64(m, m->eda_foundation_parse_total) : 0)},
+                {"eda-hash-creates",
+                 make_int(m ? load_u64(m, m->eda_hash_table_creates_total) : 0)},
+                {"eda-alloc-bytes", make_int(m ? load_u64(m, m->eda_alloc_bytes_total) : 0)},
+                {"ffi-opaque-tracking",
+                 make_int(m ? load_u64(m, m->ffi_opaque_tracking_hardened) : 1)},
                 // Per-issue schema ids for Agent dashboards
                 {"issue-923", make_int(923)},
                 {"issue-924", make_int(924)},
@@ -873,6 +881,51 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .perf_tier = kPrimPerfHot,
                  .security_level = kPrimSecSafe,
                  .doc = "Composite production health / SLO surface (#1215).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // ── Issues #1229–#1240 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1229-1240-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1229)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1229_1240_active) : 1)},
+                {"eda-hash-creates",
+                 make_int(m ? load_u64(m, m->eda_hash_table_creates_total) : 0)},
+                {"eda-alloc-bytes", make_int(m ? load_u64(m, m->eda_alloc_bytes_total) : 0)},
+                {"ffi-opaque-tracking-hardened",
+                 make_int(m ? load_u64(m, m->ffi_opaque_tracking_hardened) : 1)},
+                {"stdlib-hotpath-eda-ffi-dashboard",
+                 make_int(m ? load_u64(m, m->stdlib_hotpath_eda_ffi_dashboard) : 1)},
+                {"agent-capability-gates",
+                 make_int(m ? load_u64(m, m->agent_capability_gates) : 1)},
+                {"sv-verification-executor-scaffold",
+                 make_int(m ? load_u64(m, m->sv_verification_executor_scaffold) : 1)},
+                {"stable-node-ref-eda-scaffold",
+                 make_int(m ? load_u64(m, m->stable_node_ref_eda_scaffold) : 1)},
+                {"covergroup-sampling-scaffold",
+                 make_int(m ? load_u64(m, m->covergroup_sampling_scaffold) : 1)},
+                {"synthesize-json-escape-fixed",
+                 make_int(m ? load_u64(m, m->synthesize_json_escape_fixed) : 1)},
+                {"eda-commercial-sim-scaffold",
+                 make_int(m ? load_u64(m, m->eda_commercial_sim_scaffold) : 1)},
+                {"sva-semantic-eval-scaffold",
+                 make_int(m ? load_u64(m, m->sva_semantic_eval_scaffold) : 1)},
+                {"panic-checkpoint-raii-scaffold",
+                 make_int(m ? load_u64(m, m->panic_checkpoint_raii_scaffold) : 1)},
+                {"value-tag-consteval-contracts",
+                 make_int(m ? load_u64(m, m->value_tag_consteval_contracts) : 1)},
+                {"issue-1240", make_int(1240)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1229–#1240).",
                  .category = "general",
                  .schema = "() -> hash"});
 }

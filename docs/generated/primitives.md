@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**921** registrations scanned from `src/**/*.cpp`.
+**922** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (13%)
-- **core**: 223 primitives (24%)
+- **core**: 224 primitives (24%)
 - **internal-observable**: 428 primitives (46%)
 - **convenience**: 147 primitives (16%)
 
@@ -934,6 +934,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `eval:async` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 
+## Ffi: (1)
+
+- `ffi:opaque-stats` *[core]* — `src/compiler/ffi_primitives_impl.cpp`
+
 ## Hot-Swap: (1)
 
 - `hot-swap:fn` *[core]* — `src/compiler/evaluator_primitives_types.cpp`
@@ -1189,7 +1193,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (223)
+### Core builtins (must remain primitive) (224)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1283,6 +1287,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-expr` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
+- `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`
