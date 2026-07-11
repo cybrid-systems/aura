@@ -136,6 +136,11 @@ aura_add_issue_test(test_production_sweep_1271_1275)
 aura_issue_test_link_llvm_jit(test_production_sweep_1271_1275)
 add_dependencies(all_test_issue_targets test_production_sweep_1271_1275)
 
+# Issues #1276–#1280: reflect/obs/inliner/StableRef/pattern Phase 1
+aura_add_issue_test(test_production_sweep_1276_1280)
+aura_issue_test_link_llvm_jit(test_production_sweep_1276_1280)
+add_dependencies(all_test_issue_targets test_production_sweep_1276_1280)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
