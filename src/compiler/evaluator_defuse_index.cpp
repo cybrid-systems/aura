@@ -879,7 +879,16 @@ void Evaluator::install_defuse_subsystem() {
         [this](void* idx) -> EvalValue {
             auto* du_idx = static_cast<DefUseIndex*>(idx);
             du_idx->build(*workspace_flat_, *workspace_pool_);
+            // Issue #1129: monotonic bump; restamp frames so rebuild does
+            // not leave the entire arena permanently stale.
             const auto ver = defuse_version_.fetch_add(1, std::memory_order_acq_rel) + 1;
+            {
+                std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+                for (auto& fr : env_frames_) {
+                    if (fr.version_ != INVALID_VERSION)
+                        fr.version_ = ver;
+                }
+            }
             defuse_rebuild_count_++;
             defuse_affected_syms_.clear();
             return make_int(static_cast<std::int64_t>(ver));

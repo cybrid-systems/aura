@@ -254,9 +254,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
                 if (depth > 64)
                     return true;
-                if ((is_int(x) && is_void(y)) || (is_void(x) && is_int(y)))
-                    return false;
                 if (x == y)
+                    return true;
+                // Nested only: unify empty-list sentinels (void ↔ int 0) so
+                // ADT zero-arg match patterns (equal? val (cons "Tag" 0)) work
+                // while top-level (equal? 0 '()) stays #f (outer guard).
+                if (depth > 0 && (is_void(x) || (is_int(x) && as_int(x) == 0)) &&
+                    (is_void(y) || (is_int(y) && as_int(y) == 0)))
                     return true;
                 if (is_int(x) && is_int(y))
                     return as_int(x) == as_int(y);
