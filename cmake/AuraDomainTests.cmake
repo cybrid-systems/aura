@@ -289,6 +289,11 @@ aura_add_issue_test(test_bridge_epoch_strict)
 aura_issue_test_link_llvm_jit(test_bridge_epoch_strict)
 add_dependencies(all_test_issue_targets test_bridge_epoch_strict)
 
+# Issue #1366: (aot:reload) Aura primitive wrappers for hot-reload
+aura_add_issue_test(test_aot_reload_primitive)
+aura_issue_test_link_llvm_jit(test_aot_reload_primitive)
+add_dependencies(all_test_issue_targets test_aot_reload_primitive)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

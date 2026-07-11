@@ -1433,6 +1433,112 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // ── Issue #1366: Aura wrappers for AOT hot-reload C API ──
+    // (aot:reload path [version]) → bool
+    add("aot:reload", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        const auto path_idx = as_string_idx(a[0]);
+        if (path_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        std::uint64_t version = 0;
+        if (a.size() >= 2 && is_int(a[1])) {
+            auto v = as_int(a[1]);
+            version = v < 0 ? 0 : static_cast<std::uint64_t>(v);
+        }
+        // Lazy metrics bind (service usually already did this at startup)
+        if (ev.compiler_metrics()) {
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(ev.compiler_metrics()));
+        }
+        const std::string& path = ev.string_heap_[path_idx];
+        const bool ok = aura_reload_aot_module(path.c_str(), version);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->aot_reload_attempts_via_primitive.fetch_add(1, std::memory_order_relaxed);
+            if (ok)
+                m->aot_reload_success_via_primitive.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(ok);
+    });
+
+    // (aot:set-region-mask mask) → bool
+    add("aot:set-region-mask", [](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto v = as_int(a[0]);
+        aura_set_aot_region_mask(v < 0 ? 0 : static_cast<std::uint64_t>(v));
+        return make_bool(true);
+    });
+
+    // (aot:get-region-mask) → int
+    add("aot:get-region-mask", [](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(aura_get_aot_region_mask()));
+    });
+
+    // (aot:set-module-version v) → bool
+    add("aot:set-module-version", [](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto v = as_int(a[0]);
+        aura_set_module_version(v < 0 ? 0 : static_cast<std::uint64_t>(v));
+        return make_bool(true);
+    });
+
+    // (aot:get-module-version) → int
+    add("aot:get-module-version", [](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(aura_get_module_version()));
+    });
+
+    // (query:aot-reload-primitive-stats) → hash
+    add("query:aot-reload-primitive-stats", [&ev](const auto&) -> EvalValue {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto put = [&](const char* k, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        put("attempts-via-primitive",
+            m ? static_cast<std::int64_t>(
+                    m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed))
+              : 0);
+        put("success-via-primitive",
+            m ? static_cast<std::int64_t>(
+                    m->aot_reload_success_via_primitive.load(std::memory_order_relaxed))
+              : 0);
+        put("reload-attempts-c-api",
+            m ? static_cast<std::int64_t>(m->aot_reload_attempts_.load(std::memory_order_relaxed))
+              : 0);
+        put("stale-rejects", m ? static_cast<std::int64_t>(
+                                     m->aot_stale_reject_count_.load(std::memory_order_relaxed))
+                               : 0);
+        put("region-mask", static_cast<std::int64_t>(aura_get_aot_region_mask()));
+        put("module-version", static_cast<std::int64_t>(aura_get_module_version()));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
