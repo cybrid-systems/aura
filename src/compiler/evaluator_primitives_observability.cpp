@@ -343,8 +343,10 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:task4-mutation-stability",
     // Issue #552 — EDSL stability
     "query:edsl-stability-stats",
-    // Issue #553 — Atomic batch + mutation log
+    // Issue #553 — Atomic batch + mutation log (int sum)
     "query:mutation-log-stats",
+    // Issue #1362 — mutation log compaction observability hash
+    "query:mutation-log-compact-stats",
     // Issue #529 — Atomic batch + Guard rollback closed loop
     "query:atomic-batch-rollback-stats",
     // Issue #527 — StableNodeRef cross-COW/fiber closed loop
