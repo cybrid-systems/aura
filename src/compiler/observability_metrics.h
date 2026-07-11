@@ -5581,7 +5581,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> per_fiber_ex_state_wired{1}; // #1146
     std::atomic<std::uint64_t> orch_telemetry_wired{1};     // #1147
     std::atomic<std::uint64_t> dead_bump_audit_script{1};   // #1148
+
+    // ── Issues #1158–#1176: math UB + IO security + stdlib review ──
+    std::atomic<std::uint64_t> production_sweep_1158_1176_active{1};
+    std::atomic<std::uint64_t> math_int64_ub_fixed{1};      // #1158/#1159/#1174
+    std::atomic<std::uint64_t> http_get_no_shell{1};        // #1160
+    std::atomic<std::uint64_t> git_stage_no_shell{1};       // #1161
+    std::atomic<std::uint64_t> file_path_deny_list{1};      // #1163-1165
+    std::atomic<std::uint64_t> file_cap_checks_extended{1}; // #1162/#1171-1173
+    std::atomic<std::uint64_t> stdlib_review_phase1{1};     // #1166-1170/#1176
+    std::atomic<std::uint64_t> renderer_module_scaffold{1}; // #1175
 };
+
 
 // Per-function metrics, returned by CompilerService::snapshot()
 // for --evo-explain. Reflect-friendly.

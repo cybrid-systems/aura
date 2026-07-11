@@ -81,6 +81,11 @@ aura_add_issue_test(test_arithmetic_int64_safety)
 aura_issue_test_link_llvm_jit(test_arithmetic_int64_safety)
 add_dependencies(all_test_issue_targets test_arithmetic_int64_safety)
 
+# Issues #1158–#1176: math UB + IO security + stdlib review Phase 1
+aura_add_issue_test(test_production_sweep_1158_1176)
+aura_issue_test_link_llvm_jit(test_production_sweep_1158_1176)
+add_dependencies(all_test_issue_targets test_production_sweep_1158_1176)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

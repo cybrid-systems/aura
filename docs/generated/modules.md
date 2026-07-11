@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**40** `export module` declarations in `src/**/*.ixx`.
+**41** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -46,3 +46,4 @@
 | `aura.parser.lexer` | `src/parser/lexer.ixx` |
 | `aura.parser.parser` | `src/parser/parser.ixx` |
 | `aura.reflect` | `src/reflect/reflect.ixx` |
+| `aura.renderer.batch_terminal` | `src/renderer/batch_terminal.ixx` |

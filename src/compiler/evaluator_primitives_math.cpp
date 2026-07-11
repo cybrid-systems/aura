@@ -267,83 +267,127 @@ void register_math_regex_and_arithmetic_primitives(
         return make_float(std::round(to_double(a[0])));
     });
 
+    // Issue #1153/#1158/#1174 family: saturate float→int out of range.
     add("inexact->exact", [](const auto& a) -> EvalValue {
         if (a.empty())
             return make_int(0);
-        if (types::is_float(a[0]))
-            return types::make_int(static_cast<std::int64_t>(types::as_float(a[0])));
+        if (types::is_float(a[0])) {
+            const double d = types::as_float(a[0]);
+            constexpr double kMax = static_cast<double>(std::numeric_limits<std::int64_t>::max());
+            constexpr double kMin = static_cast<double>(std::numeric_limits<std::int64_t>::min());
+            if (!(d == d) || d >= kMax)
+                return types::make_int(std::numeric_limits<std::int64_t>::max());
+            if (d <= kMin)
+                return types::make_int(std::numeric_limits<std::int64_t>::min());
+            return types::make_int(static_cast<std::int64_t>(d));
+        }
         return a[0];
     });
 
-    // ── Arithmetic extensions ─────────────────────────────────────
-    add("modulo",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
-            if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values, "modulo: division by zero",
-                                            primitive_error_counter);
-            }
-            auto n = coerce_to_int(a[0], string_heap);
-            auto r = n % divisor;
-            if (r < 0)
-                r += (divisor > 0 ? divisor : -divisor);
-            return make_int(r);
-        });
-    add("mod",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
-            if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values, "mod: division by zero",
-                                            primitive_error_counter);
-            }
-            auto n = coerce_to_int(a[0], string_heap);
-            auto r = n % divisor;
-            if (r < 0)
-                r += (divisor > 0 ? divisor : -divisor);
-            return make_int(r);
-        });
-    add("quotient",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
-            if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values, "quotient: division by zero",
-                                            primitive_error_counter);
-            }
-            return make_int(coerce_to_int(a[0], string_heap) / divisor);
-        });
-    add("remainder",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
-            if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values,
-                                            "remainder: division by zero", primitive_error_counter);
-            }
-            return make_int(coerce_to_int(a[0], string_heap) % divisor);
-        });
-    add("abs", [&string_heap](std::span<const EvalValue> a) {
+    // ── Arithmetic extensions (#1158/#1159/#1174: no signed int64 UB) ──
+    constexpr auto kI64Min = std::numeric_limits<std::int64_t>::min();
+    constexpr auto kI64Max = std::numeric_limits<std::int64_t>::max();
+    auto safe_abs_i64 = [](std::int64_t n) -> std::int64_t {
+        // Issue #1158: -INT64_MIN is UB — saturate to INT64_MAX.
+        if (n == kI64Min)
+            return kI64Max;
+        return n < 0 ? -n : n;
+    };
+    auto i64_div_ok = [](std::int64_t n, std::int64_t d) -> bool {
+        // Issue #1159/#1156: INT64_MIN / -1 is UB.
+        return !(n == kI64Min && d == -1);
+    };
+
+    add("modulo", [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
+                   i64_div_ok](std::span<const EvalValue> a) {
+        if (a.size() < 2)
+            return make_int(0);
+        auto divisor = coerce_to_int(a[1], string_heap);
+        if (divisor == 0) {
+            return make_primitive_error(string_heap, error_values, "modulo: division by zero",
+                                        primitive_error_counter);
+        }
+        auto n = coerce_to_int(a[0], string_heap);
+        if (!i64_div_ok(n, divisor)) {
+            return make_primitive_error(string_heap, error_values,
+                                        "modulo: integer overflow (INT64_MIN/-1)",
+                                        primitive_error_counter);
+        }
+        auto r = n % divisor;
+        if (r < 0)
+            r += safe_abs_i64(divisor);
+        return make_int(r);
+    });
+    add("mod", [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
+                i64_div_ok](std::span<const EvalValue> a) {
+        if (a.size() < 2)
+            return make_int(0);
+        auto divisor = coerce_to_int(a[1], string_heap);
+        if (divisor == 0) {
+            return make_primitive_error(string_heap, error_values, "mod: division by zero",
+                                        primitive_error_counter);
+        }
+        auto n = coerce_to_int(a[0], string_heap);
+        if (!i64_div_ok(n, divisor)) {
+            return make_primitive_error(string_heap, error_values,
+                                        "mod: integer overflow (INT64_MIN/-1)",
+                                        primitive_error_counter);
+        }
+        auto r = n % divisor;
+        if (r < 0)
+            r += safe_abs_i64(divisor);
+        return make_int(r);
+    });
+    add("quotient", [&string_heap, &error_values, primitive_error_counter,
+                     i64_div_ok](std::span<const EvalValue> a) {
+        if (a.size() < 2)
+            return make_int(0);
+        auto divisor = coerce_to_int(a[1], string_heap);
+        if (divisor == 0) {
+            return make_primitive_error(string_heap, error_values, "quotient: division by zero",
+                                        primitive_error_counter);
+        }
+        auto n = coerce_to_int(a[0], string_heap);
+        if (!i64_div_ok(n, divisor)) {
+            return make_primitive_error(string_heap, error_values,
+                                        "quotient: integer overflow (INT64_MIN/-1)",
+                                        primitive_error_counter);
+        }
+        return make_int(n / divisor);
+    });
+    add("remainder", [&string_heap, &error_values, primitive_error_counter,
+                      i64_div_ok](std::span<const EvalValue> a) {
+        if (a.size() < 2)
+            return make_int(0);
+        auto divisor = coerce_to_int(a[1], string_heap);
+        if (divisor == 0) {
+            return make_primitive_error(string_heap, error_values, "remainder: division by zero",
+                                        primitive_error_counter);
+        }
+        auto n = coerce_to_int(a[0], string_heap);
+        if (!i64_div_ok(n, divisor)) {
+            return make_primitive_error(string_heap, error_values,
+                                        "remainder: integer overflow (INT64_MIN/-1)",
+                                        primitive_error_counter);
+        }
+        return make_int(n % divisor);
+    });
+    add("abs", [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         if (is_float(a[0]))
             return make_float(std::abs(as_float(a[0])));
         auto n = coerce_to_int(a[0], string_heap);
-        return make_int(n < 0 ? -n : n);
+        return make_int(safe_abs_i64(n));
     });
-    add("gcd", [&string_heap](std::span<const EvalValue> a) {
+    add("gcd", [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
         auto r = to_int(a[0]);
-        auto abs_gcd = [](std::int64_t x, std::int64_t y) -> std::int64_t {
-            x = x < 0 ? -x : x;
-            y = y < 0 ? -y : y;
+        auto abs_gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
+            x = safe_abs_i64(x);
+            y = safe_abs_i64(y);
             while (y != 0) {
                 auto t = y;
                 y = x % y;
@@ -355,14 +399,14 @@ void register_math_regex_and_arithmetic_primitives(
             r = abs_gcd(r, to_int(a[i]));
         return make_int(r);
     });
-    add("lcm", [&string_heap](std::span<const EvalValue> a) {
+    add("lcm", [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(1);
         auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
         auto r = to_int(a[0]);
-        auto gcd = [](std::int64_t x, std::int64_t y) -> std::int64_t {
-            x = x < 0 ? -x : x;
-            y = y < 0 ? -y : y;
+        auto gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
+            x = safe_abs_i64(x);
+            y = safe_abs_i64(y);
             if (x == 0 || y == 0)
                 return 0;
             while (y != 0) {
@@ -375,10 +419,21 @@ void register_math_regex_and_arithmetic_primitives(
         for (std::size_t i = 1; i < a.size(); ++i) {
             auto n = to_int(a[i]);
             auto g = gcd(r, n);
-            r = (g == 0) ? 0 : (r / g) * n;
+            if (g == 0) {
+                r = 0;
+                continue;
+            }
+            // Issue #1174: checked (r/g)*n to avoid silent overflow.
+            const auto q = r / g;
+            std::int64_t next = 0;
+            if (__builtin_mul_overflow(q, n, &next)) {
+                r = (q > 0) == (n > 0) ? kI64Max : kI64Min;
+            } else {
+                r = next;
+            }
         }
-        if (r < 0)
-            r = -r;
+        // abs(INT64_MIN) is UB — saturate via safe_abs_i64.
+        r = safe_abs_i64(r);
         return make_int(r);
     });
     add("min", [&string_heap](std::span<const EvalValue> a) {

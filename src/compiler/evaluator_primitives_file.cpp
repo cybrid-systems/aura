@@ -5,7 +5,9 @@
 module;
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "runtime_shared.h"
 #include "security_capabilities.h"
 
@@ -86,13 +88,32 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(id);
     });
 
-    // Helper: check path is a regular file (skip directories)
+    // Helper: check path is a regular file (skip directories). Uses lstat so
+    // symlink targets are not followed for the type check (#1171 TOCTOU family).
     auto is_regular = [](const std::string& path) -> bool {
         struct stat st;
-        return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+        return ::lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    };
+    // Issue #1163/#1164/#1165: refuse dangerous / sensitive paths.
+    auto path_is_denied = [](std::string_view path) -> bool {
+        if (path.empty())
+            return true;
+        // Absolute sensitive prefixes
+        static constexpr const char* kDenied[] = {
+            "/proc/self/mem", "/proc/self/mem/", "/dev/mem", "/dev/kmem", "/proc/kcore",
+        };
+        for (auto* d : kDenied) {
+            if (path == d || path.starts_with(std::string(d) + "/"))
+                return true;
+        }
+        // Any /proc/*/mem style
+        if (path.starts_with("/proc/") &&
+            (path.ends_with("/mem") || path.find("/mem/") != std::string_view::npos))
+            return true;
+        return false;
     };
 
-    add("read-file", [&ev, is_regular, deny_io](const auto& a) {
+    add("read-file", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
         if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
                                   "capability denied: io-read required");
             is_error(denied))
@@ -103,18 +124,34 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_void();
         auto& path = ev.string_heap_[idx];
-        if (!is_regular(path))
+        // Issue #1163/#1171: deny sensitive paths; open with O_NOFOLLOW to
+        // collapse lstat+open TOCTOU (symlink swap between check and open).
+        if (path_is_denied(path))
             return make_void();
-        std::ifstream f(path);
-        if (!f)
+        int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0)
             return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        struct stat st{};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            ::close(fd);
+            return make_void();
+        }
+        FILE* fp = ::fdopen(fd, "r");
+        if (!fp) {
+            ::close(fd);
+            return make_void();
+        }
+        std::string content;
+        char buf[4096];
+        while (std::size_t n = ::fread(buf, 1, sizeof(buf), fp))
+            content.append(buf, n);
+        ::fclose(fp); // also closes fd
         auto id = ev.string_heap_.size();
         ev.string_heap_.push_back(std::move(content));
         return make_string(id);
     });
 
-    add("write-file", [&ev, deny_io](std::span<const EvalValue> a) {
+    add("write-file", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
         if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
                                   "capability denied: io-write required");
             is_error(denied))
@@ -125,6 +162,9 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_void();
         auto& path = ev.string_heap_[idx];
+        // Issue #1163: refuse /proc/self/mem and other process-memory paths.
+        if (path_is_denied(path))
+            return make_void();
         std::string content;
         if (is_string(a[1])) {
             auto cidx = as_string_idx(a[1]);
@@ -135,10 +175,27 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         } else {
             return make_void();
         }
-        std::ofstream f(path);
-        if (!f)
+        // O_NOFOLLOW | O_CREAT | O_WRONLY — no symlink follow to sensitive targets.
+        int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        if (fd < 0)
             return make_void();
-        f << content;
+        struct stat st{};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            ::close(fd);
+            return make_void();
+        }
+        const char* p = content.data();
+        std::size_t left = content.size();
+        while (left > 0) {
+            auto n = ::write(fd, p, left);
+            if (n <= 0) {
+                ::close(fd);
+                return make_void();
+            }
+            p += n;
+            left -= static_cast<std::size_t>(n);
+        }
+        ::close(fd);
         return make_int(1);
     });
 
@@ -166,18 +223,25 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return result;
     });
 
-    add("file-exists?", [&ev](std::span<const EvalValue> a) {
+    add("file-exists?", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+        // Issue #1172: require io-read for existence probes (recon).
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_int(0);
         auto& path = ev.string_heap_[idx];
+        if (path_is_denied(path))
+            return make_int(0);
         struct stat st;
-        return make_int(::stat(path.c_str(), &st) == 0 ? 1 : 0);
+        return make_int(::lstat(path.c_str(), &st) == 0 ? 1 : 0);
     });
 
-    add("file-copy", [&ev, is_regular, deny_io](const auto& a) {
+    add("file-copy", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
         if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
                                   "capability denied: io-write required");
             is_error(denied))
@@ -187,19 +251,51 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
         if (sidx >= ev.string_heap_.size() || didx >= ev.string_heap_.size())
             return make_void();
-        if (!is_regular(ev.string_heap_[sidx]))
+        auto& src_path = ev.string_heap_[sidx];
+        auto& dst_path = ev.string_heap_[didx];
+        // Issue #1165: validate both source and destination paths.
+        if (path_is_denied(src_path) || path_is_denied(dst_path))
             return make_void();
-        std::ifstream src(ev.string_heap_[sidx], std::ios::binary);
-        if (!src)
+        if (!is_regular(src_path))
             return make_void();
-        std::ofstream dst(ev.string_heap_[didx], std::ios::binary);
-        if (!dst)
+        int sfd = ::open(src_path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (sfd < 0)
             return make_void();
-        dst << src.rdbuf();
+        int dfd =
+            ::open(dst_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        if (dfd < 0) {
+            ::close(sfd);
+            return make_void();
+        }
+        char buf[8192];
+        while (true) {
+            auto n = ::read(sfd, buf, sizeof(buf));
+            if (n < 0) {
+                ::close(sfd);
+                ::close(dfd);
+                return make_void();
+            }
+            if (n == 0)
+                break;
+            auto left = static_cast<std::size_t>(n);
+            const char* p = buf;
+            while (left > 0) {
+                auto w = ::write(dfd, p, left);
+                if (w <= 0) {
+                    ::close(sfd);
+                    ::close(dfd);
+                    return make_void();
+                }
+                p += w;
+                left -= static_cast<std::size_t>(w);
+            }
+        }
+        ::close(sfd);
+        ::close(dfd);
         return make_int(1);
     });
 
-    add("file-delete", [&ev, deny_io](std::span<const EvalValue> a) {
+    add("file-delete", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
         if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
                                   "capability denied: io-write required");
             is_error(denied))
@@ -209,19 +305,37 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_int(0);
-        return make_int(std::remove(ev.string_heap_[idx].c_str()) == 0 ? 1 : 0);
+        auto& path = ev.string_heap_[idx];
+        // Issue #1164: deny sensitive paths; refuse directories (no rmdir cascade);
+        // use unlinkat AT_FDCWD without following final symlink where possible.
+        if (path_is_denied(path))
+            return make_int(0);
+        struct stat st{};
+        if (::lstat(path.c_str(), &st) != 0)
+            return make_int(0);
+        if (S_ISDIR(st.st_mode))
+            return make_int(0); // directories require explicit rmdir API
+        return make_int(::unlink(path.c_str()) == 0 ? 1 : 0);
     });
 
-    add("file-size", [&ev, is_regular](const auto& a) {
+    add("file-size", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
+        // Issue #1173: require io-read for size probes.
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size() || !is_regular(ev.string_heap_[idx]))
+        if (idx >= ev.string_heap_.size())
             return make_int(0);
-        std::ifstream f(ev.string_heap_[idx], std::ios::ate | std::ios::binary);
-        if (!f)
+        auto& path = ev.string_heap_[idx];
+        if (path_is_denied(path) || !is_regular(path))
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(f.tellg()));
+        struct stat st{};
+        if (::lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(st.st_size));
     });
 
     add("shell", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
@@ -259,13 +373,20 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sid);
     });
 
-    add("directory-list", [&ev](std::span<const EvalValue> a) {
+    add("directory-list", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+        // Issue #1162: directory listing is io-read (info disclosure).
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
         auto& dir_path = ev.string_heap_[idx];
+        if (path_is_denied(dir_path))
+            return make_void();
         EvalValue result = make_void();
         auto dir = opendir(dir_path.c_str());
         if (!dir)

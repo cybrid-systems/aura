@@ -715,6 +715,35 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Observability wire-up sweep (#1144–#1148).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1158–#1176 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1158-1176-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1158)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1158_1176_active) : 1)},
+                {"math-int64-ub-fixed", make_int(m ? load_u64(m, m->math_int64_ub_fixed) : 1)},
+                {"http-get-no-shell", make_int(m ? load_u64(m, m->http_get_no_shell) : 1)},
+                {"git-stage-no-shell", make_int(m ? load_u64(m, m->git_stage_no_shell) : 1)},
+                {"file-path-deny-list", make_int(m ? load_u64(m, m->file_path_deny_list) : 1)},
+                {"file-cap-checks-extended",
+                 make_int(m ? load_u64(m, m->file_cap_checks_extended) : 1)},
+                {"stdlib-review-phase1", make_int(m ? load_u64(m, m->stdlib_review_phase1) : 1)},
+                {"renderer-module-scaffold",
+                 make_int(m ? load_u64(m, m->renderer_module_scaffold) : 1)},
+                {"issue-1176", make_int(1176)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1158–#1176).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
