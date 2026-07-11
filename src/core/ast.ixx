@@ -2494,6 +2494,24 @@ public:
         return id;
     }
 
+    // Issue #1266: set params on an existing Lambda (used by
+    // mutate:inline-call clone path — add_lambda with empty params
+    // then copy params after body wire-up).
+    void set_lambda_params(NodeId id, std::span<const SymId> params,
+                           std::span<const NodeId> annots = {}) {
+        if (id >= param_begin_.size() || id >= param_count_.size())
+            return;
+        if (id >= tag_.size() || tag_[id] != NodeTag::Lambda)
+            return;
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), params.begin(), params.end());
+        param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
+        for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
+            param_annot_data_[pstart + i] = annots[i];
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(params.size());
+    }
+
     [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::Let);
         sym_id_[id] = name;

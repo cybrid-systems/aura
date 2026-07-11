@@ -1126,6 +1126,38 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1261–#1265).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1266–#1270 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1266-1270-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1266)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1266_1270_active) : 1)},
+                {"inline-call-lambda-params-copied",
+                 make_int(m ? load_u64(m, m->inline_call_lambda_params_copied) : 0)},
+                {"set-body-define-value-extracted",
+                 make_int(m ? load_u64(m, m->set_body_define_value_extracted) : 0)},
+                {"panic-checkpoint-flush-outermost",
+                 make_int(m ? load_u64(m, m->panic_checkpoint_flush_outermost) : 0)},
+                {"envframe-dualpath-enforced",
+                 make_int(m ? load_u64(m, m->envframe_dualpath_enforced) : 1)},
+                {"envframe-dualpath-materialize-refresh",
+                 make_int(m ? load_u64(m, m->envframe_dualpath_materialize_refresh) : 0)},
+                {"steal-starvation-mitigation",
+                 make_int(m ? load_u64(m, m->steal_starvation_mitigation) : 1)},
+                {"issue-1270", make_int(1270)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1266–#1270).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail

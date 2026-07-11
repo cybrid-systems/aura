@@ -550,6 +550,14 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     }
     // Issue #418: dual-path consistency probe on materialize.
     ensure_envframe_dual_path_consistency(fr);
+    // Issue #1269: enforce dual-path + version stamp on every
+    // materialize path — refresh stale frames before binding walk
+    // so legacy bindings_ cannot bypass SymId version checks.
+    if (is_env_frame_stale(cl.env_id)) {
+        refresh_stale_frame_in_walk(cl.env_id, "materialize_call_env");
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->envframe_dualpath_materialize_refresh.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #242: detect a stale frame (captured before the
     // current mutation epoch). The frame's bindings might be
     // inconsistent with the post-mutation state — log a

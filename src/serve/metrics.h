@@ -336,6 +336,8 @@ struct AdaptiveStealStats {
     // Issue #1254: steals deferred because victim is at an inner
     // MutationBoundaryGuard (depth > 0) — not outermost-safe.
     std::atomic<std::uint64_t> steal_deferred_inner_boundary{0};
+    // Issue #1270: starvation mitigation boosts after repeated defers.
+    std::atomic<std::uint64_t> starvation_priority_boosts{0};
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {
