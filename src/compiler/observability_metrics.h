@@ -5802,6 +5802,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> custom_predicate_registry_mutex{1}; // #1296
     std::atomic<std::uint64_t> inline_max_slot_includes_params{1}; // #1297/#1298
     std::atomic<std::uint64_t> ghost_orphan_free_on_rollback{1};   // #1299/#1300
+
+    // ── Issues #1301–#1305: mutation_log compact, arena OOB, name fallback, fn limit, cache TOCTOU
+    // ──
+    std::atomic<std::uint64_t> production_sweep_1301_1305_active{1};
+    std::atomic<std::uint64_t> mutation_log_compact_on_rollback{1}; // #1301
+    std::atomic<std::uint64_t> jit_arena_env_bounds_check{1};       // #1302
+    std::atomic<std::uint64_t> jit_closure_name_fallback_fixed{1};  // #1303
+    std::atomic<std::uint64_t> jit_fns_overflow_map_active{1};      // #1304
+    std::atomic<std::uint64_t> jit_closure_cache_write_lock{1};     // #1305
 };
 
 

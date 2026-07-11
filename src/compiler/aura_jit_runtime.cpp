@@ -418,6 +418,8 @@ extern "C" {
 static std::vector<int64_t> g_closure_func_ids;          // func_id for each closure
 static std::vector<std::vector<int64_t>> g_closure_envs; // env for each closure (heap)
 static std::vector<int64_t*> g_arena_closure_envs;       // arena env ptrs (parallel, null=heap)
+// Issue #1302: allocated slot count per arena env (bounds for OOB-safe reads).
+static std::vector<size_t> g_arena_closure_env_sizes;
 // Issue #660 Option 1: closure name for cross-module identity. Set via
 // aura_closure_set_name() after aura_alloc_closure_arena(). Used as a
 // fallback in aura_closure_call when the func_id lookup fails.
@@ -457,6 +459,7 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();           // still push heap env as fallback
     g_arena_closure_envs.push_back(nullptr); // arena ptr, set by later captures
+    g_arena_closure_env_sizes.push_back(0);  // Issue #1302
     g_closure_names.emplace_back();          // Issue #660: parallel name array
     aura_unlock_workspace_write();
     return id;
@@ -496,8 +499,12 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     if (cid < g_arena_closure_envs.size()) {
         int64_t*& arena_ptr = g_arena_closure_envs[cid];
         if (arena_ptr) {
-            // Env already allocated on arena — write directly
-            arena_ptr[static_cast<size_t>(idx)] = val;
+            // Env already allocated on arena — write only if in bounds.
+            // Issue #1302: never write past recorded allocation size.
+            size_t asz =
+                cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+            if (static_cast<size_t>(idx) < asz)
+                arena_ptr[static_cast<size_t>(idx)] = val;
             aura_unlock_workspace_write();
             return;
         }
@@ -511,6 +518,10 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
                 arena_env[i] = 0;
             arena_env[static_cast<size_t>(idx)] = val;
             arena_ptr = arena_env;
+            // Issue #1302: record allocation size for OOB-safe reads.
+            if (cid >= g_arena_closure_env_sizes.size())
+                g_arena_closure_env_sizes.resize(cid + 1, 0);
+            g_arena_closure_env_sizes[cid] = env_size;
             aura_unlock_workspace_write();
             return;
         }
@@ -532,6 +543,10 @@ struct JitFnEntry {
     int32_t env_count;
 };
 static JitFnEntry g_jit_fns[512] = {{nullptr, 0, 0, 0}};
+// Issue #1304: registrations with func_id >= 512 (no silent drop).
+static std::unordered_map<int64_t, JitFnEntry> g_jit_fns_overflow;
+static std::atomic<std::uint64_t> g_jit_fns_overflow_registers{0};
+static std::atomic<std::uint64_t> g_jit_fns_limit_warnings{0};
 
 // Issue #660 Option 1: parallel name → entry map for cross-module
 // closure identity. When a closure's func_id is out of bounds in the
@@ -540,14 +555,32 @@ static JitFnEntry g_jit_fns[512] = {{nullptr, 0, 0, 0}};
 // the user's define name, e.g. "fn-b#0").
 static std::unordered_map<std::string, JitFnEntry> g_jit_fns_by_name;
 
+static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                              int32_t local_count, int32_t arg_count, int32_t env_count) {
+    if (func_id < 0 || !fn)
+        return;
+    if (func_id < 512) {
+        g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
+        return;
+    }
+    // Issue #1304: overflow path — keep callable via overflow map / name.
+    g_jit_fns_overflow[func_id] = {fn, local_count, arg_count, env_count};
+    g_jit_fns_overflow_registers.fetch_add(1, std::memory_order_relaxed);
+    if (g_jit_fns_limit_warnings.fetch_add(1, std::memory_order_relaxed) == 0) {
+        std::fprintf(stderr,
+                     "aura_register_fn: func_id=%lld exceeds 512 primary table; "
+                     "stored in overflow map (Issue #1304)\n",
+                     static_cast<long long>(func_id));
+    }
+}
+
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
                       int32_t arg_count, int32_t env_count) {
     // Issue #157 Phase 2: write lock — function registry mutation
     // must be exclusive vs readers in aura_closure_call (which
     // dereferences g_jit_fns[func_id]).
     aura_lock_workspace_write();
-    if (func_id >= 0 && func_id < 512)
-        g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
+    register_fn_entry(func_id, fn, local_count, arg_count, env_count);
     aura_unlock_workspace_write();
 }
 
@@ -558,8 +591,10 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
 void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                             int32_t local_count, int32_t arg_count, int32_t env_count) {
     aura_lock_workspace_write();
-    if (func_id >= 0 && func_id < 512 && name && *name)
-        g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
+    if (name && *name)
+        register_fn_entry(func_id, fn, local_count, arg_count, env_count);
+    else
+        register_fn_entry(func_id, fn, local_count, arg_count, env_count);
     if (name && *name)
         g_jit_fns_by_name[std::string(name)] = {fn, local_count, arg_count, env_count};
     aura_unlock_workspace_write();
@@ -631,8 +666,14 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             size_t cid_cast = static_cast<size_t>(closure_id);
             if (cid_cast < g_arena_closure_envs.size() && g_arena_closure_envs[cid_cast]) {
                 int64_t* arena_env = g_arena_closure_envs[cid_cast];
-                for (int32_t i = 0; i < env_count; ++i)
-                    locals[i] = arena_env[i];
+                // Issue #1302: bound by recorded arena allocation size.
+                size_t asz = cid_cast < g_arena_closure_env_sizes.size()
+                                 ? g_arena_closure_env_sizes[cid_cast]
+                                 : 0;
+                for (int32_t i = 0; i < env_count; ++i) {
+                    if (static_cast<size_t>(i) < asz)
+                        locals[i] = arena_env[i];
+                }
             } else {
                 auto& env = g_closure_envs[cid_cast];
                 for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
@@ -651,35 +692,38 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 
     // ── Slow path: full dispatch + cache update ──
     int64_t func_id = g_closure_func_ids[static_cast<size_t>(closure_id)];
-    if (func_id < 0 || func_id >= 512 || !g_jit_fns[func_id].fn) {
-        // Issue #660 Option 1: try name-based lookup when func_id fails.
-        // The closure was created with a cross-module func_id (e.g. fn-b'''s
-        // body has a closure for fn-a with fn-a'''s fid in fn-b'''s module).
-        // Look up by the closure'''s name.
+    // Resolve JitFnEntry: primary table → overflow map → name map (#1303/#1304).
+    // Already hold read lock — do NOT call aura_lookup_fn_by_name (would re-lock).
+    JitFnEntry entry{};
+    bool have_entry = false;
+    if (func_id >= 0 && func_id < 512 && g_jit_fns[func_id].fn) {
+        entry = g_jit_fns[func_id];
+        have_entry = true;
+    } else if (func_id >= 512) {
+        auto oit = g_jit_fns_overflow.find(func_id);
+        if (oit != g_jit_fns_overflow.end() && oit->second.fn) {
+            entry = oit->second;
+            have_entry = true;
+        }
+    }
+    if (!have_entry) {
+        // Issue #1303: name-based fallback uses full JitFnEntry (not fn-as-func_id).
         if (static_cast<size_t>(closure_id) < g_closure_names.size()) {
             const std::string& cname = g_closure_names[static_cast<size_t>(closure_id)];
             if (!cname.empty()) {
-                int64_t by_name = aura_lookup_fn_by_name(cname.c_str(), nullptr, nullptr, nullptr);
-                if (by_name != 0) {
-                    func_id = by_name; // this is actually the fn ptr, not id
-                    // Issue #660: when found by name, we got the fn ptr directly,
-                    // not a slot id. We need to construct a synthetic call.
-                    // For now, fall back to the existing slow path with a sentinel
-                    // and a name-based dispatch.
-                    // TODO: refactor to allow direct fn ptr invocation.
-                    // For this fix, look up the slot id by reverse-searching g_jit_fns.
-                    // Cheaper: cache the fn ptr in g_closure_cache and dispatch via that.
-                    // For now, do nothing and fall through to the original slow path.
+                auto nit = g_jit_fns_by_name.find(cname);
+                if (nit != g_jit_fns_by_name.end() && nit->second.fn) {
+                    entry = nit->second;
+                    have_entry = true;
                 }
             }
         }
-        if (func_id < 0 || func_id >= 512 || !g_jit_fns[func_id].fn) {
-            aura_unlock_workspace_read();
-            return 0;
-        }
+    }
+    if (!have_entry || !entry.fn) {
+        aura_unlock_workspace_read();
+        return 0;
     }
 
-    auto& entry = g_jit_fns[func_id];
     size_t slow_cid = static_cast<size_t>(closure_id);
 
     // Stack buffer for small locals, fallback to heap for large
@@ -698,8 +742,11 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // Place captured env values first (prefer arena env, fallback to heap)
     if (slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]) {
         int64_t* arena_env = g_arena_closure_envs[slow_cid];
+        // Issue #1302: bound by recorded arena allocation size.
+        size_t asz =
+            slow_cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[slow_cid] : 0;
         for (int32_t i = 0; i < entry.env_count; ++i)
-            if (i < nlocals)
+            if (i < nlocals && static_cast<size_t>(i) < asz)
                 locals[i] = arena_env[i];
     } else {
         auto& env = g_closure_envs[slow_cid];
@@ -715,6 +762,11 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]
             ? static_cast<size_t>(entry.env_count)
             : g_closure_envs[slow_cid].size();
+    // Prefer actual arena size when smaller than env_count (partial capture).
+    if (slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid] &&
+        slow_cid < g_arena_closure_env_sizes.size()) {
+        env_count_check = std::min(env_count_check, g_arena_closure_env_sizes[slow_cid]);
+    }
     int32_t env_offset = static_cast<int32_t>(env_count_check);
     for (int32_t i = 0; i < nargs; ++i) {
         int32_t slot = env_offset + i;
@@ -724,14 +776,17 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 
     int64_t result = entry.fn(locals, static_cast<uint32_t>(argc));
 
-    // ── Update cache ──
+    // ── Update cache (Issue #1305: write under exclusive lock — not read lock) ──
+    // Pre-#1305 updated 5 fields under read lock → TOCTOU with concurrent
+    // fast-path readers sharing the same cache_idx (hash collision).
+    aura_unlock_workspace_read();
+    aura_lock_workspace_write();
     g_closure_cache[cache_idx].closure_id = closure_id;
     g_closure_cache[cache_idx].fn = entry.fn;
     g_closure_cache[cache_idx].local_count = entry.local_count;
     g_closure_cache[cache_idx].arg_count = entry.arg_count;
     g_closure_cache[cache_idx].env_count = static_cast<int32_t>(env_count_check);
-
-    aura_unlock_workspace_read();
+    aura_unlock_workspace_write();
     return result;
 }
 
@@ -1483,6 +1538,10 @@ void aura_reset_runtime() {
     g_closure_func_ids.clear();
     g_closure_envs.clear();
     g_arena_closure_envs.clear();
+    g_arena_closure_env_sizes.clear(); // Issue #1302
+    g_closure_names.clear();
+    g_jit_fns_overflow.clear(); // Issue #1304
+    g_jit_fns_by_name.clear();
     g_cell_heap.clear();
     // Issue #195: per-fiber exception state — replaced
     // the old thread_local g_ex_stack.clear() with a call

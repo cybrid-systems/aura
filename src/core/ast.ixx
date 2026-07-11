@@ -1502,6 +1502,9 @@ public:
     mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0};
     // Issue #1251: rollback_to_size triggered soft compaction.
     mutable std::atomic<std::uint64_t> rollback_compaction_triggered_{0};
+    // Issue #1301: mutation_log_ suffix records dropped after rollback.
+    mutable std::atomic<std::uint64_t> mutation_log_compacted_records_{0};
+    mutable std::atomic<std::uint64_t> mutation_log_compact_ops_{0};
     // Issue #412: per-FlatAST type cache generation counter.
     // Bumped by mark_dirty_upward() and by the explicit
     // bump_type_cache_generation() accessor. The
@@ -6146,7 +6149,25 @@ public:
                     ++count;
             }
         }
+        // Issue #1301 (P1): shrink the log after rollback so RolledBack
+        // records do not accumulate unboundedly in long AI self-evo
+        // sessions. Size-based checkpoints (mutation_log_size at Guard
+        // entry) make truncating to checkpoint_size correct — callers
+        // never index into the rolled-back suffix.
+        if (mutation_log_.size() > checkpoint_size) {
+            const std::size_t dropped = mutation_log_.size() - checkpoint_size;
+            mutation_log_.resize(checkpoint_size);
+            mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);
+            mutation_log_compact_ops_.fetch_add(1, std::memory_order_relaxed);
+        }
         return count;
+    }
+
+    [[nodiscard]] std::uint64_t mutation_log_compacted_records() const noexcept {
+        return mutation_log_compacted_records_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
+        return mutation_log_compact_ops_.load(std::memory_order_relaxed);
     }
 
     // ── Type ID access ─────────────────────────────────────────
