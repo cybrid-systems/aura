@@ -307,6 +307,88 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         "signal.",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // Issue #1373: (query:mutation-boundary-hold-stats) — hold-time +
+    // cross-fiber yield / migration counters for MutationBoundaryGuard.
+    // Complements #717 fiber-boundary-violation-stats (rollback path)
+    // and #1253 mutation_hold_* (long-mutation SLO).
+    ev.primitives_.add(
+        "query:mutation-boundary-hold-stats",
+        [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+            };
+            const std::int64_t holds = m ? load(m->mutation_boundary_holds_total) : 0;
+            const std::int64_t hold_us = m ? load(m->mutation_boundary_hold_time_total_us) : 0;
+            const std::int64_t avg = holds > 0 ? static_cast<std::int64_t>(hold_us / holds) : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"same-thread-yield",
+                 make_int(m ? load(m->mutation_boundary_yield_same_thread_total) : 0)},
+                {"cross-thread-migration",
+                 make_int(m ? load(m->mutation_boundary_cross_thread_migration_total) : 0)},
+                {"yield-rollback",
+                 make_int(m ? load(m->mutation_boundary_yield_rollback_total) : 0)},
+                {"hold-time-us-total", make_int(hold_us)},
+                {"holds-total", make_int(holds)},
+                {"holds-over-1ms",
+                 make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
+                {"avg-hold-us", make_int(avg)},
+                {"held-now", make_int(ev.mutation_boundary_held() ? 1 : 0)},
+                {"schema", make_int(1373)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "MutationBoundaryGuard hold-time + yield/migration counters "
+                        "(#1373). Fields: same-thread-yield, cross-thread-migration, "
+                        "yield-rollback, hold-time-us-total, holds-total, holds-over-1ms, "
+                        "avg-hold-us, held-now, schema=1373.",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 // Issue #909 part 42 (orig lines 5536-5657)

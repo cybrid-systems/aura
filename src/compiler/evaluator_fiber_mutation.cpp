@@ -290,6 +290,12 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
     ystack.push_back(cp);
     fiber_stack_pool_detail::g_yield_pool.track_depth(ystack.size());
     mutation_yield_count_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1373: same-thread yield while a boundary is / was active
+    // (checkpoint is taken on the yielding thread before any steal).
+    if (cp.had_active_boundary) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->mutation_boundary_yield_same_thread_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
@@ -308,6 +314,13 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     bool size_mismatch = cp.mutation_stack_depth != current_mdepth;
     bool depth_mismatch = current_bdepth != cp.boundary_depth;
     bool version_drift_pre = !is_version_current(cp.defuse_version);
+    // Issue #1373: record cross-thread migration *before* restamp
+    // clears the flag (restamp re-keys thread_id to current).
+    if (thread_migrated && cp.had_active_boundary) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->mutation_boundary_cross_thread_migration_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    }
     if (thread_migrated || size_mismatch || depth_mismatch || version_drift_pre) {
         fiber_stack_pool_detail::pool_stats().size_mismatches_caught.fetch_add(
             1, std::memory_order_relaxed);
@@ -351,6 +364,9 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     // unless AOT deopt probe fired or concurrent mutation advanced again.
     if (thread_migrated || version_drift || depth_mismatch || size_mismatch) {
         cross_fiber_rollback_count_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1373: yield-path forced rollback / failure signal.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->mutation_boundary_yield_rollback_total.fetch_add(1, std::memory_order_relaxed);
         bump_guard_panic_reflect_boundary_violation_prevented();
         if (outermost_mutation_success_flag_)
             *outermost_mutation_success_flag_ = false;

@@ -292,6 +292,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:mutation-impact-snapshot",
     // Issue #504 — Guard impact log for AI decision loops
     "query:mutation-boundary-log",
+    "query:mutation-boundary-hold-stats",
     // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
     "query:self-evolution-loop-stats",
     // Issue #415 — DirtyReason verification categories +

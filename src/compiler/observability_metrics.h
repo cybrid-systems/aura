@@ -5723,12 +5723,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_hold_samples{0};                  // #1253
     std::atomic<std::uint64_t> mutation_hold_duration_us_max{0};          // #1253
     std::atomic<std::uint64_t> mutation_too_long_total{0};                // #1253
-    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};          // #1254
-    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};        // #1255
-    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};      // #1255
-    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};       // #1255
-    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};    // #1255
-    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};   // #1255
+    // Issue #1373: cross-fiber yield + hold observability (Agent dashboard)
+    //   - yield_same_thread: yield while boundary held, same OS thread
+    //   - cross_thread_migration: yield checkpoint resume on different thread
+    //   - yield_rollback: restore_post_yield_or_rollback forced failure path
+    //   - hold_time_total_us / holds_total: dual of #1253 samples (aliased writes)
+    //   - holds_over_1ms: holds longer than 1000µs (short-tail SLO probe)
+    std::atomic<std::uint64_t> mutation_boundary_yield_same_thread_total{0};      // #1373
+    std::atomic<std::uint64_t> mutation_boundary_cross_thread_migration_total{0}; // #1373
+    std::atomic<std::uint64_t> mutation_boundary_yield_rollback_total{0};         // #1373
+    std::atomic<std::uint64_t> mutation_boundary_hold_time_total_us{0};           // #1373
+    std::atomic<std::uint64_t> mutation_boundary_holds_total{0};                  // #1373
+    std::atomic<std::uint64_t> mutation_boundary_holds_over_1ms_total{0};         // #1373
+    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};                  // #1254
+    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};                // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};              // #1255
+    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};               // #1255
+    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};            // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};           // #1255
 
     // ── Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1256_1260_active{1};
