@@ -5786,6 +5786,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};    // #1288
     std::atomic<std::uint64_t> jit_unhandled_fail_fast_active{1};       // #1289
     std::atomic<std::uint64_t> ownership_lambda_params_fixed{1};        // #1290
+
+    // ── Issues #1291–#1295: fiber fid, workspace UAF, compile/fiber caps, exception clear ──
+    std::atomic<std::uint64_t> production_sweep_1291_1295_active{1};
+    std::atomic<std::uint64_t> fiber_spawn_fid_holder_fixed{1};         // #1291
+    std::atomic<std::uint64_t> workspace_delete_pointer_refresh{1};     // #1292
+    std::atomic<std::uint64_t> capability_compile_gates_active{1};      // #1293
+    std::atomic<std::uint64_t> capability_compile_denials{0};           // #1293
+    std::atomic<std::uint64_t> capability_retrofit_scaffold_active{1};  // #1294
+    std::atomic<std::uint64_t> capability_exception_control_active{1};  // #1295
+    std::atomic<std::uint64_t> capability_exception_control_denials{0}; // #1295
 };
 
 

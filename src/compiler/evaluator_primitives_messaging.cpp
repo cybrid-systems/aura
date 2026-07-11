@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
+#include "security_capabilities.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 
@@ -246,54 +247,66 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     add("fiber:spawn", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
+        // Issue #1294 Phase 1: capability gate for fiber primitives.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapFiber) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: fiber required",
+                                        ev.primitive_error_counter_ptr());
+        }
         auto cid = as_closure_id(a[0]);
         auto result_ptr = std::make_shared<std::optional<EvalValue>>();
+        // Issue #1291 (P0): shared atomic holds the real fiber id.
+        // Pre-#1291 captured `fid` by value at lambda creation (fid==0),
+        // so workers wrote s_fiber_results[0] while joiners waited on
+        // the real fid — hang forever. Shared state is published before
+        // the worker runs complete_fiber.
+        auto fid_holder = std::make_shared<std::atomic<int64_t>>(0);
+        auto complete_fiber = [&ev, cid, result_ptr, fid_holder]() {
+            *result_ptr = ev.apply_closure(cid, {});
+            // Issue #1291: wait until spawn path publishes the real fid
+            // AND registers s_fiber_results[fid] (g_fiber_spawn may run
+            // the body before returning / before register).
+            for (int spin = 0; spin < 200000; ++spin) {
+                const int64_t fid = fid_holder->load(std::memory_order_acquire);
+                if (fid != 0) {
+                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                    auto it = s_fiber_results.find(fid);
+                    if (it != s_fiber_results.end()) {
+                        it->second.ready = true;
+                        s_fiber_results_cv.notify_all();
+                        return;
+                    }
+                }
+                std::this_thread::yield();
+            }
+            // Best-effort notify even if registration raced past timeout.
+            s_fiber_results_cv.notify_all();
+        };
         int64_t fid = 0;
         // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
-            // #109 5b: must define complete_fiber AFTER fid is assigned
-            // because the lambda captures fid by value. Earlier drafts
-            // captured fid=0 and then reassigned fid, leaving the
-            // worker writing to s_fiber_results[0] while the joiner
-            // waited on s_fiber_results[<real fid>]. Same pattern below
-            // for the std::thread fallback — define the lambda where
-            // fid is in scope as a local.
-            fid = aura::messaging::g_fiber_spawn([&ev, cid, result_ptr, fid]() {
-                *result_ptr = ev.apply_closure(cid, {});
-                {
-                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
-                    auto it = s_fiber_results.find(fid);
-                    if (it != s_fiber_results.end())
-                        it->second.ready = true;
-                }
-                s_fiber_results_cv.notify_all();
-            });
+            fid = aura::messaging::g_fiber_spawn(complete_fiber);
+            fid_holder->store(fid, std::memory_order_release);
         }
         // Fallback (stdin mode): use std::thread
         if (fid <= 0) {
             // Thread counter for unique fiber IDs (negative = thread-based)
             static std::atomic<int64_t> thread_fiber_id{0};
             fid = -(++thread_fiber_id); // unique negative ID
-            // Same lambda — defined inline so fid is captured at the
-            // final assigned value.
-            auto thread_body = [&ev, cid, result_ptr, fid]() {
-                *result_ptr = ev.apply_closure(cid, {});
-                {
-                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
-                    auto it = s_fiber_results.find(fid);
-                    if (it != s_fiber_results.end())
-                        it->second.ready = true;
-                }
-                s_fiber_results_cv.notify_all();
-            };
+            fid_holder->store(fid, std::memory_order_release);
             {
                 std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
                 s_fiber_results[fid] = FiberResult{result_ptr, false};
             }
-            std::thread(thread_body).detach();
+            std::thread(complete_fiber).detach();
             return make_int(fid);
         }
         if (fid > 0) {
+            // Publish fid before registering so a fast worker still
+            // sees the real id (complete_fiber loads with acquire).
+            fid_holder->store(fid, std::memory_order_release);
             std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
             s_fiber_results[fid] = FiberResult{std::move(result_ptr), false};
             return make_int(fid);

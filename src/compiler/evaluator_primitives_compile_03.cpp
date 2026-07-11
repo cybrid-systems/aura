@@ -8,6 +8,7 @@ module;
 #include "per_defuse_index.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -220,6 +221,17 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     // re-lower (Phase 5 follow-up) marks only the affected
     // blocks rather than the whole entry.
     add("compile:mark-block-dirty!", [&ev](const auto& a) -> EvalValue {
+        // Issue #1293 Phase 1: kCapCompileDirty required in sandbox.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapCompileDirty) &&
+            !ev.has_capability(aura::compiler::security::kCapCompile) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: compile-dirty required",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return make_bool(false);
         }
@@ -244,6 +256,17 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     // not installed. Use case: the smarter re-lower clears
     // the dirty bit after re-lowering a block.
     add("compile:clear-block-dirty!", [&ev](const auto& a) -> EvalValue {
+        // Issue #1293 Phase 1: clearing dirty can hide stale IR — gate hard.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapCompileDirty) &&
+            !ev.has_capability(aura::compiler::security::kCapCompile) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: compile-dirty required",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return make_bool(false);
         }
