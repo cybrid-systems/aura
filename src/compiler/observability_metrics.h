@@ -5838,6 +5838,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> terminal_cell64_active{1};
     std::atomic<std::uint64_t> terminal_set_cell_rgb_total{0};
     std::atomic<std::uint64_t> terminal_set_cell_unicode_total{0};
+    // #1352: terminal buffer lifecycle + per-buffer locking
+    std::atomic<std::uint64_t> terminal_buffer_deletes{0};
+    std::atomic<std::uint64_t> terminal_buffer_compacts{0};
+    std::atomic<std::uint64_t> terminal_buffer_live{0};
+    std::atomic<std::uint64_t> terminal_buffer_lifecycle_active{1};
     std::atomic<std::uint64_t> render_hotpath_samples{0};       // #1314
     std::atomic<std::uint64_t> render_frame_reset_total{0};     // #1315
     std::atomic<std::uint64_t> render_frame_reset_deferred{0};  // #1315

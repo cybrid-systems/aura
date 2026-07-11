@@ -20,6 +20,7 @@ module;
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
 #include "renderer/batch_terminal.hh"
+#include "terminal_buffer_registry.hh"
 
 #if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
@@ -730,17 +731,14 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 
-    // ── Issues #1313/#1314/#1316/#1317/#1349/#1350: terminal buffer ──
-    // #1350: TermCell holds Unicode codepoint + 24-bit RGB (or 256-color palette mode).
+    // ── Issues #1313/#1314/#1316/#1317/#1349/#1350/#1352: terminal buffer ──
+    // #1350: TermCell = Unicode + RGB/palette. #1352: lifecycle + per-buffer shared_mutex.
     // #1317: REGISTERED with RENDER_PRIMITIVE_META (perf_tier=hot, category=rendering).
     using TermCell = aura::renderer::TermCell;
-    struct TermBuf {
-        std::int32_t w = 0;
-        std::int32_t h = 0;
-        std::vector<TermCell> cells;
-    };
-    static std::mutex s_term_mtx;
-    static std::vector<std::unique_ptr<TermBuf>> s_term_bufs;
+    using term_registry::s_term_bufs;
+    using term_registry::s_term_free_ids;
+    using term_registry::s_term_registry_mtx;
+    using term_registry::TermBuf;
 
     // Use meta-aware registration for render primitives (#1317).
     auto add_render = [&ev](const char* name, PrimFn fn, PrimMeta meta) {
@@ -761,14 +759,94 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             buf->w = static_cast<std::int32_t>(w);
             buf->h = static_cast<std::int32_t>(h);
             buf->cells.assign(static_cast<std::size_t>(w * h), TermCell::space_palette());
-            std::lock_guard<std::mutex> lock(s_term_mtx);
-            auto id = static_cast<std::int64_t>(s_term_bufs.size());
-            s_term_bufs.push_back(std::move(buf));
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            std::int64_t id = -1;
+            {
+                // Exclusive registry: mutate vector / freelist.
+                std::unique_lock<std::shared_mutex> reg(s_term_registry_mtx);
+                if (!s_term_free_ids.empty()) {
+                    id = static_cast<std::int64_t>(s_term_free_ids.back());
+                    s_term_free_ids.pop_back();
+                    s_term_bufs[static_cast<std::size_t>(id)] = std::move(buf);
+                } else {
+                    id = static_cast<std::int64_t>(s_term_bufs.size());
+                    s_term_bufs.push_back(std::move(buf));
+                }
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_buffer_creates.fetch_add(1, std::memory_order_relaxed);
+                m->terminal_buffer_live.fetch_add(1, std::memory_order_relaxed);
+            }
             return make_int(id);
         },
         RENDER_PRIMITIVE_META(2, "Create terminal screen buffer (id).", "(int int) -> int"));
+
+    // Issue #1352: (delete-terminal-buffer id) → #t/#f
+    add_render(
+        "delete-terminal-buffer",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_bool(false);
+            auto id = as_int(a[0]);
+            {
+                // Exclusive registry: no concurrent holder of shared reg can run.
+                std::unique_lock<std::shared_mutex> reg(s_term_registry_mtx);
+                if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                    !s_term_bufs[static_cast<std::size_t>(id)])
+                    return make_bool(false);
+                s_term_bufs[static_cast<std::size_t>(id)]
+                    .reset(); // tombstone; freelist via compact
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->terminal_buffer_deletes.fetch_add(1, std::memory_order_relaxed);
+                const auto live = m->terminal_buffer_live.load(std::memory_order_relaxed);
+                if (live > 0)
+                    m->terminal_buffer_live.fetch_sub(1, std::memory_order_relaxed);
+            }
+            return make_bool(true);
+        },
+        RENDER_PRIMITIVE_META(1,
+                              "Free terminal buffer by id (#1352). Slot reclaimed after compact.",
+                              "(int) -> bool"));
+
+    // Issue #1352: (compact-terminal-buffers) → reclaimed-slot-count
+    // Rebuilds freelist from tombstones. Live IDs stay stable (no erase-remove renumber).
+    add_render(
+        "compact-terminal-buffers",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            std::int64_t reclaimed = 0;
+            {
+                std::unique_lock<std::shared_mutex> reg(s_term_registry_mtx);
+                // Drop trailing tombstones first (cannot be live IDs).
+                std::int64_t trailing = 0;
+                while (!s_term_bufs.empty() && !s_term_bufs.back()) {
+                    s_term_bufs.pop_back();
+                    ++trailing;
+                }
+                s_term_free_ids.clear();
+                for (std::size_t i = 0; i < s_term_bufs.size(); ++i) {
+                    if (!s_term_bufs[i])
+                        s_term_free_ids.push_back(i);
+                }
+                reclaimed = trailing + static_cast<std::int64_t>(s_term_free_ids.size());
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->terminal_buffer_compacts.fetch_add(1, std::memory_order_relaxed);
+            return make_int(reclaimed);
+        },
+        RENDER_PRIMITIVE_META(
+            0, "Rebuild freelist from tombstones; shrink trailing empties (#1352).", "() -> int"));
+    // (terminal-buffer-count) → live buffers (test/ops hook)
+    add_render(
+        "terminal-buffer-count",
+        [](std::span<const EvalValue>) -> EvalValue {
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            std::int64_t n = 0;
+            for (const auto& p : s_term_bufs)
+                if (p)
+                    ++n;
+            return make_int(n);
+        },
+        RENDER_PRIMITIVE_META(0, "Count live terminal buffers (#1352).", "() -> int"));
 
     add_render(
         "terminal-set-cell",
@@ -780,7 +858,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto id = as_int(a[0]);
             auto x = as_int(a[1]);
             auto y = as_int(a[2]);
-            // Accept full Unicode codepoints (no 0xFFFF mask).
             auto ch = static_cast<std::uint32_t>(as_int(a[3]));
             if (ch > 0x10FFFFu)
                 ch = static_cast<std::uint32_t>(' ');
@@ -788,10 +865,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                                     : static_cast<std::uint8_t>(7);
             auto bg = a.size() >= 6 && is_int(a[5]) ? static_cast<std::uint8_t>(as_int(a[5]) & 0xFF)
                                                     : static_cast<std::uint8_t>(0);
-            std::lock_guard<std::mutex> lock(s_term_mtx);
-            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+            // Shared registry + exclusive buffer: parallel set-cell across buffers.
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
                 return make_bool(false);
-            auto& b = *s_term_bufs[id];
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
             TermCell cell;
@@ -832,10 +912,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             cell.bg_b =
                 a.size() >= 10 && is_int(a[9]) ? static_cast<std::uint8_t>(as_int(a[9]) & 0xFF) : 0;
             cell.mode = 1; // rgb
-            std::lock_guard<std::mutex> lock(s_term_mtx);
-            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
                 return make_bool(false);
-            auto& b = *s_term_bufs[id];
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
             b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
@@ -883,10 +965,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 cell.bg_r = 0;
                 cell.mode = 0;
             }
-            std::lock_guard<std::mutex> lock(s_term_mtx);
-            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
                 return make_bool(false);
-            auto& b = *s_term_bufs[id];
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
             b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
@@ -909,13 +993,20 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto nid = as_int(a[1]);
             std::int64_t changed = 0;
             {
-                std::lock_guard<std::mutex> lock(s_term_mtx);
+                std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
                 if (oid < 0 || nid < 0 || static_cast<std::size_t>(oid) >= s_term_bufs.size() ||
-                    static_cast<std::size_t>(nid) >= s_term_bufs.size() || !s_term_bufs[oid] ||
-                    !s_term_bufs[nid])
+                    static_cast<std::size_t>(nid) >= s_term_bufs.size() ||
+                    !s_term_bufs[static_cast<std::size_t>(oid)] ||
+                    !s_term_bufs[static_cast<std::size_t>(nid)])
                     return make_int(-1);
-                auto& o = *s_term_bufs[oid];
-                auto& n = *s_term_bufs[nid];
+                auto& o = *s_term_bufs[static_cast<std::size_t>(oid)];
+                auto& n = *s_term_bufs[static_cast<std::size_t>(nid)];
+                // Lock order by id to avoid deadlock on same-buffer pairs.
+                std::shared_lock<std::shared_mutex> lo1(oid <= nid ? o.rwlock : n.rwlock);
+                std::shared_lock<std::shared_mutex> lo2(oid <= nid ? n.rwlock : o.rwlock,
+                                                        std::defer_lock);
+                if (oid != nid)
+                    lo2.lock();
                 if (o.w != n.w || o.h != n.h)
                     changed = static_cast<std::int64_t>(n.cells.size()); // full refresh
                 else {
@@ -944,8 +1035,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         "terminal-present-batch",
         [&ev, build_present_frame](std::span<const EvalValue> a) -> EvalValue {
             // Issue #1314/#1316/#1349: (terminal-present-batch buf-id [fd]) → bytes-written
-            // Emits ANSI SGR colors + CSI H positioning + CSI 2026 sync.
-            // Marks render hot path so deopt/auto-compact soft-gate apply.
             if (a.empty() || !is_int(a[0]))
                 return make_int(-1);
             auto id = as_int(a[0]);
@@ -957,13 +1046,14 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t sgr_emits = 0;
             std::int32_t rows = 0;
             {
-                std::lock_guard<std::mutex> lock(s_term_mtx);
+                std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
                 if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
-                    !s_term_bufs[id]) {
+                    !s_term_bufs[static_cast<std::size_t>(id)]) {
                     ev.exit_render_hotpath();
                     return make_int(-1);
                 }
-                auto& b = *s_term_bufs[id];
+                auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+                std::shared_lock<std::shared_mutex> buf(b.rwlock);
                 rows = b.h;
                 sgr_emits = build_present_frame(b, out);
             }
@@ -977,7 +1067,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     static_cast<std::uint64_t>(rows > 0 ? rows : 0), std::memory_order_relaxed);
                 m->terminal_present_sync_frames_total.fetch_add(1, std::memory_order_relaxed);
                 m->render_hotpath_samples.fetch_add(1, std::memory_order_relaxed);
-                // #1316: prefer AOT-stable path accounting for present samples.
                 m->render_jit_aot_prefer_hits.fetch_add(1, std::memory_order_relaxed);
             }
             ev.exit_render_hotpath();
@@ -989,7 +1078,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     add_render(
         "terminal-present",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
-            // Alias of terminal-present-batch for Agent convenience (#1313).
             auto r = ev.primitives().lookup("terminal-present-batch");
             if (!r)
                 return make_int(-1);
@@ -998,7 +1086,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         RENDER_PRIMITIVE_META(1, "Alias of terminal-present-batch.", "(int [int]) -> int"));
 
     // Issue #1349: (terminal-frame-ansi buf-id) → string
-    // Returns the full ANSI frame without writing to a fd (test/headless path).
     add_render(
         "terminal-frame-ansi",
         [&ev, build_present_frame](std::span<const EvalValue> a) -> EvalValue {
@@ -1012,11 +1099,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto id = as_int(a[0]);
             std::string out;
             {
-                std::lock_guard<std::mutex> lock(s_term_mtx);
+                std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
                 if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
-                    !s_term_bufs[id])
+                    !s_term_bufs[static_cast<std::size_t>(id)])
                     return push_str("");
-                (void)build_present_frame(*s_term_bufs[id], out);
+                auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+                std::shared_lock<std::shared_mutex> buf(b.rwlock);
+                (void)build_present_frame(b, out);
             }
             return push_str(std::move(out));
         },
