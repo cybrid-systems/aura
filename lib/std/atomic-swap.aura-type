@@ -1,0 +1,23 @@
+make-binding: Any Any Any -> Any
+binding-id: Any -> Any
+binding-target-version: Any -> Any
+binding-artifact-id: Any -> Any
+binding-pending-target-version: Any -> Any
+binding-pending-artifact-id: Any -> Any
+binding-dirty?: Any -> Any
+binding-target: Any -> Any
+binding-artifact: Any -> Any
+swap-binding!: Any Any Any -> Any
+sync-bindings!: Any -> Any
+make-registry: -> Any
+registry-put: Any Any -> Any
+registry-ref: Any Any -> Any
+registry-list: Any -> Any
+registry-ids: Any -> Any
+pending-swaps: Any -> Any
+sync-registry!: Any -> Any
+drain-pending-swaps!: Any -> Any
+binding-on-commit: Any Any -> Any
+set-binding-on-commit!: Any -> Any
+default-binding-on-commit: Any Any -> Any
+atomic-swap:stats: Any -> Any
