@@ -9,6 +9,7 @@ module;
 #include "primitives_detail.h"
 #include "primitives_meta.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/cpp26_contract_stats.h"
 #include "core/gap_buffer.hh"
 #include "jit_typed_mutation_stats.h"
 
@@ -17,6 +18,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.compiler.value;
 import aura.compiler.macro_expansion;
+import aura.compiler.pass_manager;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1633,6 +1635,76 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .perf_tier = kPrimPerfHot,
                  .security_level = kPrimSecSafe,
                  .doc = "Phase 1 production sweep (#1316–#1320).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // ── Issues #1321–#1324 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1321-1324-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            // Sync process-wide pipeline / contract counters.
+            if (m) {
+                m->pipeline_dirty_short_circuit_total.store(
+                    aura::compiler::pipeline_dirty_short_circuit_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                // Also fold legacy skips into the dashboard.
+                m->pipeline_dirty_short_circuit_total.store(
+                    std::max(m->pipeline_dirty_short_circuit_total.load(std::memory_order_relaxed),
+                             aura::compiler::passes_skipped_dirty_pipeline.load(
+                                 std::memory_order_relaxed)),
+                    std::memory_order_relaxed);
+                m->pipeline_epoch_sync_total.store(
+                    aura::compiler::pipeline_epoch_sync_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->pipeline_soa_view_aware_total.store(
+                    aura::compiler::passes_soa_view_aware_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->pipeline_hotpath_light_analysis_total.store(
+                    aura::compiler::pipeline_hotpath_light_analysis_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->consteval_checks_total.store(
+                    static_cast<std::uint64_t>(aura::core::cpp26::kConstevalChecksTotal),
+                    std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1321)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1321_1324_active) : 1)},
+                // #1321
+                {"hotpath-contracts-expanded",
+                 make_int(m ? load_u64(m, m->hotpath_contracts_expanded) : 1)},
+                {"soa-view-bounds-contracts",
+                 make_int(m ? load_u64(m, m->soa_view_bounds_contracts) : 1)},
+                {"flatast-column-contracts",
+                 make_int(m ? load_u64(m, m->flatast_column_contracts) : 1)},
+                {"consteval-checks-total",
+                 make_int(m ? load_u64(m, m->consteval_checks_total) : 36)},
+                // #1322
+                {"pipeline-dirty-short-circuit-active",
+                 make_int(m ? load_u64(m, m->pipeline_dirty_short_circuit_active) : 1)},
+                {"pipeline-dirty-short-circuit-total",
+                 make_int(m ? load_u64(m, m->pipeline_dirty_short_circuit_total) : 0)},
+                {"pipeline-epoch-sync-total",
+                 make_int(m ? load_u64(m, m->pipeline_epoch_sync_total) : 0)},
+                {"pipeline-soa-view-aware-total",
+                 make_int(m ? load_u64(m, m->pipeline_soa_view_aware_total) : 0)},
+                // #1323
+                {"jit-fn-unhandled-counts-query-locked",
+                 make_int(m ? load_u64(m, m->jit_fn_unhandled_counts_query_locked) : 1)},
+                // #1324
+                {"jit-invalidate-lock-before-erase",
+                 make_int(m ? load_u64(m, m->jit_invalidate_lock_before_erase) : 1)},
+                {"issue-1324", make_int(1324)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1321–#1324).",
                  .category = "general",
                  .schema = "() -> hash"});
 }

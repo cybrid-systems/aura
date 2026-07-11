@@ -22,7 +22,13 @@ inline std::atomic<std::uint64_t> hotpath_invariant_hits_total{0};
 
 // Compile-time consteval/static_assert count baked into the binary.
 // Bump when cxx26_invariants.ixx / value_tags.h / shape.h grow.
-inline constexpr std::int64_t kConstevalChecksTotal = 32;
+// Issue #1321: expanded to 36 (+4 dirty/tag/arena packing asserts).
+inline constexpr std::int64_t kConstevalChecksTotal = 36;
+
+// Issue #1321 Phase 1: coverage flags — hot accessors that gained contracts.
+inline std::atomic<std::uint64_t> hotpath_contracts_expanded_active{1};
+inline std::atomic<std::uint64_t> soa_view_bounds_contracts_active{1};
+inline std::atomic<std::uint64_t> flatast_column_contracts_active{1};
 
 inline void record_contract_violation_caught() noexcept {
     contract_violations_caught_total.fetch_add(1, std::memory_order_relaxed);

@@ -2240,7 +2240,9 @@ struct AuraJIT::Impl {
     // ThreadSafeModule already provides per-module thread safety;
     // this mutex is the entry-point serialization (prevents two
     // concurrent compiles from racing on the symbol table).
-    std::mutex compile_mtx_;
+    // Issue #1323/#1324: also guards fn_unhandled_counts_ + fn_trackers_
+    // (query/erase paths). Mutable so const unhandled_count_for_fn can lock.
+    mutable std::mutex compile_mtx_;
     // Issue #114: per-function compile cache. Lets two threads
     // compiling different functions run in parallel; the same
     // function name is still serialized by this shared_mutex.
@@ -2292,7 +2294,10 @@ struct AuraJIT::Impl {
     }
     // Helper: query the per-function counter (returns 0 if the
     // function has never been seen).
+    // Issue #1323 (P0): lock compile_mtx_ — concurrent find + operator[]
+    // (insert under compile()) is UB on unordered_map without a lock.
     std::uint64_t unhandled_count_for_fn(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(compile_mtx_);
         auto it = fn_unhandled_counts_.find(name);
         if (it == fn_unhandled_counts_.end())
             return 0;
@@ -2841,6 +2846,10 @@ void AuraJIT::invalidate(const char* name) {
     if (!impl_ || !name)
         return;
     std::string n(name);
+    // Issue #1324 (P0): acquire compile_mtx_ BEFORE any erase of
+    // fn_trackers_ / fn_unhandled_counts_. Previously erases ran
+    // unlocked while compile() inserts under compile_mtx_ → UB.
+    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     // Drop the per-function resource tracker (removes the
     // module from the JITDylib) AND the per-function compile
     // cache entry. This matches what get_or_create_tracker()
@@ -2872,6 +2881,8 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
     if (p.empty())
         return;
     std::string p_hash = p + "#";
+    // Issue #1324 (P0): lock compile_mtx_ before any trackers/unhandled erase.
+    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     for (auto it = impl_->fn_trackers_.begin(); it != impl_->fn_trackers_.end();) {
         if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
             if (auto err = it->second->remove())
