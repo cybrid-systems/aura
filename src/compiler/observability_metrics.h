@@ -5819,6 +5819,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_last_module_aot_lock{1};    // #1308
     std::atomic<std::uint64_t> jit_closure_is_arena_flag{1};   // #1309
     std::atomic<std::uint64_t> jit_arena_env_free_on_reset{1}; // #1310
+
+    // ── Issues #1311–#1315: cow pins race, jit setters, terminal, render arena ──
+    std::atomic<std::uint64_t> production_sweep_1311_1315_active{1};
+    std::atomic<std::uint64_t> cow_boundary_pins_mutex{1};      // #1311
+    std::atomic<std::uint64_t> jit_runtime_setters_locked{1};   // #1312
+    std::atomic<std::uint64_t> terminal_buffer_creates{0};      // #1313
+    std::atomic<std::uint64_t> terminal_set_cell_total{0};      // #1313
+    std::atomic<std::uint64_t> terminal_diff_updates{0};        // #1313
+    std::atomic<std::uint64_t> terminal_present_batch_total{0}; // #1314
+    std::atomic<std::uint64_t> terminal_present_bytes_total{0}; // #1314
+    std::atomic<std::uint64_t> render_hotpath_samples{0};       // #1314
+    std::atomic<std::uint64_t> render_frame_reset_total{0};     // #1315
+    std::atomic<std::uint64_t> render_frame_reset_deferred{0};  // #1315
+    std::atomic<std::uint64_t> render_frame_reset_reclaimed{0}; // #1315
 };
 
 

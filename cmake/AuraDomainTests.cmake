@@ -171,6 +171,11 @@ aura_add_issue_test(test_production_sweep_1306_1310)
 aura_issue_test_link_llvm_jit(test_production_sweep_1306_1310)
 add_dependencies(all_test_issue_targets test_production_sweep_1306_1310)
 
+# Issues #1311–#1315: cow pins race, jit setters, terminal buffer, present batch, render arena
+aura_add_issue_test(test_production_sweep_1311_1315)
+aura_issue_test_link_llvm_jit(test_production_sweep_1311_1315)
+add_dependencies(all_test_issue_targets test_production_sweep_1311_1315)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

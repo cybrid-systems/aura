@@ -2,19 +2,19 @@
 
 # Primitives (generated)
 
-**923** registrations scanned from `src/**/*.cpp`.
+**930** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (13%)
-- **core**: 224 primitives (24%)
-- **internal-observable**: 429 primitives (46%)
-- **convenience**: 147 primitives (16%)
+- **core**: 225 primitives (24%)
+- **internal-observable**: 430 primitives (46%)
+- **convenience**: 152 primitives (16%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
-## Query: (429)
+## Query: (430)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -325,6 +325,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:reflection-schema-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:reflection-selfmod-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:registry-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-arena-frame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:render-ffi-buffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-jit-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
@@ -605,7 +606,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (250)
+## Core builtins (256)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -615,6 +616,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `apply` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arena-offset` *[convenience]* — `src/compiler/evaluator_primitives_misc.cpp`
+- `arena-render-frame-reset` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `asin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -751,6 +753,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `m4-move` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-return!` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
 - `mailbox-count` *[convenience]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `make-terminal-buffer` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `make-vector` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `map` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `max` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -836,6 +839,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `tcp-connect` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-diff-update` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-present` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-present-batch` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-set-cell` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
 - `type-of` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `type-registry-stats` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1194,7 +1201,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (224)
+### Core builtins (must remain primitive) (225)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1327,6 +1334,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `load` — `src/compiler/evaluator_primitives_eval.cpp`
 - `log` — `src/compiler/evaluator_primitives_math.cpp`
 - `log10` — `src/compiler/evaluator_primitives_math.cpp`
+- `make-terminal-buffer` — `src/compiler/evaluator_primitives_io.cpp`
 - `make-vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `map` — `src/compiler/evaluator_primitives_list.cpp`
 - `max` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1421,7 +1429,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (429)
+### Internal observable (stats/counters) (430)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1732,6 +1740,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:reflection-schema-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
 - `query:reflection-selfmod-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:registry-extension-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-arena-frame-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-jit-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
@@ -1853,9 +1862,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
-### Convenience (candidates for stdlib migration) (147)
+### Convenience (candidates for stdlib migration) (152)
 
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
+- `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
 - `auto-evolve-cycle-count` — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-loop` — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-once` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1988,6 +1998,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-diff-update` — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-present` — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-present-batch` — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal-set-cell` — `src/compiler/evaluator_primitives_io.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`

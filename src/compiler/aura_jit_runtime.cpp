@@ -210,6 +210,12 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
                                     void (*lock_write)(void*), void (*unlock_write)(void*),
                                     std::uint64_t (*get_version)(void*),
                                     void (*yield_boundary)(void*), void* user_data) {
+    // Issue #1312 (P0): synchronize setter with readers of g_lock_hooks.
+    // Dedicated mutex: workspace write lock is implemented *via* these hooks
+    // so we cannot call aura_lock_workspace_write here (not yet defined /
+    // chicken-and-egg on first install).
+    static std::mutex s_lock_hooks_mtx;
+    std::lock_guard<std::mutex> lock(s_lock_hooks_mtx);
     g_lock_hooks.lock_read = lock_read;
     g_lock_hooks.unlock_read = unlock_read;
     g_lock_hooks.lock_write = lock_write;
@@ -814,8 +820,12 @@ static TopCellGetFn g_top_cell_get = nullptr;
 static void* g_top_cell_user_data = nullptr;
 
 extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* user_data) {
-    g_top_cell_get = fn;
+    // Issue #1312 (P0): write under workspace write lock so readers of
+    // g_top_cell_get + g_top_cell_user_data never see a torn pair.
+    aura_lock_workspace_write();
     g_top_cell_user_data = user_data;
+    g_top_cell_get = fn;
+    aura_unlock_workspace_write();
 }
 
 extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
@@ -1070,7 +1080,10 @@ int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
 
 static int64_t (*g_hash_str_convert_fn)(int64_t) = nullptr;
 extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
+    // Issue #1312 (P0): synchronize callback pointer with hash path readers.
+    aura_lock_workspace_write();
     g_hash_str_convert_fn = fn;
+    aura_unlock_workspace_write();
 }
 int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
     // Issue #157 Phase 2: write lock — writes g_hash_tables[hidx]
@@ -1535,7 +1548,10 @@ static int64_t (*g_hash_str_eq_fn)(int64_t, int64_t) = nullptr;
 
 
 extern "C" void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
+    // Issue #1312 (P0): synchronize callback pointer with hash_key_eq readers.
+    aura_lock_workspace_write();
     g_hash_str_eq_fn = fn;
+    aura_unlock_workspace_write();
 }
 
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
