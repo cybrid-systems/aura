@@ -20,7 +20,9 @@ module;
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
 #include "renderer/batch_terminal.hh"
+#include "renderer/render_ffi.hh"
 #include "terminal_buffer_registry.hh"
+#include "hash_meta.h"
 
 #if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
@@ -1143,6 +1145,55 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             m ? load(m->render_jit_aot_prefer_hits) : 0,
             m ? load(m->render_deopt_throttle_window_ms) : 500));
         return types::make_string(sidx);
+    });
+
+    // ── Issue #1354: query:render-ffi-available ──
+    // Agent discovery: registered bindings + hot-path dispatch stats.
+    add("query:render-ffi-available", [&ev](std::span<const EvalValue>) -> EvalValue {
+        auto& reg = aura::renderer::ffi::render_ffi_registry();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        if (m) {
+            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+            m->render_ffi_registered.store(reg.registered.load(std::memory_order_relaxed),
+                                           std::memory_order_relaxed);
+            m->render_ffi_hot_path_dispatches.store(
+                reg.hot_path_dispatches.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            m->render_ffi_hotpath_enter_total.store(
+                reg.ffi_hotpath_enter_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->render_ffi_bind_success.store(reg.bind_success.load(std::memory_order_relaxed),
+                                             std::memory_order_relaxed);
+        }
+        auto* ht = FlatHashTable::create(32) /* #1141 */;
+        if (!ht)
+            return make_void();
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                               make_string, make_int);
+        };
+        insert_kv("schema", 1354);
+        insert_kv("active", 1);
+        insert_kv("phase", static_cast<std::int64_t>(aura::renderer::ffi::kRenderFfiPhase));
+        insert_kv("registered",
+                  static_cast<std::int64_t>(reg.registered.load(std::memory_order_relaxed)));
+        insert_kv("hot-path-dispatches", static_cast<std::int64_t>(reg.hot_path_dispatches.load(
+                                             std::memory_order_relaxed)));
+        insert_kv("bind-success",
+                  static_cast<std::int64_t>(reg.bind_success.load(std::memory_order_relaxed)));
+        insert_kv("bind-attempts",
+                  static_cast<std::int64_t>(reg.bind_attempts.load(std::memory_order_relaxed)));
+        insert_kv("resolve-hits",
+                  static_cast<std::int64_t>(reg.resolve_hits.load(std::memory_order_relaxed)));
+        insert_kv("ffi-hotpath-enter", static_cast<std::int64_t>(reg.ffi_hotpath_enter_total.load(
+                                           std::memory_order_relaxed)));
+        // Per-binding call totals (sum of call_count)
+        std::int64_t calls = 0;
+        for (const auto& snap : reg.snapshot())
+            calls += snap.call_count;
+        insert_kv("binding-calls", calls);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // ── Issue #1317: terminal-diff-stats ──

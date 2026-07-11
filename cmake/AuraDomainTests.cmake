@@ -229,6 +229,11 @@ aura_add_issue_test(test_terminal_input)
 aura_issue_test_link_llvm_jit(test_terminal_input)
 add_dependencies(all_test_issue_targets test_terminal_input)
 
+# Issue #1354: render FFI hot path + c-render-bind discovery
+aura_add_issue_test(test_render_ffi_hotpath)
+aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)
+add_dependencies(all_test_issue_targets test_render_ffi_hotpath)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
