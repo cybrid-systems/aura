@@ -22,6 +22,7 @@ inline BatchTerminalStats g_batch_terminal_stats{};
 
 // Issue #1181 Phase 1: efficient ANSI sequence helpers (no pair alloc on hot path).
 // Builds into a caller-provided buffer / std::string.
+// Issue #1349/#1350: extended SGR (TermCell+RGB live in batch_terminal.hh)
 // Issue #1349: extended SGR fg/bg + CSI 2026 sync + cursor helpers for
 // terminal-present-batch (P0 cyber-cat dependency).
 inline void ansi_sgr(std::string& out, int code) {

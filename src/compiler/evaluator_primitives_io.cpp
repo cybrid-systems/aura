@@ -730,13 +730,14 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 
-    // ── Issues #1313/#1314/#1316/#1317 Phase 1: terminal buffer + render meta ──
-    // Lightweight in-process buffer (cells as packed int32: ch | fg<<16 | bg<<24).
+    // ── Issues #1313/#1314/#1316/#1317/#1349/#1350: terminal buffer ──
+    // #1350: TermCell holds Unicode codepoint + 24-bit RGB (or 256-color palette mode).
     // #1317: REGISTERED with RENDER_PRIMITIVE_META (perf_tier=hot, category=rendering).
+    using TermCell = aura::renderer::TermCell;
     struct TermBuf {
         std::int32_t w = 0;
         std::int32_t h = 0;
-        std::vector<std::uint32_t> cells;
+        std::vector<TermCell> cells;
     };
     static std::mutex s_term_mtx;
     static std::vector<std::unique_ptr<TermBuf>> s_term_bufs;
@@ -759,7 +760,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto buf = std::make_unique<TermBuf>();
             buf->w = static_cast<std::int32_t>(w);
             buf->h = static_cast<std::int32_t>(h);
-            buf->cells.assign(static_cast<std::size_t>(w * h), static_cast<std::uint32_t>(' '));
+            buf->cells.assign(static_cast<std::size_t>(w * h), TermCell::space_palette());
             std::lock_guard<std::mutex> lock(s_term_mtx);
             auto id = static_cast<std::int64_t>(s_term_bufs.size());
             s_term_bufs.push_back(std::move(buf));
@@ -773,31 +774,130 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         "terminal-set-cell",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             // (terminal-set-cell buf-id x y ch [fg [bg]]) → #t/#f
+            // Backward-compat 256-color palette path (#1313 / #1350).
             if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
                 return make_bool(false);
             auto id = as_int(a[0]);
             auto x = as_int(a[1]);
             auto y = as_int(a[2]);
-            auto ch = static_cast<std::uint32_t>(as_int(a[3]) & 0xFFFF);
-            auto fg = a.size() >= 5 && is_int(a[4])
-                          ? static_cast<std::uint32_t>(as_int(a[4]) & 0xFF)
-                          : 7u;
-            auto bg = a.size() >= 6 && is_int(a[5])
-                          ? static_cast<std::uint32_t>(as_int(a[5]) & 0xFF)
-                          : 0u;
+            // Accept full Unicode codepoints (no 0xFFFF mask).
+            auto ch = static_cast<std::uint32_t>(as_int(a[3]));
+            if (ch > 0x10FFFFu)
+                ch = static_cast<std::uint32_t>(' ');
+            auto fg = a.size() >= 5 && is_int(a[4]) ? static_cast<std::uint8_t>(as_int(a[4]) & 0xFF)
+                                                    : static_cast<std::uint8_t>(7);
+            auto bg = a.size() >= 6 && is_int(a[5]) ? static_cast<std::uint8_t>(as_int(a[5]) & 0xFF)
+                                                    : static_cast<std::uint8_t>(0);
             std::lock_guard<std::mutex> lock(s_term_mtx);
             if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
                 return make_bool(false);
             auto& b = *s_term_bufs[id];
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
-            b.cells[static_cast<std::size_t>(y * b.w + x)] = ch | (fg << 16) | (bg << 24);
+            TermCell cell;
+            cell.ch = ch;
+            cell.fg_r = fg;
+            cell.bg_r = bg;
+            cell.mode = 0; // palette
+            b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
             return make_bool(true);
         },
-        RENDER_PRIMITIVE_META(4, "Set cell ch/fg/bg at (x,y).",
+        RENDER_PRIMITIVE_META(4, "Set cell ch/fg/bg at (x,y) [256-color palette].",
                               "(int int int int [int [int]]) -> bool"));
+
+    // Issue #1350: (terminal-set-cell-rgb buf x y ch fr fg fb [br bg bb]) → bool
+    add_render(
+        "terminal-set-cell-rgb",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 7 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]) ||
+                !is_int(a[4]) || !is_int(a[5]) || !is_int(a[6]))
+                return make_bool(false);
+            auto id = as_int(a[0]);
+            auto x = as_int(a[1]);
+            auto y = as_int(a[2]);
+            auto ch = static_cast<std::uint32_t>(as_int(a[3]));
+            if (ch > 0x10FFFFu)
+                ch = static_cast<std::uint32_t>(' ');
+            TermCell cell;
+            cell.ch = ch;
+            cell.fg_r = static_cast<std::uint8_t>(as_int(a[4]) & 0xFF);
+            cell.fg_g = static_cast<std::uint8_t>(as_int(a[5]) & 0xFF);
+            cell.fg_b = static_cast<std::uint8_t>(as_int(a[6]) & 0xFF);
+            cell.bg_r =
+                a.size() >= 8 && is_int(a[7]) ? static_cast<std::uint8_t>(as_int(a[7]) & 0xFF) : 0;
+            cell.bg_g =
+                a.size() >= 9 && is_int(a[8]) ? static_cast<std::uint8_t>(as_int(a[8]) & 0xFF) : 0;
+            cell.bg_b =
+                a.size() >= 10 && is_int(a[9]) ? static_cast<std::uint8_t>(as_int(a[9]) & 0xFF) : 0;
+            cell.mode = 1; // rgb
+            std::lock_guard<std::mutex> lock(s_term_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+                return make_bool(false);
+            auto& b = *s_term_bufs[id];
+            if (x < 0 || y < 0 || x >= b.w || y >= b.h)
+                return make_bool(false);
+            b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
+                m->terminal_set_cell_rgb_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_bool(true);
+        },
+        RENDER_PRIMITIVE_META(7, "Set cell with 24-bit RGB fg/bg (#1350).",
+                              "(int int int int int int int [int int int]) -> bool"));
+
+    // Issue #1350: (terminal-set-cell-unicode buf x y ch-string [fr fg fb [br bg bb]])
+    add_render(
+        "terminal-set-cell-unicode",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_string(a[3]))
+                return make_bool(false);
+            auto id = as_int(a[0]);
+            auto x = as_int(a[1]);
+            auto y = as_int(a[2]);
+            auto sidx = as_string_idx(a[3]);
+            if (sidx >= ev.string_heap_.size())
+                return make_bool(false);
+            const auto& s = ev.string_heap_[sidx];
+            const auto cp = aura::renderer::utf8_first_codepoint(s.data(), s.size());
+            TermCell cell;
+            cell.ch = cp;
+            if (a.size() >= 7 && is_int(a[4]) && is_int(a[5]) && is_int(a[6])) {
+                cell.fg_r = static_cast<std::uint8_t>(as_int(a[4]) & 0xFF);
+                cell.fg_g = static_cast<std::uint8_t>(as_int(a[5]) & 0xFF);
+                cell.fg_b = static_cast<std::uint8_t>(as_int(a[6]) & 0xFF);
+                cell.bg_r = a.size() >= 8 && is_int(a[7])
+                                ? static_cast<std::uint8_t>(as_int(a[7]) & 0xFF)
+                                : 0;
+                cell.bg_g = a.size() >= 9 && is_int(a[8])
+                                ? static_cast<std::uint8_t>(as_int(a[8]) & 0xFF)
+                                : 0;
+                cell.bg_b = a.size() >= 10 && is_int(a[9])
+                                ? static_cast<std::uint8_t>(as_int(a[9]) & 0xFF)
+                                : 0;
+                cell.mode = 1;
+            } else {
+                cell.fg_r = 7;
+                cell.bg_r = 0;
+                cell.mode = 0;
+            }
+            std::lock_guard<std::mutex> lock(s_term_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() || !s_term_bufs[id])
+                return make_bool(false);
+            auto& b = *s_term_bufs[id];
+            if (x < 0 || y < 0 || x >= b.w || y >= b.h)
+                return make_bool(false);
+            b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
+                m->terminal_set_cell_unicode_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_bool(true);
+        },
+        RENDER_PRIMITIVE_META(4, "Set cell from UTF-8 string + optional RGB (#1350).",
+                              "(int int int string [int int int [int int int]]) -> bool"));
 
     add_render(
         "terminal-diff-update",
@@ -835,7 +935,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         RENDER_PRIMITIVE_META(2, "Count changed cells between two buffers.", "(int int) -> int"));
 
-    // Shared frame builder for present-batch and frame-ansi (#1349).
+    // Shared frame builder for present-batch and frame-ansi (#1349/#1350).
     auto build_present_frame = [](const TermBuf& b, std::string& out) -> std::uint64_t {
         return aura::renderer::build_terminal_frame_ansi(out, b.w, b.h, b.cells.data());
     };
