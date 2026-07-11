@@ -255,6 +255,17 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 1, std::memory_order_relaxed);
             metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,
                                                                          std::memory_order_relaxed);
+            // Issue #1270: starvation mitigation — after repeated
+            // MutationBoundary defers, boost deferred pressure so the
+            // adaptive budget prefers ring-neighbor / higher budget
+            // for the next steal round (reduces agent-fiber starvation).
+            const auto defers = stolen->steal_deferred_mutation_boundary_count();
+            if (defers > 3) {
+                metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(
+                    1, std::memory_order_relaxed);
+                metrics::adaptive_steal_stats().starvation_priority_boosts.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
         }
 
         // Not stealable — put it back on the victim's queue.

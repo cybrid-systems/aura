@@ -1791,17 +1791,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // the previous fix of "always replace Define
                 // child" broke the body-expression case (3
                 // test_regression failures).
+                //
+                // Issue #1267: mirror mutate:rebind — if the parsed
+                // root is a full Define form, extract its value child
+                // first so we never nest a Define as a Lambda body
+                // (silent semantic corruption → void returns).
                 {
                     auto pr_root_v = flat.get(pr.root);
+                    aura::ast::NodeId body_to_set = pr.root;
+                    if (pr_root_v.tag == aura::ast::NodeTag::Define) {
+                        if (pr_root_v.children.empty()) {
+                            ok = false;
+                            return mev("parse-error", "define form in set-body code has no body");
+                        }
+                        body_to_set = pr_root_v.child(0);
+                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                            m->set_body_define_value_extracted.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        pr_root_v = flat.get(body_to_set);
+                    }
                     if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
-                        flat.set_child(id, 0, pr.root);
+                        flat.set_child(id, 0, body_to_set);
                     } else if (lambda_id < flat.size()) {
-                        flat.set_child(lambda_id, 0, pr.root);
+                        flat.set_child(lambda_id, 0, body_to_set);
                     } else {
                         // No existing lambda; treat as
                         // "replace whole Define child" for
                         // consistency with the Lambda branch.
-                        flat.set_child(id, 0, pr.root);
+                        flat.set_child(id, 0, body_to_set);
                     }
                 }
 
@@ -3980,7 +3997,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 continue;
 
             auto old_v = flat.get(static_cast<NodeId>(old_nid));
-            // For Lambda, copy params
+            // For Lambda, copy body child then params (Issue #1266).
             if (old_v.tag == NodeTag::Lambda) {
                 // Lambda params: set body child, then copy params
                 if (!old_v.children.empty()) {
@@ -3988,6 +4005,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (old_child < old_to_new.size() &&
                         old_to_new[old_child] != aura::ast::NULL_NODE)
                         flat.set_child(new_id, 0, old_to_new[old_child]);
+                }
+                // Issue #1266: the first pass created Lambda with empty
+                // params; copy original param list so nested lambdas
+                // keep formal names (no unbound variable after inline).
+                if (!old_v.params.empty()) {
+                    flat.set_lambda_params(new_id, old_v.params, old_v.param_annotations);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->inline_call_lambda_params_copied.fetch_add(1, std::memory_order_relaxed);
                 }
                 continue;
             }

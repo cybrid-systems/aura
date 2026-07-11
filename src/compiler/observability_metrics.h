@@ -5725,6 +5725,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hot_update_epoch_fences{1};            // #1264
     std::atomic<std::uint64_t> query_and_replace_all_or_nothing{0};   // #1265
     std::atomic<std::uint64_t> query_and_replace_parse_abort{0};      // #1265
+
+    // ── Issues #1266–#1270: inline/set-body/panic/SoA/steal Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1266_1270_active{1};
+    std::atomic<std::uint64_t> inline_call_lambda_params_copied{0};      // #1266
+    std::atomic<std::uint64_t> set_body_define_value_extracted{0};       // #1267
+    std::atomic<std::uint64_t> panic_checkpoint_flush_outermost{0};      // #1268
+    std::atomic<std::uint64_t> envframe_dualpath_materialize_refresh{0}; // #1269
+    std::atomic<std::uint64_t> envframe_dualpath_enforced{1};            // #1269
+    std::atomic<std::uint64_t> steal_starvation_mitigation{1};           // #1270
 };
 
 
