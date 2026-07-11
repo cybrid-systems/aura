@@ -18,6 +18,7 @@ module;
 #include "serve/metrics.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+#include "core/self_healing_hooks.h"
 
 module aura.compiler.evaluator;
 
@@ -177,6 +178,10 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
             ev.bump_longrunning_quota_violations();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1203 Phase 1: trigger registered SelfHealingHooks on quota violation.
+            aura::core::self_heal::trigger_self_healing(
+                {.kind = "quota-violation", .message = kind, .code = current});
+            ev.bump_longrunning_heal_triggers();
             return make_bool(false);
         }
         if (limit > 0)

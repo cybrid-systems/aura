@@ -11,6 +11,7 @@ module;
 // preamble (avoids the import-only restriction on .h).
 #include "observability_metrics.h"
 #include "hash_meta.h" // FNV constants (#901)
+#include "core/gc_hooks.h"
 
 module aura.compiler.evaluator;
 
@@ -140,6 +141,9 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (ev.auto_evolve_detect_closure_ == 0 || ev.auto_evolve_fix_closure_ == 0)
             return make_bool(false);
+        // Issue #1205 Phase 1: GC safepoint on long-running agent tick.
+        if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
+            fn();
         ++ev.auto_evolve_cycle_count_;
         std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n",
                      (size_t)ev.auto_evolve_detect_closure_, (size_t)ev.auto_evolve_fix_closure_);
@@ -1283,6 +1287,9 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
         };
 
         for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+            // Issue #1205 Phase 1: GC safepoint on each intend attempt.
+            if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
+                fn();
             std::string code_str;
             if (attempt == 1 || current_code_str.empty()) {
                 auto gs = ev.string_heap_.size();
