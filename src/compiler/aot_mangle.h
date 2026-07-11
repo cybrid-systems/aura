@@ -1,4 +1,4 @@
-// aot_mangle.h — AOT symbol name mangler (Issue #136, #243)
+// aot_mangle.h — AOT symbol name mangler (Issue #136, #243, #1369)
 //
 // Pure helper function used by the AOT bridge to generate valid
 // C identifiers from Aura function names. Exposed as a header
@@ -8,7 +8,9 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
+#include <string_view>
 
 namespace aura::compiler {
 
@@ -22,24 +24,23 @@ namespace aura::compiler {
 // kept verbatim).
 //
 // Issue #243 Phase 1: version suffix support. The mangled name
-// now includes a `_vN` suffix derived from the Evaluator's
+// includes a `_vN` suffix derived from the Evaluator's
 // `defuse_version_`. This lets the AOT binary self-identify
-// which mutation epoch it was generated from, so a stale .o
-// file (e.g. from a previous Aura session that mutated code
-// after a hot-reload) can be detected at runtime before it
-// dispatches to an out-of-date function body. The default
-// `defuse_version=0` is the "unversioned" baseline; existing
-// tests using the no-version path keep working.
+// which mutation epoch it was generated from.
+//
+// Issue #1369: always append `_vN`, including `_v0` when
+// defuse_version is 0. Previously version==0 skipped the suffix,
+// so `__top__` (which also skips the disambiguator) carried no
+// version info at all — per-function stale detection was impossible
+// for the entry point. Always-on `_vN` makes every symbol carry
+// an explicit epoch.
 //
 // Parameters:
 //   original        - the Aura function name to mangle
 //   disambiguator   - per-function unique counter (skipped for
 //                     __top__ which is the canonical entry point)
 //   defuse_version  - the Evaluator's defuse_version_ at emit
-//                     time. Appended as `_v<N>` to the result.
-//                     Defaults to 0 for backward compatibility
-//                     with callers that don't track version
-//                     (e.g. standalone tests).
+//                     time. Always appended as `_v<N>`.
 //
 // Returns:
 //   A valid C identifier that's unlikely to collide with other
@@ -99,16 +100,63 @@ inline std::string mangle_aot_name(const std::string& original, std::uint32_t di
         result += "_";
         result += std::to_string(disambiguator);
     }
-    // Issue #243 Phase 1: append the defuse_version suffix.
-    // The format is `_v<N>` so a mangle result for a function
-    // emitted at defuse_version=7 looks like `my_fn_2_v7` —
-    // the `_v` prefix prevents accidental collision with names
-    // that legitimately end in a digit.
-    if (defuse_version != 0) {
-        result += "_v";
-        result += std::to_string(defuse_version);
-    }
+    // Issue #1369: always append `_vN` (including `_v0`).
+    // Format `_v<N>` prevents collision with names that end in digits.
+    result += "_v";
+    result += std::to_string(defuse_version);
     return result;
+}
+
+// Issue #1369: ELF link name for registration / LLVM object.
+// `__top__` must remain the exact symbol `runtime.c` main() calls.
+// All other functions use the versioned mangle identity.
+inline std::string aot_link_name(const std::string& original, std::uint32_t disambiguator,
+                                 std::uint64_t defuse_version = 0) {
+    if (original == "__top__")
+        return "__top__";
+    return mangle_aot_name(original, disambiguator, defuse_version);
+}
+
+// Issue #1369: parse trailing `_vN` from a mangled name.
+// Returns true and writes *out_version on success.
+inline bool aot_parse_version_suffix(std::string_view mangled, std::uint64_t* out_version) {
+    if (!out_version)
+        return false;
+    // Find last "_v" followed by digits to end.
+    if (mangled.size() < 3)
+        return false;
+    auto pos = mangled.rfind("_v");
+    if (pos == std::string_view::npos || pos + 2 >= mangled.size())
+        return false;
+    std::string_view digits = mangled.substr(pos + 2);
+    if (digits.empty())
+        return false;
+    for (char c : digits) {
+        if (c < '0' || c > '9')
+            return false;
+    }
+    // strtoull needs a C string; digits are trailing so ok if we copy.
+    std::string tmp(digits);
+    char* end = nullptr;
+    unsigned long long v = std::strtoull(tmp.c_str(), &end, 10);
+    if (!end || *end != '\0')
+        return false;
+    *out_version = static_cast<std::uint64_t>(v);
+    return true;
+}
+
+inline bool aot_mangle_has_version_suffix(std::string_view mangled) {
+    std::uint64_t v = 0;
+    return aot_parse_version_suffix(mangled, &v);
+}
+
+// Host-side stale check: expected version vs version embedded in mangled name.
+// Demonstrable without dlopen (unit tests / pre-emit validation).
+inline bool aot_mangle_version_is_stale(std::string_view mangled, std::uint64_t expected) {
+    std::uint64_t got = 0;
+    if (!aot_parse_version_suffix(mangled, &got))
+        return true; // missing version → treat as stale under #1369
+    return got != expected;
 }
 
 } // namespace aura::compiler

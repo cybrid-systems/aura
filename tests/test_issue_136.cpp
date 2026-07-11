@@ -36,6 +36,7 @@ import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 namespace aura_issue_136_detail {
+using aura::compiler::aot_link_name;
 using aura::compiler::mangle_aot_name;
 
 
@@ -45,35 +46,39 @@ using aura::compiler::mangle_aot_name;
 
 bool test_mangle_basic() {
     std::println("\n--- Test: mangle_aot_name basic cases ---");
-    // Simple name gets disambiguator
-    CHECK(mangle_aot_name("foo", 0) == "foo_0", "foo → foo_0");
-    CHECK(mangle_aot_name("bar", 1) == "bar_1", "bar → bar_1");
-    // __top__ is kept verbatim (no disambiguator)
-    CHECK(mangle_aot_name("__top__", 0) == "__top__", "__top__ → __top__ (no disambiguator)");
+    // Issue #1369: always `_vN` (including `_v0`)
+    CHECK(mangle_aot_name("foo", 0) == "foo_0_v0", "foo → foo_0_v0");
+    CHECK(mangle_aot_name("bar", 1) == "bar_1_v0", "bar → bar_1_v0");
+    // __top__: no disambiguator, always version (#1369)
+    CHECK(mangle_aot_name("__top__", 0) == "__top___v0",
+          "__top__ → __top___v0 (no disambiguator, always version)");
+    CHECK(aot_link_name("__top__", 0) == "__top__",
+          "link name for __top__ stays unversioned (runtime.c)");
     return true;
 }
 
 bool test_mangle_special_chars() {
     std::println("\n--- Test: mangle_aot_name handles special chars ---");
     // @ . - space (previously handled) — still work
-    CHECK(mangle_aot_name("foo@bar", 0) == "foo_bar_0", "foo@bar → foo_bar_0");
-    CHECK(mangle_aot_name("a.b.c", 0) == "a_b_c_0", "a.b.c → a_b_c_0");
+    CHECK(mangle_aot_name("foo@bar", 0) == "foo_bar_0_v0", "foo@bar → foo_bar_0_v0");
+    CHECK(mangle_aot_name("a.b.c", 0) == "a_b_c_0_v0", "a.b.c → a_b_c_0_v0");
     // Newly-handled chars
-    CHECK(mangle_aot_name("foo?bar", 0) == "foo_bar_0", "foo?bar → foo_bar_0");
-    CHECK(mangle_aot_name("a+b", 0) == "a_b_0", "a+b → a_b_0");
-    CHECK(mangle_aot_name("x*y/z", 0) == "x_y_z_0", "x*y/z → x_y_z_0");
-    CHECK(mangle_aot_name("a&b|c", 0) == "a_b_c_0", "a&b|c → a_b_c_0");
-    CHECK(mangle_aot_name("a!b", 0) == "a_b_0", "a!b → a_b_0");
-    CHECK(mangle_aot_name("a(b)c", 0) == "a_b_c_0", "a(b)c → a_b_c_0");
+    CHECK(mangle_aot_name("foo?bar", 0) == "foo_bar_0_v0", "foo?bar → foo_bar_0_v0");
+    CHECK(mangle_aot_name("a+b", 0) == "a_b_0_v0", "a+b → a_b_0_v0");
+    CHECK(mangle_aot_name("x*y/z", 0) == "x_y_z_0_v0", "x*y/z → x_y_z_0_v0");
+    CHECK(mangle_aot_name("a&b|c", 0) == "a_b_c_0_v0", "a&b|c → a_b_c_0_v0");
+    CHECK(mangle_aot_name("a!b", 0) == "a_b_0_v0", "a!b → a_b_0_v0");
+    CHECK(mangle_aot_name("a(b)c", 0) == "a_b_c_0_v0", "a(b)c → a_b_c_0_v0");
     return true;
 }
 
 bool test_mangle_collapse_runs() {
     std::println("\n--- Test: mangle_aot_name collapses run of underscores ---");
     // Multiple consecutive special chars → single underscore
-    CHECK(mangle_aot_name("foo@@bar", 0) == "foo_bar_0", "foo@@bar → foo_bar_0 (run collapsed)");
-    CHECK(mangle_aot_name("a...b", 0) == "a_b_0", "a...b → a_b_0 (run collapsed)");
-    CHECK(mangle_aot_name("x?!@y", 0) == "x_y_0", "x?!@y → x_y_0 (run collapsed)");
+    CHECK(mangle_aot_name("foo@@bar", 0) == "foo_bar_0_v0",
+          "foo@@bar → foo_bar_0_v0 (run collapsed)");
+    CHECK(mangle_aot_name("a...b", 0) == "a_b_0_v0", "a...b → a_b_0_v0 (run collapsed)");
+    CHECK(mangle_aot_name("x?!@y", 0) == "x_y_0_v0", "x?!@y → x_y_0_v0 (run collapsed)");
     return true;
 }
 
@@ -86,23 +91,23 @@ bool test_mangle_preserves_leading_trailing() {
     // trailing underscores), per the aot_mangle.h comment:
     // "Appending at the end produces the same string both
     //  sides, so the .reg.c reference and the LLVM object
-    //  symbol line up." So `__init__` becomes `__init___0`
-    // (the trailing _ is preserved, then `_0` is appended).
-    CHECK(mangle_aot_name("__top__", 0) == "__top__",
-          "__top__ preserved (no disambiguator for canonical entry)");
-    CHECK(mangle_aot_name("__init__", 0) == "__init___0",
-          "__init__ → __init___0 (trailing _ preserved, _0 appended)");
-    CHECK(mangle_aot_name("_priv", 0) == "_priv_0", "_priv → _priv_0 (leading preserved)");
-    CHECK(mangle_aot_name("trail_", 0) == "trail__0",
-          "trail_ → trail__0 (trailing _ preserved, _0 appended)");
+    //  symbol line up." So `__init__` becomes `__init___0_v0`
+    // (the trailing _ is preserved, then `_0_v0` is appended).
+    CHECK(mangle_aot_name("__top__", 0) == "__top___v0",
+          "__top__ no disambiguator, always _v0 (#1369)");
+    CHECK(mangle_aot_name("__init__", 0) == "__init___0_v0",
+          "__init__ → __init___0_v0 (trailing _ preserved)");
+    CHECK(mangle_aot_name("_priv", 0) == "_priv_0_v0", "_priv → _priv_0_v0 (leading preserved)");
+    CHECK(mangle_aot_name("trail_", 0) == "trail__0_v0",
+          "trail_ → trail__0_v0 (trailing _ preserved)");
     return true;
 }
 
 bool test_mangle_collision() {
     std::println("\n--- Test: mangle_aot_name disambiguator prevents collision ---");
     // Two different originals with same suffix should NOT collide
-    CHECK(mangle_aot_name("foo", 0) != mangle_aot_name("foo", 1), "foo_0 != foo_1");
-    CHECK(mangle_aot_name("bar", 0) != mangle_aot_name("bar", 1), "bar_0 != bar_1");
+    CHECK(mangle_aot_name("foo", 0) != mangle_aot_name("foo", 1), "foo_0_v0 != foo_1_v0");
+    CHECK(mangle_aot_name("bar", 0) != mangle_aot_name("bar", 1), "bar_0_v0 != bar_1_v0");
     // Same original with different disambiguator also won't collide
     // (verified by the != above)
     return true;
@@ -112,10 +117,10 @@ bool test_mangle_empty_and_alphanumeric() {
     std::println("\n--- Test: mangle_aot_name empty + pure alphanumeric ---");
     // Empty string (defensive)
     auto e0 = mangle_aot_name("", 0);
-    CHECK(e0 == "_0", "empty → _0 (just disambiguator)");
+    CHECK(e0 == "_0_v0", "empty → _0_v0 (disambiguator + version)");
     // Pure alphanumeric
-    CHECK(mangle_aot_name("foo123", 0) == "foo123_0", "foo123 → foo123_0");
-    CHECK(mangle_aot_name("ABC", 0) == "ABC_0", "ABC → ABC_0");
+    CHECK(mangle_aot_name("foo123", 0) == "foo123_0_v0", "foo123 → foo123_0_v0");
+    CHECK(mangle_aot_name("ABC", 0) == "ABC_0_v0", "ABC → ABC_0_v0");
     return true;
 }
 
