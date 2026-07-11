@@ -62,6 +62,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <shared_mutex>
 #include <unwind.h>
 #include "runtime_shared.h"
 #include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
@@ -510,6 +511,16 @@ static std::vector<size_t> g_arena_closure_env_sizes;
 // aura_closure_set_name() after aura_alloc_closure_arena(). Used as a
 // fallback in aura_closure_call when the func_id lookup fails.
 static std::vector<std::string> g_closure_names;
+// Issue #1361: free bitmap + free-list for per-closure free + ID reuse.
+// g_closure_freed[i]==1 means slot i is free (must not call/capture).
+static std::vector<std::uint8_t> g_closure_freed;
+static std::vector<size_t> g_closure_free_list;
+static std::atomic<std::uint64_t> g_closure_free_total{0};
+static std::atomic<std::uint64_t> g_closure_reuse_total{0};
+// Always-on table lock: workspace write hooks are NO-OPs until
+// aura_set_lock_hooks installs them (stdin / unit tests). Without
+// this mutex, concurrent free/alloc races (double-free).
+static std::shared_mutex g_closure_table_mtx;
 
 // ── Closure inline cache (monomorphic, direct-mapped) ──
 // Caches the resolved function pointer + metadata for recently-accessed closures.
@@ -524,37 +535,142 @@ struct ClosureCacheEntry {
 };
 static ClosureCacheEntry g_closure_cache[CLOSURE_CACHE_SIZE] = {{-1, nullptr, 0, 0, 0}};
 
-int64_t aura_alloc_closure(int64_t func_id) {
-    // Issue #157 Phase 2: write lock — push_back on
-    // g_closure_func_ids + g_closure_envs is the same race as
-    // aura_alloc_pair. The lock makes push_back exclusive vs
-    // other alloc / capture / call paths.
-    aura_lock_workspace_write();
+static void invalidate_closure_cache_for(int64_t closure_id) {
+    int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
+    if (g_closure_cache[cache_idx].closure_id == closure_id)
+        g_closure_cache[cache_idx] = {-1, nullptr, 0, 0, 0};
+    // Also scan in case of collisions that left other slots (rare; size=64)
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
+        if (g_closure_cache[i].closure_id == closure_id)
+            g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
+    }
+}
+
+// Issue #1361: allocate or reuse a closure slot. Caller holds write lock.
+static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena) {
+    if (!g_closure_free_list.empty()) {
+        size_t cid = g_closure_free_list.back();
+        g_closure_free_list.pop_back();
+        if (cid < g_closure_freed.size())
+            g_closure_freed[cid] = 0;
+        g_closure_func_ids[cid] = func_id;
+        g_closure_envs[cid].clear();
+        g_closure_is_arena[cid] = is_arena;
+        // Defensive: arena env should already be freed; free again if not.
+        if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+            std::free(g_arena_closure_envs[cid]);
+            g_arena_closure_envs[cid] = nullptr;
+        }
+        if (cid < g_arena_closure_env_sizes.size())
+            g_arena_closure_env_sizes[cid] = 0;
+        if (cid < g_closure_names.size())
+            g_closure_names[cid].clear();
+        invalidate_closure_cache_for(static_cast<int64_t>(cid));
+        g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
+        return static_cast<int64_t>(cid);
+    }
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();
-    // Issue #1309: keep parallel arrays indexed by cid.
-    g_closure_is_arena.push_back(0);
+    g_closure_is_arena.push_back(is_arena);
     g_arena_closure_envs.push_back(nullptr);
     g_arena_closure_env_sizes.push_back(0);
     g_closure_names.emplace_back();
+    g_closure_freed.push_back(0);
+    return id;
+}
+
+int64_t aura_alloc_closure(int64_t func_id) {
+    // Issue #157 Phase 2 + #1361: table mutex always; workspace write when hooks set.
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    aura_lock_workspace_write();
+    int64_t id = alloc_closure_slot_locked(func_id, /*is_arena=*/0);
     aura_unlock_workspace_write();
     return id;
 }
 
 int64_t aura_alloc_closure_arena(int64_t func_id) {
-    // Issue #157 Phase 2: write lock — same as aura_alloc_closure,
-    // plus the arena pointer array also gets a new entry.
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
-    int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
-    g_closure_func_ids.push_back(func_id);
-    g_closure_envs.emplace_back();           // still push heap env as fallback
-    g_closure_is_arena.push_back(1);         // Issue #1309: arena-mode flag
-    g_arena_closure_envs.push_back(nullptr); // env ptr, set by later captures
-    g_arena_closure_env_sizes.push_back(0);  // Issue #1302
-    g_closure_names.emplace_back();          // Issue #660: parallel name array
+    int64_t id = alloc_closure_slot_locked(func_id, /*is_arena=*/1);
     aura_unlock_workspace_write();
     return id;
+}
+
+// Issue #1361: free one closure's env and mark slot reusable.
+void aura_free_closure(int64_t closure_id) {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    aura_lock_workspace_write();
+    size_t cid = static_cast<size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size()) {
+        aura_unlock_workspace_write();
+        return;
+    }
+    // Idempotent: already freed
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+        aura_unlock_workspace_write();
+        return;
+    }
+    // Free arena-mode env buffer
+    if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+        std::free(g_arena_closure_envs[cid]);
+        g_arena_closure_envs[cid] = nullptr;
+        if (cid < g_arena_closure_env_sizes.size())
+            g_arena_closure_env_sizes[cid] = 0;
+    }
+    // Free heap-mode env vector capacity
+    if (cid < g_closure_envs.size()) {
+        g_closure_envs[cid].clear();
+        g_closure_envs[cid].shrink_to_fit();
+    }
+    if (cid < g_closure_func_ids.size())
+        g_closure_func_ids[cid] = -1; // refuse call via func_id path
+    if (cid < g_closure_is_arena.size())
+        g_closure_is_arena[cid] = 0;
+    if (cid < g_closure_names.size())
+        g_closure_names[cid].clear();
+    if (cid >= g_closure_freed.size())
+        g_closure_freed.resize(g_closure_func_ids.size(), 0);
+    g_closure_freed[cid] = 1;
+    g_closure_free_list.push_back(cid);
+    invalidate_closure_cache_for(closure_id);
+    g_closure_free_total.fetch_add(1, std::memory_order_relaxed);
+    aura_unlock_workspace_write();
+}
+
+std::uint64_t aura_closure_free_total() {
+    return g_closure_free_total.load(std::memory_order_relaxed);
+}
+
+std::uint64_t aura_closure_reuse_total() {
+    return g_closure_reuse_total.load(std::memory_order_relaxed);
+}
+
+std::size_t aura_closure_slot_count() {
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    return g_closure_func_ids.size();
+}
+
+std::size_t aura_closure_live_count() {
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    std::size_t live = 0;
+    for (size_t i = 0; i < g_closure_func_ids.size(); ++i) {
+        if (i >= g_closure_freed.size() || g_closure_freed[i] == 0)
+            ++live;
+    }
+    return live;
+}
+
+int aura_closure_is_freed(int64_t closure_id) {
+    if (closure_id < 0)
+        return 1;
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    size_t cid = static_cast<size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return 1;
+    return (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) ? 1 : 0;
 }
 
 // Issue #660 Option 1: set the closure's name after allocation. Used by
@@ -564,6 +680,7 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
 void aura_closure_set_name(int64_t closure_id, const char* name) {
     if (closure_id < 0)
         return;
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
     if (static_cast<size_t>(closure_id) < g_closure_names.size()) {
         g_closure_names[static_cast<size_t>(closure_id)] = name ? std::string(name) : std::string();
@@ -572,11 +689,8 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
 }
 
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
-    // Issue #157 Phase 2: write lock — capture writes to
-    // g_closure_envs[cid] (a std::vector of vector) or
-    // g_arena_closure_envs[cid] (arena pointer). Write to
-    // inner vector / arena slot races with other fibers'
-    // captures and with aura_closure_call readers.
+    // Issue #157 Phase 2 + #1361: table mutex + workspace write when hooked.
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
     if (closure_id < 0) {
         aura_unlock_workspace_write();
@@ -584,6 +698,11 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     }
     size_t cid = static_cast<size_t>(closure_id);
     if (cid >= g_closure_envs.size()) {
+        aura_unlock_workspace_write();
+        return;
+    }
+    // Issue #1361: refuse capture into a freed slot
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
         aura_unlock_workspace_write();
         return;
     }
@@ -719,19 +838,20 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
 }
 
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
-    // Issue #157 Phase 2: read lock — reads g_closure_cache,
-    // g_closure_func_ids, g_closure_envs, g_arena_closure_envs,
-    // g_jit_fns. The lock makes the cache hit + slow path
-    // read-consistent. The g_closure_cache slot update at the
-    // end of the slow path races benignly with another fiber
-    // (worst case: a stale cache slot, corrected on the next
-    // slow-path call). The fn() call itself is invoked under
-    // the read lock — this is conservative (write lock would
-    // be unnecessary) but allows multiple concurrent calls.
+    // Issue #157 Phase 2 + #1361: shared table lock (always) + workspace read.
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_read();
     if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size()) {
         aura_unlock_workspace_read();
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
+    }
+    // Issue #1361: refuse to call a freed closure (graceful, no UAF)
+    {
+        size_t cid = static_cast<size_t>(closure_id);
+        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+            aura_unlock_workspace_read();
+            return 0;
+        }
     }
 
     // ── Inline cache check ──
@@ -1670,6 +1790,7 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
 // hash tables would also accumulate. Now they're freed
 // here, so the function is safe to call at process exit.
 void aura_reset_runtime() {
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     g_closure_func_ids.clear();
     g_closure_envs.clear();
     // Issue #1310: free malloc'd arena-mode env buffers (pre-#1310 used
@@ -1682,6 +1803,10 @@ void aura_reset_runtime() {
     g_arena_closure_env_sizes.clear(); // Issue #1302
     g_closure_is_arena.clear();        // Issue #1309
     g_closure_names.clear();
+    g_closure_freed.clear();     // Issue #1361
+    g_closure_free_list.clear(); // Issue #1361
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
+        g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
     g_jit_fns_overflow.clear(); // Issue #1304
     g_jit_fns_by_name.clear();
     g_cell_heap.clear();

@@ -1456,6 +1456,63 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.arena_group_->set_compact_threshold(static_cast<double>(clamped) / 100.0);
         return make_int(static_cast<std::int64_t>(prev * 100.0));
     });
+
+    // Issue #1361: free JIT/runtime closure env by id (opt-in; ID may be reused).
+    // Accepts int id (JIT runtime closure id) or a Closure value (tree-walker
+    // ClosureId — free is a no-op success for tree-walker; JIT path is the leak).
+    add("closure:free!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)ev;
+        if (a.empty())
+            return make_bool(false);
+        if (is_int(a[0])) {
+            aura_free_closure(as_int(a[0]));
+            return make_bool(true);
+        }
+        // Tree-walker Closure values use a different heap; free is opt-in no-op.
+        if (is_closure(a[0]))
+            return make_bool(true);
+        return make_bool(false);
+    });
+
+    // Issue #1361 probes: (closure:free-stats) → hash of free/reuse/live/slots
+    add("closure:free-stats", [&ev](const auto&) -> EvalValue {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto put = [&](const char* k, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            EvalValue val_ev = make_int(v);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = val_ev.val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        put("free-total", static_cast<std::int64_t>(aura_closure_free_total()));
+        put("reuse-total", static_cast<std::int64_t>(aura_closure_reuse_total()));
+        put("live", static_cast<std::int64_t>(aura_closure_live_count()));
+        put("slots", static_cast<std::int64_t>(aura_closure_slot_count()));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
