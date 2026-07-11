@@ -7974,6 +7974,9 @@ public:
         bool fine_rollback = false;
         std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
         aura::ast::FlatAST::ParamColumnsSnapshot param_snapshot;
+        // Issue #1355: render hot-path lightweight checkpoint (no full
+        // children snapshot; field mutations use FlatAST side log).
+        bool lightweight = false;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
@@ -8060,12 +8063,16 @@ public:
         // writes the caller will make under the boundary to acquirers
         // on other threads).
         std::size_t log_size = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
+        // Issue #1355: inside render hot path, use lightweight checkpoint —
+        // no full children_ snapshot, field mutations go to side log.
+        const bool lightweight =
+            aura::core::arena_policy::in_render_hotpath() && workspace_flat_ != nullptr;
         // Issue #221: capture the per-node children_ vector. The
         // PCV's COW semantics make this a cheap copy (each PCV
         // is a shared_ptr to immutable storage; the snapshot
         // holds shared_ptrs that keep the pre-mutation PCs alive).
         std::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
-        bool fine_rollback = fine_rollback_for_next_boundary_;
+        bool fine_rollback = fine_rollback_for_next_boundary_ && !lightweight;
         fine_rollback_for_next_boundary_ = false;
         std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
         aura::ast::FlatAST::ParamColumnsSnapshot param_snapshot;
@@ -8073,10 +8080,16 @@ public:
         std::uint64_t macro_introduced_count_at_entry = 0;
         std::uint16_t flat_generation_at_entry = 0;
         if (workspace_flat_) {
-            children_snapshot = workspace_flat_->snapshot_children();
-            if (fine_rollback) {
-                sym_id_snapshot = workspace_flat_->snapshot_sym_id();
-                param_snapshot = workspace_flat_->snapshot_param_columns();
+            if (lightweight) {
+                workspace_flat_->begin_render_lightweight_checkpoint();
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->mutation_lightweight_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                children_snapshot = workspace_flat_->snapshot_children();
+                if (fine_rollback) {
+                    sym_id_snapshot = workspace_flat_->snapshot_sym_id();
+                    param_snapshot = workspace_flat_->snapshot_param_columns();
+                }
             }
             bump_suppressed_at_entry = workspace_flat_->atomic_batch_active();
             flat_generation_at_entry = workspace_flat_->generation();
@@ -8089,7 +8102,8 @@ public:
                               std::move(children_snapshot),
                               fine_rollback,
                               std::move(sym_id_snapshot),
-                              std::move(param_snapshot)};
+                              std::move(param_snapshot),
+                              lightweight};
         active_mutation_stack().push_back(std::move(cp));
         const std::size_t depth = active_mutation_stack().size();
         std::uint64_t prev_max = nested_guard_depth_max_.load(std::memory_order_relaxed);
@@ -8097,7 +8111,7 @@ public:
                !nested_guard_depth_max_.compare_exchange_weak(
                    prev_max, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
         }
-        if (depth == 1 && workspace_flat_) {
+        if (depth == 1 && workspace_flat_ && !lightweight) {
             for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
                 if (workspace_flat_->is_macro_introduced(id))
                     ++macro_introduced_count_at_entry;
@@ -8154,7 +8168,26 @@ public:
         const bool nested_boundary = stack.size() > 1;
         auto cp = stack.back();
         stack.pop_back();
-        if (!success && workspace_flat_) {
+        if (cp.lightweight && workspace_flat_) {
+            // Issue #1355: lightweight path — commit or rollback side log.
+            if (success) {
+                workspace_flat_->commit_render_lightweight_checkpoint();
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->mutation_lightweight_commit_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                const auto n = workspace_flat_->rollback_render_lightweight_checkpoint();
+                // Also undo any durable log entries (structural ops fall through).
+                BoundaryRollbackStats stats;
+                stats.field_records_rolled =
+                    n + workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                if (stats.field_records_rolled > 0)
+                    bump_mutation_log_rollback_count();
+                last_boundary_rollback_stats_ = stats;
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->mutation_lightweight_rollback_total.fetch_add(1, std::memory_order_relaxed);
+                defuse_index_ = nullptr;
+            }
+        } else if (!success && workspace_flat_) {
             // Roll back the mutations that were appended between
             // enter and exit. The log size captured at entry
             // tells us how far to undo.

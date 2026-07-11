@@ -1516,6 +1516,11 @@ public:
     // Issue #1301: mutation_log_ suffix records dropped after rollback.
     mutable std::atomic<std::uint64_t> mutation_log_compacted_records_{0};
     mutable std::atomic<std::uint64_t> mutation_log_compact_ops_{0};
+    // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
+    mutable std::atomic<std::uint64_t> lightweight_total_{0};
+    mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
+    mutable std::atomic<std::uint64_t> lightweight_rollback_total_{0};
+    mutable std::atomic<std::uint64_t> lightweight_records_total_{0};
     // Issue #412: per-FlatAST type cache generation counter.
     // Bumped by mark_dirty_upward() and by the explicit
     // bump_type_cache_generation() accessor. The
@@ -5047,6 +5052,28 @@ public:
                                              std::uint64_t new_value, bool has_rollback)
         pre(node < tag_.size()) post(r : r >= 1) {
         const std::uint64_t mid = next_mutation_id_++;
+        // Issue #1355: under render lightweight checkpoint, field-level
+        // records go to a side stack (not mutation_log_) so hot-path
+        // frames do not inflate the durable log.
+        if (render_lightweight_active_ && has_rollback && !lightweight_frames_.empty()) {
+            MutationRecord rec = mutation::create_mutation_record({
+                .mutation_id = mid,
+                .target_node = node,
+                .operator_name = op_name,
+                .old_type_str = old_type,
+                .new_type_str = new_type,
+                .summary = summary,
+                .status = status,
+                .field_offset = field_offset,
+                .old_value = old_value,
+                .new_value = new_value,
+                .has_rollback_data = has_rollback,
+            });
+            lightweight_frames_.back().push_back(std::move(rec));
+            lightweight_records_total_.fetch_add(1, std::memory_order_relaxed);
+            mark_dirty_upward(node);
+            return mid;
+        }
         mutation_log_.push_back(mutation::create_mutation_record({
             .mutation_id = mid,
             .target_node = node,
@@ -5064,6 +5091,72 @@ public:
         if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
             node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
         return mid;
+    }
+
+    // ── Issue #1355: render hot-path lightweight checkpoints ──
+    void begin_render_lightweight_checkpoint() noexcept {
+        lightweight_frames_.emplace_back();
+        render_lightweight_active_ = true;
+        lightweight_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void commit_render_lightweight_checkpoint() noexcept {
+        if (lightweight_frames_.empty()) {
+            render_lightweight_active_ = false;
+            return;
+        }
+        lightweight_frames_.pop_back(); // discard side log (committed)
+        render_lightweight_active_ = !lightweight_frames_.empty();
+        lightweight_commit_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Roll back field mutations stored in the current lightweight frame.
+    std::size_t rollback_render_lightweight_checkpoint() noexcept {
+        if (lightweight_frames_.empty()) {
+            render_lightweight_active_ = false;
+            return 0;
+        }
+        auto& frame = lightweight_frames_.back();
+        std::size_t count = 0;
+        for (auto it = frame.rbegin(); it != frame.rend(); ++it) {
+            if (it->status != MutationStatus::Committed)
+                continue;
+            if (try_rollback_record(*it).has_value())
+                ++count;
+        }
+        lightweight_frames_.pop_back();
+        render_lightweight_active_ = !lightweight_frames_.empty();
+        lightweight_rollback_total_.fetch_add(1, std::memory_order_relaxed);
+        return count;
+    }
+
+    // Commit all nested lightweight frames (frame boundary auto-commit).
+    std::size_t commit_all_render_lightweight_checkpoints() noexcept {
+        std::size_t n = 0;
+        while (!lightweight_frames_.empty()) {
+            commit_render_lightweight_checkpoint();
+            ++n;
+        }
+        return n;
+    }
+
+    [[nodiscard]] bool render_lightweight_active() const noexcept {
+        return render_lightweight_active_;
+    }
+    [[nodiscard]] std::size_t render_lightweight_depth() const noexcept {
+        return lightweight_frames_.size();
+    }
+    [[nodiscard]] std::uint64_t lightweight_total() const noexcept {
+        return lightweight_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t lightweight_commit_total() const noexcept {
+        return lightweight_commit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t lightweight_rollback_total() const noexcept {
+        return lightweight_rollback_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t lightweight_records_total() const noexcept {
+        return lightweight_records_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #142: record a subtree-level mutation (e.g. mutate:replace-subtree).
@@ -6614,6 +6707,11 @@ public:
     std::uint64_t workspace_cow_epoch_ = 0;
     mutable std::atomic<std::uint64_t> pinned_across_boundaries_{0};
     mutable std::atomic<std::uint64_t> cross_boundary_validations_{0};
+
+    // Issue #1355: nested lightweight field-mutation frames (side log).
+    // Not part of durable mutation_log_; committed frames are discarded.
+    std::vector<std::vector<MutationRecord>> lightweight_frames_;
+    bool render_lightweight_active_ = false;
 
     // Issue #250: atomic-batch state. Placed at the end of the
     // class (after `root`) to preserve the SoA field ordering

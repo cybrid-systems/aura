@@ -5605,6 +5605,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_ffi_hot_path_dispatches{0};
     std::atomic<std::uint64_t> render_ffi_hotpath_enter_total{0};
     std::atomic<std::uint64_t> render_ffi_bind_success{0};
+    // #1355: render-aware lightweight mutation checkpoints
+    std::atomic<std::uint64_t> mutation_lightweight_total{0};
+    std::atomic<std::uint64_t> mutation_lightweight_commit_total{0};
+    std::atomic<std::uint64_t> mutation_lightweight_rollback_total{0};
+    std::atomic<std::uint64_t> mutation_lightweight_frame_commit_total{0};
     std::atomic<std::uint64_t> tenant_principal_scaffold{1};         // #1183/#1191
     std::atomic<std::uint64_t> render_memory_profiling_supported{1}; // #1184
     std::atomic<std::uint64_t> provenance_rollback_scaffold{1};      // #1185

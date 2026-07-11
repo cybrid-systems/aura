@@ -234,6 +234,11 @@ aura_add_issue_test(test_render_ffi_hotpath)
 aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)
 add_dependencies(all_test_issue_targets test_render_ffi_hotpath)
 
+# Issue #1355: render-aware lightweight mutation checkpoints
+aura_add_issue_test(test_render_mutation_checkpoint)
+aura_issue_test_link_llvm_jit(test_render_mutation_checkpoint)
+add_dependencies(all_test_issue_targets test_render_mutation_checkpoint)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
