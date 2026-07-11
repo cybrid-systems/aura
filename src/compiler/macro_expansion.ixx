@@ -27,6 +27,11 @@ export constexpr int MAX_HYGIENE_DEPTH = 256;
 export extern std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total;
 export extern std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total;
 
+// Issue #1247–#1248 Phase 1: macro-origin provenance + hygiene tracer.
+export extern std::atomic<std::uint64_t> g_macro_origin_provenance_errors;
+export extern std::atomic<std::uint64_t> g_hygiene_tracer_expansions;
+export extern std::atomic<std::uint64_t> g_hygiene_tracer_depth_max;
+
 export struct MacroExpansionDef {
     std::vector<std::string> params;
     bool dotted = false;

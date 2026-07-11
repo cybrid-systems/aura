@@ -171,6 +171,11 @@ thread_local int s_hygiene_depth = 0;
 std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total{0};
 std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
 
+// Issue #1247–#1248 Phase 1: macro-origin provenance + hygiene tracer.
+std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0};
+std::atomic<std::uint64_t> g_hygiene_tracer_expansions{0};
+std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0};
+
 aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                                    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
                                    aura::ast::NodeId body_id,
@@ -201,13 +206,28 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
     if (s_hygiene_depth >= MAX_HYGIENE_DEPTH) {
         if (!s_warned_this_call) {
             s_warned_this_call = true;
+            // Issue #1247: include macro-origin provenance in the diagnostic
+            // so Agents can locate which MacroIntroduced path blew the depth.
+            g_macro_origin_provenance_errors.fetch_add(1, std::memory_order_relaxed);
+            const char* origin = (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced)
+                                     ? "MacroIntroduced"
+                                     : "User";
             std::fprintf(stderr,
-                         "[#365 warning] clone_macro_body exceeded "
-                         "MAX_HYGIENE_DEPTH=%d; falling back to unhygienic "
-                         "substitution (original name).\n",
-                         MAX_HYGIENE_DEPTH);
+                         "[#365/#1247 warning] clone_macro_body exceeded "
+                         "MAX_HYGIENE_DEPTH=%d; marker=%s depth=%d "
+                         "[MacroIntroduced provenance path]; falling back to "
+                         "unhygienic substitution (original name).\n",
+                         MAX_HYGIENE_DEPTH, origin, s_hygiene_depth);
         }
         return NULL_NODE;
+    }
+    // Issue #1248: hygiene provenance tracer — track max depth + expansions.
+    {
+        auto cur = static_cast<std::uint64_t>(s_hygiene_depth);
+        auto prev = g_hygiene_tracer_depth_max.load(std::memory_order_relaxed);
+        while (cur > prev && !g_hygiene_tracer_depth_max.compare_exchange_weak(
+                                 prev, cur, std::memory_order_relaxed)) {
+        }
     }
     if (body_id == NULL_NODE || body_id >= source.size())
         return NULL_NODE;
@@ -467,6 +487,8 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
             if (fiber_id != 0)
                 g_macro_clone_concurrent_fiber_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_clone_hygiene_dirty_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1248: hygiene tracer expansion count (MacroIntroduced stamps).
+            g_hygiene_tracer_expansions.fetch_add(1, std::memory_order_relaxed);
             (void)fiber_id;
             std::vector<aura::ast::NodeId> stack;
             stack.push_back(new_id);

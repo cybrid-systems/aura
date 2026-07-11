@@ -376,6 +376,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             if (ref.is_valid_in(flat) && flat.get_safe(ref)) {
                 (void)ref.validate_with_provenance(flat);
+                // Issue #1250 Phase 1: mandatory COW boundary pin on every
+                // mutate:* StableNodeRef resolution (not opt-in).
+                if (!ref.boundary_pinned) {
+                    ev.pin_stable_ref_for_cow_boundary(ref);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
+                }
                 ev.bump_stable_ref_provenance_enforced();
                 out_node = ref.id;
                 return make_void();
@@ -384,6 +391,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (ref.validate_or_refresh(flat)) {
                 ev.bump_stable_ref_cross_cow_refresh();
                 ev.bump_stable_ref_provenance_enforced();
+                if (!ref.boundary_pinned) {
+                    ev.pin_stable_ref_for_cow_boundary(ref);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
+                }
                 out_node = ref.id;
                 return make_void();
             }
@@ -410,7 +422,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
                                                " >= flat size " + std::to_string(flat.size()));
             }
-            const auto ref = flat.make_ref(node);
+            auto ref = flat.make_ref(node);
             if (!ref.is_valid_in(flat) || !flat.get_safe(ref)) {
                 *ok = false;
                 const auto policy = ev.get_stale_ref_policy();
@@ -425,6 +437,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev.bump_stale_ref_warned_count();
                 return mev("stale-ref", std::string(op) + ": raw node-id is stale");
             }
+            // Issue #1250: promote raw NodeId → pinned StableNodeRef on mutate.
+            if (!ref.boundary_pinned) {
+                ev.pin_stable_ref_for_cow_boundary(ref);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            ev.bump_stable_ref_provenance_enforced();
             out_node = node;
             return make_void();
         }
