@@ -119,6 +119,9 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
     add("verify:parse-coverage-feedback", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
+        // Issue #1347: count harness parse attempts even without a workspace.
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->verify_parse_coverage_total.fetch_add(1, std::memory_order_relaxed);
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_int(0);
@@ -158,8 +161,11 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
             }
             i = (j < text.size()) ? j + 1 : j;
         }
-        if (marked > 0)
+        if (marked > 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->verify_auto_trigger_mutate_total.fetch_add(1, std::memory_order_relaxed);
             ev.bump_sv_self_evo_feedback_parse();
+        }
         return make_int(static_cast<std::int64_t>(marked));
     });
 }
@@ -175,6 +181,9 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
     add("verify:parse-assert-failure", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
+        // Issue #1347: count harness parse attempts even without a workspace.
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->verify_parse_assert_total.fetch_add(1, std::memory_order_relaxed);
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_int(0);
@@ -210,8 +219,11 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
             }
             i = (j < text.size()) ? j + 1 : j;
         }
-        if (marked > 0)
+        if (marked > 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->verify_auto_trigger_mutate_total.fetch_add(1, std::memory_order_relaxed);
             ev.bump_sv_self_evo_feedback_parse();
+        }
         return make_int(static_cast<std::int64_t>(marked));
     });
 

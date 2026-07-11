@@ -115,6 +115,8 @@ export struct LoweringState {
     // doesn't carry a narrowing hint, downstream passes behave as
     // before #280).
     std::uint32_t current_narrowing_evidence = 0;
+    // Issue #1339: MoveOp elided by escape/narrow path in try_lower_linear_type.
+    std::uint64_t linear_move_elided = 0;
 
     // RAII scope guard: saves/restores current_source_id.
     // Place at the top of lower_flat_expr so child processing

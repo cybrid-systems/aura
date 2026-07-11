@@ -5937,6 +5937,56 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> tui_mouse_scaffold_active{1};
     std::atomic<std::uint64_t> tui_mouse_enable_total{0};
     std::atomic<std::uint64_t> tui_games_scaffold_active{1};
+
+    // ── Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep ──
+    std::atomic<std::uint64_t> production_sweep_1336_1348_active{1};
+    // #1336 Incremental TC: infer_flat_partial + solve_delta + dirty prune
+    std::atomic<std::uint64_t> incremental_tc_selective_active{1};
+    std::atomic<std::uint64_t> infer_flat_partial_selective_total{0};
+    std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
+    std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
+    // #1338 Type → IR + DeadCoercionElimination parent-type stamp
+    std::atomic<std::uint64_t> ir_parent_type_stamp_active{1};
+    std::atomic<std::uint64_t> ir_parent_type_stamped_total{0};
+    std::atomic<std::uint64_t> dce_cast_elision_total{0};
+    std::atomic<std::uint64_t> dce_elide_identity_total{0};
+    std::atomic<std::uint64_t> dce_elide_narrow_total{0};
+    std::atomic<std::uint64_t> dce_elide_nested_total{0};
+    std::atomic<std::uint64_t> dce_elide_dynamic_total{0};
+    // #1339 Linear ownership mutation + Move elide
+    std::atomic<std::uint64_t> linear_move_elide_active{1};
+    std::atomic<std::uint64_t> linear_move_elided_total{0};
+    std::atomic<std::uint64_t> linear_ownership_escape_check_total{0};
+    // #1340 ADT exhaust recheck
+    std::atomic<std::uint64_t> adt_exhaust_incremental_active{1};
+    // #1341 Blame / elision reason observability
+    std::atomic<std::uint64_t> blame_elision_reason_obs_active{1};
+    // #1344 SV high-level mutate + query:pattern presets
+    std::atomic<std::uint64_t> sv_highlevel_mutate_active{1};
+    std::atomic<std::uint64_t> eda_mutate_modport_total{0};
+    std::atomic<std::uint64_t> eda_mutate_interface_total{0};
+    std::atomic<std::uint64_t> eda_mutate_property_total{0};
+    std::atomic<std::uint64_t> query_sv_pattern_preset_active{1};
+    // #1345 mark_dirty_upward configurable prune
+    std::atomic<std::uint64_t> dirty_upward_prune_active{1};
+    std::atomic<std::uint64_t> dirty_upward_pruned_boundary_total{0};
+    std::atomic<std::uint64_t> dirty_upward_max_depth_config{64};
+    // #1346 StableNodeRef lock-free / monitoring
+    std::atomic<std::uint64_t> stable_ref_lockfree_path_active{1};
+    std::atomic<std::uint64_t> stable_ref_lockfree_validate_total{0};
+    std::atomic<std::uint64_t> stable_ref_stale_refresh_total{0};
+    std::atomic<std::uint64_t> stable_ref_contention_total{0};
+    // #1347 SV verification feedback harness
+    std::atomic<std::uint64_t> sv_feedback_harness_active{1};
+    std::atomic<std::uint64_t> verify_parse_coverage_total{0};
+    std::atomic<std::uint64_t> verify_parse_assert_total{0};
+    std::atomic<std::uint64_t> verify_auto_trigger_mutate_total{0};
+    // #1348 AST long-run compaction
+    std::atomic<std::uint64_t> ast_auto_compact_active{1};
+    std::atomic<std::uint64_t> ast_auto_compact_on_commit_total{0};
+    std::atomic<std::uint64_t> ast_live_nodes_warn_total{0};
+    std::atomic<std::uint64_t> ast_compaction_threshold{1024};
+    std::atomic<std::uint64_t> ast_max_live_nodes{1'000'000};
 };
 
 

@@ -1002,6 +1002,14 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_constraints_processed_total.fetch_add(worklist.size(), std::memory_order_relaxed);
         m->delta_constraints_total.fetch_add(dirty_count_, std::memory_order_relaxed);
+        // Issue #1336: soft-cap large worklists so multi-round
+        // AI mutation never explodes p99. Excess dirty constraints
+        // remain dirty for the next solve_delta / full solve.
+        const auto cap = m->solve_delta_worklist_soft_cap.load(std::memory_order_relaxed);
+        if (cap > 0 && worklist.size() > cap) {
+            worklist.resize(static_cast<std::size_t>(cap));
+            m->solve_delta_worklist_limited_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     std::size_t max_passes = 10;
     // Issue #383: worklist_restart detection. The
@@ -4873,6 +4881,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             const aura::ast::MutationRecord& rec,
                                             aura::diag::DiagnosticCollector& diag,
                                             void* per_defuse_index_tracker) {
+    // Issue #1336: selective incremental TC path entry counter.
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->infer_flat_partial_selective_total.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #411 follow-up #1: per-symbol re-inference
     // wiring. The baseline (ancestor-walk) used
     // `affected_subtree_from_mutation` which marks every

@@ -156,8 +156,14 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
 }
 
 std::optional<NodeView> FlatAST::StableNodeRef::validate_or_refresh(FlatAST& ast) noexcept {
+    // Issue #1346: lock-free hot path — pure atomic reads of generation /
+    // free-slot / provenance fields; no workspace_mtx_ acquisition.
+    // Contended mutation paths still take MutationBoundaryGuard elsewhere.
     if (!refresh_if_stale(ast))
         return std::nullopt;
+    // Stale-refresh already bumped stale_ref_auto_refresh when remap needed;
+    // always count a successful lock-free validate for observability.
+    ast.record_lockfree_stable_ref_validate();
     return ast.get_safe(*this);
 }
 
