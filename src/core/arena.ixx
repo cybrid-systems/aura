@@ -530,6 +530,10 @@ public:
         // last_defrag_saved (so a no-op defrag doesn't reset
         // the last-saved value to 0).
         stats_.defrag_attempted_count++;
+        // Issue #1320: mirror to process-wide policy stats so Agents can
+        // observe live defrag attempts even when arena-local stats are not
+        // queried directly.
+        aura::core::arena_policy::record_defrag_attempt(saved);
         if (saved > 0) {
             if (!caller_wants_clear) {
                 // Auto-alloc path: clear the flag now that we
@@ -676,6 +680,13 @@ private:
     void maybe_auto_compact_on_alloc() noexcept {
         static constexpr double kFragThreshold = 0.30;
         static constexpr double kSmallPoolThreshold = 0.85;
+        // Issue #1320 Phase 1: soft-gate auto-compact during render hot path
+        // so present/draw frames are not jittered by compaction spikes.
+        // Request is preserved; next non-render alloc will act.
+        if (aura::core::arena_policy::in_render_hotpath()) {
+            aura::core::arena_policy::record_compact_soft_gated_render();
+            return;
+        }
         const auto snap = stats();
         const bool small_high = small_pool_.utilization() >= kSmallPoolThreshold;
         const bool frag_high = snap.fragmentation_ratio() >= kFragThreshold;

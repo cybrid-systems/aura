@@ -5833,6 +5833,37 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_frame_reset_total{0};     // #1315
     std::atomic<std::uint64_t> render_frame_reset_deferred{0};  // #1315
     std::atomic<std::uint64_t> render_frame_reset_reclaimed{0}; // #1315
+
+    // ── Issues #1316–#1320: render JIT stability, render obs, SoA migrate, gap, defrag ──
+    std::atomic<std::uint64_t> production_sweep_1316_1320_active{1};
+    // #1316 render hot-path deopt throttle / stable marking
+    std::atomic<std::uint64_t> render_stable_hot_path_active{1};
+    std::atomic<std::uint64_t> render_jit_deopt_applied{0};
+    std::atomic<std::uint64_t> render_jit_deopt_throttled{0};
+    std::atomic<std::uint64_t> render_jit_aot_prefer_hits{0};
+    std::atomic<std::uint64_t> render_deopt_throttle_window_ms{500};
+    std::atomic<std::uint64_t> render_hotpath_enter_total{0};
+    // #1317 render observability + RENDER_PRIMITIVE_META
+    std::atomic<std::uint64_t> render_primitive_meta_active{1};
+    std::atomic<std::uint64_t> render_obs_query_hits{0};
+    std::atomic<std::uint64_t> terminal_diff_stats_queries{0};
+    std::atomic<std::uint64_t> terminal_diff_cells_total{0};
+    // #1318 IR SoA full migration progressive hooks
+    std::atomic<std::uint64_t> ir_soa_migration_phase2_active{1};
+    std::atomic<std::uint64_t> ir_soa_hotpath_hits{0};
+    std::atomic<std::uint64_t> ir_soa_dual_emit_bridge_count{0};
+    std::atomic<std::uint64_t> ir_soa_dirty_short_circuit{0};
+    // #1319 gap_buffer structural mutate scaffold
+    std::atomic<std::uint64_t> gap_buffer_structural_mutate_active{1};
+    std::atomic<std::uint64_t> gap_buffer_structural_mutate_hits{0};
+    std::atomic<std::uint64_t> gap_buffer_insert_total{0};
+    std::atomic<std::uint64_t> gap_buffer_erase_total{0};
+    // #1320 live defrag + auto-compact policy (render soft-gate)
+    std::atomic<std::uint64_t> arena_live_defrag_policy_active{1};
+    std::atomic<std::uint64_t> arena_defrag_attempted_total{0};
+    std::atomic<std::uint64_t> arena_defrag_saved_bytes_total{0};
+    std::atomic<std::uint64_t> arena_compact_soft_gated_render{0};
+    std::atomic<std::uint64_t> arena_defrag_now_calls{0};
 };
 
 

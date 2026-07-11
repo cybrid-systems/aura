@@ -7,6 +7,7 @@ module;
 #include "messaging_bridge.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
+#include "core/arena_auto_policy_stats.h"
 
 module aura.compiler.evaluator;
 
@@ -376,7 +377,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
             return make_int(0);
         }
-        return make_int(static_cast<std::int64_t>(ev.arena_->defrag()));
+        // Explicit Agent call always runs (soft-gate only applies to auto-compact #1320).
+        auto saved = static_cast<std::int64_t>(ev.arena_->defrag());
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->arena_defrag_attempted_total.fetch_add(1, std::memory_order_relaxed);
+            m->arena_defrag_saved_bytes_total.fetch_add(
+                static_cast<std::uint64_t>(saved > 0 ? saved : 0), std::memory_order_relaxed);
+        }
+        return make_int(saved);
     });
     // (arena:request-defrag) — Issue #300 Phase 3: set the
     // defrag_requested flag on the main arena. The actual defrag
@@ -392,10 +400,30 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_bool(!was_set); // true = newly set, false = already set
     });
 
+    // ── Issue #1320 Phase 1: explicit live-defrag policy primitive ──
+    // (arena:defrag-now) — always run defrag (even during render soft-gate
+    // soft-gate is only for auto path; Agent explicit call always acts).
+    add("arena:defrag-now", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (!ev.arena_)
+            return make_int(0);
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        auto saved = static_cast<std::int64_t>(ev.arena_->defrag());
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->arena_defrag_now_calls.fetch_add(1, std::memory_order_relaxed);
+            m->arena_defrag_attempted_total.fetch_add(1, std::memory_order_relaxed);
+            m->arena_defrag_saved_bytes_total.fetch_add(
+                static_cast<std::uint64_t>(saved > 0 ? saved : 0), std::memory_order_relaxed);
+        }
+        return make_int(saved);
+    });
+
     // ── Issue #1315 Phase 1: render-frame arena lifecycle ──
     // (arena-render-frame-reset) — quick per-frame boundary for TUI loops.
     // Phase 1: temp_arena_ reset when safe + metrics; full time-boxed compact
-    // is follow-up.
+    // is follow-up. #1320: also sync soft-gate counters for Agent policy.
     add("arena-render-frame-reset", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (ev.any_active_mutation_boundary()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -412,6 +440,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             m->render_frame_reset_total.fetch_add(1, std::memory_order_relaxed);
             m->render_frame_reset_reclaimed.fetch_add(static_cast<std::uint64_t>(reclaimed),
                                                       std::memory_order_relaxed);
+            // Mirror process-wide soft-gate / defrag policy counters.
+            m->arena_compact_soft_gated_render.store(
+                aura::core::arena_policy::compact_soft_gated_render_total.load(
+                    std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->arena_defrag_attempted_total.store(
+                aura::core::arena_policy::defrag_attempted_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
         }
         return make_int(reclaimed);
     });

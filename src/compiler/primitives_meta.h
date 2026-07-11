@@ -32,6 +32,8 @@ inline constexpr std::string_view kPrimCategoryEda = "eda";
 inline constexpr std::string_view kPrimCategorySva = "sva";
 inline constexpr std::string_view kPrimCategoryVerification = "verification";
 inline constexpr std::string_view kPrimCategoryGeneral = "general";
+// Issue #1317: first-class rendering domain for Agent discovery.
+inline constexpr std::string_view kPrimCategoryRendering = "rendering";
 
 // Issue #697 extension kit version (bumped when schema/contracts change).
 // #709: capture contract + fast slot dispatch + registry stats.

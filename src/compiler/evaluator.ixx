@@ -4037,10 +4037,44 @@ public:
         }
     }
     void bump_jit_deopt_on_mutate() const noexcept {
+        // Issue #1316: under render hot path, throttle deopt storms (≤1 / 500ms).
+        if (aura::core::arena_policy::in_render_hotpath()) {
+            bump_render_jit_deopt_throttled();
+            return;
+        }
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->jit_deopt_on_mutate_total.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+    // Issue #1316: render-stable deopt throttle (AC1: never more than once per 500ms).
+    void bump_render_jit_deopt_throttled() const noexcept {
+        const auto window_ms =
+            compiler_metrics_
+                ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                      ->render_deopt_throttle_window_ms.load(std::memory_order_relaxed)
+                : 500ull;
+        const bool apply = aura::core::arena_policy::try_render_deopt_throttle(window_ms);
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            if (apply) {
+                m->render_jit_deopt_applied.fetch_add(1, std::memory_order_relaxed);
+                m->jit_deopt_on_mutate_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                m->render_jit_deopt_throttled.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    void enter_render_hotpath() const noexcept {
+        aura::core::arena_policy::enter_render_hotpath();
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hotpath_enter_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void exit_render_hotpath() const noexcept { aura::core::arena_policy::exit_render_hotpath(); }
+    [[nodiscard]] bool in_render_hotpath() const noexcept {
+        return aura::core::arena_policy::in_render_hotpath();
     }
     void bump_jit_fallback_to_interpreter() const noexcept {
         if (compiler_metrics_) {
