@@ -431,10 +431,21 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(0);
         }
         std::int64_t reclaimed = 0;
+        // Issue #1355: auto-commit any leftover lightweight frames at frame boundary.
+        if (ev.workspace_flat_ && ev.workspace_flat_->render_lightweight_active()) {
+            const auto n = ev.workspace_flat_->commit_all_render_lightweight_checkpoints();
+            reclaimed += static_cast<std::int64_t>(n);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->mutation_lightweight_frame_commit_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                                     std::memory_order_relaxed);
+                m->mutation_lightweight_commit_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                               std::memory_order_relaxed);
+            }
+        }
         if (ev.temp_arena_) {
             // O(1) reset of temp arena used for frame scratch.
             ev.temp_arena_->reset();
-            reclaimed = 1;
+            reclaimed = reclaimed > 0 ? reclaimed : 1;
         }
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->render_frame_reset_total.fetch_add(1, std::memory_order_relaxed);
@@ -448,8 +459,83 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             m->arena_defrag_attempted_total.store(
                 aura::core::arena_policy::defrag_attempted_total.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
+            // Sync lightweight counters from FlatAST.
+            if (ev.workspace_flat_) {
+                m->mutation_lightweight_total.store(ev.workspace_flat_->lightweight_total(),
+                                                    std::memory_order_relaxed);
+                m->mutation_lightweight_commit_total.store(
+                    ev.workspace_flat_->lightweight_commit_total(), std::memory_order_relaxed);
+                m->mutation_lightweight_rollback_total.store(
+                    ev.workspace_flat_->lightweight_rollback_total(), std::memory_order_relaxed);
+            }
         }
         return make_int(reclaimed);
+    });
+
+    // Issue #1355: Agent/test query for lightweight checkpoint stats.
+    add("query:mutation-lightweight-stats", [&ev](const auto&) -> EvalValue {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        auto load = [](const std::atomic<std::uint64_t>& a) {
+            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+        };
+        std::int64_t total = 0, commit = 0, rollback = 0, records = 0, depth = 0, active = 0;
+        if (ev.workspace_flat_) {
+            total = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total());
+            commit = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_commit_total());
+            rollback = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total());
+            records = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_records_total());
+            depth = static_cast<std::int64_t>(ev.workspace_flat_->render_lightweight_depth());
+            active = ev.workspace_flat_->render_lightweight_active() ? 1 : 0;
+        } else if (m) {
+            total = load(m->mutation_lightweight_total);
+            commit = load(m->mutation_lightweight_commit_total);
+            rollback = load(m->mutation_lightweight_rollback_total);
+        }
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::format(
+            "total={} commit={} rollback={} records={} depth={} active={} frame_commit={} "
+            "schema=1355",
+            total, commit, rollback, records, depth, active,
+            m ? load(m->mutation_lightweight_frame_commit_total) : 0));
+        return types::make_string(sidx);
+    });
+
+    // Issue #1355: test hooks for render hot path enter/exit (thin wrappers).
+    add("render-hotpath-enter", [&ev](const auto&) -> EvalValue {
+        ev.enter_render_hotpath();
+        return make_bool(true);
+    });
+    add("render-hotpath-exit", [&ev](const auto&) -> EvalValue {
+        ev.exit_render_hotpath();
+        return make_bool(true);
+    });
+
+    // Issue #1355: int probes for Agent/tests.
+    add("mutation-lightweight-total", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total()));
+    });
+    add("mutation-lightweight-commit", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_commit_total()));
+    });
+    add("mutation-lightweight-rollback", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(
+            static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total()));
+    });
+    add("mutation-lightweight-records", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_records_total()));
+    });
+    add("mutation-log-size", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
     });
 
     add("query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
