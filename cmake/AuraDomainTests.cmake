@@ -146,6 +146,11 @@ aura_add_issue_test(test_production_sweep_1281_1285)
 aura_issue_test_link_llvm_jit(test_production_sweep_1281_1285)
 add_dependencies(all_test_issue_targets test_production_sweep_1281_1285)
 
+# Issues #1286–#1290: invalidate/block-dirty, closure epoch, GuardShape, JIT fail-fast, ownership Lambda
+aura_add_issue_test(test_production_sweep_1286_1290)
+aura_issue_test_link_llvm_jit(test_production_sweep_1286_1290)
+add_dependencies(all_test_issue_targets test_production_sweep_1286_1290)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

@@ -787,7 +787,12 @@ struct LLVMBuilder {
             // matches, 0 if deopt). The IR's subsequent Branch uses
             // the result to choose specialized vs generic-trampoline.
             case OpGuardShape: {
+                // Issue #1288: unified GuardShape + linear ownership probe
+                // (same linear_safety_probe as interpreter post-invalidate path).
                 linear_safety_probe();
+                if (metrics && inst.linear_ownership_state != 0)
+                    metrics->guard_shape_linear_unified_checks.fetch_add(1,
+                                                                         std::memory_order_relaxed);
                 // Issue #538: trust occurrence-narrowing evidence and
                 // skip the runtime shape check (mirrors ir_executor).
                 if (inst.narrow_evidence != 0) {
@@ -1773,55 +1778,26 @@ struct LLVMBuilder {
             }
 
             default: {
-                // Issue #170 Phase 1 / item #1: visible default.
-                // Previously this branch silently wrote 0 to the
-                // result slot and reported 'success' to the caller,
-                // which is a SOUNDNESS BUG: any function that hits
-                // an unhandled opcode (e.g. Raise, IsError, TryBegin,
-                // TryEnd — all deferred to Phase 1 / item #2) would
-                // produce wrong output with no signal.
+                // Issue #1289 (P0 business logic): fail-fast on unhandled
+                // opcodes. Pre-#1289 wrote VOID (11) to ops[0] and returned
+                // true, so compile() continued and the JIT'd function silently
+                // produced wrong values. Returning false makes compile()
+                // return nullptr → caller falls back to the IR interpreter
+                // (always correct, possibly slower).
                 //
-                // Now: increment the unhandled-opcode counter, log
-                // a one-time warning to stderr (rate-limited via
-                // std::atomic so multi-threaded compiles don't spam),
-                // and write a tagged sentinel to the result slot.
-                // The sentinel is make_void() (tag 11) — obviously
-                // not a valid int/float/pair/closure/function
-                // return value, so a future consumer (test, fuzz
-                // harness, observability tool) can detect the
-                // anomaly immediately.
-                //
-                // We do NOT emit llvm::IRBuilder::CreateUnreachable
-                // here because that would terminate the current
-                // basic block and break control-flow joining for
-                // subsequent instructions in the same block. The
-                // counter is the observability hook; the spec
-                // controller (Phase 2 / item #1) will use it to
-                // auto-deopt to the interpreter for hot functions.
+                // Observability retained: unhandled_opcode_count,
+                // per-function fn_unhandled, fallback_count, and
+                // aura_notify_jit_unhandled_opcode for deopt/invalidate.
                 if (metrics) {
                     metrics->unhandled_opcode_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics->fallback_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics->unhandled_fail_fast_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Issue #193: also bump the per-function counter
                 // so spec_jit_controller can apply deopt per-function
                 // instead of conservatively deopting the whole process.
-                // The counter lives on the builder; Impl::compile()
-                // reads it back after the lower() loop and folds it
-                // into fn_unhandled_counts_.
                 if (fn_unhandled) {
                     fn_unhandled->fetch_add(1, std::memory_order_relaxed);
-                }
-                if (inst.ops[0] < fn.local_count)
-                    store(inst.ops[0], c64(11)); // VOID sentinel
-                // Issue #461: bump the fallback counter even on
-                // the P0 default path. The follow-up replaces
-                // the sentinel write with an LLVM call to
-                // `aura_jit_fallback_to_interpreter` (requires
-                // module-level function declaration); for now
-                // we count the route and keep the existing
-                // sentinel so the metric is observable but the
-                // behavior matches the pre-#461 default.
-                if (metrics) {
-                    metrics->fallback_count.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Issue #657: notify compiler service for unhandled-opcode
                 // deopt / invalidate observability.
@@ -1833,11 +1809,13 @@ struct LLVMBuilder {
                 static std::atomic<bool> warned{false};
                 bool expected = false;
                 if (warned.compare_exchange_strong(expected, true)) {
-                    std::fprintf(stderr, "aura_jit: WARNING — unhandled IROpcode in "
-                                         "lower() (counter exposed via Metrics). "
-                                         "Deferred to Issue #170 Phase 1 / item #2.\n");
+                    std::fprintf(stderr,
+                                 "aura_jit: WARNING — unhandled IROpcode in "
+                                 "lower(); compile fails → interpreter fallback "
+                                 "(Issue #1289 fail-fast). Function=%s\n",
+                                 (fn.name && fn.name[0] != '\0') ? fn.name : "<anon>");
                 }
-                return true;
+                return false; // Issue #1289: fail compile → interpreter
             }
         }
     }

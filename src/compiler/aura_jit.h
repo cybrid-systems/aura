@@ -199,6 +199,10 @@ public:
         // Bumped each time lower() handles those opcodes so Agents can
         // confirm JIT EH coverage vs unhandled_opcode_count.
         std::atomic<std::uint64_t> exception_opcode_lowered{0};
+        // Issue #1289: fail-fast default branch (return false → compile nullptr).
+        std::atomic<std::uint64_t> unhandled_fail_fast_total{0};
+        // Issue #1288: GuardShape paths that also probe linear_ownership_state.
+        std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.

@@ -5527,18 +5527,20 @@ bool OwnershipEnv::validate_ownership_impl(const FlatAST& flat, const StringPool
             return;
         }
         if (v.tag == NodeTag::Lambda) {
-            // (lambda (params...) body) — children: [0..n-1]=params, [n]=body
-            // Params and body are in a new scope.
+            // Issue #1290: Lambda params live in param_data_ (NodeView::params),
+            // NOT in children_. FlatAST::add_lambda stores children_ as size 1
+            // (body only). Pre-#1290 iterated v.children for "params" — with
+            // children.size()==1 the loop ran 0 times, so linear params were
+            // never added to introduced and leaks were silently missed.
             scope_stack.push_back({id, {}});
-            // Add all param names to the new scope's introduced set.
-            for (std::size_t i = 0; i + 1 < v.children.size(); ++i) {
-                auto param = flat.get(v.child(i));
-                if (param.tag == NodeTag::Variable && param.sym_id != INVALID_SYM) {
-                    auto name = std::string(pool.resolve(param.sym_id));
+            for (auto param_sym : v.params) {
+                if (param_sym == INVALID_SYM)
+                    continue;
+                auto name = std::string(pool.resolve(param_sym));
+                if (!name.empty())
                     scope_stack.back().introduced.insert(name);
-                }
             }
-            // Process body.
+            // Process body (children_[0] only).
             if (!v.children.empty()) {
                 auto last = v.children.back();
                 if (last != NULL_NODE)

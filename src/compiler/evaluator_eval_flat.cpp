@@ -133,6 +133,9 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
 
 // Issue #681: pre-call epoch/version enforcement for live closures
 // held across mutate:rebind / invalidate_function.
+// Issue #1287: dual-path apply_closure must treat bridge_epoch /
+// EnvFrame version mismatch as mandatory safe fallback (no dangling
+// flat*/pool* use after mutation).
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
@@ -141,14 +144,17 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         stale = true;
         if (m) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+            m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
             record_epoch_stale_steal_caught(m);
         }
     }
     if (cl.env_id != NULL_ENV_ID) {
         if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
             stale = true;
-            if (m)
+            if (m) {
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+                m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     if (stale)
@@ -319,10 +325,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
             {
+                // Issue #1287: mandatory bridge_epoch safety — never eval
+                // through stale flat*/pool* after mutation invalidate.
                 const auto cur_epoch = current_bridge_epoch();
                 if (is_bridge_stale(cl_copy.bridge_epoch, cur_epoch)) {
                     if (metrics) {
                         metrics->compiler_closure_safe_fallbacks.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->closure_bridge_epoch_safety_enforced.fetch_add(
                             1, std::memory_order_relaxed);
                         record_epoch_stale_steal_caught(metrics);
                     }
