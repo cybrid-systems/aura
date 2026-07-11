@@ -417,7 +417,11 @@ extern "C" {
 // === Closure runtime ===
 static std::vector<int64_t> g_closure_func_ids;          // func_id for each closure
 static std::vector<std::vector<int64_t>> g_closure_envs; // env for each closure (heap)
-static std::vector<int64_t*> g_arena_closure_envs;       // arena env ptrs (parallel, null=heap)
+// Parallel to g_closure_envs, indexed by cid (Issue #1309):
+// 1 = allocated via aura_alloc_closure_arena (use freeable env storage),
+// 0 = heap-only (aura_alloc_closure) — never take arena path.
+static std::vector<std::uint8_t> g_closure_is_arena;
+static std::vector<int64_t*> g_arena_closure_envs; // env ptrs for is_arena==1 cids
 // Issue #1302: allocated slot count per arena env (bounds for OOB-safe reads).
 static std::vector<size_t> g_arena_closure_env_sizes;
 // Issue #660 Option 1: closure name for cross-module identity. Set via
@@ -447,6 +451,11 @@ int64_t aura_alloc_closure(int64_t func_id) {
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();
+    // Issue #1309: keep parallel arrays indexed by cid.
+    g_closure_is_arena.push_back(0);
+    g_arena_closure_envs.push_back(nullptr);
+    g_arena_closure_env_sizes.push_back(0);
+    g_closure_names.emplace_back();
     aura_unlock_workspace_write();
     return id;
 }
@@ -458,7 +467,8 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();           // still push heap env as fallback
-    g_arena_closure_envs.push_back(nullptr); // arena ptr, set by later captures
+    g_closure_is_arena.push_back(1);         // Issue #1309: arena-mode flag
+    g_arena_closure_envs.push_back(nullptr); // env ptr, set by later captures
     g_arena_closure_env_sizes.push_back(0);  // Issue #1302
     g_closure_names.emplace_back();          // Issue #660: parallel name array
     aura_unlock_workspace_write();
@@ -495,11 +505,14 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         aura_unlock_workspace_write();
         return;
     }
-    // Arena env path: allocate from TL arena on first capture
-    if (cid < g_arena_closure_envs.size()) {
+    // Issue #1309: only arena-mode closures (is_arena==1) use freeable env storage.
+    // Heap-only closures must never enter this path (pre-#1309 used cid < size()
+    // which mis-routed heap closures into arena storage).
+    const bool is_arena = cid < g_closure_is_arena.size() && g_closure_is_arena[cid] != 0;
+    if (is_arena && cid < g_arena_closure_envs.size()) {
         int64_t*& arena_ptr = g_arena_closure_envs[cid];
         if (arena_ptr) {
-            // Env already allocated on arena — write only if in bounds.
+            // Env already allocated — write only if in bounds.
             // Issue #1302: never write past recorded allocation size.
             size_t asz =
                 cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
@@ -508,11 +521,10 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
             aura_unlock_workspace_write();
             return;
         }
-        // First capture for this arena closure: allocate env from arena
-        // Estimate env size from idx (grow to fit)
+        // First capture: allocate freeable env (Issue #1310: malloc, not TL
+        // bump arena — reset can free without leaking).
         size_t env_size = static_cast<size_t>(idx) + 4; // pad for future captures
-        int64_t* arena_env =
-            (int64_t*)tl_arena_alloc(&g_tl_arena, env_size * sizeof(int64_t), alignof(int64_t));
+        int64_t* arena_env = static_cast<int64_t*>(std::malloc(env_size * sizeof(int64_t)));
         if (arena_env) {
             for (size_t i = 0; i < env_size; ++i)
                 arena_env[i] = 0;
@@ -526,7 +538,7 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
             return;
         }
     }
-    // Fallback: use heap std::vector
+    // Heap-only path (or malloc OOM fallback): use g_closure_envs vector
     auto& env = g_closure_envs[cid];
     if (static_cast<size_t>(idx) >= env.size())
         env.resize(static_cast<size_t>(idx) + 1);
@@ -662,9 +674,12 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
                     locals[i] = 0;
             }
 
-            // Place captured env values first (prefer arena env, fallback to heap)
+            // Place captured env values first (arena-mode freeable env, else heap)
             size_t cid_cast = static_cast<size_t>(closure_id);
-            if (cid_cast < g_arena_closure_envs.size() && g_arena_closure_envs[cid_cast]) {
+            const bool use_arena =
+                cid_cast < g_closure_is_arena.size() && g_closure_is_arena[cid_cast] != 0 &&
+                cid_cast < g_arena_closure_envs.size() && g_arena_closure_envs[cid_cast];
+            if (use_arena) {
                 int64_t* arena_env = g_arena_closure_envs[cid_cast];
                 // Issue #1302: bound by recorded arena allocation size.
                 size_t asz = cid_cast < g_arena_closure_env_sizes.size()
@@ -739,8 +754,11 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             locals[i] = 0;
     }
 
-    // Place captured env values first (prefer arena env, fallback to heap)
-    if (slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]) {
+    // Place captured env values first (arena-mode freeable env, else heap)
+    const bool slow_use_arena =
+        slow_cid < g_closure_is_arena.size() && g_closure_is_arena[slow_cid] != 0 &&
+        slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid];
+    if (slow_use_arena) {
         int64_t* arena_env = g_arena_closure_envs[slow_cid];
         // Issue #1302: bound by recorded arena allocation size.
         size_t asz =
@@ -759,12 +777,9 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // Place call arguments after env
     int32_t nargs = argc < entry.arg_count ? static_cast<int32_t>(argc) : entry.arg_count;
     size_t env_count_check =
-        slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]
-            ? static_cast<size_t>(entry.env_count)
-            : g_closure_envs[slow_cid].size();
-    // Prefer actual arena size when smaller than env_count (partial capture).
-    if (slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid] &&
-        slow_cid < g_arena_closure_env_sizes.size()) {
+        slow_use_arena ? static_cast<size_t>(entry.env_count) : g_closure_envs[slow_cid].size();
+    // Prefer actual freeable env size when smaller than env_count (partial capture).
+    if (slow_use_arena && slow_cid < g_arena_closure_env_sizes.size()) {
         env_count_check = std::min(env_count_check, g_arena_closure_env_sizes[slow_cid]);
     }
     int32_t env_offset = static_cast<int32_t>(env_count_check);
@@ -1404,9 +1419,12 @@ void aura_newline() {
 // 2 bits of every encoded float are 0 (same shape as fixnums —
 // the v2 range check `v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2`
 // disambiguates).
+// Issue #1307 (P0): mutex — concurrent push_back + read was UB.
 static std::vector<double> g_float_pool;
+static std::mutex g_float_pool_mtx;
 
 std::int64_t aura_alloc_float(double d) {
+    std::lock_guard<std::mutex> lock(g_float_pool_mtx);
     std::int64_t idx = (std::int64_t)g_float_pool.size();
     g_float_pool.push_back(d);
     return aura::compiler::types::make_float_raw_v2(static_cast<std::uint64_t>(idx));
@@ -1416,6 +1434,7 @@ double aura_float_ref(std::int64_t val) {
     if (!aura::compiler::types::is_float_raw_v2(val))
         return 0.0;
     std::uint64_t idx = aura::compiler::types::float_idx_raw_v2(val);
+    std::lock_guard<std::mutex> lock(g_float_pool_mtx);
     if (idx < g_float_pool.size())
         return g_float_pool[(std::size_t)idx];
     return 0.0;
@@ -1423,28 +1442,39 @@ double aura_float_ref(std::int64_t val) {
 
 // ── String pool ────────────────────────────────────────────
 // Uses EvalValue-compatible encoding: STRING_BIAS_VAL - idx
+// Issue #1306 (P0): mutex — concurrent push_back + index read was UB.
 static std::vector<std::string> g_string_pool;
+static std::mutex g_string_pool_mtx;
 
 // Expose the JIT string pool for use by the evaluator's hash wrappers
 // (defined in service.ixx). Returns pointer to the pool vector.
+// Callers must treat content as snapshot-unstable across allocs;
+// prefer aura_jit_pool_string under the pool lock.
 const std::vector<std::string>* aura_jit_pool_ptr() {
     return &g_string_pool;
 }
 
-// Access string by index from JIT pool
+// Access string by index from JIT pool (TLS copy so pointer stays valid
+// until next call on this thread — safe vs concurrent push_back).
 const char* aura_jit_pool_string(std::size_t idx) {
-    if (idx < g_string_pool.size())
-        return g_string_pool[idx].c_str();
+    static thread_local std::string tls;
+    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    if (idx < g_string_pool.size()) {
+        tls = g_string_pool[idx];
+        return tls.c_str();
+    }
     return nullptr;
 }
 
 // Get JIT pool size
 std::size_t aura_jit_pool_size() {
+    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
     return g_string_pool.size();
 }
 
 std::int64_t aura_alloc_string(const char* s) {
     using aura::compiler::types::make_string_raw_v2;
+    std::lock_guard<std::mutex> lock(g_string_pool_mtx); // Issue #1306
     std::int64_t idx = (std::int64_t)g_string_pool.size();
     g_string_pool.push_back(s ? s : "");
     // Issue #181 Cycle 2: v2 string encoding.
@@ -1456,8 +1486,13 @@ const char* aura_string_ref(std::int64_t val) {
     if (!aura::compiler::types::is_string_raw_v2(val))
         return "";
     std::uint64_t idx = string_idx_raw_v2(val);
-    if (idx < g_string_pool.size())
-        return g_string_pool[(std::size_t)idx].c_str();
+    // Issue #1306: TLS copy so returned pointer is stable vs concurrent alloc.
+    static thread_local std::string tls_ref;
+    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    if (idx < g_string_pool.size()) {
+        tls_ref = g_string_pool[(std::size_t)idx];
+        return tls_ref.c_str();
+    }
     return "";
 }
 
@@ -1470,8 +1505,12 @@ const char* aura_jit_string_content(std::int64_t val) {
     if (!aura::compiler::types::is_string_raw_v2(val))
         return nullptr;
     std::uint64_t idx = string_idx_raw_v2(val);
-    if (idx < g_string_pool.size())
-        return g_string_pool[(std::size_t)idx].c_str();
+    static thread_local std::string tls_content;
+    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    if (idx < g_string_pool.size()) {
+        tls_content = g_string_pool[(std::size_t)idx];
+        return tls_content.c_str();
+    }
     return nullptr;
 }
 
@@ -1510,10 +1549,14 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
     // String comparison: both use g_string_pool encoding (STRING_BIAS_VAL - idx)
     if (stored_key <= -9000000000000000000LL && search_key <= -9000000000000000000LL) {
         // Compare content via g_string_pool (JIT runtime's string storage)
+        // Issue #1306: lock pool for concurrent safety.
         auto si = static_cast<std::size_t>(-stored_key - 9000000000000000000LL);
         auto qi = static_cast<std::size_t>(-search_key - 9000000000000000000LL);
-        if (si < g_string_pool.size() && qi < g_string_pool.size())
-            return (g_string_pool[si] == g_string_pool[qi]) ? 1 : 0;
+        {
+            std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+            if (si < g_string_pool.size() && qi < g_string_pool.size())
+                return (g_string_pool[si] == g_string_pool[qi]) ? 1 : 0;
+        }
         // Fallback: evaluator heap comparison (converted keys)
         if (g_hash_str_eq_fn)
             return g_hash_str_eq_fn(stored_key, search_key);
@@ -1537,8 +1580,15 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
 void aura_reset_runtime() {
     g_closure_func_ids.clear();
     g_closure_envs.clear();
+    // Issue #1310: free malloc'd arena-mode env buffers (pre-#1310 used
+    // TL bump allocator so clear() leaked permanently per thread).
+    for (int64_t* p : g_arena_closure_envs) {
+        if (p)
+            std::free(p);
+    }
     g_arena_closure_envs.clear();
     g_arena_closure_env_sizes.clear(); // Issue #1302
+    g_closure_is_arena.clear();        // Issue #1309
     g_closure_names.clear();
     g_jit_fns_overflow.clear(); // Issue #1304
     g_jit_fns_by_name.clear();
@@ -1555,8 +1605,15 @@ void aura_reset_runtime() {
     // sessions, fuzz iterations, multi-session tests) this is
     // a real memory leak. The pools keep their allocated
     // capacity for reuse; only the size counters reset.
-    g_string_pool.clear();
-    g_float_pool.clear();
+    // Issue #1306/#1307: lock pools during clear.
+    {
+        std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+        g_string_pool.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_float_pool_mtx);
+        g_float_pool.clear();
+    }
     // Issue #137: free hash tables. The `hash` primitive
     // (evaluator_eval_flat.cpp) creates these via FlatHashTable::create
     // and stores them in g_hash_tables; they're normally only

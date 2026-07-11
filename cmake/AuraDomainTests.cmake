@@ -166,6 +166,11 @@ aura_add_issue_test(test_production_sweep_1301_1305)
 aura_issue_test_link_llvm_jit(test_production_sweep_1301_1305)
 add_dependencies(all_test_issue_targets test_production_sweep_1301_1305)
 
+# Issues #1306–#1310: string/float pool races, last_module lock, is_arena, free envs
+aura_add_issue_test(test_production_sweep_1306_1310)
+aura_issue_test_link_llvm_jit(test_production_sweep_1306_1310)
+add_dependencies(all_test_issue_targets test_production_sweep_1306_1310)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

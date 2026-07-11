@@ -5811,6 +5811,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_closure_name_fallback_fixed{1};  // #1303
     std::atomic<std::uint64_t> jit_fns_overflow_map_active{1};      // #1304
     std::atomic<std::uint64_t> jit_closure_cache_write_lock{1};     // #1305
+
+    // ── Issues #1306–#1310: string/float pool races, last_module lock, is_arena, free envs ──
+    std::atomic<std::uint64_t> production_sweep_1306_1310_active{1};
+    std::atomic<std::uint64_t> jit_string_pool_mutex{1};       // #1306
+    std::atomic<std::uint64_t> jit_float_pool_mutex{1};        // #1307
+    std::atomic<std::uint64_t> jit_last_module_aot_lock{1};    // #1308
+    std::atomic<std::uint64_t> jit_closure_is_arena_flag{1};   // #1309
+    std::atomic<std::uint64_t> jit_arena_env_free_on_reset{1}; // #1310
 };
 
 
