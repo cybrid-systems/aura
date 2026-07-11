@@ -1,0 +1,16 @@
+; examples/tetris.aura — Issue #1343 Phase 1: tetris scaffold (headless-safe)
+
+(define (tetris-demo)
+  (tui:init "Tetris" 24 16)
+  (tui:clear 0 0)
+  ; O-piece block
+  (tui:cell 10 4 "#" 16776960 0 0)
+  (tui:cell 11 4 "#" 16776960 0 0)
+  (tui:cell 10 5 "#" 16776960 0 0)
+  (tui:cell 11 5 "#" 16776960 0 0)
+  (tui:cell 1 0 "T" 255 0 1)
+  (tui:present)
+  (tui:shutdown)
+  #t)
+
+(tetris-demo)

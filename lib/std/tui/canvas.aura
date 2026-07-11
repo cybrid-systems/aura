@@ -1,0 +1,53 @@
+; lib/std/tui/canvas.aura — Issues #1334 Phase 1: high-level drawing on tui:* primitives
+;
+; (require "std/tui/canvas" all:)
+
+(export rgb BLACK WHITE RED GREEN BLUE CYAN MAGENTA YELLOW
+        canvas-clear draw-char draw-text draw-rect fill-rect draw-pixel present)
+
+(define (rgb r g b) (+ (* r 65536) (* g 256) b))
+(define BLACK 0)
+(define WHITE 16777215)
+(define RED 16711680)
+(define GREEN 65280)
+(define BLUE 255)
+(define CYAN 65535)
+(define MAGENTA 16711935)
+(define YELLOW 16776960)
+
+(define (canvas-clear fg bg)
+  (tui:clear fg bg))
+
+(define (draw-char col row ch fg bg)
+  (tui:cell col row ch fg bg 0))
+
+(define (draw-text col row str fg bg)
+  (let ((n (string-length str)))
+    (let loop ((i 0))
+      (if (>= i n) #t
+        (begin
+          (tui:cell (+ col i) row (substring str i (+ i 1)) fg bg 0)
+          (loop (+ i 1)))))))
+
+(define (fill-rect col row width height fg bg)
+  (let y-loop ((j 0))
+    (if (>= j height) #t
+      (begin
+        (let x-loop ((i 0))
+          (if (>= i width) #t
+            (begin
+              (tui:cell (+ col i) (+ row j) " " fg bg 0)
+              (x-loop (+ i 1)))))
+        (y-loop (+ j 1))))))
+
+(define (draw-rect col row width height fg bg)
+  (fill-rect col row width 1 fg bg)
+  (fill-rect col (+ row height -1) width 1 fg bg)
+  (fill-rect col row 1 height fg bg)
+  (fill-rect (+ col width -1) row 1 height fg bg))
+
+; Half-block subcell (#1342)
+(define (draw-pixel col row top-rgb bot-rgb)
+  (tui:pixel col row top-rgb bot-rgb))
+
+(define (present) (tui:present))

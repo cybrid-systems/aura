@@ -12,6 +12,7 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include "core/gap_buffer.hh"
 #include "jit_typed_mutation_stats.h"
+#include "tui/tui_runtime.hh"
 
 module aura.compiler.evaluator;
 
@@ -1808,6 +1809,72 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .perf_tier = kPrimPerfHot,
                  .security_level = kPrimSecSafe,
                  .doc = "Phase 1 production sweep (#1325–#1330 architecture reduction).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // ── Issues #1331–#1343 Phase 1: TUI pixel rendering architecture ──
+    ev.primitives().add(
+        "query:production-sweep-1331-1343-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            if (m) {
+                m->tui_init_total.store(aura::tui::g_tui_init_total.load(std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+                m->tui_present_total.store(
+                    aura::tui::g_tui_present_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->tui_cell_writes.store(
+                    aura::tui::g_tui_cell_writes.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->tui_diff_cells_emitted.store(
+                    aura::tui::g_tui_diff_cells_emitted.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->tui_sync_output_frames.store(
+                    aura::tui::g_tui_sync_output_frames.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->tui_half_block_pixels.store(
+                    aura::tui::g_tui_half_block_pixels.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->tui_mouse_enable_total.store(
+                    aura::tui::g_tui_mouse_enable_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1331)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1331_1343_active) : 1)},
+                {"tui-architecture-plan",
+                 make_int(m ? load_u64(m, m->tui_architecture_plan_active) : 1)},
+                {"tui-layers-total", make_int(m ? load_u64(m, m->tui_layers_total) : 5)},
+                {"tui-runtime-active", make_int(m ? load_u64(m, m->tui_runtime_active) : 1)},
+                {"tui-init-total", make_int(m ? load_u64(m, m->tui_init_total) : 0)},
+                {"tui-present-total", make_int(m ? load_u64(m, m->tui_present_total) : 0)},
+                {"tui-cell-writes", make_int(m ? load_u64(m, m->tui_cell_writes) : 0)},
+                {"tui-diff-cells-emitted",
+                 make_int(m ? load_u64(m, m->tui_diff_cells_emitted) : 0)},
+                {"tui-primitives-active", make_int(m ? load_u64(m, m->tui_primitives_active) : 1)},
+                {"tui-stdlib-active", make_int(m ? load_u64(m, m->tui_stdlib_active) : 1)},
+                {"tui-cyber-cat-demo-active",
+                 make_int(m ? load_u64(m, m->tui_cyber_cat_demo_active) : 1)},
+                {"tui-sync-output-active",
+                 make_int(m ? load_u64(m, m->tui_sync_output_active) : 1)},
+                {"tui-sync-output-frames",
+                 make_int(m ? load_u64(m, m->tui_sync_output_frames) : 0)},
+                {"tui-half-block-pixels", make_int(m ? load_u64(m, m->tui_half_block_pixels) : 0)},
+                {"tui-mouse-scaffold-active",
+                 make_int(m ? load_u64(m, m->tui_mouse_scaffold_active) : 1)},
+                {"tui-mouse-enable-total",
+                 make_int(m ? load_u64(m, m->tui_mouse_enable_total) : 0)},
+                {"tui-games-scaffold-active",
+                 make_int(m ? load_u64(m, m->tui_games_scaffold_active) : 1)},
+                {"issue-1343", make_int(1343)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1331–#1343 TUI architecture).",
                  .category = "general",
                  .schema = "() -> hash"});
 }

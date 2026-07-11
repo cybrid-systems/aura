@@ -1,0 +1,31 @@
+; lib/std/tui/input.aura — Issues #1334/#1343 Phase 1: input helpers
+
+(export event-wait key-event? quit-event? mouse-event? resize-event?
+        event-key key=? ctrl-c? mouse-enable)
+
+(define (event-wait ms)
+  (tui:read-event ms))
+
+(define (key-event? e)
+  (and (pair? e) (string=? (car e) "key")))
+
+(define (quit-event? e)
+  (and (pair? e) (string=? (car e) "quit")))
+
+(define (mouse-event? e)
+  (and (pair? e) (string=? (car e) "mouse")))
+
+(define (resize-event? e)
+  (and (pair? e) (string=? (car e) "resize")))
+
+(define (event-key e)
+  (if (key-event? e) (cdr e) #f))
+
+(define (key=? e ch)
+  (and (key-event? e) (string=? (cdr e) ch)))
+
+(define (ctrl-c? e)
+  (or (quit-event? e) (key=? e "\x03")))
+
+(define (mouse-enable on?)
+  (tui:mouse (if on? 1 0)))

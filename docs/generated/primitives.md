@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**934** registrations scanned from `src/**/*.cpp`.
+**949** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (13%)
-- **core**: 227 primitives (24%)
+- **core**: 242 primitives (26%)
 - **internal-observable**: 432 primitives (46%)
 - **convenience**: 152 primitives (16%)
 
@@ -1066,6 +1066,24 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
+## Tui: (15)
+
+- `tui:cell` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:clear` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:frame-ansi` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:get-cell` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:hide-cursor` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:init` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:inject-key` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:mouse` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:pixel` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:present` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:read-event` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:set-title` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:show-cursor` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:shutdown` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:size` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+
 ## Verify: (7)
 
 - `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile_03.cpp`
@@ -1208,7 +1226,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (227)
+### Core builtins (must remain primitive) (242)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1423,6 +1441,21 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `terminal:present` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `terminal:present-delta` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `tui:cell` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:clear` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:frame-ansi` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:get-cell` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:hide-cursor` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:init` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:inject-key` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:mouse` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:pixel` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:present` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:read-event` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:set-title` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:show-cursor` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:shutdown` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:size` — `src/compiler/evaluator_primitives_tui.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `use` — `src/compiler/evaluator_primitives_module.cpp`
 - `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile_03.cpp`
