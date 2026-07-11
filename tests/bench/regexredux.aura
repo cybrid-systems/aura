@@ -1,0 +1,115 @@
+; ── regex-redux — Computer Language Benchmarks Game ──
+;
+; Port of https://benchmarksgame-team.pages.debian.net/benchmarksgame/
+;         description/regexredux.html
+;
+; Algorithm:
+;   1. Read a FASTA DNA sequence (with >header lines).
+;   2. Strip header lines and newlines -> pure sequence. Record len.
+;   3. For each of 9 count patterns: count non-overlapping matches.
+;   4. For each of 5 magic patterns in order: regex-replace-all.
+;   5. Print: 9 "pattern count" lines, then initial len, post-strip len,
+;      post-replace len.
+;
+; Usage:
+;   INPUT=/path/to/fasta ./build-gcc16/aura < tests/bench/regexredux.aura
+;       INPUT env var = path to the FASTA input file (default /tmp/dna1k.fasta).
+;
+; WHY file input (not stdin): Aura's stdin doubles as the CODE source — the
+; parser consumes all of stdin as program text, so there is no separate
+; stdin stream for `read-line` to read data from (read-line returns void
+; once the parser has reached EOF). This port reads the FASTA from a file
+; path in the INPUT env var instead. The regex work — the actual point of
+; the benchmark — is identical.
+;
+; Count semantics: non-overlapping (std::regex_search advancing past each
+; match, the canonical C++ behaviour). The 9 patterns are 8-mers and their
+; reverse complement.
+
+(begin
+  ; ── regex helpers (std::regex via the runtime primitives) ──
+  (define (re-find p s) (let ((r (regex-find p s))) (if (string? r) r "")))
+  (define (re-replace p s r) (let ((r2 (regex-replace p s r))) (if (string? r2) r2 s)))
+
+  ; non-overlapping count: replace every match with a single marker char '!'
+  ; (regex-replace = std::regex_replace with format_all, left-to-right
+  ; non-overlapping — exactly the canonical count semantics), then count the
+  ; markers. DNA is [acgt] so '!' never appears in the input. This does ONE
+  ; regex compile + ONE full-string scan per pattern, vs O(n) substring+find
+  ; per pattern the naive "search at every position" approach would take.
+  ; Uses `while` (not named-let) because the marker-count loop iterates
+  ; O(len(str)) times and Aura's named-let has no TCO (">2000 recursion depth"
+  ; guard — see tests/bench/binarytrees_while.aura).
+  (define (re-count pattern str)
+    (let ((marked (re-replace pattern str "!")))
+      (define i 0)
+      (define n 0)
+      (define mlen (string-length marked))
+      (while (lambda () (< i mlen))
+        (lambda ()
+          (if (= (string-ref marked i) 33)     ; '!' == 33
+            (set! n (+ n 1))
+            #t)
+          (set! i (+ i 1))))
+      n))
+
+  ; ── read input ──
+  (define (get-input)
+    (let ((p (getenv "INPUT")))
+      (if (string? p) p "/tmp/dna1k.fasta")))
+  (define raw (read-file (get-input)))
+
+  ; ── the 9 count patterns (printed in this order) ──
+  (define patterns
+    (list
+      "agggtaaa|tttaccct"
+      "[cgt]gggtaaa|tttaccc[acg]"
+      "a[act]ggtaaa|tttacc[agt]t"
+      "ag[act]gtaaa|tttac[agt]ct"
+      "agg[act]taaa|ttta[agt]cct"
+      "aggg[acg]aaa|ttt[cgt]ccct"
+      "agggt[cgt]aa|tt[acg]accct"
+      "agggta[cgt]a|t[acg]taccct"
+      "agggta[cgt]|[acg]ttaccct"))
+
+  ; ── the 5 magic replace pairs (pattern . replacement), applied in order ──
+  (define replaces
+    (list
+      (cons "tHa[Nt]"                        "<4>")
+      (cons "aND|caN|Ha[DS]|WaS"             "<3>")
+      (cons "a[NSt]|BY"                      "<2>")
+      (cons "<[^>]*>"                        "|")
+      (cons "\\|[^|][^|]*\\|"               "-")))
+
+  ; ── step 1: record initial length ──
+  (define initial-len (string-length raw))
+
+  ; ── step 2: strip >header lines and newlines ──
+  ;   remove everything from '>' to end of line, then drop newlines.
+  (define (strip seq)
+    (re-replace "\n" (re-replace ">[^\\n]*" seq "") ""))
+  (define seq (strip raw))
+  (define seq-len (string-length seq))
+
+  ; ── step 3: count each pattern ──
+  (define (count-all ps s)
+    (let loop ((ps ps) (out ""))
+      (if (null? ps) out
+        (loop (cdr ps)
+          (string-append out (car ps) " "
+                          (number->string (re-count (car ps) s)) "\n")))))
+  (define counts (count-all patterns seq))
+
+  ; ── step 4: apply the 5 magic replaces in order ──
+  (define (apply-replaces rs s)
+    (let loop ((rs rs) (s s))
+      (if (null? rs) s
+        (loop (cdr rs) (re-replace (car (car rs)) s (cdr (car rs)))))))
+  (define final (apply-replaces replaces seq))
+  (define final-len (string-length final))
+
+  ; ── step 5: output ── 9 "pattern count" lines, then 3 bare lengths ──
+  (display counts)
+  (display initial-len)(newline)
+  (display seq-len)(newline)
+  (display final-len)(newline))
