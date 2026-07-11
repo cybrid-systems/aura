@@ -5796,6 +5796,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> capability_retrofit_scaffold_active{1};  // #1294
     std::atomic<std::uint64_t> capability_exception_control_active{1};  // #1295
     std::atomic<std::uint64_t> capability_exception_control_denials{0}; // #1295
+
+    // ── Issues #1296–#1300: predicate race, inline max_slot, ghost orphan free ──
+    std::atomic<std::uint64_t> production_sweep_1296_1300_active{1};
+    std::atomic<std::uint64_t> custom_predicate_registry_mutex{1}; // #1296
+    std::atomic<std::uint64_t> inline_max_slot_includes_params{1}; // #1297/#1298
+    std::atomic<std::uint64_t> ghost_orphan_free_on_rollback{1};   // #1299/#1300
 };
 
 

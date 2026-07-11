@@ -2789,6 +2789,11 @@ private:
                 }
             }
         }
+        // Issue #1298 (P0): include param slots even if body does not
+        // reference unused params (e.g. (lambda (x y z) x) → max_slot=0,
+        // arg_count=3). Pre-#1298 slot_rename.at(i) threw out_of_range.
+        if (arg_count > 0 && arg_count - 1 > max_slot)
+            max_slot = arg_count - 1;
         std::uint32_t new_local_start = caller.local_count;
         for (std::uint32_t i = 0; i <= max_slot; ++i) {
             slot_rename[i] = new_local_start + i;
@@ -2912,6 +2917,9 @@ private:
                 }
             }
         }
+        // Issue #1297 (P0): same unused-param fix as #1298 single-block path.
+        if (arg_count > 0 && arg_count - 1 > max_slot)
+            max_slot = arg_count - 1;
         std::uint32_t new_local_start = caller.local_count;
         for (std::uint32_t i = 0; i <= max_slot; ++i) {
             slot_rename[i] = new_local_start + i;

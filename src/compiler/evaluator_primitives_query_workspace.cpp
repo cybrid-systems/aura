@@ -111,6 +111,9 @@ void register_workspace_query_primitives(
         auto sym = ws.canonical_pool()->intern(name);
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+            if (flat.is_free_slot(id))
+                continue;
             auto v = flat.get(id);
             if (v.sym_id == sym) {
                 auto pid = ws.pairs.size();
@@ -428,6 +431,9 @@ void register_workspace_query_primitives(
         auto& flat = *ws.workspace_flat;
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+            if (flat.is_free_slot(id))
+                continue;
             auto v = flat.get(id);
             if (v.tag != aura::ast::NodeTag::Define)
                 continue;
