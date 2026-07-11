@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**58** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**59** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -13,6 +13,7 @@
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `colony:search` | lib/std/ant.aura -- ant colony pheromone system + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
 | `std/ast` | `ast:summary-formatted` `ast:diff-formatted` `ast:validate-summary` `ast:version-summary` `ast:ref-stats` `ast:memory-pressure` | lib/std/ast.aura — High-level AST helpers (Issue #563) |
+| `std/atomic-swap` | `make-binding` `binding-id` `binding-target-version` `binding-artifact-id` `binding-pending-target-version` `binding-pending-artifact-id` `binding-dirty?` `binding-target` … (+15) | lib/std/atomic-swap.aura — Issue #1380 |
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/capability` | `capability-stack` `capability?` `check-capability` | std/capability.aura — Capability 标准库 |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
