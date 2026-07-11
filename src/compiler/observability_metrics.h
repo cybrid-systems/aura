@@ -5681,7 +5681,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> synthesize_json_escape_fixed{1};      // #1236
     std::atomic<std::uint64_t> eda_commercial_sim_scaffold{1};       // #1237
     std::atomic<std::uint64_t> sva_semantic_eval_scaffold{1};        // #1238
-    std::atomic<std::uint64_t> panic_checkpoint_raii_scaffold{1};    // #1239
+    std::atomic<std::uint64_t> panic_checkpoint_raii_scaffold{2};    // #1239 / #1363 phase 2
     std::atomic<std::uint64_t> value_tag_consteval_contracts{1};     // #1240
 
     // ── Issues #1241–#1245: SoAView / arena / hygiene concurrent Phase 1 ──

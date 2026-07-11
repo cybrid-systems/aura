@@ -274,6 +274,11 @@ aura_add_issue_test(test_compact_mutation_log)
 aura_issue_test_link_llvm_jit(test_compact_mutation_log)
 add_dependencies(all_test_issue_targets test_compact_mutation_log)
 
+# Issue #1363: PanicCheckpointGuard RAII wired to Evaluator save/restore
+aura_add_issue_test(test_panic_checkpoint_raii)
+aura_issue_test_link_llvm_jit(test_panic_checkpoint_raii)
+add_dependencies(all_test_issue_targets test_panic_checkpoint_raii)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

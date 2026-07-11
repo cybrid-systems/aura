@@ -1483,6 +1483,27 @@ public:
     // Returns true if restore was performed.
     bool restore_panic_checkpoint();
 
+    // Issue #1363: type-erased host for aura.core.panic_cp::PanicCheckpointGuard.
+    // Core module cannot depend on Evaluator; bind save/restore via void*.
+    [[nodiscard]] static aura::core::panic_cp::PanicCheckpointHost
+    panic_checkpoint_host(Evaluator& ev) noexcept {
+        return aura::core::panic_cp::PanicCheckpointHost{
+            &ev,
+            [](void* p) noexcept -> bool {
+                return static_cast<Evaluator*>(p)->save_panic_checkpoint();
+            },
+            [](void* p) noexcept -> bool {
+                return static_cast<Evaluator*>(p)->restore_panic_checkpoint();
+            },
+        };
+    }
+
+    // Issue #1363: RAII guard that actually saves/restores panic checkpoint.
+    [[nodiscard]] aura::core::panic_cp::PanicCheckpointGuard
+    make_panic_checkpoint_guard() noexcept {
+        return aura::core::panic_cp::PanicCheckpointGuard(panic_checkpoint_host(*this));
+    }
+
     // Clear the checkpoint (call after successful mutation commit).
     void commit_panic_checkpoint() {
         panic_safe_source_.clear();
