@@ -10,23 +10,23 @@
 module;
 
 #include <dlfcn.h>
+#include "renderer/render_ffi.hh"
 
 module aura.compiler.ffi_primitives;
 
 import std;
 import aura.compiler.value;
 
-// (Issue #131).
+// (Issue #131 / #1354).
 //
-// The C FFI state (loaded libraries, registered C
-// functions) was previously file-scope statics in
-// the monolithic evaluator TU. Now it's per-FFIRuntime, allowing
-// multiple evaluators with independent FFI state.
-
+// The C FFI state is per-FFIRuntime. Issue #1354 wraps c-* with
+// FfiRenderHotpathGuard so render-loop FFI participates in deopt / arena soft-gate.
 
 namespace aura::compiler {
 using EvalValue = types::EvalValue;
 using namespace aura::compiler::types;
+using aura::renderer::ffi::FfiRenderHotpathGuard;
+using aura::renderer::ffi::render_ffi_registry;
 
 void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
                                      std::vector<void*>* opaque_heap,
@@ -35,6 +35,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     auto* oh = opaque_heap;
 
     add("c-load", [this, sh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (coverage_counters)
             (*coverage_counters)[8]++;
         if (a.empty() || !types::is_string(a[0]))
@@ -53,6 +54,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-func", [this, sh, coverage_counters](const auto& a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (coverage_counters)
             (*coverage_counters)[8]++;
         // (c-func lib-id "name" sig-string)
@@ -118,21 +120,24 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-opaque", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (coverage_counters)
             (*coverage_counters)[8]++;
         if (a.empty() || !types::is_int(a[0]))
             return make_int(0);
         auto addr = types::as_int(a[0]);
         auto idx = oh->size();
-        oh->push_back(reinterpret_cast<void*>(addr));
+        oh->push_back(reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr)));
         return types::make_opaque(idx);
     });
 
     add("c-opaque?", [this](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         return types::make_bool(!a.empty() && types::is_opaque(a[0]));
     });
 
     add("c-opaque->int", [this, oh](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (a.empty() || !types::is_opaque(a[0]))
             return make_int(0);
         auto idx = types::as_opaque_idx(a[0]);
@@ -142,6 +147,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-alloc", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (coverage_counters)
             (*coverage_counters)[8]++;
         if (a.empty() || !types::is_int(a[0]))
@@ -158,6 +164,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-free", [this, oh](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (a.empty() || !types::is_opaque(a[0]))
             return make_void();
         auto idx = types::as_opaque_idx(a[0]);
@@ -194,6 +201,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-struct-size", [this](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         std::size_t total = 0;
         for (auto& arg : a) {
             if (types::is_int(arg))
@@ -203,6 +211,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-struct-set!", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (coverage_counters)
             (*coverage_counters)[8]++;
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
@@ -243,6 +252,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     add("c-struct-ref", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
         if (coverage_counters)
             (*coverage_counters)[8]++;
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) || !types::is_int(a[2]))
@@ -283,6 +293,69 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             return types::make_opaque(ni);
         }
         return make_int(0);
+    });
+
+    // Issue #1354: (c-render-bind lib-id "binding-name" "c-symbol" "signature") → #t/#f
+    // Resolves dlsym from lib-id (-1 = RTLD_DEFAULT) and registers in RenderFfiRegistry.
+    add("c-render-bind", [this, sh](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
+        if (a.size() < 4 || !types::is_int(a[0]) || !types::is_string(a[1]) ||
+            !types::is_string(a[2]) || !types::is_string(a[3]))
+            return make_bool(false);
+        if (!sh)
+            return make_bool(false);
+        auto raw_lib_id = types::as_int(a[0]);
+        void* lib = RTLD_DEFAULT;
+        if (raw_lib_id >= 0) {
+            auto lib_idx = static_cast<std::size_t>(raw_lib_id);
+            if (lib_idx >= libs_.size())
+                return make_bool(false);
+            lib = libs_[lib_idx];
+        }
+        const auto& name = (*sh)[types::as_string_idx(a[1])];
+        const auto& c_name = (*sh)[types::as_string_idx(a[2])];
+        const auto& sig = (*sh)[types::as_string_idx(a[3])];
+        void* fn_ptr = ::dlsym(lib, c_name.c_str());
+        // Allow register even if unresolved (fn_ptr null) for Agent discovery of planned binds.
+        // Prefer non-null when available.
+        auto& reg = render_ffi_registry();
+        int rc = reg.register_binding(name, c_name, sig, fn_ptr);
+        return make_bool(rc == 0);
+    });
+
+    // Issue #1354: (c-render-call "binding-name") → #t/#f
+    // Records a hot-path dispatch (and optionally invokes nullary C functions later).
+    // Phase 1: validates resolve + increments dispatch metrics (call path for Agent backends).
+    add("c-render-call", [sh](std::span<const EvalValue> a) -> EvalValue {
+        FfiRenderHotpathGuard hp;
+        if (a.empty() || !types::is_string(a[0]) || !sh)
+            return make_bool(false);
+        const auto& name = (*sh)[types::as_string_idx(a[0])];
+        auto& reg = render_ffi_registry();
+        void* fn = reg.resolve_binding(name);
+        // Always record dispatch attempt for registered names (even unresolved).
+        {
+            std::lock_guard<std::mutex> lock(reg.registry_mtx);
+            if (reg.bindings.find(name) == reg.bindings.end())
+                return make_bool(false);
+        }
+        reg.record_dispatch(name, 0);
+        // Optional nullary call when resolved (best-effort; void (*)() only).
+        if (fn) {
+            using Nullary = void (*)();
+            // Do not actually invoke arbitrary symbols in Phase 1 tests (safety).
+            // Call path is metrics + resolve verification only.
+            (void)static_cast<Nullary>(nullptr);
+            (void)fn;
+        }
+        return make_bool(true);
+    });
+
+    // Issue #1354: (query:render-ffi-count) → registered binding count (int).
+    // Full Agent hash lives at query:render-ffi-available (evaluator partition).
+    add("query:render-ffi-count", [](std::span<const EvalValue>) -> EvalValue {
+        auto& reg = render_ffi_registry();
+        return make_int(static_cast<std::int64_t>(reg.registered.load(std::memory_order_relaxed)));
     });
 }
 

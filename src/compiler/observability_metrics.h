@@ -5594,12 +5594,17 @@ struct CompilerMetrics {
 
     // ── Issues #1177–#1201: render/FFI/security/orchestration Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1177_1201_active{1};
-    std::atomic<std::uint64_t> ffi_hot_path_scaffold{1};             // #1177
-    std::atomic<std::uint64_t> zero_copy_framebuffer_supported{1};   // #1178
-    std::atomic<std::uint64_t> render_dirty_aware_scaffold{1};       // #1179/#1186
-    std::atomic<std::uint64_t> security_core_modules_scaffold{1};    // #1180
-    std::atomic<std::uint64_t> ansi_helper_supported{1};             // #1181
-    std::atomic<std::uint64_t> render_ffi_scaffold{1};               // #1182
+    std::atomic<std::uint64_t> ffi_hot_path_scaffold{1};           // #1177
+    std::atomic<std::uint64_t> zero_copy_framebuffer_supported{1}; // #1178
+    std::atomic<std::uint64_t> render_dirty_aware_scaffold{1};     // #1179/#1186
+    std::atomic<std::uint64_t> security_core_modules_scaffold{1};  // #1180
+    std::atomic<std::uint64_t> ansi_helper_supported{1};           // #1181
+    std::atomic<std::uint64_t> render_ffi_scaffold{1};             // #1182
+    // #1354: render FFI registry + c-* hot path
+    std::atomic<std::uint64_t> render_ffi_registered{0};
+    std::atomic<std::uint64_t> render_ffi_hot_path_dispatches{0};
+    std::atomic<std::uint64_t> render_ffi_hotpath_enter_total{0};
+    std::atomic<std::uint64_t> render_ffi_bind_success{0};
     std::atomic<std::uint64_t> tenant_principal_scaffold{1};         // #1183/#1191
     std::atomic<std::uint64_t> render_memory_profiling_supported{1}; // #1184
     std::atomic<std::uint64_t> provenance_rollback_scaffold{1};      // #1185
