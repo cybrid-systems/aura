@@ -428,19 +428,35 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
             return false;
         }
     }
-    // Issue #708: region isolation — reject reload when binary region
+    // Issue #708 + #1262: region isolation — reject reload when binary region
     // mask disagrees with the host's expected agent/workspace region.
-    const std::uint64_t host_region = g_aot_host_region_mask.load(std::memory_order_relaxed);
+    // Non-matching region forces FullReAOT policy (no silent wrong-region load).
+    const std::uint64_t host_region = g_aot_host_region_mask.load(std::memory_order_acquire);
     if (host_region != 0) {
         auto* binary_region = static_cast<std::uint64_t*>(::dlsym(handle, "aot_region_mask"));
         if (binary_region && *binary_region != host_region) {
             aot_log("aura_reload_aot_module: region mismatch "
-                    "(binary=%llu, host=%llu) for %s\n",
+                    "(binary=%llu, host=%llu) for %s — FullReAOT required\n",
                     static_cast<unsigned long long>(*binary_region),
                     static_cast<unsigned long long>(host_region), path);
             ::dlclose(handle);
             if (g_aot_metrics)
                 g_aot_metrics->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+    // Issue #1262: also enforce versioned mangle epoch — refuse reload if
+    // binary emit version is behind host defuse_version (stale AOT symbols).
+    {
+        auto* emit_ver = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
+        if (emit_ver && g_aot_defuse_version != 0 && *emit_ver < g_aot_defuse_version) {
+            aot_log("aura_reload_aot_module: stale defuse_version "
+                    "(binary=%llu, host=%llu) for %s\n",
+                    static_cast<unsigned long long>(*emit_ver),
+                    static_cast<unsigned long long>(g_aot_defuse_version), path);
+            ::dlclose(handle);
+            if (g_aot_metrics)
+                g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
     }

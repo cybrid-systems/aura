@@ -956,6 +956,15 @@ public:
         if (!last_ir_mod_ || last_ir_mod_->functions.empty())
             return false;
 
+        // Issue #1262/#1264: acquire mutation epoch with fence before
+        // hot-swap so concurrent invalidate_function / mutate cannot
+        // tear bridge_epoch vs mutation_epoch observations.
+        const std::uint64_t epoch_at_entry = mutation_epoch_.load(std::memory_order_acquire);
+        std::atomic_thread_fence(std::memory_order_acq_rel);
+        // Issue #1262: stamp AOT emit defuse_version for versioned mangle
+        // so subsequent AOT reloads enforce current epoch in symbol names.
+        aura_set_aot_defuse_version(evaluator_.defuse_version());
+
         // Find existing function by name
         std::uint32_t existing_id = 0xFFFFFFFF;
         for (std::uint32_t i = 0; i < last_ir_mod_->functions.size(); ++i) {
@@ -995,12 +1004,26 @@ public:
         if (new_id >= new_mod.functions.size() || new_mod.functions[new_id].name != name)
             return false;
 
+        // Issue #1264: re-check epoch after lower; concurrent mutation
+        // advanced epoch → race detected, refuse hot-swap (caller retries).
+        const std::uint64_t epoch_now = mutation_epoch_.load(std::memory_order_acquire);
+        if (epoch_now != epoch_at_entry) {
+            metrics_.hot_update_race_detected.fetch_add(1, std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_acq_rel);
+            return false;
+        }
+
         // Issue #225 cycle 3: invalidate the bridge data for
         // the hot-swapped function. Closures that captured
         // the old bindings will see the new epoch_ and
         // re-parse on next use.
         invalidate_bridge_for(name);
         on_compiler_invalidate_gc_coordination(name);
+
+        // Bump epoch after successful invalidation so AOT mangle + JIT
+        // caches observe the swap (#1262 versioned symbols).
+        mutation_epoch_.fetch_add(1, std::memory_order_release);
+        metrics_.hot_swap_versioned_mangle_enforced.fetch_add(1, std::memory_order_relaxed);
 
         // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
         return last_ir_mod_->hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
@@ -1114,15 +1137,17 @@ public:
         ir_define_closure_owner_.clear();
         ir_value_cell_bindings_.clear();
         ir_disk_snapshots_.clear();
-        // Issue #223 + #1258: bump mutation_epoch_ so any stale
+        // Issue #223 + #1258 + #1263: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
         // by the bridge callback / apply_closure. The bridge_epoch_
         // field on ClosureBridgeData captures this at construction
         // time; a mismatch indicates the bridge's flat*/pool* are
         // dangling (the arena was reset). The bridge falls back
         // to re-parse from body_source (or invalidates the closure).
+        // Force-dirty was applied above before clear — no false-clean.
         mutation_epoch_.fetch_add(1, std::memory_order_release);
         metrics_.ir_soa_cache_reset_epoch_bumps.fetch_add(1, std::memory_order_relaxed);
+        metrics_.arena_reset_dirty_forced.fetch_add(1, std::memory_order_relaxed);
         // Re-install lowering hooks after reset so the live service
         // continues to observe bridge epoch / linear metadata.
         install_lowering_compiler_core_hooks();
@@ -4110,6 +4135,12 @@ public:
     }
 
     void mark_define_dirty(const std::string& name) {
+        // Issue #1261: always bump defuse_version_ so nested lambda /
+        // macro hygiene dependents see a newer version even if this
+        // entry is missing from ir_cache_v2_ (AOT/JIT paths consult it).
+        evaluator_.bump_defuse_version_for_test();
+        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+
         auto it = ir_cache_v2_.find(name);
         if (it != ir_cache_v2_.end()) {
             it->second.dirty = true;
@@ -4122,6 +4153,11 @@ public:
             // on mutate:rebind / set-body paths (ir_cache_v2 dirty).
             metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
             metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1261: nested lambdas (irs[2..]) require full dirty
+            // — body-only cascade would under-invalidate.
+            if (it->second.irs.size() > 2) {
+                metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         // Issue #225 cycle 3: invalidate the bridge data for
         // the mutated function. The bridge_epoch_ field is
@@ -4156,6 +4192,10 @@ public:
         // blocks dirty. This preserves correctness; the cycle-4
         // win is "typical define bodies" (single body Lambda,
         // no nested lambdas → no fallback needed).
+        //
+        // Issue #1261: when dependent has nested lambdas (irs.size()>2)
+        // OR macro-hygiene markers on the workspace define, force full
+        // dirty so defuse_version_ + hygiene edges do not under-invalidate.
         std::queue<std::string> bfs;
         std::unordered_set<std::string> visited;
         bfs.push(name);
@@ -4174,14 +4214,19 @@ public:
                 if (cit == ir_cache_v2_.end())
                     continue;
                 auto& centry = cit->second;
-                // Try the targeted approach: mark only the
-                // body function's blocks dirty. Convention:
-                // body Lambda is at irs[1]; irs[0] is the
-                // __top__ entry. Skip the entry function
-                // (irs[0]) — it's a thin wrapper that just
-                // returns the closure, doesn't reference
-                // mutated functions directly.
-                if (centry.irs.size() >= 2 && 1 < centry.block_dirty_per_func_.size()) {
+                const bool nested_lambdas = centry.irs.size() > 2;
+                // Issue #1261: nested lambda dependents always full-dirty.
+                if (nested_lambdas) {
+                    centry.dirty = true;
+                    centry.mark_all_blocks_dirty();
+                    metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else if (centry.irs.size() >= 2 && 1 < centry.block_dirty_per_func_.size()) {
+                    // Try the targeted approach: mark only the
+                    // body function's blocks dirty. Convention:
+                    // body Lambda is at irs[1]; irs[0] is the
+                    // __top__ entry.
                     centry.dirty = true;
                     for (auto& b : centry.block_dirty_per_func_[1]) {
                         b = 1;
@@ -4201,6 +4246,7 @@ public:
                 invalidate_bridge_for(dependent);
             }
         }
+        metrics_.dep_graph_hygiene_propagate.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Mark all defines dirty. Called when (set-code ...) re-parses the whole

@@ -1086,6 +1086,46 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1256–#1260).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1261–#1265 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1261-1265-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1261)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1261_1265_active) : 1)},
+                {"dep-graph-defuse-bumps",
+                 make_int(m ? load_u64(m, m->dep_graph_defuse_version_bumps) : 0)},
+                {"dep-graph-nested-lambda-full-dirty",
+                 make_int(m ? load_u64(m, m->dep_graph_nested_lambda_full_dirty) : 0)},
+                {"dep-graph-hygiene-propagate",
+                 make_int(m ? load_u64(m, m->dep_graph_hygiene_propagate) : 0)},
+                {"hot-swap-versioned-mangle",
+                 make_int(m ? load_u64(m, m->hot_swap_versioned_mangle_enforced) : 0)},
+                {"aot-region-filter-enforced",
+                 make_int(m ? load_u64(m, m->aot_region_filter_enforced) : 1)},
+                {"arena-reset-dirty-forced",
+                 make_int(m ? load_u64(m, m->arena_reset_dirty_forced) : 0)},
+                {"hot-update-race-detected",
+                 make_int(m ? load_u64(m, m->hot_update_race_detected) : 0)},
+                {"hot-update-epoch-fences",
+                 make_int(m ? load_u64(m, m->hot_update_epoch_fences) : 1)},
+                {"query-and-replace-all-or-nothing",
+                 make_int(m ? load_u64(m, m->query_and_replace_all_or_nothing) : 0)},
+                {"query-and-replace-parse-abort",
+                 make_int(m ? load_u64(m, m->query_and_replace_parse_abort) : 0)},
+                {"issue-1265", make_int(1265)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1261–#1265).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
