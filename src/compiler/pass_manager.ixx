@@ -235,6 +235,18 @@ concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id)
     { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
 };
 
+// Issue #1197 Phase 1: instruction-level dirty short-circuit (optional).
+// Passes may expose is_instruction_dirty(block_id, inst_id); the dirty
+// pipeline consults it when present to skip clean instructions.
+export template <typename P>
+concept InstructionDirtyAwarePass =
+    DirtyAwarePass<P> && requires(const P& p, std::uint32_t block_id, std::uint32_t inst_id) {
+        { p.is_instruction_dirty(block_id, inst_id) } -> std::convertible_to<bool>;
+    };
+
+// Metric: instruction-level dirty skips (#1197).
+export inline std::atomic<std::uint64_t> passes_skipped_instruction_dirty{0};
+
 // ── Issue #744: ShapeStableAwarePass concept ──────────────────
 //
 // Passes that can skip clean blocks when the enclosing function's
@@ -286,6 +298,8 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
 // Issue #686: incremental pipeline with DirtyAware short-circuit —
 // skip functions whose blocks are all clean when the pass exposes
 // is_block_dirty().
+// Issue #1197: when InstructionDirtyAwarePass, also count clean
+// instruction slots (observability for instruction-level short-circuit).
 export template <IncrementalPass P>
     requires DirtyAwarePass<P>
 bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
@@ -296,6 +310,16 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
             if (pass.is_block_dirty(static_cast<std::uint32_t>(bi))) {
                 any_dirty = true;
+                // Phase 1 instruction probe: if the pass is
+                // InstructionDirtyAwarePass, walk inst dirty bits for metrics.
+                if constexpr (InstructionDirtyAwarePass<P>) {
+                    // Best-effort: probe inst 0..7; real peel uses block size.
+                    for (std::uint32_t ii = 0; ii < 8; ++ii) {
+                        if (!pass.is_instruction_dirty(static_cast<std::uint32_t>(bi), ii))
+                            passes_skipped_instruction_dirty.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    }
+                }
                 break;
             }
             if (fn_shape_stable)

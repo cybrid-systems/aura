@@ -16,6 +16,23 @@ inline constexpr const char* kCapIoRead = "io-read";
 inline constexpr const char* kCapIoWrite = "io-write";
 inline constexpr const char* kCapExec = "exec";
 
+// Issues #1187/#1192 Phase 1: first-class capability effect names
+// (bound to provenance / sandbox enforcement in follow-up peels).
+inline constexpr const char* kCapFfi = "ffi";
+inline constexpr const char* kCapNetwork = "network";
+inline constexpr const char* kCapRender = "render";
+inline constexpr const char* kCapTenantAdmin = "tenant-admin";
+
+// Effect bit tags (mirror aura.core.capability_model Effect enum).
+inline constexpr std::uint16_t kEffectNone = 0;
+inline constexpr std::uint16_t kEffectRead = 1 << 0;
+inline constexpr std::uint16_t kEffectWrite = 1 << 1;
+inline constexpr std::uint16_t kEffectExec = 1 << 2;
+inline constexpr std::uint16_t kEffectMutate = 1 << 3;
+inline constexpr std::uint16_t kEffectNetwork = 1 << 4;
+inline constexpr std::uint16_t kEffectFfi = 1 << 5;
+inline constexpr std::uint16_t kEffectRender = 1 << 6;
+
 } // namespace aura::compiler::security
 
 #endif // AURA_COMPILER_SECURITY_CAPABILITIES_H

@@ -120,38 +120,28 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     // fresh-zero split rule + #778/#780 pattern).
     CHECK(pair_alloc >= 0,
           std::format("pair-alloc-total = {} (must be >= 0 on fresh service)", pair_alloc));
+    // Issues #1178/#1181/#1184 Phase 1: support flags flipped to 1.
     const auto zero_copy =
         hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "zero-copy-supported");
-    CHECK(zero_copy == 0,
-          std::format("zero-copy-supported = {} (expected 0 — zero-copy byte-buffer primitive "
-                      "is Phase 2+ deferred)",
-                      zero_copy));
+    CHECK(
+        zero_copy == 1,
+        std::format("zero-copy-supported = {} (expected 1 — Phase 1 zero_copy_output)", zero_copy));
     const auto ansi_helper =
         hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "ansi-helper-supported");
-    CHECK(ansi_helper == 0,
-          std::format("ansi-helper-supported = {} (expected 0 — ANSI sequence helper primitive "
-                      "is Phase 2+ deferred)",
-                      ansi_helper));
+    CHECK(
+        ansi_helper == 1,
+        std::format("ansi-helper-supported = {} (expected 1 — Phase 1 ANSI helpers)", ansi_helper));
     const auto mem_prof =
         hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "memory-profiling-supported");
-    CHECK(mem_prof == 0,
-          std::format("memory-profiling-supported = {} (expected 0 — memory profiling primitive "
-                      "is Phase 2+ deferred)",
+    CHECK(mem_prof == 1,
+          std::format("memory-profiling-supported = {} (expected 1 — Phase 1 render mem-prof)",
                       mem_prof));
-    // Recommendation depends on pair allocation activity:
-    //   - If pair-alloc-total > 0: recommendation = 2 (missing-primitive)
-    //   - If pair-alloc-total == 0: recommendation = 3 (early-stage)
+    // All 3 support flags == 1 → recommendation = 0 (production-ready Phase 1).
     const auto rec = hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "recommendation");
-    if (pair_alloc == 0) {
-        CHECK(rec == 3,
-              std::format("recommendation = {} (expected 3 = early-stage when pair-alloc-total "
-                          "== 0 AND all 3 support flags == 0)",
-                          rec));
-    } else {
-        CHECK(rec == 2, std::format("recommendation = {} (expected 2 = missing-primitive when "
-                                    "pair-alloc-total > 0 AND all 3 support flags == 0)",
-                                    rec));
-    }
+    CHECK(rec == 0, std::format("recommendation = {} (expected 0 = production-ready when all "
+                                "3 support flags == 1)",
+                                rec));
+    (void)pair_alloc;
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
@@ -216,25 +206,19 @@ static void run_ac4_production_path_bumps_and_benchmark(aura::compiler::Compiler
                       "= initial + iters)",
                       kBenchmarkIters, after_pair_alloc, initial_pair_alloc + kBenchmarkIters));
 
-    // Verify the 3 hardcoded support flags are still 0
-    // (sanity check that nothing accidentally flipped them).
+    // Support flags remain 1 through the benchmark (metrics defaults).
     const auto zero_copy_after =
         hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "zero-copy-supported");
-    CHECK(zero_copy_after == 0,
-          std::format("zero-copy-supported after benchmark: {} (expected 0; the flag should "
-                      "not flip during EDSL eval)",
-                      zero_copy_after));
+    CHECK(zero_copy_after == 1,
+          std::format("zero-copy-supported after benchmark: {} (expected 1)", zero_copy_after));
     const auto ansi_helper_after =
         hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "ansi-helper-supported");
-    CHECK(ansi_helper_after == 0,
-          std::format("ansi-helper-supported after benchmark: {} (expected 0; the flag "
-                      "should not flip during EDSL eval)",
-                      ansi_helper_after));
+    CHECK(ansi_helper_after == 1,
+          std::format("ansi-helper-supported after benchmark: {} (expected 1)", ansi_helper_after));
     const auto mem_prof_after2 =
         hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "memory-profiling-supported");
-    CHECK(mem_prof_after2 == 0,
-          std::format("memory-profiling-supported after benchmark: {} (expected 0; the flag "
-                      "should not flip during EDSL eval)",
+    CHECK(mem_prof_after2 == 1,
+          std::format("memory-profiling-supported after benchmark: {} (expected 1)",
                       mem_prof_after2));
 }
 

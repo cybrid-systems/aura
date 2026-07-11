@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**41** `export module` declarations in `src/**/*.ixx`.
+**50** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -15,6 +15,7 @@
 | `aura.compiler.constant_folding` | `src/compiler/constant_folding.ixx` |
 | `aura.compiler.evaluator` | `src/compiler/evaluator.ixx` |
 | `aura.compiler.evaluator_pure` | `src/compiler/evaluator_pure.ixx` |
+| `aura.compiler.ffi_hot_path` | `src/compiler/ffi_hot_path.ixx` |
 | `aura.compiler.ffi_primitives` | `src/compiler/ffi_primitives.ixx` |
 | `aura.compiler.hardware_backend` | `src/compiler/hardware_backend.ixx` |
 | `aura.compiler.ir` | `src/compiler/ir.ixx` |
@@ -25,6 +26,7 @@
 | `aura.compiler.lowering_linear_types` | `src/compiler/lowering_linear_types.ixx` |
 | `aura.compiler.macro_expansion` | `src/compiler/macro_expansion.ixx` |
 | `aura.compiler.matcher` | `src/compiler/query_matcher.ixx` |
+| `aura.compiler.optimization_passes` | `src/compiler/optimization_passes.ixx` |
 | `aura.compiler.pass_manager` | `src/compiler/pass_manager.ixx` |
 | `aura.compiler.query` | `src/compiler/query.ixx` |
 | `aura.compiler.service` | `src/compiler/service.ixx` |
@@ -35,15 +37,22 @@
 | `aura.core` | `src/core/core.ixx` |
 | `aura.core.arena` | `src/core/arena.ixx` |
 | `aura.core.ast` | `src/core/ast.ixx` |
+| `aura.core.capability_model` | `src/core/capability_model.ixx` |
 | `aura.core.concepts` | `src/core/concepts.ixx` |
 | `aura.core.cxx26_invariants` | `src/core/cxx26_invariants.ixx` |
 | `aura.core.error` | `src/core/error.ixx` |
 | `aura.core.mutation` | `src/core/mutation.ixx` |
 | `aura.core.mutators` | `src/core/mutators.ixx` |
+| `aura.core.provenance_tracker` | `src/core/provenance_tracker.ixx` |
+| `aura.core.sandbox` | `src/core/sandbox.ixx` |
 | `aura.core.type` | `src/core/type.ixx` |
 | `aura.core.type_arena` | `src/core/type_arena.ixx` |
+| `aura.core.workspace_isolation` | `src/core/workspace_isolation.ixx` |
+| `aura.core.zero_copy_output` | `src/core/zero_copy_output.ixx` |
 | `aura.diag` | `src/compiler/diag.ixx` |
 | `aura.parser.lexer` | `src/parser/lexer.ixx` |
 | `aura.parser.parser` | `src/parser/parser.ixx` |
 | `aura.reflect` | `src/reflect/reflect.ixx` |
 | `aura.renderer.batch_terminal` | `src/renderer/batch_terminal.ixx` |
+| `aura.renderer.render_ffi` | `src/renderer/render_ffi.ixx` |
+| `aura.renderer.render_pass` | `src/renderer/render_pass.ixx` |

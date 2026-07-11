@@ -739,12 +739,20 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
         // and copies" pressure signal.
         const std::int64_t pair_alloc_total =
             m ? static_cast<std::int64_t>(m->pair_alloc_total.load(std::memory_order_relaxed)) : 0;
-        // Hardcoded flags for the deferred zero-copy + ANSI
-        // helper + memory profiling primitives (mirror
-        // #778/#779/#780 batch-ffi-supported pattern).
-        const std::int64_t zero_copy_supported = 0;
-        const std::int64_t ansi_helper_supported = 0;
-        const std::int64_t memory_profiling_supported = 0;
+        // Issues #1178/#1181/#1184 Phase 1: real support flags.
+        // zero_copy_output.ixx + batch_terminal ANSI helpers + render
+        // memory-profiling metrics are now scaffolded / active.
+        const std::int64_t zero_copy_supported =
+            m ? static_cast<std::int64_t>(
+                    m->zero_copy_framebuffer_supported.load(std::memory_order_relaxed))
+              : 1;
+        const std::int64_t ansi_helper_supported =
+            m ? static_cast<std::int64_t>(m->ansi_helper_supported.load(std::memory_order_relaxed))
+              : 1;
+        const std::int64_t memory_profiling_supported =
+            m ? static_cast<std::int64_t>(
+                    m->render_memory_profiling_supported.load(std::memory_order_relaxed))
+              : 1;
         // Recommendation: derived from the 3 support flags +
         // pair_alloc_total signal.
         std::int64_t recommendation = 3;

@@ -5591,6 +5591,30 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> file_cap_checks_extended{1}; // #1162/#1171-1173
     std::atomic<std::uint64_t> stdlib_review_phase1{1};     // #1166-1170/#1176
     std::atomic<std::uint64_t> renderer_module_scaffold{1}; // #1175
+
+    // ── Issues #1177–#1201: render/FFI/security/orchestration Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1177_1201_active{1};
+    std::atomic<std::uint64_t> ffi_hot_path_scaffold{1};             // #1177
+    std::atomic<std::uint64_t> zero_copy_framebuffer_supported{1};   // #1178
+    std::atomic<std::uint64_t> render_dirty_aware_scaffold{1};       // #1179/#1186
+    std::atomic<std::uint64_t> security_core_modules_scaffold{1};    // #1180
+    std::atomic<std::uint64_t> ansi_helper_supported{1};             // #1181
+    std::atomic<std::uint64_t> render_ffi_scaffold{1};               // #1182
+    std::atomic<std::uint64_t> tenant_principal_scaffold{1};         // #1183/#1191
+    std::atomic<std::uint64_t> render_memory_profiling_supported{1}; // #1184
+    std::atomic<std::uint64_t> provenance_rollback_scaffold{1};      // #1185
+    std::atomic<std::uint64_t> capability_effects_scaffold{1};       // #1187/#1192
+    std::atomic<std::uint64_t> render_ci_slo_scaffold{1};            // #1188
+    std::atomic<std::uint64_t> mutation_audit_tenant_scaffold{1};    // #1189
+    std::atomic<std::uint64_t> render_obs_schema_scaffold{1};        // #1190/#1193
+    std::atomic<std::uint64_t> hotpath_contract_gates_scaffold{1};   // #1194
+    std::atomic<std::uint64_t> seva_closed_loop_scaffold{1};         // #1195
+    std::atomic<std::uint64_t> panic_quota_checkpoint_scaffold{1};   // #1196
+    std::atomic<std::uint64_t> instruction_dirty_short_circuit{1};   // #1197
+    std::atomic<std::uint64_t> fiber_join_structured{1};             // #1198
+    std::atomic<std::uint64_t> aura_result_migration_scaffold{1};    // #1199
+    std::atomic<std::uint64_t> mailbox_multi_fiber_scaffold{1};      // #1200
+    std::atomic<std::uint64_t> optimization_passes_registry{1};      // #1201
 };
 
 

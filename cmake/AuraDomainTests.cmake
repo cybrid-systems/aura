@@ -86,6 +86,11 @@ aura_add_issue_test(test_production_sweep_1158_1176)
 aura_issue_test_link_llvm_jit(test_production_sweep_1158_1176)
 add_dependencies(all_test_issue_targets test_production_sweep_1158_1176)
 
+# Issues #1177–#1201: render/FFI/security/orchestration Phase 1
+aura_add_issue_test(test_production_sweep_1177_1201)
+aura_issue_test_link_llvm_jit(test_production_sweep_1177_1201)
+add_dependencies(all_test_issue_targets test_production_sweep_1177_1201)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
