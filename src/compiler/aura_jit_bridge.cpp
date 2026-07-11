@@ -71,12 +71,44 @@ extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
 //   aot_stale_reject_count, aot_region_mismatch,
 //   aot_hot_update_success_count.
 //
-// The host sets g_aot_metrics once at startup (NULL default
-// preserves pre-#452 behavior — all hooks no-op). Pattern
-// mirrors primitive_call_total: zero overhead when unset.
+// The host sets g_aot_metrics at startup (NULL default → counters
+// no-op). Issue #1368: also auto-wired from Evaluator::set_compiler_metrics
+// and aura_ensure_aot_metrics (lazy) so bare Evaluator usage is not silent.
 static aura::compiler::CompilerMetrics* g_aot_metrics = nullptr;
+static std::atomic<std::uint64_t> g_aot_metrics_lazy_init_total{0};
+static std::atomic<std::uint64_t> g_aot_metrics_explicit_sets{0};
+
+// Issue #1368: single access helper used by all counter sites.
+static inline aura::compiler::CompilerMetrics* aot_metrics() noexcept {
+    return g_aot_metrics;
+}
+
 extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
     g_aot_metrics = m;
+    if (m)
+        g_aot_metrics_explicit_sets.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Lazy: only binds when global is still null (does not overwrite host wire-up).
+extern "C" void aura_ensure_aot_metrics(void* metrics) {
+    if (!metrics)
+        return;
+    if (g_aot_metrics == nullptr) {
+        g_aot_metrics = static_cast<aura::compiler::CompilerMetrics*>(metrics);
+        g_aot_metrics_lazy_init_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void* aura_get_aot_metrics(void) {
+    return g_aot_metrics;
+}
+
+extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
+    return g_aot_metrics_lazy_init_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
+    return g_aot_metrics_explicit_sets.load(std::memory_order_relaxed);
 }
 
 // ── Issue #287: AOT module version (hot-reload / multi-agent) ───────────
@@ -118,8 +150,8 @@ static AotState& aot_state_for(void* eval_ptr) {
     auto& slot = g_aot_state_map[eval_ptr];
     if (!slot) {
         slot = std::make_unique<AotState>();
-        if (g_aot_metrics)
-            g_aot_metrics->aot_per_eval_state_creates.fetch_add(1, std::memory_order_relaxed);
+        if (aot_metrics())
+            aot_metrics()->aot_per_eval_state_creates.fetch_add(1, std::memory_order_relaxed);
     }
     return *slot;
 }
@@ -147,8 +179,8 @@ extern "C" void aura_set_aot_region_mask(std::uint64_t mask) {
 
 extern "C" void aura_set_aot_region_mask_for_eval(void* eval_ptr, std::uint64_t mask) {
     aot_state_for(eval_ptr).region_mask.store(mask, std::memory_order_relaxed);
-    if (g_aot_metrics)
-        g_aot_metrics->aot_per_eval_region_sets.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics())
+        aot_metrics()->aot_per_eval_region_sets.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_get_aot_region_mask(void) {
@@ -186,8 +218,8 @@ extern "C" void aura_cleanup_aot_state(void* eval_ptr) {
     if (!eval_ptr)
         return;
     std::lock_guard<std::mutex> lock(g_aot_state_mtx);
-    if (g_aot_state_map.erase(eval_ptr) > 0 && g_aot_metrics)
-        g_aot_metrics->aot_per_eval_state_clears.fetch_add(1, std::memory_order_relaxed);
+    if (g_aot_state_map.erase(eval_ptr) > 0 && aot_metrics())
+        aot_metrics()->aot_per_eval_state_clears.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_aot_state_map_size(void) {
@@ -329,15 +361,15 @@ std::atomic<std::uint64_t> g_aot_table_epoch{1};
 std::atomic<std::uint64_t> g_aot_register_dropped{0};
 
 void bump_reload_attempt() {
-    if (g_aot_metrics)
-        g_aot_metrics->aot_reload_attempts_.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics())
+        aot_metrics()->aot_reload_attempts_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void commit_func_table_swap() {
     g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
-    if (g_aot_metrics) {
-        g_aot_metrics->aot_refcount_swaps_.fetch_add(1, std::memory_order_relaxed);
-        g_aot_metrics->aot_concurrent_safe_reloads_.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics()) {
+        aot_metrics()->aot_refcount_swaps_.fetch_add(1, std::memory_order_relaxed);
+        aot_metrics()->aot_concurrent_safe_reloads_.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -388,59 +420,58 @@ extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
     const std::uint64_t table_epoch = g_aot_table_epoch.load(std::memory_order_relaxed);
     const bool defuse_drift = (defuse_version != 0 && emit_ver != 0 && defuse_version != emit_ver);
     const bool bridge_mismatch = (bridge_epoch != 0 && bridge_epoch != table_epoch);
-    if (defuse_drift && g_aot_metrics)
-        g_aot_metrics->aot_checkpoint_version_drifts_.fetch_add(1, std::memory_order_relaxed);
-    if (bridge_mismatch && g_aot_metrics)
-        g_aot_metrics->aot_bridge_epoch_mismatches_.fetch_add(1, std::memory_order_relaxed);
+    if (defuse_drift && aot_metrics())
+        aot_metrics()->aot_checkpoint_version_drifts_.fetch_add(1, std::memory_order_relaxed);
+    if (bridge_mismatch && aot_metrics())
+        aot_metrics()->aot_bridge_epoch_mismatches_.fetch_add(1, std::memory_order_relaxed);
     return defuse_drift || bridge_mismatch;
 }
 
 extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {
-    return g_aot_metrics
-               ? g_aot_metrics->aot_bridge_epoch_mismatches_.load(std::memory_order_relaxed)
-               : 0;
+    auto* m = aot_metrics();
+    return m ? m->aot_bridge_epoch_mismatches_.load(std::memory_order_relaxed) : 0;
 }
 
 extern "C" void aura_aot_record_deopt_on_steal() {
-    if (g_aot_metrics)
-        g_aot_metrics->aot_deopt_on_steal_.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics())
+        aot_metrics()->aot_deopt_on_steal_.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" void aura_jit_epoch_acquire_fence(void) {
     std::atomic_thread_fence(std::memory_order_acquire);
-    if (g_aot_metrics)
-        g_aot_metrics->closure_epoch_fence_enforced_total.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics())
+        aot_metrics()->closure_epoch_fence_enforced_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" void aura_arena_pop(void);
 
 extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state,
                                                        std::uint32_t opcode) {
-    if (!g_aot_metrics || linear_state == 0)
+    if (!aot_metrics() || linear_state == 0)
         return;
-    g_aot_metrics->linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    aot_metrics()->linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
     switch (opcode) {
         case 48: // DropOp
-            g_aot_metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+            aot_metrics()->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
             aura_arena_pop();
             break;
         case 51: // ArenaPop
-            g_aot_metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(
+            aot_metrics()->linear_jit_arena_forced_post_mutate_total.fetch_add(
                 1, std::memory_order_relaxed);
             aura_arena_pop();
             break;
         case 22: // Capture
         case 23: // CaptureRef
-            g_aot_metrics->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
+            aot_metrics()->linear_jit_gc_root_resync_total.fetch_add(1, std::memory_order_relaxed);
             break;
         case 52: // GuardShape
-            g_aot_metrics->linear_jit_arena_forced_post_mutate_total.fetch_add(
+            aot_metrics()->linear_jit_arena_forced_post_mutate_total.fetch_add(
                 1, std::memory_order_relaxed);
-            g_aot_metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+            aot_metrics()->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
             aura_arena_pop();
             break;
         case 45: // MoveOp
-            g_aot_metrics->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
+            aot_metrics()->linear_jit_drop_op_emitted_total.fetch_add(1, std::memory_order_relaxed);
             break;
         default:
             break;
@@ -479,8 +510,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
-        if (g_aot_metrics)
-            g_aot_metrics->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+        if (aot_metrics())
+            aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     // Staleness check: compare the new binary's aot_emit_version
@@ -493,8 +524,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         // Ensure table epoch was not advanced (constructor may have
         // registered into slots; epoch_before remains authoritative).
         (void)epoch_before;
-        if (g_aot_metrics)
-            g_aot_metrics->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+        if (aot_metrics())
+            aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
     };
     if (binary_version) {
         if (version != 0 && *binary_version != version) {
@@ -504,8 +535,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     static_cast<unsigned long long>(version), path);
             rollback_close();
             // Issue #452: bump stale-reject counter.
-            if (g_aot_metrics)
-                g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
+            if (aot_metrics())
+                aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
         aot_log("aura_reload_aot_module: loaded %s (aot_emit_version=%llu, "
@@ -522,8 +553,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             rollback_close();
             // Issue #452: pre-#243 binary with explicit version
             // requested counts as stale.
-            if (g_aot_metrics)
-                g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
+            if (aot_metrics())
+                aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
     }
@@ -536,8 +567,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     static_cast<unsigned long long>(*binary_region),
                     static_cast<unsigned long long>(host_region), path);
             rollback_close();
-            if (g_aot_metrics)
-                g_aot_metrics->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
+            if (aot_metrics())
+                aot_metrics()->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
     }
@@ -551,8 +582,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     static_cast<unsigned long long>(*emit_ver),
                     static_cast<unsigned long long>(host_defuse), path);
             rollback_close();
-            if (g_aot_metrics)
-                g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
+            if (aot_metrics())
+                aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
     }
@@ -566,9 +597,9 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     g_aot_last_commit_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
     g_aot_last_module_version = host_module_ver;
     // Issue #452: bump hot-update success counter.
-    if (g_aot_metrics) {
-        g_aot_metrics->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
-        g_aot_metrics->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics()) {
+        aot_metrics()->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
+        aot_metrics()->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
     }
     return true;
 }
@@ -582,8 +613,8 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
 extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version) {
     (void)current_defuse_version;
     // Phase 1: no DefineId index yet — report 0 dirty, bump scaffold.
-    if (g_aot_metrics)
-        g_aot_metrics->aot_reemit_dirty_skeleton_calls.fetch_add(1, std::memory_order_relaxed);
+    if (aot_metrics())
+        aot_metrics()->aot_reemit_dirty_skeleton_calls.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
 
