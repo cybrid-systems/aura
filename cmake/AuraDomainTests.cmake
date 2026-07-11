@@ -106,6 +106,11 @@ aura_add_issue_test(test_production_sweep_1241_1245)
 aura_issue_test_link_llvm_jit(test_production_sweep_1241_1245)
 add_dependencies(all_test_issue_targets test_production_sweep_1241_1245)
 
+# Issues #1246–#1250: reflect / hygiene / agent OOB / StableNodeRef Phase 1
+aura_add_issue_test(test_production_sweep_1246_1250)
+aura_issue_test_link_llvm_jit(test_production_sweep_1246_1250)
+add_dependencies(all_test_issue_targets test_production_sweep_1246_1250)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

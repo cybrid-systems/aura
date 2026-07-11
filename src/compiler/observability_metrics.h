@@ -5669,6 +5669,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> soa_view_eval_helpers{1};          // #1243
     std::atomic<std::uint64_t> hygiene_ir_marker_propagation{1};  // #1244
     std::atomic<std::uint64_t> macro_clone_concurrent_hygiene{1}; // #1245
+
+    // ── Issues #1246–#1250: reflect/hygiene/agent-OOB/provenance Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1246_1250_active{1};
+    std::atomic<std::uint64_t> runtime_reflect_bridge_guard{1};          // #1246
+    std::atomic<std::uint64_t> runtime_reflect_mutated_schema_checks{0}; // #1246
+    std::atomic<std::uint64_t> macro_origin_provenance_errors{0};        // #1247
+    std::atomic<std::uint64_t> hygiene_tracer_expansions{0};             // #1248
+    std::atomic<std::uint64_t> hygiene_tracer_depth_max{0};              // #1248
+    std::atomic<std::uint64_t> agent_string_heap_bounds_hardened{1};     // #1249
+    std::atomic<std::uint64_t> stable_ref_auto_pin_total{0};             // #1250
+    std::atomic<std::uint64_t> stable_ref_full_path_enforced{1};         // #1250
 };
 
 

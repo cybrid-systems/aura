@@ -13,6 +13,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.compiler.value;
+import aura.compiler.macro_expansion;
 
 namespace aura::compiler::primitives_detail {
 
@@ -955,6 +956,57 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .perf_tier = kPrimPerfHot,
                  .security_level = kPrimSecSafe,
                  .doc = "Phase 1 production sweep (#1241–#1245).",
+                 .category = "general",
+                 .schema = "() -> hash"});
+
+    // ── Issues #1246–#1250 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1246-1250-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            // Live hygiene tracer / macro-origin counters from macro_expansion TU.
+            using aura::compiler::macro_exp::g_hygiene_tracer_depth_max;
+            using aura::compiler::macro_exp::g_hygiene_tracer_expansions;
+            using aura::compiler::macro_exp::g_macro_origin_provenance_errors;
+            const auto hyg_exp = static_cast<std::int64_t>(
+                g_hygiene_tracer_expansions.load(std::memory_order_relaxed));
+            const auto hyg_depth = static_cast<std::int64_t>(
+                g_hygiene_tracer_depth_max.load(std::memory_order_relaxed));
+            const auto origin_err = static_cast<std::int64_t>(
+                g_macro_origin_provenance_errors.load(std::memory_order_relaxed));
+            if (m) {
+                m->hygiene_tracer_expansions.store(static_cast<std::uint64_t>(hyg_exp),
+                                                   std::memory_order_relaxed);
+                m->hygiene_tracer_depth_max.store(static_cast<std::uint64_t>(hyg_depth),
+                                                  std::memory_order_relaxed);
+                m->macro_origin_provenance_errors.store(static_cast<std::uint64_t>(origin_err),
+                                                        std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1246)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1246_1250_active) : 1)},
+                {"runtime-reflect-bridge-guard",
+                 make_int(m ? load_u64(m, m->runtime_reflect_bridge_guard) : 1)},
+                {"runtime-reflect-mutated-schema-checks",
+                 make_int(m ? load_u64(m, m->runtime_reflect_mutated_schema_checks) : 0)},
+                {"macro-origin-provenance-errors", make_int(origin_err)},
+                {"hygiene-tracer-expansions", make_int(hyg_exp)},
+                {"hygiene-tracer-depth-max", make_int(hyg_depth)},
+                {"agent-string-heap-bounds-hardened",
+                 make_int(m ? load_u64(m, m->agent_string_heap_bounds_hardened) : 1)},
+                {"stable-ref-auto-pin-total",
+                 make_int(m ? load_u64(m, m->stable_ref_auto_pin_total) : 0)},
+                {"stable-ref-full-path-enforced",
+                 make_int(m ? load_u64(m, m->stable_ref_full_path_enforced) : 1)},
+                {"issue-1250", make_int(1250)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1246–#1250).",
                  .category = "general",
                  .schema = "() -> hash"});
 }

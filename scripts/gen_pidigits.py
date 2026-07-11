@@ -10,6 +10,7 @@ call is a real GMP call at runtime; only the loop control flow is unrolled.
 
 Usage: python3 scripts/gen_pidigits.py 27 > tests/bench/pidigits.aura
 """
+
 import sys
 
 
@@ -41,14 +42,14 @@ def run(n):
 
 # (aura-define-name, gmp-symbol, signature)
 FFI = [
-    ("mpz-init",        "__gmpz_init",        "1 1"),
+    ("mpz-init", "__gmpz_init", "1 1"),
     ("mpz-init-set-ui", "__gmpz_init_set_ui", "1 1 1"),
-    ("mpz-mul-ui",      "__gmpz_mul_ui",      "1 1 1 1"),
-    ("mpz-add",         "__gmpz_add",         "1 1 1 1"),
-    ("mpz-tdiv-q",      "__gmpz_tdiv_q",      "1 1 1 1"),
-    ("mpz-get-ui",      "__gmpz_get_ui",      "1 1"),
-    ("mpz-submul-ui",   "__gmpz_submul_ui",   "1 1 1 1"),
-    ("mpz-addmul-ui",   "__gmpz_addmul_ui",   "1 1 1 1"),
+    ("mpz-mul-ui", "__gmpz_mul_ui", "1 1 1 1"),
+    ("mpz-add", "__gmpz_add", "1 1 1 1"),
+    ("mpz-tdiv-q", "__gmpz_tdiv_q", "1 1 1 1"),
+    ("mpz-get-ui", "__gmpz_get_ui", "1 1"),
+    ("mpz-submul-ui", "__gmpz_submul_ui", "1 1 1 1"),
+    ("mpz-addmul-ui", "__gmpz_addmul_ui", "1 1 1 1"),
 ]
 
 
@@ -73,10 +74,10 @@ def gen(n, out):
     w("; integers are int64 fixnums and overflow silently. GMP is loaded via the\n")
     w("; c-load/c-func FFI; libgmp must be present (Homebrew: /opt/homebrew/lib).\n\n")
     w("(begin\n")
-    w("  (define libgmp (c-load \"/opt/homebrew/lib/libgmp.dylib\"))\n")
+    w('  (define libgmp (c-load "/opt/homebrew/lib/libgmp.dylib"))\n')
     w("  (define SZ 256)\n")
     for name, sym, sig in FFI:
-        w(f"  (define {name} (c-func libgmp \"{sym}\" {sig}))\n")
+        w(f'  (define {name} (c-func libgmp "{sym}" {sig}))\n')
     w("  (define tmp1 (c-alloc SZ)) (define tmp2 (c-alloc SZ))\n")
     w("  (define acc (c-alloc SZ)) (define den (c-alloc SZ)) (define num (c-alloc SZ))\n")
     w("  (define t1 (c-opaque->int tmp1)) (define t2 (c-opaque->int tmp2))\n")
@@ -91,23 +92,23 @@ def gen(n, out):
             w(f"  (mpz-addmul-ui ap np 2) (mpz-mul-ui ap ap {k2}) (mpz-mul-ui dp dp {k2}) (mpz-mul-ui np np {k})\n")
         else:  # emit
             _, d, ia = op
-            w(f"  (display \"{d}\")\n")
+            w(f'  (display "{d}")\n')
             col += 1
             if col == 10:
-                w(f"  (display \"\\t:\")(display {ia})(newline)\n")
+                w(f'  (display "\\t:")(display {ia})(newline)\n')
                 col = 0
             w(f"  (mpz-submul-ui ap dp {d}) (mpz-mul-ui ap ap 10) (mpz-mul-ui np np 10)\n")
     if col != 0:
         pad = 10 - col
         spaces = " ".join(['(display " ")'] * pad)
         w(f"  {spaces}\n")
-        w("  (display \"\\t:\")(display " + str(n) + ")(newline)\n")
+        w('  (display "\\t:")(display ' + str(n) + ")(newline)\n")
     else:
         # full last line already ended with :count + newline; nothing to pad
         pass
     # Tail expression whose void return stdin mode does not auto-print
     # (display "" returns void and is suppressed, unlike a bare void/if).
-    w("  (display \"\")\n")
+    w('  (display "")\n')
     w("  )\n")
 
 

@@ -105,6 +105,18 @@ namespace {
         return out;
     }
 
+    // Issue #1249: bounds-checked string-heap load — never OOB-subscript.
+    // Takes the heap by ref so call sites (friend lambdas) pass ev.string_heap_.
+    template <typename Heap>
+    [[nodiscard]] std::string heap_str_from(const Heap& heap, const EvalValue& v) {
+        if (!types::is_string(v))
+            return {};
+        const auto idx = types::as_string_idx(v);
+        if (idx >= heap.size())
+            return {};
+        return heap[idx];
+    }
+
 } // namespace
 
 void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
@@ -1279,7 +1291,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_void();
         }
 
-        auto goal = ev.string_heap_[types::as_string_idx(a[0])];
+        auto goal = heap_str_from(ev.string_heap_, a[0]);
         auto gen_cid = types::as_closure_id(a[1]); // generator
         auto ver_cid = types::as_closure_id(a[2]); // verifier
 
@@ -1308,7 +1320,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         for (; i + 1 < a.size(); i += 2) {
             std::string k;
             if (types::is_string(a[i])) {
-                k = ev.string_heap_[types::as_string_idx(a[i])];
+                k = heap_str_from(ev.string_heap_, a[i]);
             } else if (types::is_keyword(a[i])) {
                 auto kidx = types::as_keyword_idx(a[i]);
                 if (kidx < ev.keyword_table_.size())
@@ -1316,7 +1328,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             } else
                 continue;
             if (k == ":strategy" && types::is_string(a[i + 1])) {
-                strategy_name = ev.string_heap_[types::as_string_idx(a[i + 1])];
+                strategy_name = heap_str_from(ev.string_heap_, a[i + 1]);
                 // Look up the strategy's max_attempts (overrides int arg)
                 for (auto& s : ev.strategies_) {
                     if (s.name == strategy_name) {
@@ -1373,7 +1385,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return {};
             auto& val = *opt;
             if (types::is_string(val))
-                return ev.string_heap_[types::as_string_idx(val)];
+                return heap_str_from(ev.string_heap_, val);
             if (types::is_void(val))
                 return {};
             if (types::is_int(val))
@@ -1564,15 +1576,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         std::size_t arg_idx = 0;
 
         if (a.size() > arg_idx && types::is_string(a[arg_idx])) {
-            filter_strategy = ev.string_heap_[types::as_string_idx(a[arg_idx])];
+            filter_strategy = heap_str_from(ev.string_heap_, a[arg_idx]);
             arg_idx++;
         }
         if (a.size() > arg_idx + 2 && types::is_string(a[arg_idx]) &&
-            ev.string_heap_[types::as_string_idx(a[arg_idx])] == ":filter") {
+            heap_str_from(ev.string_heap_, a[arg_idx]) == ":filter") {
             if (types::is_string(a[arg_idx + 1]))
-                filter_field = ev.string_heap_[types::as_string_idx(a[arg_idx + 1])];
+                filter_field = heap_str_from(ev.string_heap_, a[arg_idx + 1]);
             if (types::is_string(a[arg_idx + 2]))
-                filter_value = ev.string_heap_[types::as_string_idx(a[arg_idx + 2])];
+                filter_value = heap_str_from(ev.string_heap_, a[arg_idx + 2]);
         }
 
         std::uint64_t total = 0, successes = 0, total_attempts = 0;
@@ -1658,8 +1670,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("define-strategy", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
-        auto body = ev.string_heap_[types::as_string_idx(a[1])];
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        auto body = heap_str_from(ev.string_heap_, a[1]);
         // Optional keyword args (pairs from index 2)
         int new_max = 3;
         double new_temp = 0.3;
@@ -1669,7 +1681,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // type, not strings. Resolve both.
             std::string k;
             if (types::is_string(a[i])) {
-                k = ev.string_heap_[types::as_string_idx(a[i])];
+                k = heap_str_from(ev.string_heap_, a[i]);
             } else if (types::is_keyword(a[i])) {
                 auto kidx = types::as_keyword_idx(a[i]);
                 if (kidx < ev.keyword_table_.size())
@@ -1688,7 +1700,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (v >= 0.0 && v <= 1.0)
                     new_temp = v;
             } else if (k == ":sys-prompt-template" && types::is_string(a[i + 1])) {
-                new_spt = ev.string_heap_[types::as_string_idx(a[i + 1])];
+                new_spt = heap_str_from(ev.string_heap_, a[i + 1]);
             }
         }
         for (auto& s : ev.strategies_) {
@@ -1707,8 +1719,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("register-strategy!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
-        auto body = ev.string_heap_[types::as_string_idx(a[1])];
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        auto body = heap_str_from(ev.string_heap_, a[1]);
         for (auto& s : ev.strategies_) {
             if (s.name == name) {
                 s.body = body;
@@ -1723,8 +1735,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("strategy-field", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
-        auto field = ev.string_heap_[types::as_string_idx(a[1])];
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        auto field = heap_str_from(ev.string_heap_, a[1]);
         for (auto& s : ev.strategies_) {
             if (s.name != name)
                 continue;
@@ -1760,13 +1772,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("strategy-set-field!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
-        auto field = ev.string_heap_[types::as_string_idx(a[1])];
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
+        auto field = heap_str_from(ev.string_heap_, a[1]);
+        auto name = heap_str_from(ev.string_heap_, a[0]);
         for (auto& s : ev.strategies_) {
             if (s.name != name)
                 continue;
             if (field == "body" && types::is_string(a[2])) {
-                s.body = ev.string_heap_[types::as_string_idx(a[2])];
+                s.body = heap_str_from(ev.string_heap_, a[2]);
                 return make_bool(true);
             }
             if (field == "max-attempts" && types::is_int(a[2])) {
@@ -1785,7 +1797,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_bool(true);
             }
             if (field == "sys-prompt-template" && types::is_string(a[2])) {
-                s.sys_prompt_template = ev.string_heap_[types::as_string_idx(a[2])];
+                s.sys_prompt_template = heap_str_from(ev.string_heap_, a[2]);
                 return make_bool(true);
             }
             // name / evolution / parent are read-only
@@ -1798,7 +1810,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("strategy-inspect", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
+        auto name = heap_str_from(ev.string_heap_, a[0]);
         for (auto& s : ev.strategies_) {
             if (s.name == name) {
                 std::string result = "#(strategy-inspect";
@@ -1842,7 +1854,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("evolve-strategy", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
+        auto name = heap_str_from(ev.string_heap_, a[0]);
 
         // Find the source strategy
         const Evaluator::StrategyDef* src = nullptr;
@@ -1859,7 +1871,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // intend-analytics ourselves on this strategy.
         std::string analytics;
         if (a.size() >= 2 && types::is_string(a[1])) {
-            analytics = ev.string_heap_[types::as_string_idx(a[1])];
+            analytics = heap_str_from(ev.string_heap_, a[1]);
         } else {
             auto prim = ev.primitives_.lookup("intend-analytics");
             if (prim) {
@@ -1867,7 +1879,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 ev.string_heap_.push_back(name);
                 auto res = (*prim)({types::make_string(sid)});
                 if (types::is_string(res))
-                    analytics = ev.string_heap_[types::as_string_idx(res)];
+                    analytics = heap_str_from(ev.string_heap_, res);
             }
         }
 

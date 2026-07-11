@@ -4010,6 +4010,12 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
             m->reflection_schema_validated_total.fetch_add(1, std::memory_order_relaxed);
             if (health.macro_markers > 0)
                 m->reflection_macro_provenance_held_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1246 Phase 1: runtime_reflect_bridge under Guard —
+            // auto_validate mutated macro bodies / EDSL structs after mutate.
+            m->runtime_reflect_bridge_guard.store(1, std::memory_order_relaxed);
+            if (health.macro_markers > 0 || health.dirty_nodes > 0) {
+                m->runtime_reflect_mutated_schema_checks.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     } else {
         bump_schema_validation_fail_count();
@@ -4019,6 +4025,8 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
             if (!health.generation_healthy)
                 m->reflection_stale_validation_prevented_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+            m->runtime_reflect_bridge_guard.store(1, std::memory_order_relaxed);
+            m->runtime_reflect_mutated_schema_checks.fetch_add(1, std::memory_order_relaxed);
         }
     }
     return ok;
