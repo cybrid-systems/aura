@@ -329,6 +329,11 @@ aura_add_issue_test(test_mutate_cross_thread_migration)
 aura_issue_test_link_llvm_jit(test_mutate_cross_thread_migration)
 add_dependencies(all_test_issue_targets test_mutate_cross_thread_migration)
 
+# Issue #1374: query:pattern ↔ mutate:replace-pattern default Kleene parity
+aura_add_issue_test(test_query_mutate_consistency)
+aura_issue_test_link_llvm_jit(test_query_mutate_consistency)
+add_dependencies(all_test_issue_targets test_query_mutate_consistency)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

@@ -1418,19 +1418,16 @@ void register_workspace_query_primitives(
         bool have_pattern = false;
         std::size_t pattern_string_idx = 0;
         bool include_macro_introduced = false;
-        // Issue #289 / #481: nested-arity / Kleene-star ellipsis.
+        // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
         // Default (#t) is Kleene (`...` consumes 0..N consecutive
         // children). Set `:nested-arity #f` or `:strict-arity #t` to
         // opt back into the pre-#289 strict single-subtree wildcard
         // behavior (`...` consumes exactly 1 child). The :strict-arity
         // keyword is a discoverable alias for :nested-arity #f —
         // both flip the matcher to position-by-position matching.
-        // NOTE: mutate:replace-pattern still uses its own strict
-        // matcher (#482 will share the matcher and align the two
-        // primitives). Until that lands, the query↔mutate semantics
-        // differ in the default Kleene mode — pass :strict-arity #t
-        // to query:pattern if you need to query the same node set
-        // mutate:replace-pattern will see.
+        // Issue #1374: mutate:replace-pattern shares QueryMatcher and
+        // the same default (Kleene) so query-then-mutate pipelines see
+        // the same node set without an explicit :nested-arity flag.
         bool nested_arity = true;
         // Issue #289: result format. Default (false) preserves the
         // pre-#289 result shape — a flat list of NodeIds. When
