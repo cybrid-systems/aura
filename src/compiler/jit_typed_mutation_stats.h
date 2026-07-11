@@ -32,11 +32,26 @@ inline void record_type_propagation_stamp() noexcept {
 } // namespace aura::compiler::jit_typed_mutation
 
 // Issue #1318 Phase 1: dual-emit bridge counter (plain header for lowering_impl).
+// Issue #1377: dual-emit is opt-in (default off) — production lower pays
+// AoS-only cost unless a CompilerService / test enables the flag.
 namespace aura::compiler::ir_soa_migration {
 inline std::atomic<std::uint64_t> dual_emit_bridge_count{0};
 inline std::atomic<std::uint64_t> hotpath_hits{0};
+// Issue #1377: process-wide opt-in for SoA dual-emit in lower_to_ir_impl.
+// Default false — zero production overhead until Phase 2 consumers land.
+inline std::atomic<bool> g_enable_soa_dual_emit{false};
+inline std::atomic<std::uint64_t> dual_emit_skipped_total{0};
+[[nodiscard]] inline bool soa_dual_emit_enabled() noexcept {
+    return g_enable_soa_dual_emit.load(std::memory_order_relaxed);
+}
+inline void set_soa_dual_emit_enabled(bool on) noexcept {
+    g_enable_soa_dual_emit.store(on, std::memory_order_relaxed);
+}
 inline void record_dual_emit_bridge() noexcept {
     dual_emit_bridge_count.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_dual_emit_skipped() noexcept {
+    dual_emit_skipped_total.fetch_add(1, std::memory_order_relaxed);
 }
 inline void record_hotpath_hit() noexcept {
     hotpath_hits.fetch_add(1, std::memory_order_relaxed);

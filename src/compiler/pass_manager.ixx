@@ -3916,7 +3916,13 @@ public:
     // Run the bridge: convert each SoA function to AoS, run
     // the wrapped AoS pass on the AoS view, bump counters.
     // Returns true if the wrapped pass returned no errors.
+    // Issue #1377: early-out when single-emit (empty SoA module) —
+    // no to_aos_view conversion cost when dual-emit was off.
     bool run(IRModuleV2& soa_mod) {
+        if (soa_mod.functions.empty()) {
+            aos_view_ = aura::ir::IRModule{};
+            return true;
+        }
         // Build a temporary AoS IRModule from the SoA module
         // for the wrapped pass to consume. This is the
         // bridge — the SoA side is the source of truth, the

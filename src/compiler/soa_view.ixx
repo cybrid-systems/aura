@@ -23,7 +23,9 @@ inline std::atomic<std::uint64_t> g_soa_view_misses{0};
 inline std::atomic<std::uint64_t> g_soa_migration_hotpath_hits{0};
 inline std::atomic<std::uint64_t> g_soa_dual_emit_bridge_count{0};
 inline std::atomic<std::uint64_t> g_soa_dirty_short_circuit{0};
-inline constexpr int kSoaMigrationPhase2 = 1; // progressive; full retire of dual-emit is follow-up
+// Issue #1377: dual-emit is opt-in (default off) in production lower;
+// full SoA primary path remains deferred Phase 2+ (see ir_soa.ixx).
+inline constexpr int kSoaMigrationPhase2 = 1;
 
 inline void record_soa_view_hit() noexcept {
     g_soa_view_hits.fetch_add(1, std::memory_order_relaxed);
