@@ -1,6 +1,9 @@
-; lib/std/tui/run.aura — Issues #1335 Phase 1: game loop + tui:run
+; lib/std/tui/run.aura — Issues #1335 / #1353 / #1358: game loop + tui:run
+;
+; (require "std/tui/run" all:)
 
-(export tui:run game-loop continuous-render text-scroller-demo)
+(export tui:run tui:run-raw game-loop continuous-render text-scroller-demo
+        game-loop-input)
 
 ; Enter TUI (headless-safe), run thunk, always shutdown.
 (define (tui:run title thunk)
@@ -11,7 +14,18 @@
     (tui:shutdown)
     result))
 
-; Simplified fixed-iteration game loop (no real clock; n-frames or until tick returns #f)
+; Interactive path: raw mode + cleanup (#1353 / #1358)
+(define (tui:run-raw title w h thunk)
+  (tui:init title w h)
+  (tui:hide-cursor)
+  (tui:raw-mode-on)
+  (let ((result (thunk)))
+    (tui:raw-mode-off)
+    (tui:show-cursor)
+    (tui:shutdown)
+    result))
+
+; Fixed-iteration game loop (n-frames or until tick returns #f)
 (define (game-loop fps tick-fn render-fn)
   (let ((max-frames (* fps 2)))
     (let loop ((i 0))
@@ -22,6 +36,18 @@
             (tui:present)
             (loop (+ i 1)))
           #t)))))
+
+; Game loop with input poll each frame (timeout-ms ≈ 1000/fps)
+(define (game-loop-input max-frames timeout-ms tick-fn render-fn)
+  (let loop ((i 0) (running #t))
+    (if (or (not running) (>= i max-frames)) #t
+      (begin
+        (render-fn)
+        (tui:present)
+        (let ((e (tui:read-event timeout-ms)))
+          (if (tick-fn e)
+            (loop (+ i 1) #t)
+            (loop (+ i 1) #f)))))))
 
 (define (continuous-render fps render-fn)
   (game-loop fps (lambda () #t) render-fn))

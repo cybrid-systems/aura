@@ -1,4 +1,4 @@
-; examples/snake.aura — Issue #1343 Phase 1: snake scaffold (headless-safe)
+; examples/snake.aura — Issues #1343 / #1358: snake scaffold (headless-safe)
 
 (define (snake-demo)
   (tui:init "Snake" 32 12)

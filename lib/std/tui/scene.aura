@@ -1,0 +1,54 @@
+; lib/std/tui/scene.aura — Issue #1358: simple scene graph (list of objects)
+;
+; Object: (obj kind x y data)  kind = "sprite" | "text" | "char"
+; Requires draw-sprite / draw-text from canvas+sprite when composing demos.
+; (require "std/tui/scene" all:)
+
+(export make-scene scene-add! scene-clear! scene-objects
+        scene-draw-tui! make-obj obj-x obj-y obj-kind obj-data
+        obj-set-pos!)
+
+(define (make-scene) (cons "scene" (list)))
+
+(define (scene-objects sc) (cdr sc))
+
+(define (scene-clear! sc)
+  (set-cdr! sc (list))
+  sc)
+
+(define (scene-add! sc obj)
+  (set-cdr! sc (cons obj (cdr sc)))
+  sc)
+
+(define (make-obj kind x y data)
+  (list "obj" kind x y data))
+
+(define (obj-kind o) (car (cdr o)))
+(define (obj-x o) (car (cdr (cdr o))))
+(define (obj-y o) (car (cdr (cdr (cdr o)))))
+(define (obj-data o) (car (cdr (cdr (cdr (cdr o))))))
+
+(define (obj-set-pos! o x y)
+  (set-car! (cdr (cdr o)) x)
+  (set-car! (cdr (cdr (cdr o))) y)
+  o)
+
+; Draw all objects on global tui:* (data for sprite = sprite; text = string)
+(define (scene-draw-tui! sc fg bg)
+  (let loop ((objs (scene-objects sc)))
+    (if (null? objs) #t
+      (begin
+        (let ((o (car objs)))
+          (let ((k (obj-kind o))
+                (x (obj-x o))
+                (y (obj-y o))
+                (d (obj-data o)))
+            (cond
+              ((string=? k "sprite")
+               (draw-sprite x y d fg bg))
+              ((string=? k "text")
+               (draw-text x y d fg bg))
+              ((string=? k "char")
+               (tui:cell x y d fg bg 0))
+              (else #t))))
+        (loop (cdr objs))))))
