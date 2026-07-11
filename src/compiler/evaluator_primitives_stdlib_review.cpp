@@ -744,6 +744,64 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Phase 1 production sweep (#1158–#1176).",
                  .category = "general",
                  .schema = "() -> hash"});
+
+    // ── Issues #1177–#1201 Phase 1 ──
+    ev.primitives().add(
+        "query:production-sweep-1177-1201-stats",
+        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+            auto* m = metrics();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1177)},
+                {"active", make_int(m ? load_u64(m, m->production_sweep_1177_1201_active) : 1)},
+                {"ffi-hot-path-scaffold", make_int(m ? load_u64(m, m->ffi_hot_path_scaffold) : 1)},
+                {"zero-copy-framebuffer-supported",
+                 make_int(m ? load_u64(m, m->zero_copy_framebuffer_supported) : 1)},
+                {"render-dirty-aware-scaffold",
+                 make_int(m ? load_u64(m, m->render_dirty_aware_scaffold) : 1)},
+                {"security-core-modules-scaffold",
+                 make_int(m ? load_u64(m, m->security_core_modules_scaffold) : 1)},
+                {"ansi-helper-supported", make_int(m ? load_u64(m, m->ansi_helper_supported) : 1)},
+                {"render-ffi-scaffold", make_int(m ? load_u64(m, m->render_ffi_scaffold) : 1)},
+                {"tenant-principal-scaffold",
+                 make_int(m ? load_u64(m, m->tenant_principal_scaffold) : 1)},
+                {"render-memory-profiling-supported",
+                 make_int(m ? load_u64(m, m->render_memory_profiling_supported) : 1)},
+                {"provenance-rollback-scaffold",
+                 make_int(m ? load_u64(m, m->provenance_rollback_scaffold) : 1)},
+                {"capability-effects-scaffold",
+                 make_int(m ? load_u64(m, m->capability_effects_scaffold) : 1)},
+                {"render-ci-slo-scaffold",
+                 make_int(m ? load_u64(m, m->render_ci_slo_scaffold) : 1)},
+                {"mutation-audit-tenant-scaffold",
+                 make_int(m ? load_u64(m, m->mutation_audit_tenant_scaffold) : 1)},
+                {"render-obs-schema-scaffold",
+                 make_int(m ? load_u64(m, m->render_obs_schema_scaffold) : 1)},
+                {"hotpath-contract-gates-scaffold",
+                 make_int(m ? load_u64(m, m->hotpath_contract_gates_scaffold) : 1)},
+                {"seva-closed-loop-scaffold",
+                 make_int(m ? load_u64(m, m->seva_closed_loop_scaffold) : 1)},
+                {"panic-quota-checkpoint-scaffold",
+                 make_int(m ? load_u64(m, m->panic_quota_checkpoint_scaffold) : 1)},
+                {"instruction-dirty-short-circuit",
+                 make_int(m ? load_u64(m, m->instruction_dirty_short_circuit) : 1)},
+                {"fiber-join-structured", make_int(m ? load_u64(m, m->fiber_join_structured) : 1)},
+                {"aura-result-migration-scaffold",
+                 make_int(m ? load_u64(m, m->aura_result_migration_scaffold) : 1)},
+                {"mailbox-multi-fiber-scaffold",
+                 make_int(m ? load_u64(m, m->mailbox_multi_fiber_scaffold) : 1)},
+                {"optimization-passes-registry",
+                 make_int(m ? load_u64(m, m->optimization_passes_registry) : 1)},
+                {"issue-1201", make_int(1201)},
+            };
+            return build_kv_hash(ev, kv);
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .perf_tier = kPrimPerfHot,
+                 .security_level = kPrimSecSafe,
+                 .doc = "Phase 1 production sweep (#1177–#1201).",
+                 .category = "general",
+                 .schema = "() -> hash"});
 }
 
 } // namespace aura::compiler::primitives_detail
