@@ -2,19 +2,19 @@
 
 # Primitives (generated)
 
-**967** registrations scanned from `src/**/*.cpp`.
+**971** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (13%)
 - **core**: 248 primitives (26%)
-- **internal-observable**: 435 primitives (45%)
-- **convenience**: 161 primitives (17%)
+- **internal-observable**: 436 primitives (45%)
+- **convenience**: 164 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
-## Query: (435)
+## Query: (436)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -285,6 +285,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pattern-sv-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:per-fiber-exception-state-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:per-fiber-stack-pool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
+- `query:prim-dispatch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-error-unified-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-fastpath-per-prim` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
@@ -618,7 +619,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (262)
+## Core builtins (265)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -795,6 +796,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `pow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `prim-cold-dispatch-fallback` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `prim-hot-dispatch-hits` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `prim-hot-table-size` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `procedure?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `query-annotate-functions` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1495,7 +1499,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (435)
+### Internal observable (stats/counters) (436)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1766,6 +1770,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:pattern-sv-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:per-fiber-exception-state-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
 - `query:per-fiber-stack-pool-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:prim-dispatch-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:primitive-error-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-error-unified-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-fastpath-per-prim` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
@@ -1933,7 +1938,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
-### Convenience (candidates for stdlib migration) (161)
+### Convenience (candidates for stdlib migration) (164)
 
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -2035,6 +2040,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `mutation-log-size` — `src/compiler/evaluator_primitives_memory.cpp`
 - `my-id` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
+- `prim-cold-dispatch-fallback` — `src/compiler/evaluator_primitives_memory.cpp`
+- `prim-hot-dispatch-hits` — `src/compiler/evaluator_primitives_memory.cpp`
+- `prim-hot-table-size` — `src/compiler/evaluator_primitives_memory.cpp`
 - `query-annotate-functions` — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-type-of` — `src/compiler/evaluator_primitives_eval.cpp`

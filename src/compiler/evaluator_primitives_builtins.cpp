@@ -3,6 +3,8 @@
 
 module;
 
+#include "core/arena_auto_policy_stats.h"
+#include "primitives_meta.h"
 
 module aura.compiler.evaluator;
 
@@ -197,12 +199,32 @@ Primitives::Primitives() {
         if (slot < meta_.size())
             meta_[slot] = std::move(meta);
     };
-    set_meta("+", {.arity = 255, .pure = true, .doc = "Variadic addition."});
-    set_meta("-", {.arity = 255, .pure = true, .doc = "Variadic subtraction."});
-    set_meta("not", {.arity = 1, .pure = true, .doc = "Boolean negation."});
+    set_meta("+",
+             {.arity = 255, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Variadic addition."});
+    set_meta(
+        "-",
+        {.arity = 255, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Variadic subtraction."});
+    set_meta(
+        "*",
+        {.arity = 255, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Variadic multiplication."});
+    set_meta("/",
+             {.arity = 255, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Variadic division."});
+    set_meta("not",
+             {.arity = 1, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Boolean negation."});
+    set_meta("car", {.arity = 1, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Pair car."});
+    set_meta("cdr", {.arity = 1, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Pair cdr."});
+    set_meta("cons", {.arity = 2, .pure = true, .perf_tier = kPrimPerfHot, .doc = "Pair cons."});
 }
 std::optional<PrimFn> Primitives::lookup(std::string_view n) const {
-    // Issue #914: transparent hash — no temporary std::string.
+    // Issue #914/#1356: HotTierTable first, then main table_ (transparent hash).
+    if (auto hit = hot_map_.find(n); hit != hot_map_.end()) {
+        hot_dispatch_hits_.fetch_add(1, std::memory_order_relaxed);
+        if (aura::core::arena_policy::in_render_hotpath())
+            hot_dispatch_hits_render_.fetch_add(1, std::memory_order_relaxed);
+        return hit->second;
+    }
+    if (aura::core::arena_policy::in_render_hotpath())
+        cold_dispatch_fallback_.fetch_add(1, std::memory_order_relaxed);
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
