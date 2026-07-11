@@ -2182,15 +2182,29 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         auto pattern_str = ev.string_heap_[pattern_idx];
         std::string repl_template = ev.string_heap_[repl_idx];
-        // Issue #482: optional `:nested-arity [#t|#f]` keyword +
-        // summary string. Scan from a[2] to a.back(), collecting
-        // keywords; the LAST string arg becomes the summary. Default
-        // :nested-arity is #f (strict) to preserve pre-#482 mutation
-        // semantics — mutation as a primitive is fundamentally an
-        // atomic replacement, and Kleene mutation semantics
-        // (expanding `...` to multiple captures) are not yet defined.
-        bool nested_arity = false;
+        // Issue #482 / #1374: shared QueryMatcher with query:pattern.
+        // Keywords aligned with query:pattern:
+        //   :nested-arity [#t|#f]  — Kleene (default #t after #1374)
+        //   :strict-arity [#t]     — alias for :nested-arity #f
+        //   :include-macro-introduced / :allow-macro-introduced /
+        //   :exclude-macro-introduced / :respect-hygiene
+        // Summary string remains an optional trailing string arg.
+        // Default nested_arity=true matches query:pattern so AI
+        // query-then-mutate pipelines see the same node set.
+        bool nested_arity = true;
+        bool nested_arity_explicit = false;
+        bool include_macro_introduced = false;
         std::string summary = "replace-pattern";
+        auto consume_bool = [&](bool& target, std::size_t& ai) {
+            target = true;
+            if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                if (is_bool(a[ai + 1]))
+                    target = as_bool(a[ai + 1]);
+                else
+                    target = (as_int(a[ai + 1]) != 0);
+                ++ai;
+            }
+        };
         for (std::size_t ai = 2; ai < a.size(); ++ai) {
             if (is_keyword(a[ai])) {
                 auto kidx = as_keyword_idx(a[ai]);
@@ -2200,14 +2214,41 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
                 auto kw = ev.keyword_table_[kidx];
                 if (kw == ":nested-arity") {
-                    nested_arity = true;
+                    nested_arity_explicit = true;
+                    consume_bool(nested_arity, ai);
+                } else if (kw == ":strict-arity") {
+                    nested_arity_explicit = true;
+                    bool v = true;
                     if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
                         if (is_bool(a[ai + 1]))
-                            nested_arity = as_bool(a[ai + 1]);
+                            v = as_bool(a[ai + 1]);
                         else
-                            nested_arity = (as_int(a[ai + 1]) != 0);
+                            v = (as_int(a[ai + 1]) != 0);
                         ++ai;
                     }
+                    nested_arity = !v;
+                } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
+                    consume_bool(include_macro_introduced, ai);
+                } else if (kw == ":exclude-macro-introduced") {
+                    bool exclude = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            exclude = as_bool(a[ai + 1]);
+                        else
+                            exclude = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                    include_macro_introduced = !exclude;
+                } else if (kw == ":respect-hygiene") {
+                    bool v = false;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            v = as_bool(a[ai + 1]);
+                        else
+                            v = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                    include_macro_introduced = v;
                 } else {
                     ok = false;
                     return mev("bad-arg",
@@ -2218,7 +2259,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             } else {
                 ok = false;
                 return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
-                                      " [:nested-arity [#t]] [summary-string])");
+                                      " [:nested-arity [#t|#f]] [:strict-arity [#t]]"
+                                      " [:include-macro-introduced [#t]]"
+                                      " [:allow-macro-introduced [#t]]"
+                                      " [:exclude-macro-introduced [#t|#f]]"
+                                      " [:respect-hygiene [#t|#f]] [summary-string])");
+            }
+        }
+        // Issue #1374: one-shot stderr notice when default Kleene is used
+        // without an explicit arity keyword (pre-#1374 default was strict).
+        if (!nested_arity_explicit && nested_arity) {
+            static std::atomic<bool> s_kleene_default_warned{false};
+            if (!s_kleene_default_warned.exchange(true, std::memory_order_relaxed)) {
+                std::fprintf(stderr, "WARNING: mutate:replace-pattern now defaults to Kleene "
+                                     "(:nested-arity #t) to match query:pattern (#1374). "
+                                     "Pass :strict-arity #t for pre-#1374 single-subtree "
+                                     "wildcard behavior.\n");
             }
         }
 
@@ -2338,21 +2394,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         };
 
         // ── Match + capture ────────────────────────────────────
-        // so the two primitives agree on which nodes match a pattern
-        // regardless of :nested-arity mode. mutate:replace-pattern
-        // defaults to strict (nested_arity = false) for pre-#482
-        // semantics; pass :nested-arity #t to opt into Kleene
-        // matching (the replacement template still expects 1 capture
-        // per `...` for now).
-        // Issue #270: query captures StableNodeRef; apply validates
-        // each ref before set_child inside an atomic batch.
+        // Issue #482 / #1374: shared QueryMatcher with query:pattern.
+        // Default Kleene (nested_arity=true) matches query:pattern so
+        // the same pattern string selects the same node set. Pass
+        // :strict-arity #t for pre-#1374 single-subtree wildcards.
+        // Replacement still substitutes one `...` placeholder per
+        // capture in order (excess Kleene captures ignored).
+        // Issue #270: capture StableNodeRef; apply validates before
+        // set_child inside an atomic batch.
         struct PatternMatch {
             StableNodeRef match_ref;
             std::vector<StableNodeRef> capture_refs;
         };
 
         aura::compiler::QueryMatcher matcher(&flat, ev.workspace_pool_, pat_flat, pat_pool,
-                                             wildcard_sym, nested_arity);
+                                             wildcard_sym, nested_arity, !include_macro_introduced);
 
         // Find all matching nodes in workspace. Snapshot end_id (#111)
         // and capture StableNodeRef per match (#270).
@@ -2360,11 +2416,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         std::vector<PatternMatch> matches;
         matches.reserve(end_id);
         for (NodeId id = 0; id < end_id; ++id) {
-            // Issue #482: fresh per-match state, same as query site.
+            // Issue #484: skip orphans (same contract as query:pattern).
+            if (flat.root != NULL_NODE && id != flat.root && flat.parent_of(id) == NULL_NODE &&
+                !flat.is_macro_introduced(id))
+                continue;
+            // Issue #482 / #1374: fresh per-match state, same as query site.
             matcher.state.captures.clear();
             matcher.state.depth = 0;
+            while (matcher.has_pending_guard())
+                matcher.clear_pending_guard();
             if (!matcher.match_subtree(id, pat_pr.root))
                 continue;
+            // Issue #292: :guard patterns need Aura eval (query:pattern).
+            // Mutate does not re-eval guards — skip those matches so we
+            // never apply a replacement the query path would reject.
+            if (matcher.has_pending_guard()) {
+                while (matcher.has_pending_guard())
+                    matcher.clear_pending_guard();
+                continue;
+            }
             PatternMatch pm;
             pm.match_ref = flat.make_ref(id);
             pm.capture_refs.reserve(matcher.state.captures.size());
