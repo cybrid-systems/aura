@@ -267,15 +267,34 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 59 (orig lines 18572-18664)
 void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #824: minimal terminal rendering primitives (Phase 1 counters).
-    add("terminal:clear", [&ev](const auto&) -> EvalValue {
+    // Issue #824 Phase 1 counters → Issue #1351 Phase A deprecation.
+    // These no-ops only bump metrics; real terminal APIs live on make-terminal-buffer /
+    // terminal-set-cell* / terminal-present-batch / terminal-diff-update.
+    // Phase A: return #f + one-shot stderr warn; keep counters. Phase B: delete later.
+    auto deprecate_terminal_noop = [](const char* name, const char* replacement) {
+        // Per-name one-shot via address of static storage keyed by name pointer
+        // (literals are unique). Thread-safe enough for stderr warn spam control.
+        static std::mutex warn_mu;
+        static std::unordered_set<const void*> warned;
+        std::lock_guard<std::mutex> lock(warn_mu);
+        if (warned.insert(static_cast<const void*>(name)).second) {
+            std::fprintf(stderr,
+                         "[aura] WARN: %s is deprecated (no-op); use %s instead "
+                         "(see #1351)\n",
+                         name, replacement);
+        }
+    };
+
+    add("terminal:clear", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
+        deprecate_terminal_noop("terminal:clear", "make-terminal-buffer + terminal-present-batch");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_render_clear_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
-    add("terminal:draw-batch", [&ev](const auto& a) -> EvalValue {
+    add("terminal:draw-batch", [&ev, deprecate_terminal_noop](const auto& a) -> EvalValue {
+        deprecate_terminal_noop("terminal:draw-batch", "terminal-set-cell / terminal-set-cell-rgb");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_render_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
@@ -283,31 +302,36 @@ void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
                 m->term_render_present_ns_total.fetch_add(static_cast<std::uint64_t>(as_int(a[0])),
                                                           std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
-    add("terminal:present", [&ev](const auto&) -> EvalValue {
+    add("terminal:present", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
+        deprecate_terminal_noop("terminal:present", "terminal-present-batch / terminal-present");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_render_present_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
-    add("terminal:mark-dirty-region", [&ev](const auto&) -> EvalValue {
+    add("terminal:mark-dirty-region", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
+        deprecate_terminal_noop("terminal:mark-dirty-region",
+                                "terminal-diff-update (real dirty cell count)");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->term_render_dirty_region_total.fetch_add(1, std::memory_order_relaxed);
             m->render_hp_dirty_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
     // Issue #1135: present-delta only bumps its own delta counter —
     // term_render_present_total is owned solely by terminal:present.
-    add("terminal:present-delta", [&ev](const auto&) -> EvalValue {
+    add("terminal:present-delta", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
+        deprecate_terminal_noop("terminal:present-delta",
+                                "terminal-diff-update + terminal-present-batch");
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->render_hp_present_delta_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(true);
+        return make_bool(false);
     });
     // Issue #830: query:pass-shape-epoch-stats
     add("query:pass-shape-epoch-stats", [&ev](const auto&) -> EvalValue {

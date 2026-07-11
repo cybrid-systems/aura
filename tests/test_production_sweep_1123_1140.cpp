@@ -70,16 +70,16 @@ int main() {
         CHECK(r2 && is_void(*r2), "format non-string → void");
     }
 
-    // #1135/#1136/#1140
+    // #1135/#1136/#1140 — no-ops deprecated in #1351 (still bool, now #f)
     {
         CHECK(cs.eval("(terminal:present)") && is_bool(*cs.eval("(terminal:present)")),
               "terminal:present");
         auto b = cs.eval("(terminal:present-delta)");
-        CHECK(b && is_bool(*b) && as_bool(*b), "terminal:present-delta");
+        CHECK(b && is_bool(*b) && !as_bool(*b), "terminal:present-delta deprecated → #f");
         auto c = cs.eval("(terminal:create-buffer)");
-        CHECK(c && is_bool(*c) && as_bool(*c), "terminal:create-buffer");
+        CHECK(c && is_bool(*c) && !as_bool(*c), "terminal:create-buffer deprecated → #f");
         auto d = cs.eval("(terminal:diff)");
-        CHECK(d && is_bool(*d) && as_bool(*d), "terminal:diff");
+        CHECK(d && is_bool(*d) && !as_bool(*d), "terminal:diff deprecated → #f");
     }
 
     // #1139
