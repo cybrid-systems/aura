@@ -7682,14 +7682,25 @@ private:
     // Instead of removing from cache, re-lowers each dependent with the current cache
     // so they stay resolvable in the IR pipeline with updated dependencies.
     void invalidate_function(const std::string& name) {
-        // Issue #166 Phase 1: bump the global mutation epoch FIRST,
-        // before any other work. This ensures that any cache entry
-        // being concurrently checked by another fiber will see a
-        // newer epoch than its last_seen_epoch_ and treat itself
-        // as stale. The increment uses release ordering so
-        // concurrently executing apply_closure / JIT / interpreter
-        // paths that load with acquire see the bump before using
-        // stale bridge/EnvFrame metadata (Issue #739).
+        // Issue #59 Iter 3 + #1378: acquire the Mutation Lock FIRST so
+        // epoch bump, block-dirty, BFS, and cache/JIT teardown are
+        // atomic w.r.t. concurrent invalidate_function / mutate.
+        // A mutate:* that triggers this must drain any in-flight compile
+        // before erasing the cache entry, otherwise another fiber could
+        // observe a half-erased state.
+        //
+        // Issue #166 historically bumped mutation_epoch_ BEFORE the lock
+        // for "early visibility". That opened a multi-fiber re-entrancy
+        // window (Issue #1378): another invalidate could interleave after
+        // epoch publish but before dep_graph_ cleanup, producing
+        // non-deterministic cascade topology. Epoch still uses
+        // memory_order_release; readers load acquire (L739/L966/L1013).
+        std::unique_lock mutate_lock(mutate_mtx_);
+
+        // Issue #166 Phase 1: bump the global mutation epoch under the lock.
+        // Release ordering so apply_closure / JIT / interpreter paths that
+        // load with acquire see the bump before using stale bridge/EnvFrame
+        // metadata (Issue #739).
         mutation_epoch_.fetch_add(1, std::memory_order_release);
         // Issue #531: bump closure_stale_refresh_count_ on
         // every invalidate_function — measures the closure
@@ -7723,11 +7734,6 @@ private:
             metrics_.invalidate_per_block_dirty_total.fetch_add(1, std::memory_order_relaxed);
         }
 
-        // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
-        // A mutate:* that triggers this must drain any in-flight compile
-        // before erasing the cache entry, otherwise another fiber could
-        // observe a half-erased state.
-        std::unique_lock mutate_lock(mutate_mtx_);
         // Issue #401: real BFS over called_by chain.
         //
         // The previous implementation used std::vector + push_back/pop_back,
@@ -7793,7 +7799,11 @@ private:
                 }
             }
         }
-        // Invalidate JIT cache for affected functions
+        // Invalidate JIT cache for affected functions.
+        // Issue #491 + #1378: erase jit_cache_ AND jit_.invalidate in
+        // the SAME jit_cache_mtx_ scope so a concurrent shared reader
+        // never observes "cache miss but AuraJIT still has native code".
+        // Lock order: mutate_mtx_ (already held) → jit_cache_mtx_.
         {
             std::unique_lock cache_write(jit_cache_mtx_);
             jit_cache_.erase(name);
@@ -7808,19 +7818,17 @@ private:
                                                                         std::memory_order_relaxed);
                 }
             }
-        }
-        // Issue #491: drop stale AuraJIT modules alongside jit_cache_
-        // erase so in-flight fibers cannot keep executing old native
-        // code after invalidate_function / hot-swap.
-        jit_.invalidate(name.c_str());
-        jit_.invalidate_prefix(name.c_str());
-        metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-        evaluator_.bump_incremental_closure_jit_sync();
-        for (auto& dep_name : dependents) {
-            jit_.invalidate(dep_name.c_str());
-            jit_.invalidate_prefix(dep_name.c_str());
+            // Drop stale AuraJIT modules inside the same lock as erase.
+            jit_.invalidate(name.c_str());
+            jit_.invalidate_prefix(name.c_str());
             metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
             evaluator_.bump_incremental_closure_jit_sync();
+            for (auto& dep_name : dependents) {
+                jit_.invalidate(dep_name.c_str());
+                jit_.invalidate_prefix(dep_name.c_str());
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                evaluator_.bump_incremental_closure_jit_sync();
+            }
         }
 
         // Issue #225 cycle 3: invalidate bridge data for
@@ -8307,6 +8315,18 @@ public:
     // (mutate:rebind) EDSL surface, which would also rebuild the function
     // body (mixing the traversal test with the rebind path).
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
+
+    // Issue #1378: test accessors for cascade ordering / epoch accounting.
+    [[nodiscard]] std::uint64_t public_mutation_epoch() const noexcept {
+        return mutation_epoch_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t public_invalidate_function_calls() const noexcept {
+        return metrics_.invalidate_function_calls.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool public_jit_cache_contains(const std::string& name) const {
+        std::shared_lock cache_read(jit_cache_mtx_);
+        return jit_cache_.find(name) != jit_cache_.end();
+    }
 
     // Issue #1377: opt-in SoA dual-emit (default off). When false,
     // lower_to_ir skips IRFunctionSoA columns + bridge counters.

@@ -349,6 +349,11 @@ aura_add_issue_test(test_ir_soa_dual_emit)
 aura_issue_test_link_llvm_jit(test_ir_soa_dual_emit)
 add_dependencies(all_test_issue_targets test_ir_soa_dual_emit)
 
+# Issue #1378: invalidate_function cascade ordering under mutate_lock
+aura_add_issue_test(test_invalidate_cascade_order)
+aura_issue_test_link_llvm_jit(test_invalidate_cascade_order)
+add_dependencies(all_test_issue_targets test_invalidate_cascade_order)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
