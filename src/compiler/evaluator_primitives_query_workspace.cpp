@@ -1841,6 +1841,10 @@ void register_workspace_query_primitives(
         }
         if (!include_macro_introduced) {
             ev.verify_pattern_result_hygiene(flat, result, with_markers);
+            // Issue #1280: default exclude-MacroIntroduced path is the
+            // production hygiene contract for query:pattern.
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->pattern_hygiene_default_exclude.fetch_add(1, std::memory_order_relaxed);
         }
         return result;
     });

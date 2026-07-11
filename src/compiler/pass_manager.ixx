@@ -2605,23 +2605,38 @@ private:
                 }
             }
         }
-        // Loops: detect back-edges via DFS from the entry.
-        // A back-edge is an edge (B -> A) where A is an
-        // ancestor of B in the DFS tree.
-        std::unordered_set<std::uint32_t> visited;
-        std::vector<std::uint32_t> stack;
-        stack.push_back(0); // entry block
-        while (!stack.empty()) {
-            auto bid = stack.back();
-            stack.pop_back();
-            if (!visited.insert(bid).second)
-                continue;
-            for (auto succ : successors_of(func, bid)) {
-                if (visited.count(succ)) {
-                    // back-edge → loop → not inlinable (yet)
-                    return false;
+        // Loops: detect true back-edges via DFS with path colors.
+        // Issue #1278: a back-edge is an edge to a GRAY node (on the
+        // current DFS path). Edges to BLACK (finished) nodes are
+        // cross/forward edges — normal for diamond/join CFGs and must
+        // NOT reject inlining. Pre-#1278 used a single visited set and
+        // false-positive on A→B, A→C, B→D, C→D diamonds.
+        // Colors: 0=white (unseen), 1=gray (on path), 2=black (done).
+        std::vector<std::uint8_t> color(func.blocks.size(), 0);
+        struct DfsFrame {
+            std::uint32_t bid = 0;
+            std::size_t next = 0;
+        };
+        std::vector<DfsFrame> dfs_stack;
+        dfs_stack.push_back({0, 0});
+        color[0] = 1;
+        while (!dfs_stack.empty()) {
+            auto& fr = dfs_stack.back();
+            auto succs = successors_of(func, fr.bid);
+            if (fr.next < succs.size()) {
+                const auto succ = succs[fr.next++];
+                if (succ >= color.size())
+                    continue;
+                if (color[succ] == 1)
+                    return false; // true back-edge → loop
+                if (color[succ] == 0) {
+                    color[succ] = 1;
+                    dfs_stack.push_back({succ, 0});
                 }
-                stack.push_back(succ);
+                // color[succ] == 2: finished join target (diamond) — OK
+            } else {
+                color[fr.bid] = 2;
+                dfs_stack.pop_back();
             }
         }
         // Every block must end with Branch, Jump, or Return.

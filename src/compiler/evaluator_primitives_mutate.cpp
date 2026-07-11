@@ -405,14 +405,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                         m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #1279: auto-refresh path bookkeeping when already valid
+                // (refresh_if_stale is a no-op but counts boundary auto-use).
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->stable_ref_boundary_auto_refresh.fetch_add(1, std::memory_order_relaxed);
                 ev.bump_stable_ref_provenance_enforced();
                 out_node = ref.id;
                 return make_void();
             }
             // Cross-COW / generation drift: try auto-refresh before fail.
+            // Issue #1279: validate_or_refresh is the automatic boundary
+            // refresh for multi-layer / COW stale refs.
             if (ref.validate_or_refresh(flat)) {
                 ev.bump_stable_ref_cross_cow_refresh();
                 ev.bump_stable_ref_provenance_enforced();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->stable_ref_boundary_auto_refresh.fetch_add(1, std::memory_order_relaxed);
                 if (!ref.boundary_pinned) {
                     ev.pin_stable_ref_for_cow_boundary(ref);
                     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))

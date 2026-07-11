@@ -5748,6 +5748,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> epoch_bump_for_macro{0};                        // #1274
     std::atomic<std::uint64_t> naked_macro_mutate_attempt{0};                  // #1275
     std::atomic<std::uint64_t> hygiene_edsl_awareness{1};                      // #1275
+
+    // ── Issues #1276–#1280: reflect/obs/inliner/StableRef/pattern Phase 1 ──
+    std::atomic<std::uint64_t> production_sweep_1276_1280_active{1};
+    std::atomic<std::uint64_t> reflect_nested_struct_scaffold{1};   // #1276
+    std::atomic<std::uint64_t> reflect_runtime_schema_hooks{1};     // #1276
+    std::atomic<std::uint64_t> hygiene_violation_stats_active{1};   // #1277
+    std::atomic<std::uint64_t> dirty_impact_stats_active{1};        // #1277
+    std::atomic<std::uint64_t> inline_diamond_cfg_fixed{1};         // #1278
+    std::atomic<std::uint64_t> stable_ref_boundary_auto_refresh{0}; // #1279
+    std::atomic<std::uint64_t> stable_ref_auto_refresh_enforced{1}; // #1279
+    std::atomic<std::uint64_t> pattern_hygiene_default_exclude{0};  // #1280
+    std::atomic<std::uint64_t> pattern_hygiene_end_to_end{1};       // #1280
 };
 
 
