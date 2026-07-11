@@ -254,6 +254,11 @@ aura_add_issue_test(test_cyber_cat_smoke)
 aura_issue_test_link_llvm_jit(test_cyber_cat_smoke)
 add_dependencies(all_test_issue_targets test_cyber_cat_smoke)
 
+# Issue #1359: TLarena 1MB default capacity + graceful OOM
+aura_add_issue_test(test_tl_arena_capacity)
+aura_issue_test_link_llvm_jit(test_tl_arena_capacity)
+add_dependencies(all_test_issue_targets test_tl_arena_capacity)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

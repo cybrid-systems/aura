@@ -16,10 +16,14 @@ struct PairSlot {
 };
 
 // ── TL Arena (thread-local bump allocator) ──
+// Issue #1359: default was 64MB *eager* malloc per thread → 100 fibers = 6.4GB.
+// Initial capacity is 1MB (or AURA_TL_ARENA_INITIAL_MB); growth doubles as needed.
 struct TLarena {
     uint8_t* base = nullptr;
     size_t offset = 0;
-    size_t capacity = 64 * 1024 * 1024; // 64MB default
+    // 0 = resolve to kDefaultCapacity (or env) on first init/alloc.
+    size_t capacity = 0;
+    static constexpr size_t kDefaultCapacity = 1024 * 1024; // 1MB (#1359)
 };
 
 // Per-thread global arena instance
@@ -76,12 +80,18 @@ struct FlatHashTable {
 extern std::vector<FlatHashTable*> g_hash_tables;
 
 // ── TL Arena API ──
-void tl_arena_init(TLarena* arena);
+// Returns true on success. On OOM leaves base==nullptr and returns false (no exit).
+bool tl_arena_init(TLarena* arena);
 void tl_arena_destroy(TLarena* arena);
 void tl_arena_reset(TLarena* arena);
+// Returns nullptr on OOM (no exit). Lazily inits when base is null.
 void* tl_arena_alloc(TLarena* arena, size_t size, size_t align);
 void tl_arena_push(TLarena* arena);
 void tl_arena_pop(TLarena* arena);
+
+// Issue #1359 probes
+extern "C" size_t aura_tl_arena_default_capacity();
+extern "C" std::uint64_t aura_tl_arena_oom_total();
 
 // ── JIT / runtime C ABI (defined in aura_jit_runtime.cpp, aura_jit_bridge.cpp) ──
 extern "C" std::int64_t aura_jit_test();

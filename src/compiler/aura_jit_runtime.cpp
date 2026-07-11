@@ -52,6 +52,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <array>
@@ -67,38 +68,96 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include "hash_meta.h"  // Issue #908: kEmptySlot
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
+// Issue #1359: 1MB default (was 64MB), graceful OOM, env override.
 __thread TLarena g_tl_arena;
 
-void tl_arena_init(TLarena* arena) {
+static std::atomic<uint64_t> g_tl_arena_oom_total{0};
+
+// Resolve initial capacity: non-zero capacity wins; else env AURA_TL_ARENA_INITIAL_MB
+// (1..1024) or TLarena::kDefaultCapacity (1MB).
+static size_t tl_arena_resolve_capacity(size_t capacity) {
+    if (capacity != 0)
+        return capacity;
+    if (const char* env = std::getenv("AURA_TL_ARENA_INITIAL_MB")) {
+        char* end = nullptr;
+        long mb = std::strtol(env, &end, 10);
+        if (end != env && mb > 0 && mb <= 1024)
+            return static_cast<size_t>(mb) * 1024u * 1024u;
+    }
+    return TLarena::kDefaultCapacity;
+}
+
+extern "C" size_t aura_tl_arena_default_capacity() {
+    return TLarena::kDefaultCapacity;
+}
+
+extern "C" uint64_t aura_tl_arena_oom_total() {
+    return g_tl_arena_oom_total.load(std::memory_order_relaxed);
+}
+
+bool tl_arena_init(TLarena* arena) {
+    if (!arena)
+        return false;
+    arena->capacity = tl_arena_resolve_capacity(arena->capacity);
     if (!arena->base) {
-        arena->base = (uint8_t*)malloc(arena->capacity);
+        arena->base = static_cast<uint8_t*>(std::malloc(arena->capacity));
         if (!arena->base) {
-            fprintf(stderr, "tl_arena: alloc %zu failed\n", arena->capacity);
-            exit(1);
+            std::fprintf(stderr, "tl_arena: alloc %zu failed\n", arena->capacity);
+            ++g_tl_arena_oom_total;
+            // Issue #1359: no exit(1) — leave base null for graceful fail
+            return false;
         }
     }
     arena->offset = 0;
+    return true;
 }
 
 void tl_arena_destroy(TLarena* arena) {
-    free(arena->base);
+    if (!arena)
+        return;
+    std::free(arena->base);
     arena->base = nullptr;
     arena->offset = 0;
+    // Keep capacity so re-init reuses the same policy size (or 0 → resolve again).
 }
 
 void tl_arena_reset(TLarena* arena) {
-    arena->offset = 0;
+    if (arena)
+        arena->offset = 0;
 }
 
 void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
+    if (!arena)
+        return nullptr;
+    if (size == 0)
+        size = 1;
+    if (align == 0)
+        align = 1;
+
+    // Lazy init for threads that never called tl_arena_init (fiber workers).
+    if (!arena->base) {
+        if (!tl_arena_init(arena))
+            return nullptr;
+    }
+
     size_t aligned = (arena->offset + align - 1) & ~(align - 1);
-    if (aligned + size > arena->capacity) {
-        // Double capacity
-        size_t new_cap = arena->capacity * 2;
-        uint8_t* new_base = (uint8_t*)realloc(arena->base, new_cap);
+    size_t needed = aligned + size;
+    if (needed > arena->capacity) {
+        // Double until large enough (preserves growth; handles size > 2×cap).
+        size_t new_cap = arena->capacity ? arena->capacity : TLarena::kDefaultCapacity;
+        while (new_cap < needed) {
+            if (new_cap > (std::numeric_limits<size_t>::max() / 2)) {
+                std::fprintf(stderr, "tl_arena: overflow\n");
+                ++g_tl_arena_oom_total;
+                return nullptr;
+            }
+            new_cap *= 2;
+        }
+        uint8_t* new_base = static_cast<uint8_t*>(std::realloc(arena->base, new_cap));
         if (!new_base) {
-            fprintf(stderr, "tl_arena: overflow\n");
-            exit(1);
+            std::fprintf(stderr, "tl_arena: overflow\n");
+            ++g_tl_arena_oom_total;
+            return nullptr;
         }
         arena->base = new_base;
         arena->capacity = new_cap;
@@ -110,16 +169,33 @@ void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
 }
 
 void tl_arena_push(TLarena* arena) {
-    // Save current offset on a simple stack (reuses arena memory for stack)
-    // Top of arena = stack of saved offsets
-    size_t* stack_top = (size_t*)(arena->base + arena->offset);
+    // Save current offset on a simple stack (reuses arena memory for stack).
+    // Top of arena = stack of saved offsets.
+    if (!arena)
+        return;
+    if (!arena->base) {
+        if (!tl_arena_init(arena))
+            return;
+    }
+    if (arena->offset + sizeof(size_t) > arena->capacity) {
+        // Grow via alloc path, then rewrite the mark (alloc may pad).
+        size_t mark = arena->offset;
+        void* slot = tl_arena_alloc(arena, sizeof(size_t), alignof(size_t));
+        if (!slot)
+            return;
+        *static_cast<size_t*>(slot) = mark;
+        return;
+    }
+    size_t* stack_top = reinterpret_cast<size_t*>(arena->base + arena->offset);
     *stack_top = arena->offset;
     arena->offset += sizeof(size_t);
 }
 
 void tl_arena_pop(TLarena* arena) {
-    // Restore offset from stack
-    arena->offset = ((size_t*)(arena->base + arena->offset))[-1];
+    // Restore offset from stack (only correct if no intervening allocs past the mark slot).
+    if (!arena || !arena->base || arena->offset < sizeof(size_t))
+        return;
+    arena->offset = (reinterpret_cast<size_t*>(arena->base + arena->offset))[-1];
 }
 
 // ── Arena flag ──
