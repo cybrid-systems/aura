@@ -1,0 +1,31 @@
+; lib/std/tests/test_atomic_swap_fuzz.aura — Issue #1380
+; Iterative swap/sync cycles (shallow stack; no 1000-deep recursion).
+
+(require "std/atomic-swap" all:)
+
+(define (test-atomic-swap-fuzz)
+  (define b (make-binding "fuzz" 0 "art-0"))
+  (define ok #t)
+  (define i 0)
+  (let loop ()
+    (if (>= i 50)
+        (and ok
+             (= (binding-target-version b) 50)
+             (not (binding-dirty? b)))
+      (begin
+        (let* ((nv (+ i 1))
+               (queued (swap-binding! b nv "art-x"))
+               (live-ok (= (binding-target-version queued)
+                           (binding-target-version b)))
+               (r (sync-bindings! queued))
+               (nb (car r))
+               (did (cdr r))
+               (r2 (sync-bindings! nb))
+               (did2 (cdr r2)))
+          (set! ok (and ok live-ok did (not did2)
+                        (= (binding-target-version nb) nv)))
+          (set! b nb)
+          (set! i nv)
+          (loop))))))
+
+(test-atomic-swap-fuzz)

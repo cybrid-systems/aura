@@ -106,6 +106,10 @@
     (list "tui/anim"
       (list "TUI animation timeline (frames + fps ticks)"
             "(require \"std/tui/anim\" all:)"))
+    ; ── Atomic resource swap (Issue #1380) ──
+    (list "atomic-swap"
+      (list "Bind resource→artifact; queue swap, drain at sync boundary"
+            "(require \"std/atomic-swap\" all:)"))
     ; ── AOT hot-update (Issue #1370) ──
     (list "hot-update"
       (list "AOT hot-reload + region + health (high-level Agent API)"

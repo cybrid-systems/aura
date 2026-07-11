@@ -1,0 +1,42 @@
+; lib/std/tests/test_atomic_swap_basic.aura — Issue #1380
+; Returns #t when basic swap/sync drain semantics pass.
+
+(require "std/atomic-swap" all:)
+
+(define (test-atomic-swap-basic)
+  (let* ((b0 (make-binding "ui" 0 "sprite-0"))
+         (id (binding-id b0))
+         (tv (binding-target-version b0))
+         (art (binding-artifact-id b0))
+         (dirty0 (binding-dirty? b0))
+         (b1 (swap-binding! b0 1 "sprite-1"))
+         (dirty1 (binding-dirty? b1))
+         (pt (binding-pending-target-version b1))
+         (pa (binding-pending-artifact-id b1))
+         ; still shows old live target until sync
+         (live-t (binding-target-version b1))
+         (live-a (binding-artifact-id b1))
+         (r (sync-bindings! b1))
+         (committed (car r))
+         (did (cdr r))
+         (r2 (sync-bindings! committed))
+         (did2 (cdr r2))
+         (c-t (binding-target-version committed))
+         (c-a (binding-artifact-id committed))
+         (c-dirty (binding-dirty? committed)))
+    (and (equal? id "ui")
+         (= tv 0)
+         (equal? art "sprite-0")
+         (not dirty0)
+         dirty1
+         (= pt 1)
+         (equal? pa "sprite-1")
+         (= live-t 0)
+         (equal? live-a "sprite-0")
+         did
+         (= c-t 1)
+         (equal? c-a "sprite-1")
+         (not c-dirty)
+         (not did2))))
+
+(test-atomic-swap-basic)

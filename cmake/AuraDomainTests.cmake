@@ -354,6 +354,11 @@ aura_add_issue_test(test_invalidate_cascade_order)
 aura_issue_test_link_llvm_jit(test_invalidate_cascade_order)
 add_dependencies(all_test_issue_targets test_invalidate_cascade_order)
 
+# Issue #1380: generic atomic-resource-swap stdlib
+aura_add_issue_test(test_atomic_swap_stdlib)
+aura_issue_test_link_llvm_jit(test_atomic_swap_stdlib)
+add_dependencies(all_test_issue_targets test_atomic_swap_stdlib)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)

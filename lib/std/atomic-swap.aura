@@ -1,0 +1,158 @@
+; lib/std/atomic-swap.aura — Issue #1380
+; Generic "bind resource R → artifact A so they swap atomically".
+;
+; Domains: games, agent UIs, IDE highlighters, dashboards.
+; Domain callers (e.g. aura-pets) compose this into pet:render-sync!
+; etc. — this module stays generic (no pet vocabulary).
+;
+; Model (immutable lists, no define-record — max dialect portability):
+;   Binding = (id target-version artifact-id
+;              pending-target-version pending-artifact-id dirty?)
+;   Registry = list of bindings
+;
+; Protocol:
+;   1. (swap-binding! b new-ver new-artifact) → dirty binding (queued)
+;   2. At render/sync boundary: (sync-bindings! b) → (committed . did-commit?)
+;      or (sync-registry! reg) → (new-reg . any-committed?)
+;
+; Usage:
+;   (require "std/atomic-swap" all:)
+;   (define b (make-binding "ui" 0 "sprite-0"))
+;   (define b2 (swap-binding! b 1 "sprite-1"))
+;   (define r (sync-bindings! b2))  ; (car r)=committed, (cdr r)=#t
+
+(export make-binding
+        binding-id
+        binding-target-version
+        binding-artifact-id
+        binding-pending-target-version
+        binding-pending-artifact-id
+        binding-dirty?
+        binding-target
+        binding-artifact
+        swap-binding!
+        sync-bindings!
+        make-registry
+        registry-put
+        registry-ref
+        registry-list
+        registry-ids
+        pending-swaps
+        sync-registry!
+        drain-pending-swaps!
+        binding-on-commit
+        set-binding-on-commit!
+        default-binding-on-commit
+        atomic-swap:stats)
+
+; ── Binding as 6-element list ──
+; (id target-ver artifact pending-ver pending-artifact dirty)
+
+(define (make-binding id target-version artifact-id)
+  (list id target-version artifact-id 0 "" #f))
+
+(define (binding-id b) (car b))
+(define (binding-target-version b) (car (cdr b)))
+(define (binding-artifact-id b) (car (cdr (cdr b))))
+(define (binding-pending-target-version b) (car (cdr (cdr (cdr b)))))
+(define (binding-pending-artifact-id b) (car (cdr (cdr (cdr (cdr b))))))
+(define (binding-dirty? b) (car (cdr (cdr (cdr (cdr (cdr b)))))))
+
+; Aliases from issue surface
+(define (binding-target b) (binding-target-version b))
+(define (binding-artifact b) (binding-artifact-id b))
+
+; Queue a swap — does NOT commit. Returns new dirty binding.
+(define (swap-binding! b new-target-version new-artifact-id)
+  (list (binding-id b)
+        (binding-target-version b)
+        (binding-artifact-id b)
+        new-target-version
+        new-artifact-id
+        #t))
+
+; Commit pending at sync boundary.
+; Returns (committed-binding . did-commit?) pair.
+(define (sync-bindings! b)
+  (if (binding-dirty? b)
+      (let ((committed
+              (list (binding-id b)
+                    (binding-pending-target-version b)
+                    (binding-pending-artifact-id b)
+                    0
+                    ""
+                    #f)))
+        (binding-on-commit (binding-id b) committed)
+        (cons committed #t))
+      (cons b #f)))
+
+; ── Registry: list of bindings ──
+
+(define (make-registry)
+  '())
+
+(define (registry-put reg b)
+  (let ((id (binding-id b)))
+    (let loop ((xs reg) (acc '()))
+      (cond
+        ((null? xs) (cons b (reverse acc)))
+        ((equal? (binding-id (car xs)) id)
+         (append (reverse acc) (cons b (cdr xs))))
+        (else (loop (cdr xs) (cons (car xs) acc)))))))
+
+(define (registry-ref reg id)
+  (let loop ((xs reg))
+    (cond
+      ((null? xs) #f)
+      ((equal? (binding-id (car xs)) id) (car xs))
+      (else (loop (cdr xs))))))
+
+(define (registry-list reg) reg)
+
+(define (registry-ids reg)
+  (let loop ((xs reg) (acc '()))
+    (if (null? xs)
+        (reverse acc)
+        (loop (cdr xs) (cons (binding-id (car xs)) acc)))))
+
+(define (pending-swaps reg)
+  (let loop ((xs reg) (acc '()))
+    (cond
+      ((null? xs) (reverse acc))
+      ((binding-dirty? (car xs))
+       (loop (cdr xs) (cons (car xs) acc)))
+      (else (loop (cdr xs) acc)))))
+
+; Sync all dirty bindings in a registry.
+; Returns (new-registry . any-committed?)
+(define (sync-registry! reg)
+  (let loop ((xs reg) (acc '()) (any #f))
+    (if (null? xs)
+        (cons (reverse acc) any)
+        (let* ((r (sync-bindings! (car xs)))
+               (nb (car r))
+               (did (cdr r)))
+          (loop (cdr xs) (cons nb acc) (or any did))))))
+
+; Drain alias — same as sync-registry!
+(define (drain-pending-swaps! reg)
+  (sync-registry! reg))
+
+; ── Commit hook (overridable) ──
+; default-binding-on-commit is the live hook; set-binding-on-commit!
+; rebinds it via set! for callers that need custom side effects.
+
+(define (default-binding-on-commit id b)
+  (begin id b #t))
+
+(define binding-on-commit default-binding-on-commit)
+
+(define (set-binding-on-commit! fn)
+  (set! binding-on-commit fn)
+  #t)
+
+; ── Lightweight stats (pure; for Agent discoverability) ──
+; Returns a plain list: (pending-count committed-fields)
+(define (atomic-swap:stats reg)
+  (list (length (pending-swaps reg))
+        (length reg)))
