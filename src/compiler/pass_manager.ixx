@@ -1395,17 +1395,6 @@ public:
                             changed = true;
                             continue;
                         }
-                        // Issue #1338: parent/source type stamp when
-                        // cast carries narrow_evidence but source was
-                        // untyped — propagate so later DCE can elide.
-                        if (src->type_id == 0 && instr.type_id != 0) {
-                            // Non-const mutate via index map.
-                            auto it = slot_to_idx.find(ops[1]);
-                            if (it != slot_to_idx.end()) {
-                                block.instructions[it->second].type_id = instr.type_id;
-                                ++parent_type_stamped_;
-                            }
-                        }
                     }
                 }
 
