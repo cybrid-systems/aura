@@ -110,6 +110,10 @@
     (list "atomic-swap"
       (list "Bind resource→artifact; queue swap, drain at sync boundary"
             "(require \"std/atomic-swap\" all:)"))
+    ; ── Workspace persistence (Issue #1381) ──
+    (list "persist"
+      (list "Save/load workspace + AOT meta + mutation log (AURASOUL binary)"
+            "(require \"std/persist\" all:)"))
     ; ── AOT hot-update (Issue #1370) ──
     (list "hot-update"
       (list "AOT hot-reload + region + health (high-level Agent API)"

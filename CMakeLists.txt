@@ -36,6 +36,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_mutate.cpp
     src/compiler/query_matcher.cpp
     src/compiler/evaluator_primitives_workspace.cpp
+    src/compiler/evaluator_primitives_persist.cpp
     src/compiler/evaluator_primitives_ast.cpp
     src/compiler/evaluator_primitives_compile.cpp
     src/compiler/evaluator_primitives_compile_00.cpp

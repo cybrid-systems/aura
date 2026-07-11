@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**59** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**60** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -39,6 +39,7 @@
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` | — |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
 | `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `agent:spawn` `agent:ask` `agent:list` … (+8) | — |
+| `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |

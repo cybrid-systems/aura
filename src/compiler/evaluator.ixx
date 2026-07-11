@@ -813,6 +813,8 @@ namespace primitives_detail {
                                std::function<void()> destroy_defuse_index);
     void register_workspace_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                        std::function<void()> destroy_defuse_index);
+    // Issue #1381: serialize-workspace / deserialize-workspace / workspace-persist-info
+    void register_persist_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_ast_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index,
@@ -929,6 +931,9 @@ export class Evaluator {
     primitives_detail::register_workspace_primitives(std::function<void(std::string, PrimFn)> add,
                                                      Evaluator& ev,
                                                      std::function<void()> destroy_defuse_index);
+    friend void
+    primitives_detail::register_persist_primitives(std::function<void(std::string, PrimFn)> add,
+                                                   Evaluator& ev);
     friend void primitives_detail::register_ast_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index,
@@ -2450,6 +2455,10 @@ private:
     // Stores (kind, message) for structured diagnostic return
     std::string last_set_code_error_kind_;
     std::string last_set_code_error_msg_;
+    // Issue #1381: last successful set-code source (for serialize-workspace).
+    // Prefer get_workspace_source_fn_ when CompilerService is wired; this
+    // fallback keeps bare Evaluator persistable.
+    std::string workspace_source_text_;
 
     // Last mutate typecheck error (empty = no error). Set by auto-typecheck
     // after mutate:rebind etc. Cleared on next successful mutate.
