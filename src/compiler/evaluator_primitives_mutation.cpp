@@ -64,6 +64,67 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
     });
 
+    // Issue #1362: compact committed mutation log prefix (keep recent tail).
+    // (mutation-log-compact [keep-recent=1000] [keep-rolledback?=true]) → dropped count
+    add("mutation-log-compact", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        std::size_t keep_recent = 1000;
+        bool keep_rolledback = true;
+        if (!a.empty() && is_int(a[0])) {
+            auto k = as_int(a[0]);
+            keep_recent = k < 0 ? 0 : static_cast<std::size_t>(k);
+        }
+        if (a.size() >= 2 && is_bool(a[1]))
+            keep_rolledback = as_bool(a[1]);
+        const auto dropped = ev.workspace_flat_->compact_mutation_log(keep_recent, keep_rolledback);
+        return make_int(static_cast<std::int64_t>(dropped));
+    });
+
+    // Issue #1362: (query:mutation-log-stats) → hash of size/compacted/ops
+    add("query:mutation-log-stats", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_void();
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto put = [&](const char* k, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            EvalValue val_ev = make_int(v);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = val_ev.val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        auto* flat = ev.workspace_flat_;
+        put("log-size", static_cast<std::int64_t>(flat->mutation_count()));
+        put("compacted-records", static_cast<std::int64_t>(flat->mutation_log_compacted_records()));
+        put("compact-ops", static_cast<std::int64_t>(flat->mutation_log_compact_ops()));
+        put("auto-threshold",
+            static_cast<std::int64_t>(aura::ast::FlatAST::kMutationLogAutoCompactThreshold));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
     // Issue #1054: bad-arg and empty-history both return void (list-or-void
     // contract). Never return make_int(0) on bad args (truthy, wrong type).
     add("mutation-history", [&ev](std::span<const EvalValue> a) {

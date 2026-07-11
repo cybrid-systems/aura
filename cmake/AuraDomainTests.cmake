@@ -269,6 +269,11 @@ aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)
 add_dependencies(all_test_issue_targets test_closure_free)
 
+# Issue #1362: compact committed mutation_log_ (prevent long-run leak)
+aura_add_issue_test(test_compact_mutation_log)
+aura_issue_test_link_llvm_jit(test_compact_mutation_log)
+add_dependencies(all_test_issue_targets test_compact_mutation_log)
+
 aura_add_issue_test(test_domain_fiber_orchestration)
 aura_issue_test_link_llvm_jit(test_domain_fiber_orchestration)
 add_dependencies(all_test_issue_targets test_domain_fiber_orchestration)
