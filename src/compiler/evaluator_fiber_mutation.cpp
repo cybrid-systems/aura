@@ -189,9 +189,15 @@ thread_local std::vector<aura::compiler::Evaluator::MutationCheckpoint>
 thread_local std::vector<aura::compiler::Evaluator::YieldBoundaryCheckpoint>
     aura::compiler::Evaluator::g_main_thread_yield_checkpoints;
 thread_local void* aura::compiler::Evaluator::g_current_fiber_void;
-// Issue #264: Evaluator instance for yield/resume hooks (set by
-// outermost MutationBoundaryGuard; cleared on guard exit).
-thread_local aura::compiler::Evaluator* g_yield_hook_evaluator = nullptr;
+// Issue #1403: thread-local stack of Evaluator* hooks (replaces the
+// previous thread_local Evaluator* pointer). When fiber:spawn
+// reuses a worker thread for multiple fibers, each fiber's RAII
+// guard pushes its Evaluator onto this stack; the trampolines
+// (flush_mutation_boundary_trampoline / mutation_boundary_held_trampoline)
+// read the top of stack via yield_hook_evaluator(). LIFO pop on
+// guard destruction. Cross-fiber state-corruption from a stale
+// single-pointer write is eliminated.
+thread_local std::vector<aura::compiler::Evaluator*> g_yield_hook_stack;
 // Issue #456: per-thread pointer to the active Evaluator
 // for observability primitives. Set by CompilerService
 // ctor and used by (query:mutation-impact) /
@@ -420,21 +426,27 @@ namespace {
         fiber_stack_pool_detail::release_yield_stack(p);
     }
     void fiber_yield_checkpoint_impl(uint8_t reason) {
-        if (!g_yield_hook_evaluator)
+        // Issue #1403: read top of thread-local stack instead
+        // of a single thread_local pointer.
+        auto* ev = Evaluator::yield_hook_evaluator();
+        if (!ev)
             return;
         bool at_boundary =
             reason == static_cast<uint8_t>(aura::serve::YieldReason::MutationBoundary);
-        g_yield_hook_evaluator->checkpoint_yield_boundary(at_boundary);
+        ev->checkpoint_yield_boundary(at_boundary);
     }
     void fiber_resume_validate_impl() {
-        if (!g_yield_hook_evaluator)
+        // Issue #1403: read top of thread-local stack instead
+        // of a single thread_local pointer.
+        auto* ev = Evaluator::yield_hook_evaluator();
+        if (!ev)
             return;
-        const std::uint64_t ver = g_yield_hook_evaluator->defuse_version_snapshot();
-        const std::uint64_t bridge = g_yield_hook_evaluator->current_bridge_epoch();
+        const std::uint64_t ver = ev->defuse_version_snapshot();
+        const std::uint64_t bridge = ev->current_bridge_epoch();
         if (aura_aot_probe_checkpoint_version(ver, bridge))
             aura_aot_record_deopt_on_steal();
-        (void)g_yield_hook_evaluator->restore_post_yield_or_rollback();
-        g_yield_hook_evaluator->restore_panic_checkpoint_on_fiber_resume_if_needed();
+        (void)ev->restore_post_yield_or_rollback();
+        ev->restore_panic_checkpoint_on_fiber_resume_if_needed();
     }
     void fiber_sync_mutation_stack_impl(void* per_fiber_stack) {
         Evaluator::sync_per_fiber_mutation_stack(per_fiber_stack);
@@ -497,7 +509,11 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
 // non-module header that the module interface cannot include.
 //
 void Evaluator::bind_yield_hook_evaluator() {
-    g_yield_hook_evaluator = this;
+    // Issue #1403: push onto thread-local stack. Trampolines
+    // read the top of stack via yield_hook_evaluator(). RAII
+    // pairing with unbind_yield_hook_evaluator() keeps the stack
+    // LIFO.
+    g_yield_hook_stack.push_back(this);
 }
 
 // Issue #456: per-thread query-evaluator accessors.
@@ -541,13 +557,26 @@ void Evaluator::unbind_query_evaluator() noexcept {
 }
 
 void Evaluator::unbind_yield_hook_evaluator() {
-    if (g_yield_hook_evaluator == this)
-        g_yield_hook_evaluator = nullptr;
+    // Issue #1403: LIFO removal from the thread-local stack.
+    // Search from the top — the matching entry should normally
+    // be at the top of the stack (RAII pairing with bind). If
+    // an unbalanced guard happens (defensive), we still find
+    // and remove the correct entry without disturbing others.
+    for (auto it = g_yield_hook_stack.rbegin(); it != g_yield_hook_stack.rend(); ++it) {
+        if (*it == this) {
+            g_yield_hook_stack.erase((it + 1).base());
+            return;
+        }
+    }
+    // Not found — already unbound. Silently no-op (matches the
+    // existing defensive semantics: unbind_yield_hook_evaluator
+    // is idempotent under RAII use).
 }
 
-// Issue #285: yield_hook_evaluator() getter.
+// Issue #1403 + #285: yield_hook_evaluator() getter returns top
+// of the thread-local stack (or nullptr if empty).
 Evaluator* Evaluator::yield_hook_evaluator() noexcept {
-    return g_yield_hook_evaluator;
+    return g_yield_hook_stack.empty() ? nullptr : g_yield_hook_stack.back();
 }
 
 void Evaluator::yield_mutation_boundary() {
@@ -567,8 +596,8 @@ void Evaluator::yield_mutation_boundary() {
 // g_fiber_yield_mutation_boundary above.
 //
 // Bridge-callable trampoline (file-local): wraps the thread-local
-// `g_yield_hook_evaluator` so Fiber::yield can invoke the flush
-// without needing the module include.
+// `g_yield_hook_stack` (top-of-stack via `yield_hook_evaluator()` getter) so Fiber::yield can
+// invoke the flush without needing the module include.
 namespace {
     void flush_mutation_boundary_trampoline() {
         if (aura::compiler::Evaluator::yield_hook_evaluator())
@@ -660,11 +689,10 @@ void Evaluator::flush_mutation_boundary() {
 // Issue #453: Panic Checkpoint lifecycle hooks across fiber migration.
 //
 // Three bridge trampolines. All three are file-local and use the
-// thread-local `g_yield_hook_evaluator` (set by the outermost
-// active MutationBoundaryGuard via bind_yield_hook_evaluator) to
-// find the active evaluator. When no guard is active, the
-// evaluator is null and each trampoline is a no-op (the bridge
-// hooks are nullable; Fiber::yield/resume treat null as "skip").
+// thread-local `g_yield_hook_stack` (read top-of-stack via `yield_hook_evaluator()` getter, set by
+// the outermost active MutationBoundaryGuard via bind_yield_hook_evaluator) to find the active
+// evaluator. When no guard is active, the evaluator is null and each trampoline is a no-op (the
+// bridge hooks are nullable; Fiber::yield/resume treat null as "skip").
 //
 // Why file-local + trampoline: matches the existing pattern from
 // #285 (g_flush_mutation_boundary). The bridge is non-module
@@ -735,7 +763,7 @@ namespace {
 
 // Evaluator::pending_panic_checkpoint: returns true if the
 // outermost active guard (tracked via thread-local
-// `g_yield_hook_evaluator`) has a captured checkpoint. Returns
+// `g_yield_hook_stack`) read via `yield_hook_evaluator()` getter has a captured checkpoint. Returns
 // false when no guard is active.
 bool Evaluator::pending_panic_checkpoint() const noexcept {
     // The bridge trampoline checks the same path; this is
