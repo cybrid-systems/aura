@@ -357,6 +357,40 @@ private:
             ev.ch = kKeyEscape;
             return true;
         }
+        // ESC O A/B/C/D — SS3 application-cursor mode (common on macOS Terminal)
+        if (byte_buf_.size() >= 2 && byte_buf_[1] == 'O') {
+            if (byte_buf_.size() < 3)
+                return false; // wait for final
+            const auto fin = byte_buf_[2];
+            byte_buf_.pop_front(); // ESC
+            byte_buf_.pop_front(); // O
+            byte_buf_.pop_front(); // final
+            ev = {};
+            ev.kind = InputEvent::Kind::Key;
+            switch (fin) {
+                case 'A':
+                    ev.ch = kKeyArrowUp;
+                    return true;
+                case 'B':
+                    ev.ch = kKeyArrowDown;
+                    return true;
+                case 'C':
+                    ev.ch = kKeyArrowRight;
+                    return true;
+                case 'D':
+                    ev.ch = kKeyArrowLeft;
+                    return true;
+                case 'H':
+                    ev.ch = kKeyHome;
+                    return true;
+                case 'F':
+                    ev.ch = kKeyEnd;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         // ESC [
         if (byte_buf_.size() >= 2 && byte_buf_[1] == '[') {
             // Collect until final byte 0x40-0x7E
