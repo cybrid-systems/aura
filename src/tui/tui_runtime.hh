@@ -130,6 +130,15 @@ public:
             return;
         // #1353: leave raw mode if we entered it with the TUI session.
         global_tui_input().disable_raw_mode();
+        // Always restore the real TTY cursor. show_cursor() only flips a flag
+        // that is applied on the next present(); after quit there is no present,
+        // so without this the terminal stays cursor-hidden (\033[?25l).
+        if (!headless_) {
+            // show cursor + reset SGR + end synchronized output if stuck
+            constexpr const char* kRestore = "\033[?25h\033[0m\033[?2026l";
+            std::fwrite(kRestore, 1, std::strlen(kRestore), stdout);
+            std::fflush(stdout);
+        }
         cursor_visible_ = true;
         mouse_enabled_ = false;
         initialized_ = false;
@@ -226,8 +235,23 @@ public:
         g_tui_present_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void hide_cursor() { cursor_visible_ = false; }
-    void show_cursor() { cursor_visible_ = true; }
+    void hide_cursor() {
+        cursor_visible_ = false;
+        if (initialized_ && !headless_) {
+            constexpr const char* kHide = "\033[?25l";
+            std::fwrite(kHide, 1, std::strlen(kHide), stdout);
+            std::fflush(stdout);
+        }
+    }
+    void show_cursor() {
+        cursor_visible_ = true;
+        // Immediate restore so callers that do not present() still get a cursor.
+        if (initialized_ && !headless_) {
+            constexpr const char* kShow = "\033[?25h";
+            std::fwrite(kShow, 1, std::strlen(kShow), stdout);
+            std::fflush(stdout);
+        }
+    }
     void set_title(const std::string& t) { title_ = t; }
 
     void set_mouse_enabled(bool on) {
