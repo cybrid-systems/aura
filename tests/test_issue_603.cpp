@@ -60,6 +60,9 @@ int aura_issue_603_run() {
     std::println("=== Issue #603: IR SoA full consumer adoption + minimal re-lower ===");
 
     aura::compiler::CompilerService cs;
+    // Issue #1377: dual-emit is opt-in (default off). This test exercises
+    // the dual-emit SoA path — enable for the duration of the run.
+    cs.set_soa_dual_emit(true);
 
     // AC1: primitive returns hash with 5 fields (existing 2 + new 3).
     {
@@ -178,6 +181,9 @@ int aura_issue_603_run() {
         CHECK(snap_stat(cs, "instructions-emitted") >= 1, "instructions-emitted still readable");
         CHECK(snap_stat(cs, "functions-emitted") >= 1, "functions-emitted still readable");
     }
+
+    // Restore global dual-emit default so later bundle members stay isolated.
+    cs.set_soa_dual_emit(false);
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
