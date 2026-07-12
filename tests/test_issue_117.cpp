@@ -105,7 +105,9 @@ bool test_full_re_simulation_discovers_linear() {
     flat->root = root;
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, root, notes);
+    aura::core::TypeRegistry reg; // Issue #1387: required TypeRegistry arg
+    bool pass =
+        aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, reg, root, notes);
     int leaks = count_kind(notes, "leaked-linear");
     std::println("  full validation: pass={} leaks={}", pass, leaks);
     CHECK(leaks >= 1, "validate_ownership_full finds leaked-linear binding");
@@ -152,8 +154,9 @@ bool test_full_catches_what_dirty_misses() {
     // x isn't in any dirty set.
     {
         std::vector<aura::compiler::OwnershipNote> notes;
+        aura::core::TypeRegistry reg; // Issue #1387
         bool pass =
-            aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, root, notes);
+            aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, reg, root, notes);
         int leaks = count_kind(notes, "leaked-linear");
         CHECK(leaks >= 1, "full re-simulation: reports leak for non-dirty linear binding");
     }
@@ -180,7 +183,9 @@ bool test_full_properly_moved_no_leak() {
     flat->root = root;
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, root, notes);
+    aura::core::TypeRegistry reg; // Issue #1387
+    bool pass =
+        aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, reg, root, notes);
     int leaks = count_kind(notes, "leaked-linear");
     CHECK(leaks == 0, "properly moved linear → no leak");
     CHECK(pass, "properly moved linear → overall pass=true");

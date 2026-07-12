@@ -360,8 +360,19 @@ public:
     // by a prior infer_flat call) to discover linear-typed
     // bindings. The caller is expected to have run infer_flat
     // before calling this.
+    //
+    // Issue #1387: now also discovers type-driven linear bindings
+    // (a binding whose value's type is registered linear in
+    // `reg` via `register_linear` / `kLinear` flag), not just
+    // syntactic `(Linear ...)` wrappers. The two sources are
+    // combined via set union (defense in depth).
+    //
+    // The `reg` parameter is REQUIRED (not defaulted). Old 3-arg
+    // callers fail to compile, which is the intended signal that
+    // the silent-fallback code path is being removed.
     static bool validate_ownership_full(const aura::ast::FlatAST& flat,
-                                        const aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                        const aura::ast::StringPool& pool,
+                                        const aura::core::TypeRegistry& reg, aura::ast::NodeId root,
                                         std::vector<OwnershipNote>& notes_out);
 
     // Internal: shared implementation of the post-hoc ownership

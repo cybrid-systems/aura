@@ -281,6 +281,14 @@ aura_add_issue_test(test_issue_1383_disabled_mode_warn)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1383_disabled_mode_warn)
 add_dependencies(all_test_issue_targets test_issue_1383_disabled_mode_warn)
 
+# Issue #1387: validate_ownership_full discovers type-driven
+# linear bindings via reg.linear_of(type_id) alongside the
+# existing syntactic Linear wrapper check (set union, defense
+# in depth). Requires the new const TypeRegistry& parameter
+# (old 3-arg callers fail to compile).
+aura_add_issue_test(test_issue_1387_type_driven_linear)
+add_dependencies(all_test_issue_targets test_issue_1387_type_driven_linear)
+
 # Issue #1361: aura_free_closure + closure:free! + ID reuse
 aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)
