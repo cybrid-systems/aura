@@ -299,6 +299,17 @@ aura_add_issue_test(test_issue_1384_envframe_version_init)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1384_envframe_version_init)
 add_dependencies(all_test_issue_targets test_issue_1384_envframe_version_init)
 
+# Issue #1385: env_frames_ + arena observability via
+# (compiler:metrics) primitive (returns JSON with the 4 keys:
+# env_frames_size_total, env_frames_stale_count,
+# ast_arena_bytes_in_use, ast_arena_upstream_bytes). The arena
+# uses a CountingMR as its upstream so fallback bytes are
+# observable. Uses aura_issue_test_link_llvm_jit_minimal because
+# the test path touches g_tl_arena / jit runtime symbols.
+aura_add_issue_test(test_issue_1385_env_arena_metrics)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1385_env_arena_metrics)
+add_dependencies(all_test_issue_targets test_issue_1385_env_arena_metrics)
+
 # Issue #1361: aura_free_closure + closure:free! + ID reuse
 aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)

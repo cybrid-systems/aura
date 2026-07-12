@@ -1945,6 +1945,23 @@ public:
             throw std::out_of_range("env_frame_for_test: invalid id");
         return env_frames_[id];
     }
+
+    // Issue #1385: snapshot env_frames_ metrics into a
+    // CompilerMetrics struct. O(N) iteration under shared lock
+    // for stale count; O(1) for size. Safe to call from any
+    // thread. Does NOT touch arena metrics — that's the caller's
+    // job (CompilerService owns the arena + its counting MR).
+    void refresh_env_arena_metrics(CompilerMetrics& m) const {
+        m.env_frames_size_total.store(env_frames_.size(), std::memory_order_relaxed);
+        std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+        auto current = defuse_version_.load(std::memory_order_acquire);
+        std::size_t stale = 0;
+        for (const auto& fr : env_frames_) {
+            if (fr.version_ < current)
+                ++stale;
+        }
+        m.env_frames_stale_count.store(stale, std::memory_order_relaxed);
+    }
     // Issue #205: walk env_frames_ and collect pair/closure
     // indices reachable through env bindings. The GC calls
     // this (via the env_walk callback) to discover roots

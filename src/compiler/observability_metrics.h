@@ -6068,6 +6068,40 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ast_live_nodes_warn_total{0};
     std::atomic<std::uint64_t> ast_compaction_threshold{1024};
     std::atomic<std::uint64_t> ast_max_live_nodes{1'000'000};
+
+    // Issue #1385: env_frames_arena observability. Snapshot
+    // fields, refreshed on each (compiler:metrics) call. See
+    // Evaluator::refresh_env_arena_metrics + CompilerService::
+    // refresh_env_arena_metrics for the snapshot logic.
+    //
+    // env_frames_size_total: current env_frames_.size() (O(1)
+    // snapshot). Append-only — monotonic in long-running
+    // processes (aura-pets pipelines run for hours). Operators
+    // alert when this grows past a threshold.
+    //
+    // env_frames_stale_count: number of frames with version_ <
+    // current defuse_version_ (O(N) iteration under shared lock).
+    // High value means many stale captures; not necessarily a
+    // problem (they get refreshed on walk), but useful for
+    // capacity planning.
+    //
+    // ast_arena_bytes_in_use: ASTArena::used() snapshot (O(1)).
+    // Bytes currently consumed in the arena's monotonic buffer.
+    // Compare against capacity for fragmentation estimation.
+    //
+    // ast_arena_upstream_bytes: bytes allocated through the
+    // arena's upstream memory_resource (e.g. fallback chunks
+    // from new_delete_resource when the arena buffer overflows).
+    // Tracks via a CountingMR installed as the arena's upstream.
+    // Monotonic — NOT reclaimed by arena.reset() or
+    // resource_.release() (per the C++ spec on monotonic_buffer_
+    // resource::deallocate). High value means the arena has
+    // overflowed its initial buffer and is paying the fallback
+    // cost.
+    std::atomic<std::uint64_t> env_frames_size_total{0};
+    std::atomic<std::uint64_t> env_frames_stale_count{0};
+    std::atomic<std::uint64_t> ast_arena_bytes_in_use{0};
+    std::atomic<std::uint64_t> ast_arena_upstream_bytes{0};
 };
 
 

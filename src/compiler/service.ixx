@@ -5726,6 +5726,8 @@ public:
     // ---- Accessors ---------------------------------------------------
 
     ast::ASTArena& arena() { return arena_; }
+    // (Issue #1385: Evaluator& evaluator() public accessor already
+    // exists above at line 5733 — see [[nodiscard]] declaration.)
     Evaluator& evaluator() { return evaluator_; }
     // Issue #354: passthrough for the
     // mutation-boundary-held check. Returns true
@@ -8099,7 +8101,33 @@ private:
         evaluator_.probe_linear_ownership_at_gc_safepoint();
     }
 
-    ast::ASTArena arena_;
+    // Issue #1385: CountingMR — wraps new_delete_resource and
+    // tracks cumulative bytes allocated via do_allocate. Used as
+    // arena_'s upstream so fallback allocations beyond the
+    // arena's monotonic_buffer_resource initial buffer are
+    // observable via ast_arena_upstream_bytes metric. The counter
+    // is monotonic (deallocate is no-op for monotonic upstream).
+    // Declared BEFORE arena_ so arena_ can reference it in member
+    // init list.
+    struct CountingMR : std::pmr::memory_resource {
+        std::atomic<std::uint64_t> bytes_allocated{0};
+        std::atomic<std::uint64_t> alloc_count{0};
+
+    private:
+        void* do_allocate(std::size_t bytes, std::size_t align) override {
+            bytes_allocated.fetch_add(bytes, std::memory_order_relaxed);
+            alloc_count.fetch_add(1, std::memory_order_relaxed);
+            return std::pmr::new_delete_resource()->allocate(bytes, align);
+        }
+        void do_deallocate(void* p, std::size_t bytes, std::size_t align) override {
+            std::pmr::new_delete_resource()->deallocate(p, bytes, align);
+        }
+        bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+            return this == &other;
+        }
+    };
+    CountingMR arena_upstream_mr_{};
+    ast::ASTArena arena_{8 * 1024 * 1024, &arena_upstream_mr_};
     ast::ASTArena temp_arena_;
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;
@@ -9385,6 +9413,24 @@ public:
     static std::mutex& registry_mtx() {
         static std::mutex mtx;
         return mtx;
+    }
+
+    // Issue #1385: snapshot env_frames_ + arena metrics into the
+    // CompilerMetrics struct. Called by the (compiler:metrics)
+    // primitive before serializing. Does NOT touch jit / fiber /
+    // shape counters — those have their own update paths.
+    void refresh_env_arena_metrics(CompilerMetrics& m) const {
+        evaluator_.refresh_env_arena_metrics(m);
+        m.ast_arena_bytes_in_use.store(arena_.used(), std::memory_order_relaxed);
+        m.ast_arena_upstream_bytes.store(
+            arena_upstream_mr_.bytes_allocated.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+    }
+
+    // Issue #1385: const accessor for the arena's upstream
+    // CountingMR (used by tests).
+    [[nodiscard]] const CountingMR& arena_upstream_for_test() const noexcept {
+        return arena_upstream_mr_;
     }
 };
 
