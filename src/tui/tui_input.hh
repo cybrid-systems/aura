@@ -44,7 +44,10 @@ inline constexpr std::uint32_t kKeyArrowLeft = 0x2190u;
 inline constexpr std::uint32_t kKeyEnter = 0x0Du;
 inline constexpr std::uint32_t kKeyEscape = 0x1Bu;
 inline constexpr std::uint32_t kKeySpace = 0x20u;
-inline constexpr std::uint32_t kKeyBackspace = 0x7Fu;
+inline constexpr std::uint32_t kKeyBackspace = 0x7Fu; // DEL — Mac "delete" key
+inline constexpr std::uint32_t kKeyDelete = 0x2326u;  // ⌦ forward delete (CSI 3~)
+inline constexpr std::uint32_t kKeyHome = 0x21F1u;    // ⇱
+inline constexpr std::uint32_t kKeyEnd = 0x21F2u;     // ⇲
 
 struct InputEvent {
     enum class Kind { None, Key, Resize, Quit, Mouse };
@@ -369,7 +372,7 @@ private:
                     for (std::size_t j = 0; j <= i; ++j)
                         byte_buf_.pop_front();
 
-                    // Arrow: A/B/C/D
+                    // Arrow / Home / End (single final byte)
                     if (csi.size() == 1) {
                         ev = {};
                         ev.kind = InputEvent::Kind::Key;
@@ -386,10 +389,34 @@ private:
                             case 'D':
                                 ev.ch = kKeyArrowLeft;
                                 break;
+                            case 'H':
+                                ev.ch = kKeyHome;
+                                break;
+                            case 'F':
+                                ev.ch = kKeyEnd;
+                                break;
                             default:
                                 return false;
                         }
                         return true;
+                    }
+                    // CSI n~ : 3~ Delete, 1~/7~ Home, 4~/8~ End (common xterm/Mac)
+                    if (!csi.empty() && csi.back() == '~') {
+                        ev = {};
+                        ev.kind = InputEvent::Kind::Key;
+                        if (csi == "3~") {
+                            ev.ch = kKeyDelete;
+                            return true;
+                        }
+                        if (csi == "1~" || csi == "7~") {
+                            ev.ch = kKeyHome;
+                            return true;
+                        }
+                        if (csi == "4~" || csi == "8~") {
+                            ev.ch = kKeyEnd;
+                            return true;
+                        }
+                        return false;
                     }
                     // Mouse SGR: <btn;col;row M/m
                     if (!csi.empty() && csi[0] == '<') {
