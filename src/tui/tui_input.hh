@@ -64,15 +64,53 @@ inline TUIInput& global_tui_input();
 class TUIInput {
 public:
     TUIInput() = default;
-    ~TUIInput() { disable_raw_mode(); }
+    ~TUIInput() {
+        disable_raw_mode();
+        close_tty_fd();
+    }
 
-    // Enable raw mode. Idempotent. On non-TTY, marks logical raw (headless) and returns true.
+    // Prefer real keyboard TTY even when program source was piped on stdin
+    // (echo '(...)' | aura — common for demos). Falls back to STDIN_FILENO.
+    int input_fd() {
+#if defined(__unix__) || defined(__APPLE__)
+        if (input_fd_ >= 0)
+            return input_fd_;
+        if (::isatty(STDIN_FILENO)) {
+            input_fd_ = STDIN_FILENO;
+            return input_fd_;
+        }
+        // Program fed via pipe: open controlling terminal for keys.
+        int fd = ::open("/dev/tty", O_RDWR | O_CLOEXEC);
+        if (fd >= 0) {
+            input_fd_ = fd;
+            owns_tty_fd_ = true;
+            return input_fd_;
+        }
+        input_fd_ = STDIN_FILENO;
+        return input_fd_;
+#else
+        return STDIN_FILENO;
+#endif
+    }
+
+    void close_tty_fd() {
+#if defined(__unix__) || defined(__APPLE__)
+        if (owns_tty_fd_ && input_fd_ >= 0 && input_fd_ != STDIN_FILENO) {
+            ::close(input_fd_);
+        }
+        owns_tty_fd_ = false;
+        input_fd_ = -1;
+#endif
+    }
+
+    // Enable raw mode. Idempotent. Uses /dev/tty when stdin is a pipe.
     bool enable_raw_mode() {
         if (raw_mode_)
             return true;
 #if defined(__unix__) || defined(__APPLE__)
-        if (::isatty(STDIN_FILENO)) {
-            if (::tcgetattr(STDIN_FILENO, &orig_termios_) != 0)
+        const int fd = input_fd();
+        if (::isatty(fd)) {
+            if (::tcgetattr(fd, &orig_termios_) != 0)
                 return false;
             struct termios raw = orig_termios_;
             raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO | ISIG | IEXTEN));
@@ -81,7 +119,7 @@ public:
             // Keep OPOST so ANSI output still works reasonably.
             raw.c_cc[VMIN] = 0;
             raw.c_cc[VTIME] = 0;
-            if (::tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0)
+            if (::tcsetattr(fd, TCSAFLUSH, &raw) != 0)
                 return false;
             tty_raw_ = true;
             install_sigint_handler();
@@ -103,7 +141,8 @@ public:
         if (tty_raw_) {
             if (mouse_enabled_)
                 disable_mouse_sequences();
-            ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios_);
+            const int fd = input_fd_ >= 0 ? input_fd_ : STDIN_FILENO;
+            ::tcsetattr(fd, TCSAFLUSH, &orig_termios_);
             tty_raw_ = false;
             restore_sigint_handler();
         }
@@ -127,14 +166,15 @@ public:
             return ev;
         }
 #if defined(__unix__) || defined(__APPLE__)
-        if (tty_raw_ && ::isatty(STDIN_FILENO)) {
+        const int fd = input_fd();
+        if (tty_raw_ && ::isatty(fd)) {
             struct pollfd pfd{};
-            pfd.fd = STDIN_FILENO;
+            pfd.fd = fd;
             pfd.events = POLLIN;
             const int pr = ::poll(&pfd, 1, timeout_ms < 0 ? -1 : timeout_ms);
             if (pr > 0 && (pfd.revents & POLLIN)) {
                 std::uint8_t buf[64];
-                const auto n = ::read(STDIN_FILENO, buf, sizeof(buf));
+                const auto n = ::read(fd, buf, sizeof(buf));
                 if (n > 0) {
                     for (ssize_t i = 0; i < n; ++i)
                         byte_buf_.push_back(buf[i]);
@@ -434,6 +474,8 @@ private:
     bool raw_mode_ = false;
     bool tty_raw_ = false;
     bool mouse_enabled_ = false;
+    int input_fd_ = -1;
+    bool owns_tty_fd_ = false;
     std::deque<std::uint8_t> byte_buf_;
 };
 

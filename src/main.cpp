@@ -389,15 +389,15 @@ int main(int argc, char* argv[]) {
         void* sp = nullptr;
         if (ucontext) {
 #if defined(__x86_64__)
-            // Linux x86_64: gregs[REG_RIP] is the saved instruction pointer,
-            // gregs[REG_RSP] is the saved stack pointer. These indices are
-            // part of the stable Linux x86_64 ucontext ABI (see gregs(3) /
-            // sys/ucontext.h). This is the only path CI hits; the aarch64
-            // branch is for local dev (its mcontext_t is opaque, so we
-            // skip the IP extraction rather than chase kernel ABI).
+            // Linux x86_64: gregs[REG_RIP] / gregs[REG_RSP] (sys/ucontext.h).
             auto* mctx = &static_cast<ucontext_t*>(ucontext)->uc_mcontext;
             ip = reinterpret_cast<void*>(mctx->gregs[REG_RIP]);
             sp = reinterpret_cast<void*>(mctx->gregs[REG_RSP]);
+#elif defined(__aarch64__)
+            // Linux aarch64: mcontext_t has pc / sp (sys/ucontext.h).
+            auto* mctx = &static_cast<ucontext_t*>(ucontext)->uc_mcontext;
+            ip = reinterpret_cast<void*>(mctx->pc);
+            sp = reinterpret_cast<void*>(mctx->sp);
 #endif
         }
 

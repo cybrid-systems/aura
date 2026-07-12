@@ -10,6 +10,7 @@ module;
 #include "tui/tui_input.hh"
 #include "tui/tui_runtime.hh"
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 module aura.compiler.evaluator;
@@ -22,8 +23,10 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
+using types::as_bool;
 using types::as_int;
 using types::as_string_idx;
+using types::is_bool;
 using types::is_int;
 using types::is_string;
 using types::make_bool;
@@ -118,10 +121,13 @@ namespace {
 } // namespace
 
 void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
-    // 1. (tui:init [title [cols [rows]]]) → #t/#f  — headless by default
+    // 1. (tui:init [title [cols [rows [live?]]]]) → #t/#f
+    //    Headless by default (CI-safe). live?=#t or AURA_TUI_LIVE=1 writes
+    //    present() frames to stdout when it is a TTY.
     add("tui:init", [&ev](std::span<const EvalValue> a) -> EvalValue {
         std::string title = "aura-tui";
         int cols = 80, rows = 24;
+        bool live = false;
         if (!a.empty() && is_string(a[0])) {
             auto i = as_string_idx(a[0]);
             if (i < ev.string_heap_.size())
@@ -131,10 +137,16 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
             cols = static_cast<int>(as_int(a[1]));
         if (a.size() >= 3 && is_int(a[2]))
             rows = static_cast<int>(as_int(a[2]));
+        if (a.size() >= 4 && is_bool(a[3]))
+            live = as_bool(a[3]);
+        if (const char* env = std::getenv("AURA_TUI_LIVE")) {
+            if (env[0] == '1' || env[0] == 'y' || env[0] == 'Y' || env[0] == 't' || env[0] == 'T')
+                live = true;
+        }
         auto& tui = aura::tui::global_tui();
         if (tui.is_initialized())
             tui.shutdown();
-        bool ok = tui.init(title, cols, rows, /*force_tty=*/false);
+        bool ok = tui.init(title, cols, rows, /*force_tty=*/live);
         bump_tui_metrics(ev);
         return make_bool(ok);
     });
