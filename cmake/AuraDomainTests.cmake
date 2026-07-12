@@ -289,6 +289,16 @@ add_dependencies(all_test_issue_targets test_issue_1383_disabled_mode_warn)
 aura_add_issue_test(test_issue_1387_type_driven_linear)
 add_dependencies(all_test_issue_targets test_issue_1387_type_driven_linear)
 
+# Issue #1384: EnvFrame::version_ must be initialized to the
+# current defuse_version_ BEFORE push_back (not via default ctor
+# + post-fill), so concurrent readers never observe version_ ==
+# 0 inside the unique_lock window. Also re-stamps version_ in
+# alloc_env_frame_from_env after bindings are assigned so the
+# frame captures defuse_version_ at COMPLETION.
+aura_add_issue_test(test_issue_1384_envframe_version_init)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1384_envframe_version_init)
+add_dependencies(all_test_issue_targets test_issue_1384_envframe_version_init)
+
 # Issue #1361: aura_free_closure + closure:free! + ID reuse
 aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)

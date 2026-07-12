@@ -421,15 +421,13 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         // to make the failure mode visible.
         return NULL_ENV_ID;
     }
-    EnvFrame fr;
-    fr.parent_id = parent_id;
-    fr.primitives_ = primitives;
-    // Issue #242: stamp the frame with the current defuse_version_
-    // so subsequent lookups can detect stale captures. The version
-    // is an acquire-load so the frame's metadata (parent_id,
-    // primitives_) is visible to threads that observe the bumped
-    // version after a memory barrier.
-    fr.version_ = defuse_version_.load(std::memory_order_acquire);
+    // Issue #1384: construct the frame locally with version_ =
+    // current defuse_version_ BEFORE push_back, so any reader
+    // that observes the new index via env_frames_.size() sees a
+    // valid version_ (not the default 0, which is the "never
+    // stamped" sentinel and would be wrongly classified as stale
+    // by is_env_frame_stale once defuse_version_ > 0).
+    EnvFrame fr(parent_id, primitives, defuse_version_.load(std::memory_order_acquire));
     env_frames_.push_back(std::move(fr));
     return static_cast<EnvId>(env_frames_.size() - 1);
 }
@@ -466,6 +464,14 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     auto bss = e.bindings_symid();
     fr.bindings_symid_.assign(bss.begin(), bss.end());
     ensure_envframe_dual_path_consistency(fr);
+    // Issue #1384: re-stamp version_ AFTER all assignments so the
+    // frame captures defuse_version_ at COMPLETION, not at the
+    // moment alloc_env_frame returned. Without this, a defuse
+    // bump landing between alloc_env_frame and the assignments
+    // would leave the frame with a stale version_ (frame is
+    // wrongly classified as stale by is_env_frame_stale even
+    // though its bindings are current).
+    fr.version_ = defuse_version_.load(std::memory_order_acquire);
     return id;
 }
 
