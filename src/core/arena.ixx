@@ -246,10 +246,14 @@ private:
 //
 export class ASTArena {
 public:
-    explicit ASTArena(std::size_t initial_size = 8 * 1024 * 1024)
+    // Default upstream is the system allocator. Tests can pass a
+    // counting memory_resource to verify that destructors run
+    // before resource_.release() (see Issue #1382 contract test).
+    explicit ASTArena(std::size_t initial_size = 8 * 1024 * 1024,
+                      std::pmr::memory_resource* upstream = std::pmr::new_delete_resource())
         : initial_size_(initial_size)
         , buffer_(initial_size)
-        , resource_(buffer_.data(), buffer_.size(), std::pmr::new_delete_resource()) {}
+        , resource_(buffer_.data(), buffer_.size(), upstream) {}
 
     // Issue #300 (P1) Phase 3: defrag request flag. Set by
     // (arena:request-defrag) primitive to signal that a defrag is

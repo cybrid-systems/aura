@@ -264,6 +264,13 @@ aura_add_issue_test(test_envframe_stableid)
 aura_issue_test_link_llvm_jit(test_envframe_stableid)
 add_dependencies(all_test_issue_targets test_envframe_stableid)
 
+# Issue #1382: ASTArena contract test — run_destructors() must run
+# before resource_.release() in ~ASTArena() and reset(). Uses a
+# counting memory_resource as the upstream to detect release()
+# ordering. No LLVM JIT needed (pure C++ arena contract test).
+aura_add_issue_test(test_issue_1382_arena_dtor_order)
+add_dependencies(all_test_issue_targets test_issue_1382_arena_dtor_order)
+
 # Issue #1361: aura_free_closure + closure:free! + ID reuse
 aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)
