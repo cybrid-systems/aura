@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**991** registrations scanned from `src/**/*.cpp`.
+**992** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 125 primitives (13%)
-- **core**: 255 primitives (26%)
-- **internal-observable**: 441 primitives (45%)
+- **core**: 256 primitives (26%)
+- **internal-observable**: 441 primitives (44%)
 - **convenience**: 170 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -951,6 +951,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `closure:free-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:stats` *[core]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 
+## Compiler: (1)
+
+- `compiler:metrics` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+
 ## Concurrency: (3)
 
 - `concurrency:stats` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
@@ -1273,7 +1277,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (255)
+### Core builtins (must remain primitive) (256)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1342,6 +1346,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `closure:free!` — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:free-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `compiler:metrics` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `concurrency:stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile_05.cpp`

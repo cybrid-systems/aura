@@ -786,6 +786,29 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
 }
 
 // Issue #909 compile part 63 (orig 5319-5319)
-void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {}
+void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
+    // Issue #1385: (compiler:metrics) primitive — expose env_frames_
+    // and arena observability metrics as a JSON string. Refreshes
+    // the 4 lazy-snapshot counters in CompilerMetrics
+    // (env_frames_size_total, env_frames_stale_count,
+    // ast_arena_bytes_in_use, ast_arena_upstream_bytes) before
+    // serializing. Returns void if CompilerService / CompilerMetrics
+    // back-pointers are unset (e.g. bare Evaluator without service).
+    add("compiler:metrics", [&ev](const auto&) -> EvalValue {
+        auto* svc = static_cast<CompilerService*>(ev.compiler_service());
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        if (!svc || !m)
+            return types::make_void();
+        svc->refresh_env_arena_metrics(*m);
+        std::string json =
+            std::format("{{\"env_frames_size_total\":{},\"env_frames_stale_count\":{},"
+                        "\"ast_arena_bytes_in_use\":{},\"ast_arena_upstream_bytes\":{}}}",
+                        m->env_frames_size_total.load(), m->env_frames_stale_count.load(),
+                        m->ast_arena_bytes_in_use.load(), m->ast_arena_upstream_bytes.load());
+        auto idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(json));
+        return types::make_string(idx);
+    });
+}
 
 } // namespace aura::compiler::primitives_detail
