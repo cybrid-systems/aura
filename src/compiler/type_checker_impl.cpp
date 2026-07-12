@@ -5333,18 +5333,40 @@ bool OwnershipEnv::validate_ownership(const FlatAST& flat, const StringPool& poo
 // discovery (caller knows the registry), pass the
 // pre-computed set via the dirty-only `validate_ownership`
 // instead — that's the more precise path.
-bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool& pool, NodeId root,
+bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool& pool,
+                                           const TypeRegistry& reg, NodeId root,
                                            std::vector<OwnershipNote>& notes_out) {
     std::unordered_set<std::string> linear_bindings;
     std::function<void(NodeId)> discover = [&](NodeId id) {
         if (id == NULL_NODE || id >= flat.size())
             return;
         auto v = flat.get(id);
-        // Pattern 1: (let ((x (Linear e))) ...) — value is a
-        // Linear wrapper node. x is a linear binding.
         if (v.tag == NodeTag::Let && v.sym_id != INVALID_SYM) {
+            // Pattern 1 (Issue #147/#117): syntactic Linear
+            // wrapper. (let ((x (Linear e))) ...) — x is linear.
+            bool is_linear = false;
             if (!v.children.empty() && v.child(0) != NULL_NODE &&
                 flat.get(v.child(0)).tag == NodeTag::Linear) {
+                is_linear = true;
+            }
+            // Pattern 2 (Issue #1387): type-driven discovery.
+            // If the let value's type is registered linear in
+            // `reg` (via register_linear / kLinear flag), the
+            // binding is linear even without a Linear wrapper.
+            // Requires a prior infer_flat call to populate
+            // flat.type_id. Kept in addition to the syntactic
+            // check (defense in depth — works even if the
+            // registry hasn't been consulted yet).
+            if (!is_linear && !v.children.empty() && v.child(0) != NULL_NODE) {
+                auto tid = flat.type_id(v.child(0));
+                if (tid != 0) {
+                    aura::core::TypeId ty_id{static_cast<std::uint32_t>(tid)};
+                    if (reg.linear_of(ty_id) != nullptr) {
+                        is_linear = true;
+                    }
+                }
+            }
+            if (is_linear) {
                 auto name = std::string(pool.resolve(v.sym_id));
                 if (!name.empty())
                     linear_bindings.insert(name);

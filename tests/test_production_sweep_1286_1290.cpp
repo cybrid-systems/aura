@@ -84,7 +84,10 @@ int main() {
         // Ownership validation must not crash; with the #1290 fix the walker
         // iterates v.params so linear param names enter introduced.
         std::vector<aura::compiler::OwnershipNote> notes;
-        (void)aura::compiler::OwnershipEnv::validate_ownership_full(flat, pool, flat.root, notes);
+        // Issue #1387: validate_ownership_full now requires a TypeRegistry.
+        aura::core::TypeRegistry reg;
+        (void)aura::compiler::OwnershipEnv::validate_ownership_full(flat, pool, reg, flat.root,
+                                                                    notes);
         CHECK(true, "ownership validate Lambda with param_data_ ok");
     }
 
