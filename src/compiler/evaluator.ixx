@@ -618,6 +618,18 @@ export struct EnvFrame {
     // enter). So a version_ == 0 frame is always stale; this is
     // intentional — old frames should be re-validated.
     std::uint64_t version_ = 0;
+
+    // Issue #1384: explicit ctor that takes `version_` so the
+    // "construct locally with version_ = current" pattern can't
+    // be accidentally bypassed by future changes. Default ctor
+    // still exists for legacy callers (e.g. emplace_back with
+    // field-fill later — they must set version_ before push).
+    EnvFrame(EnvId pid, const Primitives* prim, std::uint64_t version)
+        : parent_id(pid)
+        , primitives_(prim)
+        , version_(version) {}
+    EnvFrame() = default;
+
     // P0 (EnvFrame SoA migration): removed raw cells_ pointer.
     // EnvFrame is now pure data (bindings + parent_id index).
     // Cell deref (when bound value is cell sentinel) is centralized
@@ -1922,6 +1934,17 @@ public:
     [[nodiscard]] std::shared_mutex& env_frames_lock() const { return env_frames_mtx_; }
     // Number of live frames.
     [[nodiscard]] std::size_t env_frames_size() const { return env_frames_.size(); }
+    // Issue #1384: test-only accessor for a frame by id. Returns
+    // a const ref into env_frames_ under the shared lock so the
+    // frame can't be reallocated out from under the caller.
+    // Throws std::out_of_range on invalid id.
+    [[nodiscard]] const aura::compiler::EnvFrame&
+    env_frame_for_test(aura::compiler::EnvId id) const {
+        std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+        if (id == aura::compiler::NULL_ENV_ID || id >= env_frames_.size())
+            throw std::out_of_range("env_frame_for_test: invalid id");
+        return env_frames_[id];
+    }
     // Issue #205: walk env_frames_ and collect pair/closure
     // indices reachable through env bindings. The GC calls
     // this (via the env_walk callback) to discover roots
