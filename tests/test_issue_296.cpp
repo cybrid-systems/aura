@@ -4,19 +4,22 @@
 // Validates the Bridge Lifetime Contract documented in
 // src/compiler/evaluator.ixx and src/compiler/service.ixx.
 //
-// Contract summary:
-//   1. bridge_epoch == 0 is "legacy / not tracked" — trustworthy
-//   2. Non-zero values: strict validation, mismatch = stale
-//   3. Callers must not pass current_epoch == 0 when bridge has been bumped
-//   4. The bridge_epoch counter is bumped atomically on structural mutation
+// Contract summary (strict as of Issue #1365):
+//   1. current_epoch == 0 → tracking inactive → never stale
+//   2. bridge_epoch == 0 with current_epoch != 0 → unstamped while
+//      tracking active → STALE (unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1)
+//   3. Non-zero mismatch → stale
+//   4. Construction sites stamp via stamp_closure_bridge_epoch
 //
 // State machine:
-//   fresh closure ─captures─> bridge_epoch = current
+//   fresh closure ─stamp─> bridge_epoch = current
 //   bump_bridge_epoch() ─bumps─> current
 //   is_bridge_stale(captured, current) ─checks─> bool
 //   stale closure ─falls back─> body_source re-parse
 
 #include "test_harness.hpp"
+
+#include <cstdlib>
 
 import std;
 using aura::test::g_failed;
@@ -28,14 +31,27 @@ import aura.compiler.service;
 
 namespace test_296_detail {
 
-// AC #1: legacy bridge_epoch (0) is trusted, never stale
+// AC #1: #1365 strict unstamped semantics (+ legacy opt-in)
 bool test_legacy_trusted() {
-    std::println("\n--- AC #1: bridge_epoch == 0 is legacy / trusted ---");
-    // current=0 (initial), captured=0 → not stale (both legacy)
+    std::println("\n--- AC #1: bridge_epoch strict (#1365) ---");
+    // current=0 (tracking inactive) → never stale
     CHECK(!aura::compiler::Evaluator::is_bridge_stale(0, 0), "0 vs 0 not stale");
-    // current=N, captured=0 → not stale (legacy wins)
-    CHECK(!aura::compiler::Evaluator::is_bridge_stale(0, 100),
-          "captured=0 (legacy) not stale even when current=100");
+    CHECK(!aura::compiler::Evaluator::is_bridge_stale(42, 0),
+          "any vs current=0 (tracking off) not stale");
+    // current=N, captured=0 → unstamped while tracking active → STALE
+    // (legacy trust was removed by default in #1365)
+    const bool legacy_env = [] {
+        if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+            return e[0] != '0' && e[0] != '\0';
+        return false;
+    }();
+    if (legacy_env) {
+        CHECK(!aura::compiler::Evaluator::is_bridge_stale(0, 100),
+              "LEGACY_TRUST=1: captured=0 trusted when current=100");
+    } else {
+        CHECK(aura::compiler::Evaluator::is_bridge_stale(0, 100),
+              "strict: captured=0 is stale when current=100 (#1365)");
+    }
     return true;
 }
 

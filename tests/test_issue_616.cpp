@@ -11,7 +11,9 @@
 // a separate follow-up.
 
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -37,6 +39,29 @@ static int g_failed = 0;
             std::println(std::cerr, "  FAIL: {}", msg);                                            \
         }                                                                                          \
     } while (0)
+
+// Resolve tests/fixtures/... whether the bundle is launched from repo
+// root or build/ (CI uses ROOT; local `./build/test_issues_*` often
+// uses build/ as cwd). Prefer AURA_SRC_ROOT when set.
+static std::string fixture_path(std::string_view rel) {
+    namespace fs = std::filesystem;
+    if (const char* env = std::getenv("AURA_SRC_ROOT"); env && env[0] != '\0') {
+        fs::path p = fs::path(env) / rel;
+        if (fs::is_regular_file(p))
+            return p.string();
+    }
+    fs::path cwd = fs::current_path();
+    for (int depth = 0; depth < 6; ++depth) {
+        fs::path candidate = cwd / rel;
+        if (fs::is_regular_file(candidate))
+            return candidate.string();
+        if (!cwd.has_parent_path() || cwd == cwd.parent_path())
+            break;
+        cwd = cwd.parent_path();
+    }
+    // Last resort: relative path (preserves previous behavior / echo checks).
+    return std::string(rel);
+}
 
 // Read an integer field from a hash returned by Aura.
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view hash_src,
@@ -79,7 +104,7 @@ int aura_issue_616_run() {
     // cs.eval that captures h, plus N for each field lookup).
     {
         std::println("\n--- AC1: (eda:load-sv) on valid sample.sv ---");
-        const std::string fixture = "tests/fixtures/issue_616/sample.sv";
+        const std::string fixture = fixture_path("tests/fixtures/issue_616/sample.sv");
         const auto load_ok_before = hw_stat(cs, "load-sv-total");
         const auto load_fail_before = hw_stat(cs, "load-sv-failure-total");
         auto h = cs.eval(std::format("(eda:load-sv \"{}\")", fixture));
@@ -135,7 +160,7 @@ int aura_issue_616_run() {
     // 1 (initial h) + 5 (4 hash_int + 1 hash_string) = 6 calls.
     {
         std::println("\n--- AC3: (eda:parse-verification-result) on valid cov.json ---");
-        const std::string fixture = "tests/fixtures/issue_616/cov.json";
+        const std::string fixture = fixture_path("tests/fixtures/issue_616/cov.json");
         const auto parse_ok_before = hw_stat(cs, "parse-verification-result-total");
         const auto eval_str = std::format("(eda:parse-verification-result \"{}\")", fixture);
         auto h = cs.eval(eval_str);
@@ -207,12 +232,14 @@ int aura_issue_616_run() {
         std::mutex eval_mtx;
         std::atomic<int> ok_count{0};
         constexpr int k_iters = 4;
+        const std::string sv = fixture_path("tests/fixtures/issue_616/sample.sv");
+        const std::string cov = fixture_path("tests/fixtures/issue_616/cov.json");
         const auto load_ok_before = hw_stat(cs, "load-sv-total");
         const auto parse_ok_before = hw_stat(cs, "parse-verification-result-total");
         auto worker_load = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(eda:load-sv \"tests/fixtures/issue_616/sample.sv\")");
+                auto r = cs.eval(std::format("(eda:load-sv \"{}\")", sv));
                 if (r && aura::compiler::types::is_hash(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
@@ -220,8 +247,7 @@ int aura_issue_616_run() {
         auto worker_parse = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval(
-                    "(eda:parse-verification-result \"tests/fixtures/issue_616/cov.json\")");
+                auto r = cs.eval(std::format("(eda:parse-verification-result \"{}\")", cov));
                 if (r && aura::compiler::types::is_hash(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
