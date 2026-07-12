@@ -1704,22 +1704,24 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         std::optional<Env> tail_env;
 
         // Recursion depth guard: friendly error vs segfault
-        // MAX_C_STACK_DEPTH must be low enough to fit in the C++ call stack (~550 frames)
+        // Each eval_flat frame is large (~7–8KB of C stack on aarch64/x86_64),
+        // so the default 8MB process stack only holds ~1000 frames. A guard of
+        // 2000 allowed SIGSEGV before the limit tripped. Keep headroom under
+        // the OS stack (~700 frames ≈ 5.5MB of eval_flat alone).
         // ── Recursion depth guard (thread_local) ────────────────────────
         // #109 (P0): the depth counter must be PER THREAD, not per Evaluator.
         // Fiber fallback (std::thread + [this] capture) shares an Evaluator
         // across N OS threads; if each thread increments a shared counter, a
-        // modest amount of parallel work trips the MAX_C_STACK_DEPTH=2000 guard
-        // even though no single thread is deeply nested. This is what made
+        // modest amount of parallel work trips the guard even though no single
+        // thread is deeply nested. That is what made
         // `tests/suite/concurrent.aura` T7-T10 (orch:parallel 5-way, nested
-        // spawn+join) flaky: in one run they'd see the shared counter spike
-        // past 2000 and bail with "recursion depth exceeded".
+        // spawn+join) flaky with the old shared counter.
         //
         // The shared eval_depth_ member is still used below for auto-gc-temp
         // sampling and auto-gc cooldown, where "global eval activity" is the
         // intended signal (one thread's deep call can still be enough work
         // to warrant a periodic gc-temp). The two are now decoupled.
-        static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
+        static constexpr std::size_t MAX_C_STACK_DEPTH = 700;
         thread_local std::size_t t_c_stack_depth = 0;
         struct DepthGuard {
             std::size_t& d;
