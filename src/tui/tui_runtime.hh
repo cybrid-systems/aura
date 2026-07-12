@@ -37,6 +37,43 @@ inline std::atomic<std::uint64_t> g_tui_half_block_pixels{0};
 inline std::atomic<std::uint64_t> g_tui_mouse_enable_total{0};
 inline std::atomic<std::uint64_t> g_tui_read_event_total{0};
 
+// attr bit: second column of an East-Asian wide glyph (CJK etc.). Not emitted;
+// the terminal already advanced two columns when the head was printed.
+inline constexpr std::uint8_t kAttrWideTail = 0x80;
+
+// East-Asian Wide / Fullwidth (heuristic). Box-drawing stays narrow.
+inline bool is_wide_glyph(std::uint32_t cp) noexcept {
+    if (cp < 0x1100)
+        return false;
+    // Hangul Jamo
+    if (cp <= 0x115F)
+        return true;
+    if (cp == 0x2329 || cp == 0x232A)
+        return true;
+    // CJK radicals .. Yi syllables (includes Unified Ideographs)
+    if (cp >= 0x2E80 && cp <= 0xA4CF)
+        return true;
+    // Hangul syllables
+    if (cp >= 0xAC00 && cp <= 0xD7A3)
+        return true;
+    if (cp >= 0xF900 && cp <= 0xFAFF)
+        return true;
+    if (cp >= 0xFE10 && cp <= 0xFE19)
+        return true;
+    if (cp >= 0xFE30 && cp <= 0xFE6F)
+        return true;
+    if (cp >= 0xFF00 && cp <= 0xFF60)
+        return true;
+    if (cp >= 0xFFE0 && cp <= 0xFFE6)
+        return true;
+    // Common emoji / symbols often double-width in modern terminals
+    if (cp >= 0x1F300 && cp <= 0x1FAFF)
+        return true;
+    if (cp >= 0x20000 && cp <= 0x3FFFD)
+        return true;
+    return false;
+}
+
 struct Cell {
     std::uint32_t ch = static_cast<std::uint32_t>(' ');
     std::uint32_t fg = 0xFFFFFF;
@@ -47,6 +84,7 @@ struct Cell {
     bool visual_eq(const Cell& o) const noexcept {
         return ch == o.ch && fg == o.fg && bg == o.bg && attr == o.attr;
     }
+    bool is_wide_tail() const noexcept { return (attr & kAttrWideTail) != 0; }
 };
 
 struct Event {
@@ -112,11 +150,38 @@ public:
         if (!initialized_ || col < 0 || row < 0 || col >= cols_ || row >= rows_)
             return false;
         auto& c = front_[static_cast<std::size_t>(row * cols_ + col)];
-        c.ch = ch ? ch : static_cast<std::uint32_t>(' ');
+        const std::uint32_t glyph = ch ? ch : static_cast<std::uint32_t>(' ');
+        // If we overwrite the tail of a previous wide glyph, clear its head.
+        if (c.is_wide_tail() && col > 0) {
+            auto& head = front_[static_cast<std::size_t>(row * cols_ + (col - 1))];
+            if (is_wide_glyph(head.ch)) {
+                head.ch = static_cast<std::uint32_t>(' ');
+                head.attr = static_cast<std::uint8_t>(head.attr & ~kAttrWideTail);
+                head.dirty = true;
+            }
+        }
+        c.ch = glyph;
         c.fg = fg & 0xFFFFFFu;
         c.bg = bg & 0xFFFFFFu;
-        c.attr = attr;
+        c.attr = static_cast<std::uint8_t>(attr & ~kAttrWideTail);
         c.dirty = true;
+        // Wide glyphs occupy two terminal columns: mark the next cell as tail
+        // so emit_diff does not print into the second half of the glyph.
+        if (is_wide_glyph(glyph) && col + 1 < cols_) {
+            auto& tail = front_[static_cast<std::size_t>(row * cols_ + (col + 1))];
+            tail.ch = static_cast<std::uint32_t>(' ');
+            tail.fg = c.fg;
+            tail.bg = c.bg;
+            tail.attr = kAttrWideTail;
+            tail.dirty = true;
+        } else if (col + 1 < cols_) {
+            auto& nxt = front_[static_cast<std::size_t>(row * cols_ + (col + 1))];
+            if (nxt.is_wide_tail()) {
+                nxt.attr = static_cast<std::uint8_t>(nxt.attr & ~kAttrWideTail);
+                nxt.ch = static_cast<std::uint32_t>(' ');
+                nxt.dirty = true;
+            }
+        }
         g_tui_cell_writes.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
@@ -272,6 +337,16 @@ private:
                 auto idx = static_cast<std::size_t>(r * cols_ + c);
                 auto& fc = front_[idx];
                 auto& bc = back_[idx];
+                // Wide-tail cells are consumed by the previous CJK head; the
+                // terminal already advanced 2 columns. Never print into them
+                // (that used to paint black spaces over Chinese glyphs).
+                if (fc.is_wide_tail()) {
+                    if (force || fc.dirty || !fc.visual_eq(bc)) {
+                        bc = fc;
+                        fc.dirty = false;
+                    }
+                    continue;
+                }
                 if (!force && !fc.dirty && fc.visual_eq(bc))
                     continue;
                 // Absolute cursor move (1-based)
@@ -302,6 +377,14 @@ private:
                 bc = fc;
                 fc.dirty = false;
                 ++emitted;
+                // Keep back-buffer in sync for the implied tail column.
+                if (is_wide_glyph(fc.ch) && c + 1 < cols_) {
+                    auto tidx = static_cast<std::size_t>(r * cols_ + (c + 1));
+                    auto& ft = front_[tidx];
+                    auto& bt = back_[tidx];
+                    bt = ft;
+                    ft.dirty = false;
+                }
             }
         }
         out += "\033[?2026l";
