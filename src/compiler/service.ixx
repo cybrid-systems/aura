@@ -6452,8 +6452,24 @@ public:
     // - Strict: any note causes typed_mutate to return
     //   success=false with the first note's message promoted to
     //   MutationResult::error.
-    void set_invariant_check_mode(InvariantCheckMode m) { invariant_check_mode_ = m; }
+    void set_invariant_check_mode(InvariantCheckMode m) {
+        if (invariant_check_mode_ != m) {
+            invariant_check_mode_ = m;
+            ++mode_flip_count_; // Issue #1383: throttle disable-warn.
+        }
+    }
     InvariantCheckMode invariant_check_mode() const { return invariant_check_mode_; }
+
+    // Issue #1383: read accumulated eval-mode warnings. Cleared
+    // via clear_eval_warnings(). Includes the one-shot warning
+    // emitted when invariant_check_mode is set to Disabled on a
+    // workspace with prior typed mutations (so an operator can
+    // see the silent-bypass risk). Surfaced via (eval-warnings)
+    // primitive and `--serve warnings`.
+    [[nodiscard]] const std::vector<std::string>& eval_warnings() const noexcept {
+        return mode_warnings_;
+    }
+    void clear_eval_warnings() noexcept { mode_warnings_.clear(); }
 
     // Issue #411: post-mutation auto-incremental typecheck mode.
     // See the IncrementalTypecheckMode enum above for the three
@@ -6856,6 +6872,21 @@ public:
 
             if (invariant_check_mode_ == InvariantCheckMode::Disabled) {
                 res.invariant_status = aura::ast::InvariantStatus::NotChecked;
+                // Issue #1383: throttled warn when Disabled is
+                // set on a workspace with prior typed mutations.
+                // Throttled to ONCE per mode flip (operator can
+                // see the silent-bypass risk without per-mutation
+                // spam). WarningsOnly/Strict modes never warn
+                // because they actually run the check.
+                if (auto* ws = evaluator_.workspace_flat();
+                    ws && ws->mutation_count() > 0 &&
+                    mode_flip_count_ != last_disabled_warn_flip_) {
+                    mode_warnings_.push_back(
+                        "invariant checks disabled on workspace with " +
+                        std::to_string(ws->mutation_count()) +
+                        " typed mutations \u2014 linear ownership narrowing may be stale");
+                    last_disabled_warn_flip_ = mode_flip_count_;
+                }
                 return res;
             }
 
@@ -8100,6 +8131,16 @@ private:
     // set_invariant_check_mode() when soundness enforcement is
     // desired (e.g. in CI runs or --strict CLI flag).
     InvariantCheckMode invariant_check_mode_ = InvariantCheckMode::WarningsOnly;
+
+    // Issue #1383: mode-flip counter + last-disabled-warn flip.
+    // Bumped by set_invariant_check_mode on every change. The
+    // Disabled branch of typed_mutate consults these to throttle
+    // the "invariant checks disabled on workspace with N typed
+    // mutations" warning to ONCE per flip (not per-mutation
+    // spam). See mode_warnings_ below.
+    std::uint64_t mode_flip_count_ = 0;
+    std::uint64_t last_disabled_warn_flip_ = 0;
+    std::vector<std::string> mode_warnings_;
 
     // Issue #169: incremental-strictness mode. Default Balanced
     // (= existing behavior). Future Goals 1-4 will read this
