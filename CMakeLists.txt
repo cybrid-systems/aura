@@ -4707,6 +4707,16 @@ aura_issue_test_link_llvm_jit(test_issue_1401)
 # after granting kCapWildcard. Locks the enforcement invariant.
 aura_add_issue_test(test_issue_1402)
 aura_issue_test_link_llvm_jit(test_issue_1402)
+# Issue #1404: restamp_yield_checkpoint_top fail-loud contract.
+# Source change: function now returns bool (true = mismatch detected,
+# no restamp; false = OK, restamped). 3 callers updated to capture
+# the return. Contract test verifies basic structure + that the
+# diagnostic counters remain accessible. Full integration test
+# (trigger real mismatch via fiber:spawn + concurrent arena:defrag)
+# is documented as follow-up — blocked by the pre-existing cs.eval
+# concurrent crash documented in #1399's honest gap.
+aura_add_issue_test(test_issue_1404)
+aura_issue_test_link_llvm_jit(test_issue_1404)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW

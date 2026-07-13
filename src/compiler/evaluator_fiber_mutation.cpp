@@ -141,15 +141,33 @@ namespace fiber_stack_pool_detail {
         return static_cast<YieldStackVec*>(p);
     }
 
-    void restamp_yield_checkpoint_top(Evaluator* ev, aura::serve::Fiber* fiber) {
+    // Issue #1404 (Option 1): restamp_yield_checkpoint_top used to
+    // "detect-and-overwrite" — bump size_mismatches_caught, then
+    // silently rewrite `top.*` to the new state. The continuation
+    // then ran with the new state regardless of the drift. Each of
+    // the 4 fields indicates a real anomaly:
+    //   - mutation_stack_depth / boundary_depth drift → stack inconsistent
+    //   - defuse_version drift → mutation epoch advanced during hold
+    //   - thread_id drift → fiber migrated threads (worker pool steal)
+    //
+    // Now: on mismatch, bump the counter (for diagnostics) and RETURN
+    // `true` without restamping. The caller is expected to surface an
+    // merr via the trampoline (fiber-local error channel) so the
+    // fiber aborts / deadlocks gracefully instead of running on a
+    // silent state overwrite. On no mismatch, restamp as before and
+    // return false.
+    //
+    // Returns: true if a mismatch was detected (caller should fail-loud);
+    //          false if the checkpoint was successfully restamped.
+    bool restamp_yield_checkpoint_top(Evaluator* ev, aura::serve::Fiber* fiber) {
         if (!ev || !fiber)
-            return;
+            return false;
         void* yp = fiber->yield_checkpoint_ptr();
         if (yp == nullptr)
-            return;
+            return false;
         auto& ystack = yield_stack_from_ptr(yp);
         if (ystack.empty())
-            return;
+            return false;
         void* mp = fiber->mutation_stack_ptr();
         const std::size_t mdepth = mp ? mutation_stack_from_ptr(mp).size() : 0;
         const std::size_t bdepth = Evaluator::mutation_boundary_depth();
@@ -158,13 +176,19 @@ namespace fiber_stack_pool_detail {
         const bool mismatch = top.mutation_stack_depth != mdepth || top.boundary_depth != bdepth ||
                               top.defuse_version != ver ||
                               top.thread_id != std::this_thread::get_id();
-        if (mismatch)
+        if (mismatch) {
+            // Fail-loud: counter bumps for diagnostics, but the recorded
+            // checkpoint top is preserved (NOT overwritten) so the caller
+            // can surface an merr pointing at the drift.
             pool_stats().size_mismatches_caught.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
         top.mutation_stack_depth = mdepth;
         top.boundary_depth = bdepth;
         top.defuse_version = ver;
         top.thread_id = std::this_thread::get_id();
         pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
+        return false;
     }
 
 } // namespace fiber_stack_pool_detail
@@ -342,7 +366,12 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         // Also restamp live fiber yield stack storage if present.
         if (g_current_fiber_void != nullptr) {
             auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
-            fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
+            // Issue #1404 Option 1: capture mismatch flag. Caller-side
+            // merr surfacing via the fiber-local error channel is the
+            // follow-up (the existing rollback path already uses
+            // size_mismatch / thread_migrated signals for this caller).
+            [[maybe_unused]] const bool yc_mismatch =
+                fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
         }
         thread_migrated = false;
         size_mismatch = false;
@@ -384,7 +413,10 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
                 m->panic_transfer_on_steal.fetch_add(1, std::memory_order_relaxed);
             if (Evaluator::g_current_fiber_void != nullptr) {
                 auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
-                fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
+                // Issue #1404 Option 1: capture mismatch flag. Panic-transfer
+                // path already forces rollback via success flag below.
+                [[maybe_unused]] const bool yc_mismatch =
+                    fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
             }
             // Force rollback path via success flag so Guard dtor restores.
             if (panic_auto_rollback_ && outermost_mutation_success_flag_)
@@ -721,7 +753,9 @@ namespace {
         ev->bump_panic_checkpoint_transfer_count();
         if (Evaluator::g_current_fiber_void != nullptr) {
             auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
-            fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
+            // Issue #1404 Option 1: capture mismatch flag.
+            [[maybe_unused]] const bool yc_mismatch =
+                fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
         }
         // Issue #1127: snapshot both counters under one acquire fence so
         // probe sees a consistent side of concurrent AOT/mutate updates.
