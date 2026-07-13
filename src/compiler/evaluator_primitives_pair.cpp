@@ -56,7 +56,8 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
+                                         std::pmr::vector<Pair>& pairs,
                                          std::pmr::vector<std::string>& string_heap,
                                          std::vector<EvalValue>& error_values,
                                          std::atomic<std::uint64_t>* primitive_error_counter) {
@@ -345,11 +346,20 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
     });
 
     // ── Mutable pair operations ───────────────────────────────────
+    // Issue #1397: set-car!/set-cdr! mutate an existing pair slot.
+    // The read-of-idx + write-of-pair must be atomic relative to
+    // concurrent `pairs_.push_back` / `pairs_.resize` that may
+    // reallocate the underlying vector (invalidating the reference).
+    // Acquire the Evaluator's alloc_storage_lock_ for the mutation.
     add("set-car!",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
+            // Issue #1397: read-of-idx + write-of-pair must be atomic
+            // relative to concurrent `pairs_.push_back` / `pairs_.resize`
+            // that may reallocate the underlying vector.
+            std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
             if (idx < pairs.size()) {
                 pairs[idx].car = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
@@ -358,10 +368,12 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_void();
         });
     add("set-cdr!",
-        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
             auto idx = as_pair_idx(a[0]);
+            // Issue #1397: same atomic guard as set-car!.
+            std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
             if (idx < pairs.size()) {
                 pairs[idx].cdr = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {

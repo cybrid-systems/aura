@@ -762,7 +762,7 @@ namespace primitives_detail {
     // P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
     void register_type_and_char_primitives(std::function<void(std::string, PrimFn)> add);
     void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)> add,
-                                             std::pmr::vector<Pair>& pairs,
+                                             Evaluator& ev, std::pmr::vector<Pair>& pairs,
                                              std::pmr::vector<std::string>& string_heap,
                                              std::vector<EvalValue>& error_values,
                                              std::atomic<std::uint64_t>* primitive_error_counter);
@@ -2131,6 +2131,12 @@ public:
 private:
     ClosureId next_id() { return next_id_++; }
     [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) {
+        // Issue #1397: push_back + size read MUST be atomic so the
+        // returned index is stable across concurrent `fiber:spawn`
+        // workers (which share the Evaluator). std::lock_guard RAII
+        // releases the mutex at scope exit; the duration here is
+        // bounded to the vector reallocation + the size_t return.
+        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
         cells_.push_back(v);
         return cells_.size() - 1;
     }
@@ -2332,6 +2338,7 @@ private:
     // Evaluator destruction (after the pmr vectors are
     // cleared, which runs ~string on each stored string).
     //
+private:
     // Declared BEFORE cells_/pairs_/string_heap_ so the
     // pmr::vector members can take its address in their
     // initializer (member init order matches declaration
@@ -2339,6 +2346,26 @@ private:
     std::pmr::monotonic_buffer_resource runtime_resource_;
     std::pmr::vector<types::EvalValue> cells_{&runtime_resource_};
     std::pmr::vector<Pair> pairs_{&runtime_resource_};
+
+public:
+    // Issue #1397: uniform mutex guarding `cells_` / `pairs_` /
+    // `string_heap_` push_back + size reads + indexed mutations.
+    // `fiber:spawn` shares the Evaluator between the spawning thread
+    // and the worker thread; without this guard, `pairs_.push_back`
+    // + `pairs_.size()-1` index return, `set-car!` /
+    // `set-cdr!` element writes, and `string_heap_.push_back` race
+    // (lost updates, iterator invalidation mid-iter, torn pair slots).
+    // See https://github.com/cybrid-systems/aura/issues/1397 for the
+    // full audit + AC. Opted for Option A (uniform mutex) over
+    // Option B (per-thread arena) / Option C (doc-only) for the
+    // simple, correctness-first closure. Hot path overhead is bounded
+    // to the lock_guard acquire/release (sub-100ns); Phase 2 may
+    // revisit with Option B's per-thread arena if profiling demands.
+    // Public: the register_*_primitives free functions in
+    // evaluator_primitives_*.cpp need to acquire this lock on
+    // push_back / set-car! / set-cdr! paths to keep the Aura
+    // primitive surface thread-safe under fiber:spawn.
+    mutable std::mutex alloc_storage_lock_;
     // Issue #145 Phase 2.1 — SoA arena for Env. Frames are
     // appended in alloc_env_frame and indexed by EnvId. Frame
     // data is parallel to Env; parent walks go via parent_id_

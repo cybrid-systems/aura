@@ -230,9 +230,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (ret_type == 3 && result_i != 0) {
                     // String return: char* → string_heap
                     auto s = reinterpret_cast<const char*>(static_cast<std::intptr_t>(result_i));
-                    auto sidx = string_heap_.size();
-                    string_heap_.emplace_back(s ? s : "");
-                    return types::make_string(sidx);
+                    // Issue #1397: size() read + emplace_back() must be atomic
+                    // (fiber:spawn shares Evaluator across threads).
+                    {
+                        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
+                        auto sidx = string_heap_.size();
+                        string_heap_.emplace_back(s ? s : "");
+                        return types::make_string(sidx);
+                    }
                 }
                 if (ret_type == 4) {
                     // Opaque: store pointer in opaque_heap_, return OpaqueRef
@@ -376,6 +381,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
     auto v = flat.get(nid);
     // Local helper: build (cons "fn-name" args)
     auto cd = [&](const std::string& fn, const EvalValue& args) -> EvalValue {
+        // Issue #1397: size() read + push_back() + index return must be
+        // atomic (fiber:spawn shares Evaluator across threads).
+        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
         auto fi = string_heap_.size();
         string_heap_.push_back(fn);
         auto pi = pairs_.size();
@@ -423,6 +431,10 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return val;
         }
         case ast::NodeTag::Call: {
+            // Issue #1397: size() read + push_back() in the per-iter
+            // loop must be atomic to keep the returned pair_idx stable
+            // across concurrent fiber:spawn workers.
+            std::lock_guard<std::mutex> lock(alloc_storage_lock_);
             EvalValue tail = make_void();
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
                 auto item = ast_to_data(flat, pool, *it);
@@ -433,6 +445,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return tail;
         }
         case ast::NodeTag::Begin: {
+            std::lock_guard<std::mutex> lock(alloc_storage_lock_);
             EvalValue tail = make_void();
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
                 auto item = ast_to_data(flat, pool, *it);
@@ -446,6 +459,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto cond = v.children.size() > 0 ? ast_to_data(flat, pool, v.child(0)) : make_void();
             auto then_b = v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1)) : make_void();
             auto else_b = v.children.size() > 2 ? ast_to_data(flat, pool, v.child(2)) : make_void();
+            // Issue #1397: lock across the two push_backs + make_pair calls
+            // so the tail indices the IfExpr chain uses are stable.
+            std::lock_guard<std::mutex> lock(alloc_storage_lock_);
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({then_b, else_b});
             tail = make_pair(pairs_.size());
@@ -453,6 +469,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return cd("if", tail);
         }
         case ast::NodeTag::Lambda: {
+            // Issue #1397: each push_back in the per-param loop + final body
+            // push_back is atomic for stable returned pair index.
+            std::lock_guard<std::mutex> lock(alloc_storage_lock_);
             EvalValue params_tail = make_void();
             for (auto it = v.params.rbegin(); it != v.params.rend(); ++it) {
                 auto pname = std::string(pool.resolve(*it));
@@ -469,6 +488,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Define: {
             auto name_str = std::string(pool.resolve(v.sym_id));
+            // Issue #1397: size() + push_back for both string_heap_ and pairs_
+            // must be atomic so the symbol / value pair has stable indices.
+            std::lock_guard<std::mutex> lock(alloc_storage_lock_);
             auto nidx = string_heap_.size();
             string_heap_.push_back(name_str);
             auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
