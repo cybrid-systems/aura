@@ -172,6 +172,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     const auto sync_before =
         hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "env-version-sync-on-reload");
 
+    // Issue #1396: bump helpers + this AC4 exercise gated
+    // behind AOT_RELOAD_PHASE_2_PLUS. Phase 1 ships the
+    // primitive surface (AC1/AC2/AC3 + AC5 above) without
+    // callers; per-decision-point bump sites live in
+    // aura_jit_bridge.cpp + WorkerThread::steal() +
+    // EnvFrame sync, which are Phase 2+ tasks. When the
+    // macro is defined, this block re-enables and verifies
+    // the helpers can be invoked from a test driver.
+    // The metric fields stay unconditionally, so the
+    // primitive keeps returning valid hashes regardless of
+    // the macro state.
+#ifdef AOT_RELOAD_PHASE_2_PLUS
     // Exercise the 3 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
     // helpers bump CompilerMetrics atomics (which the
@@ -216,6 +228,9 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with all 3 deferred flags == 0)",
                       rec_after));
+#else
+    std::println("  AC4 deferred: bump helpers absent (AOT_RELOAD_PHASE_2_PLUS undefined)");
+#endif // AOT_RELOAD_PHASE_2_PLUS
 }
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {

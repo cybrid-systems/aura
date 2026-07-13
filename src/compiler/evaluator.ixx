@@ -5070,6 +5070,20 @@ public:
             m->arena_races_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #1396: 4 unwired AOT hot-reload bump helpers
+    // (bump_aot_safe_boundary_hit + 3 from #785) gated behind
+    // AOT_RELOAD_PHASE_2_PLUS. Phase 1 ships the metric fields
+    // in observability_metrics.h:5232-5234, 5298 + the query
+    // primitives in evaluator_primitives_obs_jit_01.cpp:850 +
+    // obs_jit_03.cpp:692-700; per-decision-point bump sites
+    // are Phase 2+ wire-up work in aura_jit_bridge.cpp +
+    // MutationBoundaryGuard + fiber.cpp + EnvFrame sync.
+    // Defining the macro re-enables the helpers + the call-
+    // site tests below skip cleanly via the same #ifdef.
+    // Metric fields stay unconditionally (query primitives
+    // return hashes with zero fields even when helpers are
+    // absent). See tests/test_issue_1396.cpp for design doc.
+#ifdef AOT_RELOAD_PHASE_2_PLUS
     // Issue #732: AOT hot-reload safe-swap at MutationBoundary
     // observability counter backing the
     // (query:aot-safe-swap-boundary-stats) primitive. Public so
@@ -5122,6 +5136,7 @@ public:
             m->aot_env_version_sync_on_reload_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+#endif // AOT_RELOAD_PHASE_2_PLUS
     // Issue #733: macro marker propagation + IR/JIT hygiene
     // enforcement counters backing the (query:ir-marker-hygiene-stats)
     // primitive. These are public so future lowering_impl.cpp +

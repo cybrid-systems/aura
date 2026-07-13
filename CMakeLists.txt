@@ -4651,6 +4651,19 @@ aura_issue_test_link_llvm_jit(test_issue_784)
 # regression.
 aura_add_issue_test(test_issue_785)
 aura_issue_test_link_llvm_jit(test_issue_785)
+# Issue #1396: Scope-limited close for the 4 unwired AOT
+# hot-reload bump helpers (#732 safe_boundary + #785
+# concurrent_steal / grace_period / env_version_sync). Audit
+# found 0 production call sites; the helpers are wrapped
+# behind AOT_RELOAD_PHASE_2_PLUS so default builds stay honest
+# (helpers absent) without losing the Phase 2+ design intent.
+# Metric fields (observability_metrics.h:5232-5234, 5298) +
+# query primitives stay UNCONDITIONAL. 4 ACs: #732 primitive
+# stays queryable, #785 primitive stays queryable (schema=785),
+# all 4 newly added metric fields read 0 in default build,
+# AOT_RELOAD_PHASE_2_PLUS documented as the chosen gating macro.
+aura_add_issue_test(test_issue_1396)
+aura_issue_test_link_llvm_jit(test_issue_1396)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
