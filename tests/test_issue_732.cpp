@@ -159,6 +159,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     // MutationBoundary safe-swap point). The other 4 cross-reference
     // fields are read from existing #708 atomics — we exercise only
     // the new aot_safe_boundary_hits_total bump helper here.
+    // Issue #1396: bump helpers + boundary == 7 CHECK gated
+    // behind AOT_RELOAD_PHASE_2_PLUS. Phase 1 ships the
+    // primitive surface (AC1/AC2/AC3 + 4 "other-fields == 0"
+    // CHECKs below) + the primitive shape; per-decision-point
+    // bump sites are Phase 2+ wire-up work in aura_jit_bridge
+    // .cpp + MutationBoundaryGuard + fiber. The other 4 fields
+    // remain == 0 in BOTH macro states (no cross-reference
+    // callers either), so those CHECKs stay outside.
+#ifdef AOT_RELOAD_PHASE_2_PLUS
     auto& ev = cs.evaluator();
     ev.bump_aot_safe_boundary_hit();
     ev.bump_aot_safe_boundary_hit();
@@ -172,6 +181,18 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     CHECK(boundary == 7,
           std::format("after 7 safe-boundary-hit bumps: safe-boundary-hits = {} (expected 7)",
                       boundary));
+#else
+    // helpers absent in default build — verify the primitive
+    // shape stays valid + safe-boundary-hits reads 0 (proves
+    // the field is wired through even without callers).
+    const auto boundary_zero =
+        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "safe-boundary-hits");
+    CHECK(boundary_zero == 0,
+          std::format("safe-boundary-hits = {} (expected 0 in default build "
+                      "\u2014 no AOT reload callers yet, AOT_RELOAD_PHASE_2_PLUS undefined)",
+                      boundary_zero));
+    std::println("  AC4 deferred: bump helper absent (AOT_RELOAD_PHASE_2_PLUS undefined)");
+#endif // AOT_RELOAD_PHASE_2_PLUS
     // The other 4 fields must remain 0 since we only bumped the new atomic.
     const auto swaps = hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "refcount-swaps");
     CHECK(swaps == 0,
