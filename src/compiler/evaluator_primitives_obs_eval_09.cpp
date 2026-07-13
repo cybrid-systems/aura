@@ -144,7 +144,7 @@ void ObservabilityPrims::register_eval_p72(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -317,7 +317,7 @@ void ObservabilityPrims::register_eval_p73(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -431,7 +431,7 @@ void ObservabilityPrims::register_eval_p74(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -540,7 +540,7 @@ void ObservabilityPrims::register_eval_p75(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -668,7 +668,7 @@ void ObservabilityPrims::register_eval_p76(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -806,7 +806,7 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -964,7 +964,7 @@ void ObservabilityPrims::register_eval_p78(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -1095,7 +1095,7 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
                     meta[idx] = fp;
                     // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+                    std::lock_guard lock(ev.alloc_storage_lock_);
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
