@@ -331,12 +331,29 @@ public:
     // it's called with no safepoint registered. See
     // warn_no_safepoint_once() below.
     [[nodiscard]] bool request_defrag() noexcept {
-        const bool registered = aura::gc_hooks::safepoint_registered();
-        if (!registered) {
+        // Issue #1397: atomic compare-exchange so the return value
+        // distinguishes "newly set this call" from "already set by
+        // a prior call". test_issue_300 AC5 encodes this semantics:
+        // the first (arena:request-defrag) returns #t, every
+        // subsequent call (regardless of whether defrag has run
+        // and reset the flag via clear_defrag_request()) observes
+        // the already-true state and returns #f. Returning the
+        // `registered` state alone (the prior behavior) conflated
+        // two distinct concerns — whether a safepoint is wired up
+        // vs whether this call actually transitioned the flag.
+        // Atomic CAS preserves the always-set side effect (the flag
+        // is true after call returns regardless of who won the
+        // race) while letting callers distinguish first-call from
+        // duplicate-call. The "no safepoint" warning continues to
+        // fire only on the first call per process (one-shot via
+        // warn_no_safepoint_once()).
+        bool expected = false;
+        const bool newly_set = defrag_requested_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel, std::memory_order_relaxed);
+        if (!aura::gc_hooks::safepoint_registered()) {
             warn_no_safepoint_once();
         }
-        defrag_requested_.store(true, std::memory_order_release);
-        return registered;
+        return newly_set;
     }
     [[nodiscard]] bool safepoint_registered() const noexcept {
         return aura::gc_hooks::safepoint_registered();

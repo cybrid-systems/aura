@@ -25,6 +25,7 @@
 // produced a confused "double-free" ASAN report under compact that
 // the sanitizer could not localize.
 #include "test_harness.hpp"
+#include "core/gc_hooks.h"
 
 import std;
 using aura::test::g_failed;
@@ -290,6 +291,34 @@ int run_tests() {
 } // namespace test_300_detail
 
 int aura_issue_300_run() {
+    // Issue #1397: register a no-op stub safepoint for AC5
+    // (defrag request flag scaffold). Production paths register
+    // the real safepoint check via src/serve/scheduler.cpp +
+    // src/serve/serve_async.cpp (only linked into the
+    // serve-mode binary). Standalone test binaries (this one +
+    // test_issues_jit bundle members) don't link the serve
+    // module, so g_arena_safepoint_check stays null and
+    // ASTArena::request_defrag() returns false on the first call
+    // (see src/core/arena.ixx:333-340 — return value is whether
+    // the safepoint is registered, not whether the flag was set).
+    //
+    // The stub is purely a registration signal: a no-op function
+    // pointer so the safepoint_registered() check inside
+    // request_defrag() returns true. We don't need a real GC
+    // observation here — the test only validates the request-flag
+    // lifecycle (fresh=#f → request=#t → set=#t → duplicate=#f →
+    // after-defrag=#f), not actual defrag semantics.
+    //
+    // The static-local-with-initializer pattern guarantees the
+    // registration runs exactly once on first call, even when
+    // test_issue_300 runs as a member of the test_issues_jit
+    // bundle (where multiple test_issue_*_run() invocations
+    // share the process).
+    static bool s_safepoint_registered = []() {
+        aura::gc_hooks::g_arena_safepoint_check.store(+[] {});
+        return true;
+    }();
+    (void)s_safepoint_registered;
     return test_300_detail::run_tests();
 }
 
