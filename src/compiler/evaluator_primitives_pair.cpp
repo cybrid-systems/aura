@@ -346,20 +346,32 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // ── Mutable pair operations ───────────────────────────────────
-    // Issue #1397: set-car!/set-cdr! mutate an existing pair slot.
-    // The read-of-idx + write-of-pair must be atomic relative to
-    // concurrent `pairs_.push_back` / `pairs_.resize` that may
-    // reallocate the underlying vector (invalidating the reference).
-    // Acquire the Evaluator's alloc_storage_lock_ for the mutation.
+    // Issue #1397 + #1399: set-car!/set-cdr! mutate an existing
+    // pair slot. The pair-index resolution + field write must be
+    // atomic relative to concurrent `pairs_.push_back` /
+    // `pairs_.resize` that may reallocate the underlying vector
+    // (invalidating the resolved index).
+    //
+    // #1397 wrapped the field write under `alloc_storage_lock_`,
+    // but idx was resolved BEFORE the lock — leaving a window
+    // where another fiber's push_back could realloc pairs_ between
+    // idx capture and the locked write, producing a write to the
+    // wrong slot (or to freed memory).
+    //
+    // #1399 fix: resolve idx INSIDE the lock_guard so the
+    // (idx capture → bounds check → field write) sequence is one
+    // atomic critical section. Combined with #1397, this closes
+    // the cross-fiber pair-mutation race.
     add("set-car!",
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
-            auto idx = as_pair_idx(a[0]);
-            // Issue #1397: read-of-idx + write-of-pair must be atomic
-            // relative to concurrent `pairs_.push_back` / `pairs_.resize`
-            // that may reallocate the underlying vector.
+            // Issue #1397 + #1399: resolve idx + bounds check + field
+            // write all under alloc_storage_lock_ so concurrent
+            // push_back / resize cannot realloc pairs_ between
+            // idx capture and write.
             std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+            auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
                 pairs[idx].car = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
@@ -371,9 +383,10 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
-            auto idx = as_pair_idx(a[0]);
-            // Issue #1397: same atomic guard as set-car!.
+            // Issue #1397 + #1399: same atomic guard as set-car! —
+            // idx capture inside lock_guard, not before.
             std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+            auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
                 pairs[idx].cdr = a[1];
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
