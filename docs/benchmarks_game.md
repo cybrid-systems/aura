@@ -7,6 +7,7 @@
 | binary-trees | 分配 / 解分配压力（cons / vector 堆） | `tests/bench/binarytrees_{cons,array,while}.aura` |
 | pidigits | 任意精度整数（GMP FFI） | `tests/bench/pidigits.aura` + `scripts/gen_pidigits.py` |
 | regex-redux | 正则表达式匹配 / 替换（std::regex） | `tests/bench/regexredux.aura` + `scripts/gen_regexredux_input.py` |
+| reverse-complement | 字符串反转 + 互补（不可变字符串 + list 转换） | `tests/bench/revcomp.aura` + `scripts/gen_revcomp_input.py` |
 
 ## 前置
 
@@ -116,6 +117,41 @@ a[act]ggtaaa|tttacc[agt]t 1
 
 ---
 
+## reverse-complement
+
+读 FASTA DNA 序列，对每条序列（`>header` 行分隔）**反转**并按 IUB 表**互补**每个碱基，输出 header 原样 + 反转互补序列（60 字符/行）。参数 `INPUT` = FASTA 文件路径。
+
+```bash
+# 1. 生成输入
+python3 scripts/gen_revcomp_input.py 10000 > /tmp/rc.fasta
+
+# 2. 运行
+INPUT=/tmp/rc.fasta ./build-gcc16/aura < tests/bench/revcomp.aura    # ~0.4s
+
+# 更大规模 (线性扩展)
+python3 scripts/gen_revcomp_input.py 100000 > /tmp/rc100k.fasta
+INPUT=/tmp/rc100k.fasta ./build-gcc16/aura < tests/bench/revcomp.aura  # ~2.9s
+```
+
+**输出**（header 原样 + revcomp 后的序列 60 字符/行，与官方格式一致）：
+```
+>revcomp
+HAYDSDKCSMYNWBMVVYGCMAWRBYGCCDMNNYMSTCTVGDTKTHYCKBSNWSYMYRDM
+BVWRCDDCVTNCHRKKMYKKVDTVNWHCAMSGBBGMNHNNCHKDVGYRRGARCRAVVSGT
+...
+WMBVYMDSAMRYWSHGBMRBHBYGRWYBGCVAWKRCHBBV      ← 末行不满 60
+```
+
+**IUB 互补表**（完整 15 码）：`A↔T C↔G G↔C T↔A M↔K R↔Y W↔W S↔S Y↔R K↔M V↔B H↔D D↔H B↔V N↔N`（S/W/N 自互补）。
+
+**为什么慢**：Aura 字符串**不可变**（没有 `string-set!`/`make-string`），无法像 C 版那样原地双指针字节交换 + 查表互补。必须走 `string->list` → `reverse` → `map complement` → `list->string` 的链表转换路径，每次 revcomp 都建一个 cons-list。性能受此限制（10k=0.4s, 100k=2.9s，线性）。
+
+**两个非显然坑（都绕过了，见文件头注释）**：
+- named-let 无 TCO → parse/output 循环用 `while`（和 binarytrees_while 同）。
+- **`define` 求值 bug**：`(define x expr)` 当 `expr` 引用被 `set!` 修改过的变量时，求值成空。比如 `entries` 用 `set!`+`cons` 构建后，`(define all (reverse entries))` 返回空，但 `(reverse entries)` 直接 display 是对的。用 `let` 绕过。函数体内 `define` 引用闭包变量也有同样问题。详见 `memory/define-set-var-evaluates-empty.md`。
+
+---
+
 ## 交叉验证参考实现
 
 每个 benchmark 都有独立的 Python 参考实现用来验证 Aura 输出正确性：
@@ -146,15 +182,18 @@ EOF
 | binarytrees | 无运行期 mark-sweep GC，cons cell 不回收 | N=12 内存 ~116MB，~2×/每+2 depth | N≈14-16 OOM |
 | pidigits | FFI closure 不能从闭包内调 → 循环预展开 | N=100 输出正确，~0.1s | 无（N 受生成步数限制，约线性） |
 | regex-redux | regex-find 无位置返回，regex 无预编译 | 10k ~1s，100k ~10s，线性 | 性能受 std::regex 编译开销限制 |
+| reverse-complement | 字符串不可变，revcomp 走 list 转换 | 10k ~0.4s，100k ~2.9s，线性 | 性能受 string→list 转换限制 |
 
 要突破这些限制需要运行时侧改进（见各文件头注释和 `docs/`）：
 - binarytrees：运行期 GC 或 `gc:keep` 单根保护原语
 - pidigits：修 FFI dispatch 的 `cid < func_count()` bug（见 `docs/ffi_closure_dispatch_fix.md`）
 - regex-redux：regex 预编译 + 返回匹配位置的 `regex-find-pos` 原语
+- reverse-complement：可变字符串（`string-set!`/`make-string`）支持原地字节交换
 
 ## 相关文件
 
 - 算法说明 + Benchmarks Game 链接：各 `.aura` 文件头注释
 - binarytrees 三版差异 + 限制分析：`memory/binarytrees-no-tco-recursion-limit.md`
 - pidigits FFI 限制：`docs/ffi_closure_dispatch_fix.md`
+- revcomp 的 `define`+`set!` 求值 bug：`memory/define-set-var-evaluates-empty.md`
 - 构建问题（重新构建时）：`docs/import_std_build_fix.md`
