@@ -54,6 +54,8 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 **加 primitive 前必须先回答** [`docs/design/primitive-vs-stdlib-decision-framework.md`](design/primitive-vs-stdlib-decision-framework.md) **中的问题**：默认应放入 stdlib (`lib/std/`)，只有满足 7 条红线的功能才下沉为 C++ primitive。决定后再回到下面的注册流程。
 
+**冻结（P0b）**：禁止新增公共 `*-stats` / `*-stats-hash` 原语名。计数器写入 `CompilerMetrics`，对外用 `(engine:metrics)`（见 [primitives-surface-refactor.md](design/primitives-surface-refactor.md)）。`./build.py gate` 会跑 `scripts/check_primitive_surface.py`；故意扩 baseline 需 `--update-baseline` 并在 PR 说明。
+
 **P0 已完成**：`init_pair_primitives()` 内无内联 `primitives_.add("...")`；静态原语均在 `evaluator_primitives_*.cpp`（31 个 TU），经 `prim_registrar()` 回调注册。完整列表见 `docs/generated/primitives.md`（`./build.py docs` 生成）。
 
 注册点：`init_pair_primitives()`、`Evaluator()` 构造器（network/type 等），或 `ffi_runtime_` / `adt_runtime_`（外部 runtime 模式）。

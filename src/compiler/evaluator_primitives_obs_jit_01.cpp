@@ -26,6 +26,7 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
+import aura.compiler.service;
 
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
@@ -453,6 +454,127 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
         // (stats:count) without a second hardcoded literal to keep
         // in sync.
         return make_int(static_cast<std::int64_t>(ObservabilityPrims::stats_primitives().size()));
+    });
+
+    // P1a surface refactor: (engine:metrics [name | :all])
+    // Single public observability facade — prefer this over new query:*-stats.
+    //   (engine:metrics)        → summary hash {schema, stats-count, …}
+    //   (engine:metrics "name") → invoke that stats primitive (if registered)
+    //   (engine:metrics :all)   → hash of every stats name → value
+    add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            // Capacity: next power-of-two >= 2*kv.size() (min 16)
+            std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
+            std::uint64_t cap = 16;
+            while (cap < need)
+                cap <<= 1;
+            auto* ht = FlatHashTable::create(cap);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
+                auto fp = ::aura::compiler::hash::fingerprint(h);
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+
+        const auto& stats = ObservabilityPrims::stats_primitives();
+
+        // (engine:metrics "query:foo-stats") → single stats value
+        if (a.size() >= 1 && is_string(a[0])) {
+            auto sidx = as_string_idx(a[0]);
+            if (sidx >= ev.string_heap_.size())
+                return make_void();
+            const std::string& name = ev.string_heap_[sidx];
+            auto fn = ev.primitives_.lookup(name);
+            if (!fn)
+                return make_void();
+            return (*fn)({});
+        }
+
+        // (engine:metrics :all) → full nested hash name→value
+        bool dump_all = false;
+        if (a.size() >= 1 && types::is_keyword(a[0])) {
+            auto kidx = types::as_keyword_idx(a[0]);
+            if (kidx < ev.keyword_table_.size() &&
+                (ev.keyword_table_[kidx] == ":all" || ev.keyword_table_[kidx] == "all"))
+                dump_all = true;
+        }
+
+        if (dump_all) {
+            std::vector<std::pair<std::string, EvalValue>> kv;
+            kv.reserve(stats.size() + 2);
+            kv.push_back({"schema", make_int(1)});
+            kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
+            for (const auto& name : stats) {
+                auto fn = ev.primitives_.lookup(name);
+                if (!fn)
+                    continue;
+                kv.push_back({name, (*fn)({})});
+            }
+            return build_hash(kv);
+        }
+
+        // Default summary (fast): schema + count + optional compiler arena fields
+        std::vector<std::pair<std::string, EvalValue>> kv;
+        kv.push_back({"schema", make_int(1)});
+        kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
+        // Discoverability: re-use stats:list semantics as a list value
+        {
+            EvalValue names_list = make_void();
+            for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(*it);
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), names_list});
+                names_list = make_pair(pid);
+            }
+            kv.push_back({"stats-names", names_list});
+        }
+        // Nested compiler env/arena snapshot when available (Issue #1385 fields)
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            if (auto* svc = static_cast<CompilerService*>(ev.compiler_service())) {
+                svc->refresh_env_arena_metrics(*m);
+            }
+            std::vector<std::pair<std::string, EvalValue>> ck;
+            ck.push_back({"env_frames_size_total",
+                          make_int(static_cast<std::int64_t>(m->env_frames_size_total.load()))});
+            ck.push_back({"env_frames_stale_count",
+                          make_int(static_cast<std::int64_t>(m->env_frames_stale_count.load()))});
+            ck.push_back({"ast_arena_bytes_in_use",
+                          make_int(static_cast<std::int64_t>(m->ast_arena_bytes_in_use.load()))});
+            ck.push_back({"ast_arena_upstream_bytes",
+                          make_int(static_cast<std::int64_t>(m->ast_arena_upstream_bytes.load()))});
+            kv.push_back({"compiler", build_hash(ck)});
+        }
+        return build_hash(kv);
     });
 
     // Issue #728: (query:unified-error-stats) — unified structured
