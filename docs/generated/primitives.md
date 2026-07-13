@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**996** registrations scanned from `src/**/*.cpp`.
+**997** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 126 primitives (13%)
-- **core**: 259 primitives (26%)
+- **core**: 260 primitives (26%)
 - **internal-observable**: 441 primitives (44%)
 - **convenience**: 170 primitives (17%)
 
@@ -991,6 +991,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 
+## Engine: (1)
+
+- `engine:metrics` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+
 ## Eval: (1)
 
 - `eval:async` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1285,7 +1289,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (259)
+### Core builtins (must remain primitive) (260)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1385,6 +1389,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eda:validate-sv-emit-roundtrip` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:waveform-snapshot` — `src/compiler/evaluator_primitives_eda.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error?` — `src/compiler/evaluator_primitives_runtime.cpp`

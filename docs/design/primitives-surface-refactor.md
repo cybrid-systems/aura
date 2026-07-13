@@ -1,11 +1,15 @@
 # Primitives Surface Refactor — Minimal Public API + Progressive Delivery
 
-> **Status**: plan (authoritative direction for subsequent PRs)  
+> **Status**: in progress — **P0b + P1a landed** (freeze gate + `engine:metrics`)  
 > **Supersedes / extends**: [#558–#566 demotion epic](primitives-demotion-batch1.md),  
 > [primitive-vs-stdlib-decision-framework.md](primitive-vs-stdlib-decision-framework.md),  
 > [query-namespace-decision.md](query-namespace-decision.md),  
 > [stdlib-organization-spec.md](stdlib-organization-spec.md)  
-> **Goal**: 对外暴露尽可能少；其余用宏 / 标准库；C++ 只保留高性能 + AI-native 工作面 + 引擎/宿主红线。
+> **Goal**: 对外暴露尽可能少；其余用宏 / 标准库；C++ 只保留高性能 + AI-native 工作面 + 引擎/宿主红线。  
+>  
+> **Shipped**: `scripts/check_primitive_surface.py` (gate in `./build.py gate`);  
+> `(engine:metrics)` / `(engine:metrics name)` / `(engine:metrics :all)`;  
+> baseline `docs/generated/stats-primitives-baseline.json`.
 
 ---
 

@@ -1318,9 +1318,24 @@ def cmd_test(suite_names: list[str]):
     return _summarize_test_results(results)
 
 
+def cmd_primitive_surface():
+    """P0b: inventory + freeze — no new public *-stats primitive names."""
+    print(f"{B}═══ Primitive surface freeze ═══{N}")
+    script = ROOT / "scripts" / "check_primitive_surface.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("primitive surface freeze failed (no new *-stats names)")
+        return 1
+    ok("primitive surface freeze OK")
+    return 0
+
+
 def cmd_gate():
-    """Fast static checks for CI (docs + lint + format + fixtures)."""
-    return cmd_docs(check=True) or cmd_lint() or cmd_format() or cmd_fixtures()
+    """Fast static checks for CI (docs + lint + format + fixtures + surface freeze)."""
+    return cmd_docs(check=True) or cmd_lint() or cmd_format() or cmd_fixtures() or cmd_primitive_surface()
 
 
 def cmd_ci():

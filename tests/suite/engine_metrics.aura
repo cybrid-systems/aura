@@ -1,0 +1,23 @@
+; suite/engine_metrics.aura — P1a (engine:metrics) facade
+; Surface refactor: single observability entry (see
+; docs/design/primitives-surface-refactor.md).
+
+(require "std/test" all:)
+
+(test-suite "engine:metrics-summary"
+  (check (hash? (engine:metrics)))
+  (check (= 1 (hash-ref (engine:metrics) "schema")))
+  (check (> (hash-ref (engine:metrics) "stats-count") 0))
+  (check (pair? (hash-ref (engine:metrics) "stats-names"))))
+
+(test-suite "engine:metrics-by-name"
+  ; Lookup routes to the underlying stats primitive
+  (check (hash? (engine:metrics "query:macro-hygiene-stats")))
+  ; Unknown name → void
+  (check (eq? (engine:metrics "query:no-such-stats-zzz") (void))))
+
+(test-suite "engine:metrics-all"
+  (define all (engine:metrics :all))
+  (check (hash? all))
+  (check (= (hash-ref (engine:metrics) "stats-count")
+            (hash-ref all "stats-count"))))
