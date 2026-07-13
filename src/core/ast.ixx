@@ -6213,6 +6213,13 @@ public:
     void bump_pinned_across_boundaries() const noexcept {
         pinned_across_boundaries_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1406: counter for pins dropped by the bounded-retention
+    // cap in Evaluator::pin_stable_ref_for_cow_boundary. Observability
+    // only — not a correctness signal (dropped pins fall back to
+    // is_valid() per the cap-policy docstring).
+    void bump_pinned_across_boundaries_dropped() const noexcept {
+        pinned_across_boundaries_dropped_.fetch_add(1, std::memory_order_relaxed);
+    }
     void bump_cross_boundary_validations() const noexcept {
         cross_boundary_validations_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -6850,6 +6857,8 @@ public:
     // WorkspaceNode::cow_epoch on switch / lazy clone.
     std::uint64_t workspace_cow_epoch_ = 0;
     mutable std::atomic<std::uint64_t> pinned_across_boundaries_{0};
+    // Issue #1406: counter for pins dropped by bounded-retention cap.
+    mutable std::atomic<std::uint64_t> pinned_across_boundaries_dropped_{0};
     mutable std::atomic<std::uint64_t> cross_boundary_validations_{0};
 
     // Issue #1355: nested lightweight field-mutation frames (side log).
