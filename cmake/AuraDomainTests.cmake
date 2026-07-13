@@ -355,6 +355,17 @@ aura_add_issue_test(test_issue_1393_panic_checkpoint_cross_evaluator)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1393_panic_checkpoint_cross_evaluator)
 add_dependencies(all_test_issue_targets test_issue_1393_panic_checkpoint_cross_evaluator)
 
+# Issue #1394: EvalValue string v2 encoding round-trip regression.
+# Verifies make_string(N) + is_string + as_string_idx round-trips
+# correctly for collision-sensitive indices (31, 19, 95, 83) that
+# would have hit RefError/RefKeyword collisions under v1 encoding.
+# Also tests 0..1023 random indices for sanity + is_string
+# classification at low indices. llvm_jit_minimal sufficient —
+# exercises the value module directly, no Aura runtime needed.
+aura_add_issue_test(test_issue_1394_value_string_v2_round_trip)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1394_value_string_v2_round_trip)
+add_dependencies(all_test_issue_targets test_issue_1394_value_string_v2_round_trip)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==
