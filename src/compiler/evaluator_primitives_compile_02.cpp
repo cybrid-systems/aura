@@ -8,6 +8,7 @@ module;
 #include "per_defuse_index.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -21,6 +22,8 @@ import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.compiler.pass_manager;
 import aura.compiler.query;
+import aura.compiler.hardware_backend;
+import aura.compiler.sv_ir;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
 
@@ -611,6 +614,19 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
     // the (compile:ast-ops-stats) fast-fixed-point-hits
     // counter surfaces how often the early-exit fires.
     add("compile:mark-dirty-upward-fast", [&ev](const auto& a) -> EvalValue {
+        // Issue #1395: capability gate — require kCapWildcard.
+        // "fast path" name suggests audit-skip; gate behind
+        // highest privilege to prevent silent audit-trail bypass.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: kCapWildcard required",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();

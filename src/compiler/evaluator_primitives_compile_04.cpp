@@ -76,6 +76,17 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
     // subtrees and wants to start fresh on the next cycle.
     // Returns #t on success, #f if no flat.
     add("compile:clear-macro-dirty!", [&ev](const auto&) -> EvalValue {
+        // Issue #1395: capability gate — require kCapWildcard.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: kCapWildcard required",
+                                        ev.primitive_error_counter_ptr());
+        }
         auto* ws = CompilePrims::pick_macro_flat(ev);
         if (!ws)
             return make_bool(false);

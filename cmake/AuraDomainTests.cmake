@@ -366,6 +366,18 @@ aura_add_issue_test(test_issue_1394_value_string_v2_round_trip)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1394_value_string_v2_round_trip)
 add_dependencies(all_test_issue_targets test_issue_1394_value_string_v2_round_trip)
 
+# Issue #1395: compile:mark-dirty! primitives capability gate
+# contract test. Verifies the 4 newly-gated primitives
+# (mark-instruction-dirty!, clear-instruction-dirty!,
+# mark-dirty-upward-fast, clear-macro-dirty!) return merr
+# when called without kCapWildcard in sandbox_mode, and work
+# when called without sandbox_mode. Also verifies the 3
+# #1293-gated primitives (kCapCompileDirty/Deopt) are
+# unchanged (backward compat).
+aura_add_issue_test(test_issue_1395_dirty_primitives_cap_gate)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1395_dirty_primitives_cap_gate)
+add_dependencies(all_test_issue_targets test_issue_1395_dirty_primitives_cap_gate)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==
