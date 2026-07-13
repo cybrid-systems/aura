@@ -4687,6 +4687,13 @@ aura_issue_test_link_llvm_jit(test_issue_1397)
 # set-push-set sequence + 4-thread stress.
 aura_add_issue_test(test_issue_1399)
 aura_issue_test_link_llvm_jit(test_issue_1399)
+# Issue #1400: bridge_epoch ↔ mutation_epoch sync invariant —
+# verify public bridge_epoch() + bump_bridge_epoch() reflect the
+# shared atomic (aliasing). Lock-in: invalidate_function now calls
+# bump_bridge_epoch() instead of mutation_epoch_.fetch_add(1, ...)
+# so a future decoupling fails to compile at the call site.
+aura_add_issue_test(test_issue_1400)
+aura_issue_test_link_llvm_jit(test_issue_1400)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW

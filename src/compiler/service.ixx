@@ -7757,7 +7757,16 @@ private:
         // Release ordering so apply_closure / JIT / interpreter paths that
         // load with acquire see the bump before using stale bridge/EnvFrame
         // metadata (Issue #739).
-        mutation_epoch_.fetch_add(1, std::memory_order_release);
+        //
+        // Issue #1400 Option 1 (coupled bumps): bridge_epoch() and
+        // mutation_epoch_ share the same atomic (see bridge_epoch() at
+        // line ~8624 + bump_bridge_epoch() below). Calling
+        // bump_bridge_epoch() here makes the dual-domain intent
+        // (bridge staleness + mutation epoch) explicit at the call site
+        // and locks the invariant via the public helper — a future
+        // decoupling of the two domains will fail to compile here
+        // rather than silently desync.
+        bump_bridge_epoch();
         // Issue #531: bump closure_stale_refresh_count_ on
         // every invalidate_function — measures the closure
         // refresh frequency post-mutate. Stats-only
