@@ -122,6 +122,8 @@ Primitive 是 C++ `evaluator_primitives_*.cpp` 里注册到 `Primitives` 表的 
 
 **默认下沉决策：stdlib。** 只有满足 [决策框架](design/primitive-vs-stdlib-decision-framework.md) 的 7 条红线 (engine-boot / 内部状态访问 / 性能热路径 / FFI / 类型系统 / 观测性 / 诊断恢复) 才下沉为 primitive。绝大多数用户级 API 都应该是 stdlib。
 
+**表面收敛（进行中）：** 对外稳定面尽量小，观测折叠为 metrics facade，其余宏/stdlib；见 [design/primitives-surface-refactor.md](design/primitives-surface-refactor.md)（分阶段 + CI 分层）。
+
 注册点（与注册函数）：
 
 | 簇 / 前缀 | 源文件 | 注册函数 |
