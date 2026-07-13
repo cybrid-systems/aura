@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 namespace aura::compiler {
 
@@ -60,6 +61,25 @@ inline constexpr int kPrimCaptureContractVersion = 2;
 // Issue #498: use Evaluator::prim_registrar_with_meta() as register_with_spec.
 
 namespace primitives_detail {
+
+    // P2a/P2b: full vs s0 registration. Default full (compat).
+    // AURA_PRIMITIVES=s0|minimal or AURA_FULL_PRIMITIVES=0 → s0.
+    inline bool full_primitives_enabled() noexcept {
+        if (const char* p = std::getenv("AURA_PRIMITIVES")) {
+            // strcmp-free tiny checks
+            if ((p[0] == 's' || p[0] == 'S') && p[1] == '0')
+                return false;
+            if ((p[0] == 'm' || p[0] == 'M') && (p[1] == 'i' || p[1] == 'I'))
+                return false; // minimal
+            if ((p[0] == 'f' || p[0] == 'F') && (p[1] == 'u' || p[1] == 'U'))
+                return true; // full
+        }
+        if (const char* f = std::getenv("AURA_FULL_PRIMITIVES")) {
+            if (f[0] == '0' || f[0] == 'n' || f[0] == 'N' || f[0] == 'f' || f[0] == 'F')
+                return false;
+        }
+        return true;
+    }
 
     // Issue #709: bump the aggregate fast-path counter only.
     // Retained for backward compatibility — callers that don't have

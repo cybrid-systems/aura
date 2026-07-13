@@ -1113,14 +1113,35 @@ SUITE_SKIP = {
     #  Removed the skip entry.)
 }
 
+# P4: curated S0 surface smoke (AURA_PRIMITIVES=s0). Full suite stays full-mode.
+# Expand as more suite files become s0-clean (no bulk stats / eda / security).
+SUITE_S0_FILES = frozenset(
+    {
+        "engine_metrics.aura",
+        "stdlib_surface.aura",
+        "core.aura",
+        "stdlib.aura",
+        "errors.aura",
+        "macros.aura",
+        "module.aura",
+    }
+)
 
-def test_suite_runner():
-    """Run all tests/suite/*.aura files."""
-    print(f"{B}═══ Suite tests ═══{N}")
+
+def test_suite_runner(*, s0: bool = False):
+    """Run all tests/suite/*.aura files.
+
+    s0=True sets AURA_PRIMITIVES=s0 and only runs SUITE_S0_FILES (surface smoke).
+    """
+    label = "Suite tests (s0)" if s0 else "Suite tests"
+    print(f"{B}═══ {label} ═══{N}")
     root = ROOT / "tests" / "suite"
     passed = 0
     failed = 0
     skipped = 0
+    env = os.environ.copy()
+    if s0:
+        env["AURA_PRIMITIVES"] = "s0"
     for f in sorted(root.glob("*.aura")):
         if f.name == "run-tests.aura":
             continue
@@ -1129,12 +1150,20 @@ def test_suite_runner():
             print(f"  {Y}↷{N}  suite/{name}.aura: SKIPPED — {SUITE_SKIP[f.name]}")
             skipped += 1
             continue
+        if s0 and f.name not in SUITE_S0_FILES:
+            continue  # not part of s0 smoke set (silent skip; not counted)
         code = f.read_text()
         if not code:
             warn(f"  suite/{name}.aura: empty")
             failed += 1
             continue
-        r = subprocess.run([str(AURA), "--load", str(f)], capture_output=True, text=True, timeout=120)
+        r = subprocess.run(
+            [str(AURA), "--load", str(f)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
         if r.returncode == 0:
             ok(f"  suite/{name}.aura")
             passed += 1
@@ -1146,8 +1175,15 @@ def test_suite_runner():
     summary = f"  Suite: {passed}/{total} passed"
     if skipped:
         summary += f" ({skipped} skipped)"
+    if s0:
+        summary += " [AURA_PRIMITIVES=s0]"
     print(summary)
     return 1 if failed > 0 else 0
+
+
+def test_suite_s0():
+    """Curated suite under AURA_PRIMITIVES=s0 (P4 surface smoke)."""
+    return test_suite_runner(s0=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1204,6 +1240,7 @@ SUITES = {
     "ai": test_ai_agent_demo,
     "bash": test_bash,
     "suite": test_suite_runner,
+    "suite-s0": test_suite_s0,
     "repl": test_repl,
     "concurrent": test_concurrent,
     "issues": test_issues,

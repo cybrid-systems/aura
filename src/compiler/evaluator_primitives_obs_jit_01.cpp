@@ -420,19 +420,12 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
-// Issue #909 part 11 (orig lines 12726-12889)
-void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
-
-    // Issue #560: (stats:list) — returns the list of every
-    // registered *-stats primitive (the source of truth for
-    // the std/stats Aura module). Each entry is the primitive
-    // name (string). Used by std/stats.aura for the (stats:list)
-    // + (stats:count) helpers + for AI Agent observability
-    // dashboards that want to enumerate all stats.
+// P2b: minimal observability surface for AURA_PRIMITIVES=s0.
+// stats:list / stats:count / engine:metrics — no bulk query:*-stats.
+void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& ev) {
+    // Issue #560: (stats:list)
     add("stats:list", [&ev](const auto&) -> EvalValue {
-        // See ObservabilityPrims::stats_primitives() above (single source of truth).
         const std::vector<std::string>& stats = ObservabilityPrims::stats_primitives();
-        // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
         for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
             auto sidx = ev.string_heap_.size();
@@ -444,23 +437,12 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
         return result;
     });
 
-    // Issue #560: (stats:count) — companion to (stats:list).
-    // Returns the # of registered *-stats primitives.
+    // Issue #560: (stats:count)
     add("stats:count", [](const auto&) -> EvalValue {
-        // Single source of truth = ObservabilityPrims::stats_primitives()
-        // (the static list shared with (stats:list) above). Returns
-        // the literal element count at module-init time, so adding
-        // a new entry to the const list automatically updates
-        // (stats:count) without a second hardcoded literal to keep
-        // in sync.
         return make_int(static_cast<std::int64_t>(ObservabilityPrims::stats_primitives().size()));
     });
 
-    // P1a surface refactor: (engine:metrics [name | :all])
-    // Single public observability facade — prefer this over new query:*-stats.
-    //   (engine:metrics)        → summary hash {schema, stats-count, …}
-    //   (engine:metrics "name") → invoke that stats primitive (if registered)
-    //   (engine:metrics :all)   → hash of every stats name → value
+    // P1a: (engine:metrics [name | :all])
     add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             // Capacity: next power-of-two >= 2*kv.size() (min 16)
@@ -576,6 +558,11 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
         }
         return build_hash(kv);
     });
+}
+
+// Issue #909 part 11 (orig lines 12726-12889) — bulk stats after facade
+void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
+    register_metrics_facade(add, ev);
 
     // Issue #728: (query:unified-error-stats) — unified structured
     // error + provenance + recovery observability for AI Agent

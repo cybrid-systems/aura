@@ -224,4 +224,6 @@ struct ObservabilityPrims {
     static void register_jit_p113(PrimRegistrar add, Evaluator& ev);
     static void register_eval_all(PrimRegistrar add, Evaluator& ev);
     static void register_jit_all(PrimRegistrar add, Evaluator& ev);
+    // P2b: stats:list + stats:count + engine:metrics only (s0 facade).
+    static void register_metrics_facade(PrimRegistrar add, Evaluator& ev);
 };
