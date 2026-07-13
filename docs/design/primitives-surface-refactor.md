@@ -1,6 +1,6 @@
 # Primitives Surface Refactor — Minimal Public API + Progressive Delivery
 
-> **Status**: in progress — **P0b + P1a + P1b + P2a skeleton landed**  
+> **Status**: in progress — **P0b–P2b + P3 surface + P4 s0 CI landed**  
 > **Supersedes / extends**: [#558–#566 demotion epic](primitives-demotion-batch1.md),  
 > [primitive-vs-stdlib-decision-framework.md](primitive-vs-stdlib-decision-framework.md),  
 > [query-namespace-decision.md](query-namespace-decision.md),  
@@ -12,6 +12,9 @@
 > - P1a: `(engine:metrics)` / name / `:all`  
 > - P1b: issue tests use `(hash-ref (engine:metrics "query:…") …)` (~195 files)  
 > - P2a: `AURA_PRIMITIVES=s0|full` / `AURA_FULL_PRIMITIVES=0` gates eda/security/verify/stdlib-review  
+> - P2b: s0 skips bulk eval/jit observability; registers `register_metrics_facade` only  
+> - P3: `lib/std/surface.aura` re-exports string/json/math convenience; `tests/suite/stdlib_surface.aura`  
+> - P4: `./build.py suite-s0` + CI job `s0-smoke` (curated SUITE_S0_FILES under `AURA_PRIMITIVES=s0`)  
 > - baseline `docs/generated/stats-primitives-baseline.json`
 
 ---

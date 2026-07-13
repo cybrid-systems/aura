@@ -1,0 +1,40 @@
+; lib/std/surface.aura — recommended public convenience surface (P3)
+;
+; Prefer these modules over raw C++ primitive names for Agent / app code.
+; C++ hot-path builtins (string-append, +, floor, json-parse, …) remain
+; registered for performance and boot; this module re-exports the
+; stdlib composition layer as the stable "product" API.
+;
+; Import: (require "std/surface" all:)
+; Or pull pieces: (require "std/string" all:) etc.
+;
+; See docs/design/primitives-surface-refactor.md Phase 3.
+
+(require "std/string" all:)
+(require "std/json" all:)
+(require "std/math" all:)
+
+(export
+  ; ── string (stdlib composition) ──
+  string-split string-split-words string-join string-trim
+  string-upcase string-downcase
+  string-contains? string-prefix? string-suffix? string-replace
+  string-pad-left string-pad-right string-reverse string-repeat
+  string->chars chars->string string-take string-drop
+
+  ; ── json ──
+  json-parse json-stringify json-escape json-value
+  json-arr-items json-obj-items
+
+  ; ── math ──
+  pi e phi tau
+  square cube abs clamp signum min max
+  avg mean median mode
+  safe-div safe-div?
+  floor ceil round trunc
+  sin cos tan asin acos atan atan2
+  degrees->radians radians->degrees
+  odd? even? positive? negative? zero?
+  gcd lcm prime? factors fibonacci
+  factorial expt nCr nPr
+  sum product range variance stddev percentile normalize)

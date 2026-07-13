@@ -1443,11 +1443,17 @@ void ObservabilityPrims::register_jit_all(PrimRegistrar add, Evaluator& ev) {
 }
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
-    ObservabilityPrims::register_eval_all(add, ev);
+    // P2b: bulk eval-side stats only in full mode (s0 skips).
+    if (full_primitives_enabled())
+        ObservabilityPrims::register_eval_all(add, ev);
 }
 
 void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
-    ObservabilityPrims::register_jit_all(add, ev);
+    // P2b: full JIT/obs stats in full mode; s0 only metrics facade.
+    if (full_primitives_enabled())
+        ObservabilityPrims::register_jit_all(add, ev);
+    else
+        ObservabilityPrims::register_metrics_facade(add, ev);
 }
 
 } // namespace aura::compiler::primitives_detail

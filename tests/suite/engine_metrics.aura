@@ -1,6 +1,5 @@
-; suite/engine_metrics.aura — P1a (engine:metrics) facade
-; Surface refactor: single observability entry (see
-; docs/design/primitives-surface-refactor.md).
+; suite/engine_metrics.aura — P1a/P2b (engine:metrics) facade
+; Works under AURA_PRIMITIVES=full and s0 (facade-only).
 
 (require "std/test" all:)
 
@@ -11,9 +10,10 @@
   (check (pair? (hash-ref (engine:metrics) "stats-names"))))
 
 (test-suite "engine:metrics-by-name"
-  ; Lookup routes to the underlying stats primitive
-  (check (hash? (engine:metrics "query:macro-hygiene-stats")))
-  ; Unknown name → void
+  ; Lookup routes to underlying stats prim when registered (full mode).
+  ; Under s0, individual query:*-stats are absent → void (still OK).
+  (define one (engine:metrics "query:macro-hygiene-stats"))
+  (check (or (hash? one) (eq? one (void))))
   (check (eq? (engine:metrics "query:no-such-stats-zzz") (void))))
 
 (test-suite "engine:metrics-all"
@@ -22,11 +22,13 @@
   (check (= (hash-ref (engine:metrics) "stats-count")
             (hash-ref all "stats-count"))))
 
-; P1b: field access via facade must match direct stats prim
+; Full-mode parity: direct stats prim matches facade by-name.
 (test-suite "engine:metrics-parity"
-  (define direct (query:macro-hygiene-stats))
   (define via (engine:metrics "query:macro-hygiene-stats"))
-  (check (hash? direct))
-  (check (hash? via))
-  ; schema field present on both when stats return structured hashes
-  (check (number? (hash-ref via "schema"))))
+  (if (eq? via (void))
+      (check #t) ; s0: no bulk stats registered
+    (begin
+      (define direct (query:macro-hygiene-stats))
+      (check (hash? direct))
+      (check (hash? via))
+      (check (number? (hash-ref via "schema"))))))

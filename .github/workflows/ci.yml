@@ -143,6 +143,58 @@ jobs:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py ci
 
+  # P4: S0 surface smoke — parallel with build-test (runtime gate AURA_PRIMITIVES=s0).
+  # Validates metrics facade + curated suite without bulk query:*-stats / eda / security.
+  # See docs/design/primitives-surface-refactor.md Phase 2b/4.
+  s0-smoke:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Install mold / lld (fast linkers)
+      run: |
+        set -e
+        if ! command -v mold >/dev/null 2>&1; then
+          apt-get update -qq && apt-get install -y -qq mold || echo "::warning::mold not installed"
+        fi
+        if ! command -v ld.lld >/dev/null 2>&1; then
+          apt-get update -qq && apt-get install -y -qq lld || echo "::warning::lld not installed"
+        fi
+
+    - name: Build
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+      run: python3 build.py build
+
+    - name: Suite s0 surface smoke
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+      run: python3 build.py test suite-s0
+
+    - name: engine:metrics under s0
+      env:
+        AURA_PRIMITIVES: s0
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+      run: |
+        printf '%s\n' \
+          '(define m (engine:metrics))' \
+          '(unless (hash? m) (error "engine:metrics not hash"))' \
+          '(unless (= 1 (hash-ref m "schema")) (error "schema"))' \
+          '(display "s0 engine:metrics ok")' \
+          '(newline)' \
+          | ./build/aura
+
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   # Routes through build.py --sanitizer=asan (Issue #299) so local and
   # CI build invocation stay in lockstep.

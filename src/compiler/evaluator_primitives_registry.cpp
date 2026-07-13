@@ -4,8 +4,7 @@
 module;
 
 #include "runtime_shared.h"
-
-#include <cstdlib>
+#include "primitives_detail.h"
 
 module aura.compiler.evaluator;
 
@@ -54,27 +53,8 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-// P2a surface refactor: full vs s0 registration tiers.
-// Default = full (compat). Set AURA_PRIMITIVES=s0 or AURA_FULL_PRIMITIVES=0
-// to skip vertical/extended clusters (eda, security, verify-tool, stdlib-review).
-// Observability (including engine:metrics) stays in S0 so the facade works.
-static bool full_primitives_enabled() noexcept {
-    if (const char* p = std::getenv("AURA_PRIMITIVES")) {
-        std::string_view v{p};
-        if (v == "s0" || v == "S0" || v == "minimal")
-            return false;
-        if (v == "full" || v == "FULL")
-            return true;
-    }
-    if (const char* f = std::getenv("AURA_FULL_PRIMITIVES")) {
-        // 0/false/no → s0; anything else → full
-        if (f[0] == '0' || f[0] == 'n' || f[0] == 'N' || f[0] == 'f' || f[0] == 'F')
-            return false;
-    }
-    return true; // default: full surface
-}
-
 void Evaluator::register_all_primitives() {
+    using primitives_detail::full_primitives_enabled;
     // ── S0: language core + AI work surface + metrics facade ──
     primitives_detail::register_type_and_char_primitives(prim_registrar());
 
@@ -158,8 +138,8 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_eval_primitives(prim_registrar(), *this, mev,
                                                 [this]() { defuse_index_destroy(&defuse_index_); });
 
-    // Observability stays in S0: includes (engine:metrics) / (stats:list|count).
-    // Individual query:*-stats remain registered until Phase 5 demotion.
+    // Eval-side bulk observability (full only). Metrics facade is registered
+    // from register_jit_arena_primitives in the ctor (always / s0-facade).
     primitives_detail::register_eval_observability_primitives(prim_registrar(), *this);
 
     // ── Extended / vertical (S1–S2): gated by full_primitives_enabled() ──

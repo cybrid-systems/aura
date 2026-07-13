@@ -59,12 +59,15 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 **观测读取（P1）**：测试与 Agent 优先  
 `(hash-ref (engine:metrics "query:foo-stats") 'field)`，勿再新增直接依赖新 stats 名的 API。
 
-**运行时分层（P2a）**：默认 full。收窄扩展簇（eda / security / verify-tool / stdlib-review）：
+**运行时分层（P2a/P2b）**：默认 full。s0 跳过 bulk observability stats 与扩展簇（eda / security / verify-tool / stdlib-review），只保留 `engine:metrics` facade：
 
 ```bash
 AURA_PRIMITIVES=s0 ./build/aura          # 或 AURA_FULL_PRIMITIVES=0
 AURA_PRIMITIVES=full ./build/aura        # 默认
+./build.py test suite-s0                 # curated surface smoke（CI s0-smoke job）
 ```
+
+**Convenience 面（P3）**：Agent / 应用优先 `(require "std/surface" all:)`（string/json/math 组合层）；热路径 C++ 原语仍在，但不作为产品 API 推荐入口。
 
 **P0 已完成**：`init_pair_primitives()` 内无内联 `primitives_.add("...")`；静态原语均在 `evaluator_primitives_*.cpp`（31 个 TU），经 `prim_registrar()` 回调注册。完整列表见 `docs/generated/primitives.md`（`./build.py docs` 生成）。
 
