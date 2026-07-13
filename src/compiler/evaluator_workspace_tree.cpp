@@ -387,6 +387,18 @@ void Evaluator::update_shared_tree_root() {
                 wt->nodes_[active].has_own_flat = true;
         }
     }
+    // Issue #1405 Option 1: bump workspace_flat_->generation so any
+    // fiber that captured the previous generation sees drift on its
+    // next eval_flat check. Cheap atomic increment — no extra
+    // synchronization cost (the active_node mutation above is
+    // already under whatever lock owns workspace_tree_).
+    //
+    // The fiber-side check (Option 2 follow-up) will compare its
+    // captured generation against this bumped value and emit merr
+    // on mismatch — closing the drift window that the existing
+    // lazy ensure_stable_ref_workspace_consistency leaves open.
+    if (workspace_flat_)
+        workspace_flat_->bump_generation();
 }
 
 void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
