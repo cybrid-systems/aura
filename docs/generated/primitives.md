@@ -2,12 +2,12 @@
 
 # Primitives (generated)
 
-**995** registrations scanned from `src/**/*.cpp`.
+**996** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 125 primitives (13%)
+- **mutation-safety**: 126 primitives (13%)
 - **core**: 259 primitives (26%)
 - **internal-observable**: 441 primitives (44%)
 - **convenience**: 170 primitives (17%)
@@ -541,7 +541,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (65)
+## Compile: (66)
 
 - `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
@@ -579,6 +579,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:macro-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:macro-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:macro-origin-provenance-errors` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
@@ -1155,7 +1156,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (125)
+### Mutation safety (must remain primitive) (126)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1219,6 +1220,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:macro-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:macro-origin-provenance-errors` — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`

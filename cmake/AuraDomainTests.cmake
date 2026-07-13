@@ -332,6 +332,17 @@ aura_add_issue_test(test_issue_1391_apply_closure_recursion)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1391_apply_closure_recursion)
 add_dependencies(all_test_issue_targets test_issue_1391_apply_closure_recursion)
 
+# Issue #1392: macro hygiene depth observability contract.
+# Verifies (compile:macro-origin-provenance-errors) primitive
+# works (returns g_macro_origin_provenance_errors counter value)
+# and that MAX_HYGIENE_DEPTH was raised from 256 to 1024.
+# Smoke test — depth > 1024 triggers the counter increment but
+# writing a 1024-level nested macro is impractical in a single
+# test; observability plumbing is the scope-limited fix.
+aura_add_issue_test(test_issue_1392_macro_hygiene_depth)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1392_macro_hygiene_depth)
+add_dependencies(all_test_issue_targets test_issue_1392_macro_hygiene_depth)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==
