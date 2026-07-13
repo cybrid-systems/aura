@@ -4664,6 +4664,13 @@ aura_issue_test_link_llvm_jit(test_issue_785)
 # AOT_RELOAD_PHASE_2_PLUS documented as the chosen gating macro.
 aura_add_issue_test(test_issue_1396)
 aura_issue_test_link_llvm_jit(test_issue_1396)
+# Issue #1397: extended coverage for ASTArena::request_defrag
+# atomic CAS newly_set semantics - 50-cycle + multi-service
+# independence + (arena:defrag-requested?) tracking. Pairs with
+# test_issue_300.cpp AC5 (one-cycle basic) + closes the gap surfaced
+# by #1428 (GitHub-numbered from #1397 request).
+aura_add_issue_test(test_issue_1397)
+aura_issue_test_link_llvm_jit(test_issue_1397)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
