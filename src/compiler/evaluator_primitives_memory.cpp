@@ -388,24 +388,26 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_int(saved);
     });
-    // (arena:request-defrag) — Issue #300 Phase 3: set the
-    // defrag_requested flag on the main arena. The actual defrag
-    // runs when something observes the flag and decides to act
-    // (typically the main thread or a fiber coordinator at the
-    // next safe opportunity). Returns true iff a safepoint is
-    // registered to observe the flag. If false, the flag is set
-    // but no allocation will ever see it (and a one-shot stderr
-    // warning is emitted by the arena).
+    // (arena:request-defrag) — Issue #300 Phase 3 + #1397 atomic
+    // CAS semantics: set the defrag_requested flag on the main
+    // arena. The actual defrag runs when something observes the
+    // flag and decides to act (typically the main thread or a
+    // fiber coordinator at the next safe opportunity).
+    //
+    // Returns the request's *newly-set* signal (atomic CAS): #t
+    // on the call that actually transitions the flag from false to
+    // true; #f on every subsequent call until the flag is reset
+    // by (arena:defrag) or (arena:request-defrag-reset). The
+    // same call also still emits the one-shot "no safepoint"
+    // warning if the arena has no safepoint hook installed.
+    //
+    // To check safepoint registration status independently
+    // (which the old "observed = registered" semantics used to
+    // conflate), call `(arena:safepoint-registered?)` separately.
     add("arena:request-defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_)
             return make_bool(false);
-        bool was_set = ev.arena_->defrag_requested();
-        bool observed = ev.arena_->request_defrag();
-        // observed=false means the flag will not be observed by
-        // any allocation (no safepoint). Caller can use the
-        // return value to decide whether to fall back to
-        // (arena:defrag-now) for explicit compaction.
-        (void)was_set;
+        const bool observed = ev.arena_->request_defrag();
         return make_bool(observed);
     });
     // (arena:safepoint-registered?) — Issue #1390: boolean
