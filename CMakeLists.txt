@@ -4669,6 +4669,10 @@ aura_issue_test_link_llvm_jit(test_issue_1396)
 # (2 threads (map f lst) no torn + set-car! index stable + 4 threads x 100K cons ops no UB)
 aura_add_issue_test(test_stress_alloc_storage_lock)
 aura_issue_test_link_llvm_jit(test_stress_alloc_storage_lock)
+# Issue #1398: hash-set! resize + hash-keys/hash-values iter invalidation contract test
+# (hash-keys/hash-values/hash->alist return by value - snapshot stable after hash-set! triggers resize)
+aura_add_issue_test(test_hash_iter_invalidation)
+aura_issue_test_link_llvm_jit(test_hash_iter_invalidation)
 # Issue #1397: extended coverage for ASTArena::request_defrag
 # atomic CAS newly_set semantics - 50-cycle + multi-service
 # independence + (arena:defrag-requested?) tracking. Pairs with
