@@ -4680,6 +4680,13 @@ aura_issue_test_link_llvm_jit(test_hash_iter_invalidation)
 # by #1428 (GitHub-numbered from #1397 request).
 aura_add_issue_test(test_issue_1397)
 aura_issue_test_link_llvm_jit(test_issue_1397)
+# Issue #1399: set-car!/set-cdr! pair mutation race — idx resolution
+# moved INSIDE alloc_storage_lock_ critical section (extends #1397's
+# field-write guard to cover idx capture). 4 ACs: single-thread
+# correctness + 2-thread set-vs-cons race + same-thread
+# set-push-set sequence + 4-thread stress.
+aura_add_issue_test(test_issue_1399)
+aura_issue_test_link_llvm_jit(test_issue_1399)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
