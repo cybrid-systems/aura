@@ -4722,6 +4722,12 @@ aura_issue_test_link_llvm_jit(test_issue_1404)
 # Fiber-side check + merr (full Option 2 per body) is documented follow-up.
 aura_add_issue_test(test_issue_1405)
 aura_issue_test_link_llvm_jit(test_issue_1405)
+# Issue #1406: propagate_cow_pins_after_clone Option 2 — bounded retention
+# cap (kMaxPinnedBoundaryRefs=4096, drop oldest) + version-check retry
+# using cow_boundary_pins_total_ as the version counter. Unpin-on-merge
+# deferred (no explicit layer-merge/finalize path; separate issue).
+aura_add_issue_test(test_issue_1406)
+aura_issue_test_link_llvm_jit(test_issue_1406)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW

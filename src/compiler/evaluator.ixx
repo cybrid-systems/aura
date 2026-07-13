@@ -9079,9 +9079,20 @@ public:
     // Issue #1311 (P0): mutex + snapshot iteration — concurrent pin +
     // propagate was a data race on this vector (and re-entrant push
     // during outer iteration).
+    //
+    // Issue #1406 Option 2 (#3, bounded retention): cap the pin
+    // vector to kMaxPinnedBoundaryRefs and drop the oldest pin on
+    // overflow. Unbounded growth was the RSS leak vector that the
+    // issue body flagged as the primary symptom (same family as
+    // #1398 cells_/pairs_/string_heap_ race + #1384 env_frames_
+    // version init). Drops are best-effort — the dropped ref may
+    // still be live but loses its cross-boundary pin guarantee;
+    // validate_stable_ref_cross_cow_boundary will fall back to
+    // is_valid() for the next check on that ref.
     std::vector<aura::ast::FlatAST::StableNodeRef> cow_boundary_pinned_refs_{};
     mutable std::mutex cow_boundary_pins_mtx_{};
     std::atomic<std::uint64_t> cow_boundary_pins_total_{0};
+    static constexpr std::size_t kMaxPinnedBoundaryRefs = 4096;
     void pin_stable_ref_for_cow_boundary(aura::ast::FlatAST::StableNodeRef ref) noexcept {
         ref.pin_for_cow();
         {
@@ -9089,6 +9100,15 @@ public:
             for (const auto& existing : cow_boundary_pinned_refs_) {
                 if (existing.id == ref.id && existing.workspace_id == ref.workspace_id)
                     return;
+            }
+            // Issue #1406 Option 2: bounded retention. If we are at
+            // the cap, drop the OLDEST pin (front of the vector) and
+            // log via the metric. Newest pins are the most likely to
+            // be in active use, so drop-oldest is the right policy.
+            if (cow_boundary_pinned_refs_.size() >= kMaxPinnedBoundaryRefs) {
+                cow_boundary_pinned_refs_.erase(cow_boundary_pinned_refs_.begin());
+                if (workspace_flat_)
+                    workspace_flat_->bump_pinned_across_boundaries_dropped();
             }
             cow_boundary_pinned_refs_.push_back(ref);
         }
@@ -9105,23 +9125,36 @@ public:
             return;
         workspace_flat_->set_workspace_cow_epoch(child_cow_epoch);
         const auto parent_layer = wt->nodes_[child_layer].parent_layer_idx;
-        // Snapshot under lock so re-entrant pin_stable_ref does not
-        // invalidate the iteration range (Issue #1311).
-        std::vector<aura::ast::FlatAST::StableNodeRef> snapshot;
-        {
-            std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
-            snapshot = cow_boundary_pinned_refs_;
-        }
-        for (const auto& pinned : snapshot) {
-            if (pinned.workspace_id != parent_layer)
-                continue;
-            auto resolved = wt->resolve_stable_ref(parent_layer, pinned, child_layer);
-            if (!resolved)
-                continue;
-            auto child_ref = *resolved;
-            child_ref.cow_epoch_at_capture = child_cow_epoch;
-            child_ref.pin_for_cow();
-            pin_stable_ref_for_cow_boundary(child_ref);
+        // Issue #1406 Option 2 (#1): concurrent snapshot+iter with
+        // version check retry. Snapshot a version counter, iterate,
+        // then re-check — if a concurrent pin happened during
+        // iteration, re-snapshot and retry. Bounded to kMaxRetries
+        // to avoid livelock on a hot pinning source. The counter is
+        // cow_boundary_pins_total_ (atomic, monotonic) — any
+        // difference between version_before and version_after
+        // indicates new pins added during the snapshot window.
+        constexpr int kMaxRetries = 3;
+        for (int retry = 0; retry < kMaxRetries; ++retry) {
+            std::vector<aura::ast::FlatAST::StableNodeRef> snapshot;
+            const auto version_before = cow_boundary_pins_total_.load(std::memory_order_acquire);
+            {
+                std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+                snapshot = cow_boundary_pinned_refs_;
+            }
+            for (const auto& pinned : snapshot) {
+                if (pinned.workspace_id != parent_layer)
+                    continue;
+                auto resolved = wt->resolve_stable_ref(parent_layer, pinned, child_layer);
+                if (!resolved)
+                    continue;
+                auto child_ref = *resolved;
+                child_ref.cow_epoch_at_capture = child_cow_epoch;
+                child_ref.pin_for_cow();
+                pin_stable_ref_for_cow_boundary(child_ref);
+            }
+            const auto version_after = cow_boundary_pins_total_.load(std::memory_order_acquire);
+            if (version_after == version_before)
+                break; // success — no concurrent pin during this snapshot
         }
     }
     [[nodiscard]] bool
