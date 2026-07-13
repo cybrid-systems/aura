@@ -1,0 +1,135 @@
+; ── reverse-complement — Computer Language Benchmarks Game ──
+;
+; Port of https://benchmarksgame-team.pages.debian.net/benchmarksgame/
+;         description/revcomp.html
+;
+; Algorithm: read a FASTA file; for each sequence (delimited by >header lines),
+; reverse the sequence and complement each base via the IUB table, then write
+; the header unchanged followed by the reverse-complemented sequence wrapped
+; at 60 chars per line.
+;
+; Usage:
+;   INPUT=/path/to/fasta ./build-gcc16/aura < tests/bench/revcomp.aura
+;       INPUT env var = path to the FASTA input file.
+;
+; WHY file input: Aura's stdin doubles as the program-text stream — the parser
+; consumes all of stdin as code, so read-line returns void and there is no
+; separate stdin for the data. Reads the FASTA from a file path in the INPUT
+; env var instead (same workaround as regexredux.aura).
+;
+; IUB complement table (code -> complement):
+;   A<->T  C<->G  G<->C  T<->A  M<->K  R<->Y  W<->W  S<->S  Y<->R  K<->M
+;   V<->B  H<->D  D<->H  B<->V  N<->N
+;
+; Aura strings are immutable (no string-set!/make-string), so the reverse-
+; complement is built via string->list -> reverse -> map complement ->
+; list->string. Uses `while` (not named-let) for the parse/output loops
+; because Aura's named-let has no TCO — it trips the ">2000 recursion depth"
+; guard on inputs above ~2000 chars (see tests/bench/binarytrees_while.aura).
+;
+; ALSO: function bodies use `let` (not internal `define`) for locals that
+; reference closure-captured variables — internal `(define x expr)` in a
+; function body mis-evaluates expr to empty/0 when expr references captured
+; vars. `let` evaluates correctly. Top-level `define` is fine; only internal
+; define inside a function/closure is affected.
+
+(begin
+  ; ── complement: char-code -> char-code (full IUB table, uppercase) ──
+  (define (comp c)
+    (cond ((= c 65) 84)   ; A -> T
+          ((= c 84) 65)   ; T -> A
+          ((= c 67) 71)   ; C -> G
+          ((= c 71) 67)   ; G -> C
+          ((= c 77) 75)   ; M -> K
+          ((= c 82) 89)   ; R -> Y
+          ((= c 87) 87)   ; W -> W
+          ((= c 83) 83)   ; S -> S
+          ((= c 89) 82)   ; Y -> R
+          ((= c 75) 77)   ; K -> M
+          ((= c 86) 66)   ; V -> B
+          ((= c 72) 68)   ; H -> D
+          ((= c 68) 72)   ; D -> H
+          ((= c 66) 86)   ; B -> V
+          ((= c 78) 78)   ; N -> N
+          (else c)))        ; whitespace / unknown -> unchanged
+
+  ; reverse-complement a pure sequence string (no headers, no newlines)
+  (define (revcomp seq)
+    (list->string (map comp (reverse (string->list seq)))))
+
+  ; ── read input ──
+  (define (get-input)
+    (let ((p (getenv "INPUT")))
+      (if (string? p) p "/tmp/revcomp_input.fasta")))
+  (define raw (read-file (get-input)))
+
+  (define len (string-length raw))
+  (define i 0)
+  (define cur-header "")
+  (define cur-seq "")
+  (define entries (list))   ; built in reverse order, reversed at end
+
+  ; advance i past one newline (if at one)
+  (define (skip-newline)
+    (if (and (< i len) (= (string-ref raw i) 10))
+      (set! i (+ i 1)) #t))
+
+  ; read one line from i (without the trailing newline), advance i
+  (define (read-line-from)
+    (let ((start i))
+      (while (lambda () (and (< i len) (not (= (string-ref raw i) 10))))
+        (lambda () (set! i (+ i 1))))
+      (let ((line (substring raw start i)))
+        (skip-newline)
+        line)))
+
+  ; flush the current (header . seq) entry onto `entries`
+  (define (flush-entry)
+    (if (string=? cur-header "")
+      #t
+      (set! entries (cons (cons cur-header cur-seq) entries))))
+
+  ; parse the whole file into `entries`
+  (while (lambda () (< i len))
+    (lambda ()
+      (let ((line (read-line-from)))
+        (if (= (string-ref line 0) 62)          ; '>'
+          (begin
+            (flush-entry)
+            (set! cur-header line)
+            (set! cur-seq ""))
+          (set! cur-seq (string-append cur-seq line))))))
+  (flush-entry)
+
+  ; ── output: header unchanged, then revcomp(seq) wrapped at 60 chars/line ──
+  ; NOTE: `out` and `es` reference vars that have been `set!`-mutated. Aura's
+  ; top-level/internal `(define x expr)` mis-evaluates expr to empty when expr
+  ; references a set!-mutated variable, so we bind them via `let` instead (which
+  ; evaluates correctly) and drive the loops over `let`-bound state.
+  (define out (list))    ; list of output chunks, joined at the end
+  (define (emit s) (set! out (cons s out)))
+
+  (define (emit-wrapped s)
+    (let ((slen (string-length s)))
+      (define j 0)
+      (while (lambda () (< j slen))
+        (lambda ()
+          (let ((end (+ j 60)))
+            (emit (substring s j (if (> end slen) slen end)))
+            (emit "\n")
+            (set! j (+ j 60)))))))
+
+  (let ((es (reverse entries)))
+    (while (lambda () (not (null? es)))
+      (lambda ()
+        (let ((e (car es)))
+          (emit (car e))                 ; header ">..."
+          (emit "\n")
+          (emit-wrapped (revcomp (cdr e)))
+          (set! es (cdr es))))))
+
+  ; ── flush all output as one big string ──
+  ; `out` is set!-mutated, so wrap the (reverse out) in a let to dodge the
+  ; define-evaluates-to-empty bug.
+  (let ((all-out (reverse out)))
+    (display (string-join all-out ""))))
