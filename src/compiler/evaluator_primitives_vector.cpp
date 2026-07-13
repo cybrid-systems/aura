@@ -313,6 +313,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         auto* ht = g_hash_tables[hidx];
         auto meta = ht->metadata();
         auto keys = ht->keys();
+        // Issue #1398 contract: hash-keys returns BY VALUE — each key
+        // is copied into a freshly-constructed EvalValue and cons'd into
+        // a brand-new pair list. The returned list is independent of the
+        // underlying hash table's internal storage. Caller can safely
+        // invoke (hash-set!) / (hash-remove!) / (hash-clear!) etc. on
+        // the same hash after this call without invalidating the returned
+        // list. Verified by tests/test_hash_iter_invalidation.cpp.
         EvalValue result = make_void();
         for (std::size_t i = ht->capacity; i > 0; --i) {
             if (meta[i - 1] != 0xFF) {
@@ -332,6 +339,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         auto* ht = g_hash_tables[hidx];
         auto meta = ht->metadata();
         auto vals = ht->values();
+        // Issue #1398 contract: hash-values returns BY VALUE — each
+        // value is copied into a freshly-constructed EvalValue and
+        // cons'd into a brand-new pair list. Independent of the hash
+        // table's internal storage; safe to mutate the hash afterward.
+        // Verified by tests/test_hash_iter_invalidation.cpp.
         EvalValue result = make_void();
         for (std::size_t i = ht->capacity; i > 0; --i) {
             if (meta[i - 1] != 0xFF) {
@@ -368,6 +380,11 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         EvalValue result = make_void();
         // Walk in reverse so the resulting alist is in
         // insertion / hash order.
+        // Issue #1398 contract: hash->alist returns BY VALUE — each
+        // (key . value) cons cell is built from freshly-constructed
+        // EvalValue copies, so the returned alist is independent of the
+        // hash table's internal storage. Safe to mutate the hash
+        // afterward. Verified by tests/test_hash_iter_invalidation.cpp.
         for (std::size_t i = ht->capacity; i > 0; --i) {
             if (meta[i - 1] != 0xFF) {
                 // Build (key . value) cons cell.
