@@ -324,6 +324,19 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
         // Issue #1326 Phase 1: deprecation path (JIT deopt DoS vector).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             record_write_side_prim_deprecation(m);
+        // Issue #1395: capability gate — require kCapWildcard.
+        // Bit-flipping dirty state can poison Issue #147 invariant
+        // checks; gate behind highest privilege.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: kCapWildcard required",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -339,6 +352,17 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
     // Issue #460: (compile:clear-instruction-dirty! name
     // func-idx block-idx instr-idx) — per-instruction clear.
     add("compile:clear-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
+        // Issue #1395: capability gate — require kCapWildcard.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: kCapWildcard required",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
