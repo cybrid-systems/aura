@@ -319,6 +319,19 @@ aura_add_issue_test(test_arena_defrag_concurrent)
 aura_issue_test_link_llvm_jit_minimal(test_arena_defrag_concurrent)
 add_dependencies(all_test_issue_targets test_arena_defrag_concurrent)
 
+# Issue #1391: apply_closure C++ recursion safety contract
+# test. Verifies the Issue #109 thread_local depth guard
+# (MAX_C_STACK_DEPTH=700 in evaluator_eval_flat.cpp:1698-1729)
+# catches deep recursion gracefully (no SIGSEGV), and that
+# shallow TCO + closure semantics still work. Tests the
+# cross-closure-boundary eval_flat → apply_closure → eval_flat
+# recursion path (separate from intra-eval_flat TCO trampoline
+# at line 2971/2979/3347/3372). llvm_jit_minimal sufficient
+# (Aura eval path, no JIT/AOT needed).
+aura_add_issue_test(test_issue_1391_apply_closure_recursion)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1391_apply_closure_recursion)
+add_dependencies(all_test_issue_targets test_issue_1391_apply_closure_recursion)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==
