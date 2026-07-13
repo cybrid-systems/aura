@@ -53,7 +53,7 @@ EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
     // Issue #1397: merr construction interleaves 2x string_heap_ + 2x
     // pairs_ push_backs; the two-pair construction (mp / kp) must
     // see consistent indices across fiber:spawn workers.
-    std::lock_guard<std::mutex> lock(alloc_storage_lock_);
+    std::lock_guard lock(alloc_storage_lock_);
     auto mi = string_heap_.size();
     string_heap_.push_back(m);
     auto ki = string_heap_.size();
@@ -77,7 +77,7 @@ void Evaluator::register_adt_ctor(const std::string& ctor_name, types::EvalValue
         // Issue #1397: per-arg list construction (push_back loop + tail)
         // must be atomic so the resulting ADT instance has a stable
         // pair index across concurrent fiber:spawn workers.
-        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
+        std::lock_guard lock(alloc_storage_lock_);
         types::EvalValue rest = make_void();
         for (auto it = args.rbegin(); it != args.rend(); ++it) {
             auto pid = static_cast<std::uint64_t>(pairs_.size());
@@ -95,7 +95,7 @@ void Evaluator::register_adt_ctor(const std::string& ctor_name, types::EvalValue
 types::EvalValue Evaluator::make_adt_zero_arg_ctor(types::EvalValue tag_str) {
     // Issue #1397: zero-arg ADT ctor pairs_ push_back atomic for
     // stable pair index across fiber:spawn workers.
-    std::lock_guard<std::mutex> lock(alloc_storage_lock_);
+    std::lock_guard lock(alloc_storage_lock_);
     types::EvalValue rest = make_void();
     auto cid = static_cast<std::uint64_t>(pairs_.size());
     pairs_.push_back({tag_str, rest});

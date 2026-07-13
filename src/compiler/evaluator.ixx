@@ -2136,7 +2136,7 @@ private:
         // workers (which share the Evaluator). std::lock_guard RAII
         // releases the mutex at scope exit; the duration here is
         // bounded to the vector reallocation + the size_t return.
-        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
+        std::lock_guard lock(alloc_storage_lock_);
         cells_.push_back(v);
         return cells_.size() - 1;
     }
@@ -2371,7 +2371,15 @@ public:
     // evaluator_primitives_*.cpp need to acquire this lock on
     // push_back / set-car! / set-cdr! paths to keep the Aura
     // primitive surface thread-safe under fiber:spawn.
-    mutable std::mutex alloc_storage_lock_;
+    //
+    // recursive_mutex: ast_to_data holds the lock while converting a
+    // Call/Begin/... and recursively converts nested Call children
+    // that re-enter the same lock (and the cd() helper also locks).
+    // A plain mutex deadlocks on quoted nested calls such as
+    // '(f (g x)), '(unquote (+ 1 2)), ``(,',(+ 1 2)) — which hung
+    // suite/ast_viz and fuzz seed edge_qq_nested (Issue #1397 lock
+    // added without same-thread re-entrancy).
+    mutable std::recursive_mutex alloc_storage_lock_;
     // Issue #1401: serializes load_module_file ↔ compact_env_frames().
     // compact_env_frames (Issue #1386) re-packs env_frames_ and
     // rewrites Closure::env_id via a remap table. load_module_file
@@ -2390,7 +2398,10 @@ public:
     // paths are exclusive and rare (module reload / env-frame GC
     // are not hot paths), so we serialize fully rather than allow
     // concurrent reloads.
-    mutable std::mutex compact_env_frames_lock_;
+    // recursive: nested (require ...) re-enters load_module_file (deps);
+    // plain mutex hung suite/ast_viz (ast-viz → list/string). Circular
+    // deps still blocked via loading_stack_.
+    mutable std::recursive_mutex compact_env_frames_lock_;
     // Issue #145 Phase 2.1 — SoA arena for Env. Frames are
     // appended in alloc_env_frame and indexed by EnvId. Frame
     // data is parallel to Env; parent walks go via parent_id_

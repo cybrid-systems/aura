@@ -140,7 +140,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // and adds new closures_ to closures_; without the interlock, a
     // concurrent compact_env_frames could miss those closures (Step 2
     // walk) or reclaim frames the loader is about to use (Step 3 pack).
-    std::lock_guard<std::mutex> interlock(compact_env_frames_lock_);
+    std::lock_guard interlock(compact_env_frames_lock_);
     // 1. Resolve path
     auto resolved = resolve_module_path(path);
     if (resolved.empty()) {

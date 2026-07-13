@@ -370,7 +370,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // write all under alloc_storage_lock_ so concurrent
             // push_back / resize cannot realloc pairs_ between
             // idx capture and write.
-            std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+            std::lock_guard lock(ev.alloc_storage_lock_);
             auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
                 pairs[idx].car = a[1];
@@ -385,7 +385,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_void();
             // Issue #1397 + #1399: same atomic guard as set-car! —
             // idx capture inside lock_guard, not before.
-            std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+            std::lock_guard lock(ev.alloc_storage_lock_);
             auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
                 pairs[idx].cdr = a[1];

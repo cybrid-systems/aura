@@ -879,7 +879,7 @@ std::size_t Evaluator::compact_env_frames() {
     // via remap; without the interlock, a concurrent load_module_file
     // could add closures_ to a stale view of env_frames_ (frame
     // already reclaimed or remap table wrong).
-    std::lock_guard<std::mutex> interlock(compact_env_frames_lock_);
+    std::lock_guard interlock(compact_env_frames_lock_);
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();
     if (orig_size == 0) {
