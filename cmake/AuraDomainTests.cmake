@@ -310,6 +310,17 @@ aura_add_issue_test(test_issue_1385_env_arena_metrics)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1385_env_arena_metrics)
 add_dependencies(all_test_issue_targets test_issue_1385_env_arena_metrics)
 
+# Issue #1386: env_frames_ arena compaction + Closure::env_id
+# rewrite via remap table. Uses (evaluator:compact-env-frames)
+# primitive + (compiler:metrics) to verify reclamation + env_id
+# rewrite correctness. Needs full llvm_jit link (not minimal)
+# because AC3 actually invokes a closure via (c) — closure
+# materialization path requires full JIT runtime. Same link
+# pattern as test_issues_809_817_batch / test_issues_819_829_batch.
+aura_add_issue_test(test_issue_1386_compact_env_frames)
+aura_issue_test_link_llvm_jit(test_issue_1386_compact_env_frames)
+add_dependencies(all_test_issue_targets test_issue_1386_compact_env_frames)
+
 # Issue #1361: aura_free_closure + closure:free! + ID reuse
 aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)

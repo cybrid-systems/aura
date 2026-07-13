@@ -809,6 +809,19 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
         ev.string_heap_.push_back(std::move(json));
         return types::make_string(idx);
     });
+    // Issue #1386: (evaluator:compact-env-frames) primitive.
+    // Triggers env_frames_ arena compaction. Reclaims stale
+    // frames (version_ < current defuse_version_) that are
+    // not referenced by any live Closure. Rewrites
+    // Closure::env_id via remap; bumps defuse_version_ so any
+    // stale bridge_epoch snapshot re-bridges via
+    // closure_bridge_. Returns the number of frames reclaimed
+    // as an int. See Evaluator::compact_env_frames for the
+    // algorithm + concurrency contract (caller must serialize
+    // at the workspace level).
+    add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
+        return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
