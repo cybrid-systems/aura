@@ -283,7 +283,11 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
 
         // set-code manages its own workspace lock — call outside our lock.
         if (!blob.source.empty()) {
-            auto sidx = ev.string_heap_.size();
+            // Issue #1397: string_heap_ push_back atomic — hoist the
+            // size() + push_back() out of an inner block so `sidx` is
+            // visible to the `make_string(sidx)` call below.
+            std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+            const auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(blob.source);
             auto set_fn = ev.primitives_.lookup("set-code");
             if (!set_fn)
@@ -340,7 +344,11 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
             if (fp == 0xFF)
                 fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
+            // Issue #1397: string_heap_ push_back atomic — hoist the
+            // size() + push_back() out of an inner block so `kidx` is
+            // visible to the `make_string(kidx).val` call below.
+            std::lock_guard<std::mutex> lock(ev.alloc_storage_lock_);
+            const std::size_t kidx = ev.string_heap_.size();
             ev.string_heap_.push_back(k);
             auto meta = ht->metadata();
             auto keys = ht->keys();

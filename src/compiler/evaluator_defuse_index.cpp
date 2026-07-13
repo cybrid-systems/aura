@@ -828,6 +828,9 @@ void Evaluator::install_defuse_subsystem() {
 
     // Helper: build Aura result list from NodeIds
     auto nodes_to_list = [this](std::span<const DefUseIndex::NodeId> nodes) -> EvalValue {
+        // Issue #1397: per-iter push_back must be atomic for stable
+        // pair index across fiber:spawn workers sharing the Evaluator.
+        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
         EvalValue list = make_void();
         for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
             auto pid = pairs_.size();
@@ -841,6 +844,9 @@ void Evaluator::install_defuse_subsystem() {
         auto result = idx->query_def_use(sym);
         auto def_list = nodes_to_list(result.defs);
         auto use_list = nodes_to_list(result.uses);
+        // Issue #1397: stable result_pid across workers - the underlying
+        // pairs_ push_back must be atomic.
+        std::lock_guard<std::mutex> lock(alloc_storage_lock_);
         auto result_pid = pairs_.size();
         pairs_.push_back({def_list, use_list});
         return make_pair(result_pid);
@@ -878,6 +884,10 @@ void Evaluator::install_defuse_subsystem() {
             auto def_list = nodes_to_list(duo.defs);
             auto use_list = nodes_to_list(duo.uses);
             auto caller_list = nodes_to_list(callers);
+            // Issue #1397: 3-arg result list build (caller_list /
+            // use_list / def_list) must be atomic so the indices
+            // c1/c2/c3 used in the make_pair linkages stay stable.
+            std::lock_guard<std::mutex> lock(alloc_storage_lock_);
             auto c1 = pairs_.size();
             pairs_.push_back({caller_list, make_void()});
             auto c2 = pairs_.size();
@@ -909,6 +919,9 @@ void Evaluator::install_defuse_subsystem() {
             auto* du_idx = static_cast<DefUseIndex*>(idx);
             auto& flat = *workspace_flat_;
             auto make_kv = [&](std::string_view k, std::int64_t v) -> types::EvalValue {
+                // Issue #1397: per-kv push_back atomic for stable
+                // pair index across fiber:spawn workers.
+                std::lock_guard<std::mutex> lock(alloc_storage_lock_);
                 auto kv_ref = make_pair(pairs_.size());
                 auto k_sym = string_heap_.size();
                 string_heap_.push_back(std::string(k));
@@ -919,6 +932,10 @@ void Evaluator::install_defuse_subsystem() {
             };
             auto stats = make_void();
             auto push_kv = [&](std::string_view k, std::int64_t v) {
+                // Issue #1397: per-kv-link push_back atomic so the
+                // linkage (new_ref from make_kv -> linked into stats)
+                // is stable across workers.
+                std::lock_guard<std::mutex> lock(alloc_storage_lock_);
                 auto kv_ref = make_kv(k, v);
                 auto new_ref = make_pair(pairs_.size());
                 pairs_.push_back(Pair{kv_ref, stats});
