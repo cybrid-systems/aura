@@ -298,6 +298,17 @@ aura_add_issue_test(test_lock_hierarchy)
 aura_issue_test_link_llvm_jit_minimal(test_lock_hierarchy)
 add_dependencies(all_test_issue_targets test_lock_hierarchy)
 
+# Issue #1389: query_mutation_log iter+append race contract
+# test. Verifies that query_mutation_log() acquires workspace
+# shared_lock during the mutation_log_ copy (prevents UB when
+# concurrent typed_mutate push_back invalidates the iterator).
+# Thread A calls query_mutation_log() directly via C++; Thread B
+# does Aura (set! ...) loop that triggers typed_mutate internally.
+# Real race at workspace_mtx_ — no Aura serialization involved.
+aura_add_issue_test(test_mutation_log_query_race)
+aura_issue_test_link_llvm_jit_minimal(test_mutation_log_query_race)
+add_dependencies(all_test_issue_targets test_mutation_log_query_race)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==

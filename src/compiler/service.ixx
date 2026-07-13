@@ -7094,6 +7094,29 @@ public:
             source = current_ast_;
         if (!source)
             return result;
+        // Issue #1389: acquire workspace shared lock for the
+        // duration of the mutation_log_ copy. Without this,
+        // a concurrent typed_mutate from another thread can
+        // push_back mid-iteration (std::pmr::vector reallocation
+        // invalidates the iterator → use-after-free / size
+        // mismatch → UB).
+        //
+        // Mirror the const_cast pattern at service.ixx:6222-6250
+        // (CompilerMetrics::snapshot): lock_workspace_shared is
+        // non-const but the shared_mutex's internal state is
+        // mutable, so const_cast on the Evaluator reference is
+        // safe. Plain lock_shared (not try_lock_shared) is used
+        // here because query_mutation_log is a leaf call from
+        // --serve protocol / test code, not from the IR
+        // interpreter. The serialize-workspace pattern at
+        // evaluator_primitives_persist.cpp:206-227 is the same
+        // (plain lock_shared).
+        auto& eval_mut = const_cast<Evaluator&>(evaluator_);
+        eval_mut.lock_workspace_shared();
+        struct UnlockGuard {
+            Evaluator& e;
+            ~UnlockGuard() { e.unlock_workspace_shared(); }
+        } guard{eval_mut};
         auto hist = (node == aura::ast::NULL_NODE) ? source->all_mutations()
                                                    : source->mutation_history(node);
         for (auto& rec : hist) {
