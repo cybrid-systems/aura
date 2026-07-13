@@ -112,7 +112,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "panic-rollback-compact-hits", "races-prevented",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:arena-concurrent-compact-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-concurrent-compact-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

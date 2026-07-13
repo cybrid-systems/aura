@@ -260,7 +260,8 @@ bool test_edsl_stats_returns_hash() {
     // Check each of the 4 fields exists
     for (auto key : {"shape-fold-count", "shape-linear-elide-count", "shape-narrow-check-count",
                      "guard-shape-hits"}) {
-        auto rr = cs.eval(std::format("(hash-ref (query:shape-folding-stats) '{}')", key));
+        auto rr = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:shape-folding-stats\") '{}')", key));
         if (!rr) {
             CHECK(false, std::format("hash-ref for '{}' failed", key));
             continue;

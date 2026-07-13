@@ -91,7 +91,8 @@ static void run_ac2_metrics_primitive(aura::compiler::CompilerService& cs) {
                                            "narrowing-stable-paths", "runtime-check-savings",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:dead-coercion-elision-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:dead-coercion-elision-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
     const auto schema = hash_int_field(cs, "(query:dead-coercion-elision-stats)", "schema");

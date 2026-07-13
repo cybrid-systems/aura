@@ -91,7 +91,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"deopt-on-hygiene", "aot-reload-marker-mismatches",
                                            "interpreter-fallback-hygiene-hits", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:macro-jit-hygiene-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:macro-jit-hygiene-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

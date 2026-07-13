@@ -110,7 +110,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "linear-safe-after-steal-reload", "epoch-consistent-hits",
         "composite-fidelity-status",      "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:task6-concurrent-fidelity) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:task6-concurrent-fidelity\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

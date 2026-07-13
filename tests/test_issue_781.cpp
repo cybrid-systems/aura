@@ -105,7 +105,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "ansi-helper-supported", "memory-profiling-supported",
                                            "recommendation",        "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:zero-copy-framebuffer-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:zero-copy-framebuffer-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

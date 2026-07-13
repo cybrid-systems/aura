@@ -21,3 +21,12 @@
   (check (hash? all))
   (check (= (hash-ref (engine:metrics) "stats-count")
             (hash-ref all "stats-count"))))
+
+; P1b: field access via facade must match direct stats prim
+(test-suite "engine:metrics-parity"
+  (define direct (query:macro-hygiene-stats))
+  (define via (engine:metrics "query:macro-hygiene-stats"))
+  (check (hash? direct))
+  (check (hash? via))
+  ; schema field present on both when stats return structured hashes
+  (check (number? (hash-ref via "schema"))))

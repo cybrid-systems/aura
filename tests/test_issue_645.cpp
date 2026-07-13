@@ -67,7 +67,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:scheduler-steal-bias-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:scheduler-steal-bias-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -161,8 +162,9 @@ int aura_issue_645_run() {
         // hash-ref on `schema` (which would hit Aura's hash-
         // table error path / SIGABRT for missing keys).
         const auto check_706_field = [&](std::string_view k) {
-            auto r = cs.eval(
-                std::format("(hash-ref (query:scheduler-stealbudget-adaptive-stats) '{}')", k));
+            auto r = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:scheduler-stealbudget-adaptive-stats\") '{}')",
+                k));
             return r.has_value() && aura::compiler::types::is_int(*r);
         };
         CHECK(check_706_field("mutation-bias-hits"),

@@ -43,7 +43,8 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 }
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:ci-reproducibility-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:ci-reproducibility-stats\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -52,14 +53,16 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 }
 
 static std::string hash_string(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:ci-reproducibility-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:ci-reproducibility-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_string(*r))
         return {};
     return cs.evaluator().string_heap()[aura::compiler::types::as_string_idx(*r)];
 }
 
 static bool hash_bool(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:ci-reproducibility-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:ci-reproducibility-stats\") '{}')", key));
     return r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
 }
 
@@ -96,10 +99,11 @@ int aura_issue_675_run() {
         CHECK(hash_int(cs, "source-date-epoch") >= 0, "source-date-epoch field");
         CHECK(!hash_string(cs, "build-type").empty(), "build-type field");
         CHECK(!hash_string(cs, "sanitizer-mode").empty(), "sanitizer-mode field");
-        auto repro =
-            cs.eval("(hash-ref (query:ci-reproducibility-stats) 'reproducible-flags-active)");
+        auto repro = cs.eval("(hash-ref (engine:metrics \"query:ci-reproducibility-stats\") "
+                             "'reproducible-flags-active)");
         CHECK(repro && aura::compiler::types::is_bool(*repro), "reproducible-flags-active field");
-        auto ccache = cs.eval("(hash-ref (query:ci-reproducibility-stats) 'ccache-disabled)");
+        auto ccache = cs.eval(
+            "(hash-ref (engine:metrics \"query:ci-reproducibility-stats\") 'ccache-disabled)");
         CHECK(ccache && aura::compiler::types::is_bool(*ccache), "ccache-disabled field");
     }
 

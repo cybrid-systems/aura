@@ -118,7 +118,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "safe-boundary-hits",      "refcount-swaps", "region-violations-prevented",
         "concurrent-safe-reloads", "deopt-on-steal", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:aot-safe-swap-boundary-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:aot-safe-swap-boundary-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

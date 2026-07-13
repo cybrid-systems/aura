@@ -134,7 +134,8 @@ bool test_edsl_stats_returns_hash() {
     CHECK(aura::compiler::types::is_hash(v), "(query:arena-auto-stats) returns a hash");
     for (auto key : {"auto-compact-guard-call-count", "compaction-yield-checks",
                      "auto-compact-trigger-count", "auto-compact-skip-count"}) {
-        auto rr = cs.eval(std::format("(hash-ref (query:arena-auto-stats) '{}')", key));
+        auto rr = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:arena-auto-stats\") '{}')", key));
         if (!rr) {
             CHECK(false, std::format("hash-ref for '{}' failed", key));
             continue;
@@ -150,7 +151,8 @@ bool test_guard_dtor_bumps_counter() {
     std::println("\n--- AC6: guard dtor bumps counter ---");
     aura::compiler::CompilerService cs;
     // Get baseline
-    auto before = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto before = cs.eval(
+        "(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-guard-call-count)");
     if (!before || !aura::compiler::types::is_int(*before)) {
         CHECK(false, "could not read baseline guard-call count");
         return true;
@@ -162,7 +164,8 @@ bool test_guard_dtor_bumps_counter() {
     cs.eval(R"((mutate:rebind 'foo 42))");
 
     // Read again
-    auto after = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto after = cs.eval(
+        "(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-guard-call-count)");
     if (!after || !aura::compiler::types::is_int(*after)) {
         CHECK(false, "could not read post-mutate guard-call count");
         return true;
@@ -206,10 +209,14 @@ bool test_stats_list_includes() {
 bool test_fresh_service_defaults() {
     std::println("\n--- AC9: fresh service defaults ---");
     aura::compiler::CompilerService cs;
-    auto guard = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
-    auto yield_ = cs.eval("(hash-ref (query:arena-auto-stats) 'compaction-yield-checks)");
-    auto trigger = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-trigger-count)");
-    auto skip = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-skip-count)");
+    auto guard = cs.eval(
+        "(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-guard-call-count)");
+    auto yield_ =
+        cs.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") 'compaction-yield-checks)");
+    auto trigger = cs.eval(
+        "(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-trigger-count)");
+    auto skip =
+        cs.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-skip-count)");
     CHECK(aura::compiler::types::as_int(*guard) == 0, "guard-call == 0");
     CHECK(aura::compiler::types::as_int(*yield_) == 0, "yield-check == 0");
     CHECK(aura::compiler::types::as_int(*trigger) == 0, "trigger == 0");
@@ -222,12 +229,14 @@ bool test_fresh_service_defaults() {
 bool test_long_session_signal() {
     std::println("\n--- AC10: long AI session signal ---");
     aura::compiler::CompilerService cs;
-    auto before = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto before = cs.eval(
+        "(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-guard-call-count)");
     auto before_n = aura::compiler::types::as_int(*before);
     for (int i = 0; i < 5; ++i) {
         cs.eval(std::format(R"((mutate:rebind 'foo_{} {}))", i, i * 10));
     }
-    auto after = cs.eval("(hash-ref (query:arena-auto-stats) 'auto-compact-guard-call-count)");
+    auto after = cs.eval(
+        "(hash-ref (engine:metrics \"query:arena-auto-stats\") 'auto-compact-guard-call-count)");
     auto after_n = aura::compiler::types::as_int(*after);
     CHECK(
         after_n >= before_n + 5,

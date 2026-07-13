@@ -116,7 +116,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "strategy-balanced-count",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:self-evolution-closedloop-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:self-evolution-closedloop-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

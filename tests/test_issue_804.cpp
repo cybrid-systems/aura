@@ -115,7 +115,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "recovery-hook-invocations", "unified-error-path-active", "schema",
     };
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:primitive-error-unified-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:primitive-error-unified-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
@@ -284,7 +285,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     CHECK(schema_751 == 751, std::format("#751 schema = {} (expected 751)", schema_751));
     for (const auto& k : {"prim-error-counter", "prim-error-hits", "style-compliance-pct",
                           "capture-contract-version"}) {
-        auto f = cs.eval(std::format("(hash-ref (query:primitives-contract-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:primitives-contract-stats\") '{}')", k));
         CHECK(f, std::format("#751 field '{}' still present", k));
     }
 }

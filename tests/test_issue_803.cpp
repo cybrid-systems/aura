@@ -142,7 +142,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "schema",
     };
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:seva-longrunning-concurrent-slo) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:seva-longrunning-concurrent-slo\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
@@ -311,8 +312,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     CHECK(schema_802 == 802, std::format("#802 schema = {} (expected 802)", schema_802));
     for (const auto& k : {"feedback-parse-hits", "structured-mutate-hits", "closed-loop-rounds",
                           "convergence-hits"}) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:sv-verification-self-evolution-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:sv-verification-self-evolution-stats\") '{}')", k));
         CHECK(f, std::format("#802 field '{}' still present", k));
     }
 

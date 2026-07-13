@@ -87,7 +87,7 @@ struct Entry {
 
 static std::vector<Entry> read_top_list(aura::compiler::CompilerService& cs) {
     std::vector<Entry> out;
-    auto r = cs.eval("(hash-ref (query:primitive-fastpath-per-prim) 'top)");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:primitive-fastpath-per-prim\") 'top)");
     if (!r || !aura::compiler::types::is_pair(*r))
         return out;
     const auto& pairs = cs.evaluator().pairs();
@@ -152,7 +152,8 @@ int aura_issue_479_run() {
     CHECK(hash_int(cs, stats_src, "total") >= 0, "total field present (>= 0)");
     CHECK(hash_int(cs, stats_src, "distinct-prims") >= 0, "distinct-prims field present (>= 0)");
     CHECK(hash_int(cs, stats_src, "capacity") >= 0, "capacity field present (>= 0)");
-    auto top_field = cs.eval("(hash-ref (query:primitive-fastpath-per-prim) 'top)");
+    auto top_field =
+        cs.eval("(hash-ref (engine:metrics \"query:primitive-fastpath-per-prim\") 'top)");
     CHECK(top_field.has_value(), "top field present");
 
     // AC3: baseline snapshot is non-negative.

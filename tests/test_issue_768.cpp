@@ -108,7 +108,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "contract-checks-hotpath", "shape-stability-transitions", "jit-epoch-sync-hits",
         "deopt-targeted-skips",    "concept-violations-caught",   "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:shape-pass-hotpath-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:shape-pass-hotpath-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

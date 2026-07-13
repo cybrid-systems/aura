@@ -24,7 +24,8 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 static std::int64_t hash_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:task4-hotpath-contracts) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:task4-hotpath-contracts\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);

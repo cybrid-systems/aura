@@ -122,7 +122,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"current-vs-baseline-pct", "contract-violations",
                                            "fastpath-hit-rate-pct", "regression-flag", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:primitives-hotpath-slo-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:primitives-hotpath-slo-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

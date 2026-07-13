@@ -5,6 +5,8 @@ module;
 
 #include "runtime_shared.h"
 
+#include <cstdlib>
+
 module aura.compiler.evaluator;
 
 import std;
@@ -52,7 +54,28 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// P2a surface refactor: full vs s0 registration tiers.
+// Default = full (compat). Set AURA_PRIMITIVES=s0 or AURA_FULL_PRIMITIVES=0
+// to skip vertical/extended clusters (eda, security, verify-tool, stdlib-review).
+// Observability (including engine:metrics) stays in S0 so the facade works.
+static bool full_primitives_enabled() noexcept {
+    if (const char* p = std::getenv("AURA_PRIMITIVES")) {
+        std::string_view v{p};
+        if (v == "s0" || v == "S0" || v == "minimal")
+            return false;
+        if (v == "full" || v == "FULL")
+            return true;
+    }
+    if (const char* f = std::getenv("AURA_FULL_PRIMITIVES")) {
+        // 0/false/no → s0; anything else → full
+        if (f[0] == '0' || f[0] == 'n' || f[0] == 'N' || f[0] == 'f' || f[0] == 'F')
+            return false;
+    }
+    return true; // default: full surface
+}
+
 void Evaluator::register_all_primitives() {
+    // ── S0: language core + AI work surface + metrics facade ──
     primitives_detail::register_type_and_char_primitives(prim_registrar());
 
     auto* primitive_error_counter = primitive_error_counter_ptr();
@@ -135,19 +158,25 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_eval_primitives(prim_registrar(), *this, mev,
                                                 [this]() { defuse_index_destroy(&defuse_index_); });
 
+    // Observability stays in S0: includes (engine:metrics) / (stats:list|count).
+    // Individual query:*-stats remain registered until Phase 5 demotion.
     primitives_detail::register_eval_observability_primitives(prim_registrar(), *this);
-    primitives_detail::register_stdlib_review_primitives(prim_registrar(), *this);
 
-    // Issue #499: foundational EDA parse/query/mutate primitives module.
-    primitives_detail::register_eda_primitives(prim_registrar(), *this);
+    // ── Extended / vertical (S1–S2): gated by full_primitives_enabled() ──
+    if (full_primitives_enabled()) {
+        primitives_detail::register_stdlib_review_primitives(prim_registrar(), *this);
 
-    primitives_detail::register_security_primitives(prim_registrar(), *this);
+        // Issue #499: foundational EDA parse/query/mutate primitives module.
+        primitives_detail::register_eda_primitives(prim_registrar(), *this);
 
-    // Issue #443: external simulator tool-calling +
-    // structured result parsing primitives.
-    primitives_detail::register_verify_tool_primitives(
-        prim_registrar(), *this, [this](std::int32_t idx) { return make_string(idx); },
-        [this](std::int64_t v) { return make_int(v); }, mev);
+        primitives_detail::register_security_primitives(prim_registrar(), *this);
+
+        // Issue #443: external simulator tool-calling +
+        // structured result parsing primitives.
+        primitives_detail::register_verify_tool_primitives(
+            prim_registrar(), *this, [this](std::int32_t idx) { return make_string(idx); },
+            [this](std::int64_t v) { return make_int(v); }, mev);
+    }
 }
 
 } // namespace aura::compiler

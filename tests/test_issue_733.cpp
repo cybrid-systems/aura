@@ -120,7 +120,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "marker-propagation-hits",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:ir-marker-hygiene-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:ir-marker-hygiene-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

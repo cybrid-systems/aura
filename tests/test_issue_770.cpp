@@ -154,7 +154,8 @@ static void run_ac2_fidelity_primitive(aura::compiler::CompilerService& cs) {
                                            "reverify-truncated-under-guard", "epoch-sync-hits",
                                            "blame-chain-length", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:type-incremental-fidelity-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
     const auto schema = hash_int_field(cs, "(query:type-incremental-fidelity-stats)", "schema");
@@ -172,8 +173,8 @@ static void run_ac3_reverify_occurrence_primitive(aura::compiler::CompilerServic
                                            "timeout-prevented", "stale-blame-invalidation",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:constraint-reverify-occurrence-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:constraint-reverify-occurrence-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
     const auto schema =

@@ -83,7 +83,8 @@ static void run_ac2_six_fields(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: standard stats fields present in the hash response ---");
     const std::vector<std::string> keys = {"total", "hits", "savings", "active", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:dead-coercion-elim-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:dead-coercion-elim-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

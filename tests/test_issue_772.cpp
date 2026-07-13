@@ -102,7 +102,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "slo-breach-total",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:sv-closedloop-slo) '{}')", k));
+        auto f =
+            cs.eval(std::format("(hash-ref (engine:metrics \"query:sv-closedloop-slo\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

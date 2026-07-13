@@ -108,8 +108,8 @@ static void run_ac2_seven_fields(aura::compiler::CompilerService& cs) {
                                            "recommended-action",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:linear-ownership-enforcement-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:linear-ownership-enforcement-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

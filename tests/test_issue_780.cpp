@@ -99,7 +99,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "hotpath-eval-flat-calls",        "hotpath-lowering-calls", "rendering-path-jit-supported",
         "hot-update-rendering-optimized", "recommendation",         "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:jit-rendering-coverage-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:jit-rendering-coverage-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

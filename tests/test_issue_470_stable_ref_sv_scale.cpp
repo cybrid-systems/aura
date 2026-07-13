@@ -65,7 +65,8 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:stable-ref-stats-hash) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -91,10 +92,14 @@ bool test_primitive_returns_hash() {
 bool test_four_fields_present() {
     std::println("\n--- AC2: 4 fields present ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(hash-ref (query:stable-ref-stats-hash) 'generation-wrap-count)");
-    auto r2 = cs.eval("(hash-ref (query:stable-ref-stats-hash) 'stable-ref-invalidations)");
-    auto r3 = cs.eval("(hash-ref (query:stable-ref-stats-hash) 'node-gen-stale-accesses)");
-    auto r4 = cs.eval("(hash-ref (query:stable-ref-stats-hash) 'recommendation)");
+    auto r1 = cs.eval(
+        "(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") 'generation-wrap-count)");
+    auto r2 = cs.eval(
+        "(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") 'stable-ref-invalidations)");
+    auto r3 = cs.eval(
+        "(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") 'node-gen-stale-accesses)");
+    auto r4 =
+        cs.eval("(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") 'recommendation)");
     if (!r1 || !r2 || !r3 || !r4) {
         CHECK(false, "one or more hash-refs returned error");
         return true;

@@ -95,7 +95,8 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 }
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:cxx26-invariants) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:cxx26-invariants\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))

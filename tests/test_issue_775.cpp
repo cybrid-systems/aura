@@ -107,7 +107,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "meta_completeness_pct", "test_skeletons_generated",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:extension-kit-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:extension-kit-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

@@ -72,7 +72,8 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 }
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:strategy-evolution-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:strategy-evolution-stats\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -192,7 +193,9 @@ bool test_eight_fields() {
     for (auto* k : kFields) {
         // active-strategy is a string, others are ints.
         if (std::string(k) == "active-strategy") {
-            auto r = run_on(cs, std::format("(hash-ref (query:strategy-evolution-stats) '{}')", k));
+            auto r = run_on(
+                cs, std::format(
+                        "(hash-ref (engine:metrics \"query:strategy-evolution-stats\") '{}')", k));
             if (aura::compiler::types::is_string(r))
                 ++found;
         } else {

@@ -97,7 +97,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"cross-layer-validations", "cross-layer-mismatches",
                                            "cow-boundary-pins", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:stable-ref-layer-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:stable-ref-layer-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

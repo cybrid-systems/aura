@@ -101,7 +101,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "auto-compact-triggers", "fragmentation-post-mutate",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:arena-integration-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:arena-integration-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

@@ -65,7 +65,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:stable-ref-provenance-sv-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:stable-ref-provenance-sv-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -157,8 +158,8 @@ int aura_issue_641_run() {
         // The new primitive's schema sentinel is 641; the
         // historical one's is 631 — they should NOT collide.
         const auto new_schema = hash_int(cs, "schema");
-        auto old_schema_r =
-            cs.eval("(hash-ref (query:stable-ref-provenance-sv-stats-hash) 'schema')");
+        auto old_schema_r = cs.eval(
+            "(hash-ref (engine:metrics \"query:stable-ref-provenance-sv-stats-hash\") 'schema')");
         CHECK(old_schema_r.has_value() && aura::compiler::types::is_int(*old_schema_r) &&
                   aura::compiler::types::as_int(*old_schema_r) == 631,
               std::format("#631 primitive schema == 631 (got {})",

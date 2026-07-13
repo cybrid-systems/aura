@@ -68,7 +68,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:aot-reload-func-table-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:aot-reload-func-table-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -161,7 +162,8 @@ int aura_issue_644_run() {
         // should NOT collide on name OR field set.
         const auto new_schema = hash_int(cs, "schema");
         // #708 uses `reload-attempts` instead of `schema`.
-        auto old_field_r = cs.eval("(hash-ref (query:aot-reload-stats) 'reload-attempts)");
+        auto old_field_r =
+            cs.eval("(hash-ref (engine:metrics \"query:aot-reload-stats\") 'reload-attempts)");
         CHECK(old_field_r.has_value() && aura::compiler::types::is_int(*old_field_r),
               "#708 primitive 'reload-attempts' field reachable (no `schema` field — uses "
               "'reload-attempts' as primary sentinel)");
