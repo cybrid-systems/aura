@@ -289,6 +289,15 @@ add_dependencies(all_test_issue_targets test_issue_1383_disabled_mode_warn)
 aura_add_issue_test(test_issue_1387_type_driven_linear)
 add_dependencies(all_test_issue_targets test_issue_1387_type_driven_linear)
 
+# Issue #1388: lock hierarchy contract test + 4 mutex decl
+# acquire-order doc. Uses mini-stubs of the 4 production locks
+# (mutate/workspace/env_frames/dep_graph) to verify the canonical
+# acquire order under concurrent workload. llvm_jit_minimal
+# sufficient (no Aura runtime symbols needed for stub-based test).
+aura_add_issue_test(test_lock_hierarchy)
+aura_issue_test_link_llvm_jit_minimal(test_lock_hierarchy)
+add_dependencies(all_test_issue_targets test_lock_hierarchy)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==

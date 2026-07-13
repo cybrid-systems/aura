@@ -2359,6 +2359,10 @@ private:
     // materialize_call_env, lookup_by_symid_chain) takes a
     // shared lock; writer (alloc_env_frame, alloc_env_frame_
     // from_env) takes unique.
+    // Lock-order contract (Issue #1388): acquire ONLY after
+    // mutate_mtx_ + workspace_mtx_. dep_graph_mtx_ acquires
+    // AFTER this one. Canonical order is mutate → workspace →
+    // env_frames → dep_graph. Reverse order is NOT allowed.
     mutable std::shared_mutex env_frames_mtx_;
     // Issue #206: pair remap table. Rebuilt by compact_pairs().
     // pair_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
@@ -3213,6 +3217,10 @@ private:
     // additional layer: when set, mutate primitives return
     // "read-only" without acquiring the lock. This is checked
     // BEFORE lock acquisition to keep the no-op fast path.
+    // Lock-order contract (Issue #1388): acquire ONLY after
+    // mutate_mtx_. env_frames_mtx_ + dep_graph_mtx_ acquire
+    // AFTER this one. Canonical order is mutate → workspace →
+    // env_frames → dep_graph. Reverse order is NOT allowed.
     std::shared_mutex workspace_mtx_;
 
 public:
