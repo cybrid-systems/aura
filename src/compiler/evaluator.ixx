@@ -1874,6 +1874,31 @@ public:
     // env_generation_ + envframe_truncate counters.
     // Returns number of frames dropped.
     std::size_t truncate_env_frames_to_checkpoint();
+    // Issue #1386: compact env_frames_ arena — reclaim stale
+    // frames (version_ < current defuse_version_) that are not
+    // referenced by any live Closure. Builds a remap table,
+    // rewrites Closure::env_id for all closures in closures_,
+    // and bumps defuse_version_ post-compact (forces
+    // closure_bridge_ fallback for any in-flight stale
+    // bridge_epoch snapshots).
+    //
+    // Returns the number of frames reclaimed (0 if nothing was
+    // stale). Locking: holds env_frames_mtx_ unique_lock for
+    // the entire compact window; briefly takes closures_mtx_
+    // (shared then unique) to read references + rewrite env_id.
+    //
+    // Concurrency contract: caller must serialize at the
+    // workspace level — concurrent apply_closure is NOT safe
+    // during a compact because Closure::env_id may be
+    // temporarily inconsistent (the unique_lock on closures_mtx_
+    // blocks new apply_closure calls but does NOT block in-flight
+    // ones that already hold a Closure reference). Documented in
+    // issue #1386 body.
+    //
+    // Replaces the legacy truncate_env_frames_to_checkpoint
+    // for non-rollback reclamation: compact_env_frames is for
+    // operator-driven reclamation in long-running processes.
+    std::size_t compact_env_frames();
     // Issue #1360: stable resolve — nullptr if id is NULL, OOB,
     // or (future) generation-mismatched free slot.
     [[nodiscard]] const EnvFrame* resolve_env_frame(EnvId id) const noexcept;
@@ -1884,6 +1909,16 @@ public:
     }
     [[nodiscard]] std::uint64_t get_envframe_truncated_frames() const noexcept {
         return envframe_truncated_frames_.load(std::memory_order_relaxed);
+    }
+    // Issue #1386: compact_env_frames observability accessors.
+    [[nodiscard]] std::uint64_t get_envframe_compact_count() const noexcept {
+        return envframe_compact_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_reclaimed_frames() const noexcept {
+        return envframe_reclaimed_frames_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_compact_closures_rewritten() const noexcept {
+        return envframe_compact_closures_rewritten_.load(std::memory_order_relaxed);
     }
     // Accessor for the post-rollback invalidation count
     // (observability for (query:envframe-dualpath-stats)).
@@ -2844,6 +2879,16 @@ private:
     // Issue #1360: truncate_env_frames_to_checkpoint observability.
     mutable std::atomic<std::uint64_t> envframe_truncate_count_{0};
     mutable std::atomic<std::uint64_t> envframe_truncated_frames_{0};
+    // Issue #1386: compact_env_frames observability. Distinct
+    // from truncate (operator-driven vs rollback-driven).
+    // envframe_compact_count_: number of compact_env_frames()
+    // calls that reclaimed at least 1 frame. envframe_reclaimed_
+    // frames_: total reclaimed frames across all compacts.
+    // envframe_compact_closures_rewritten_: total Closure::env_id
+    // rewrites (verify env_id walk touched the expected count).
+    mutable std::atomic<std::uint64_t> envframe_compact_count_{0};
+    mutable std::atomic<std::uint64_t> envframe_reclaimed_frames_{0};
+    mutable std::atomic<std::uint64_t> envframe_compact_closures_rewritten_{0};
     // Issue #458: query hygiene metrics. Bumped by query:pattern
     // (and friends) when they skip a MacroIntroduced node during
     // traversal. Stats-only (relaxed-ordering). Exposed via
@@ -9180,6 +9225,20 @@ public:
     void bump_envframe_truncate(std::uint64_t frames_dropped) const noexcept {
         envframe_truncate_count_.fetch_add(1, std::memory_order_relaxed);
         envframe_truncated_frames_.fetch_add(frames_dropped, std::memory_order_relaxed);
+    }
+    // Issue #1386: bump compact_env_frames counters. Only bumps
+    // the per-call counter when at least 1 frame was reclaimed
+    // (so operators can distinguish "compact ran" from "compact
+    // reclaimed"). The closure-rewrite counter always bumps
+    // (it's a per-closure touch count, not a per-call flag).
+    void bump_envframe_compact(std::uint64_t frames_reclaimed,
+                               std::uint64_t closures_rewritten) const noexcept {
+        if (frames_reclaimed > 0) {
+            envframe_compact_count_.fetch_add(1, std::memory_order_relaxed);
+            envframe_reclaimed_frames_.fetch_add(frames_reclaimed, std::memory_order_relaxed);
+        }
+        envframe_compact_closures_rewritten_.fetch_add(closures_rewritten,
+                                                       std::memory_order_relaxed);
     }
     // Issue #418: bindings_ vs bindings_symid_ length consistency
     // probe for EnvFrame SoA dual-path + stale policy paths.

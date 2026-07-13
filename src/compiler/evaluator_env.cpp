@@ -854,6 +854,100 @@ EnvFrame* Evaluator::resolve_env_frame_mut(EnvId id) noexcept {
     return &env_frames_[id];
 }
 
+// Issue #1386: compact env_frames_ arena — reclaim stale frames
+// that are not referenced by any live Closure. Rewrites
+// Closure::env_id via a remap table so apply_closure materializes
+// the right frame post-compact. Bumps defuse_version_ so any
+// stale bridge_epoch snapshot re-bridges via closure_bridge_.
+//
+// Algorithm:
+//   1. unique_lock(env_frames_mtx_)
+//   2. shared_lock(closures_mtx_) — build referenced set
+//   3. live[i] = (version_ >= defuse_version_) || referenced[i]
+//   4. Build new_env_frames + remap[old -> new or -1]
+//   5. unique_lock(closures_mtx_) — rewrite Closure::env_id
+//   6. swap env_frames_, defuse_version_.fetch_add(1)
+//
+// Locking order: env_frames_mtx_ -> closures_mtx_ (consistent
+// with apply_closure path which takes closures_mtx_ first then
+// materializes from env_frames_ under no env_frames_mtx_ hold —
+// a fiber holding shared closures_mtx_ blocks our unique take,
+// avoiding the classic upgrade deadlock).
+std::size_t Evaluator::compact_env_frames() {
+    std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    const std::size_t orig_size = env_frames_.size();
+    if (orig_size == 0) {
+        // Still bump defuse_version_ so the caller sees a
+        // post-compact epoch marker (consistency with the
+        // non-empty path).
+        defuse_version_.fetch_add(1, std::memory_order_release);
+        return 0;
+    }
+    const auto current_defuse = defuse_version_.load(std::memory_order_acquire);
+
+    // Step 2: build referenced set from closures_ (shared lock).
+    // A frame is referenced if any live Closure's env_id == i.
+    std::vector<bool> referenced(orig_size, false);
+    {
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        for (const auto& kv : closures_) {
+            const auto id = kv.second.env_id;
+            if (id != NULL_ENV_ID && id < orig_size) {
+                referenced[id] = true;
+            }
+        }
+    }
+
+    // Step 3 + 4: build new_env_frames + remap. Iterate env_frames_
+    // once; move live frames into new_env_frames, record remap[i] =
+    // new index for live frames, -1 for dead frames. After the loop
+    // env_frames_ contains a mix of valid (dead) and moved-from (live)
+    // frames — but we replace it with new_env_frames anyway, so the
+    // state is transient and harmless.
+    std::vector<std::int64_t> remap(orig_size, -1);
+    std::deque<EnvFrame> new_env_frames;
+    for (std::size_t i = 0; i < orig_size; ++i) {
+        const bool live = env_frames_[i].version_ >= current_defuse || referenced[i];
+        if (live) {
+            remap[i] = static_cast<std::int64_t>(new_env_frames.size());
+            new_env_frames.push_back(std::move(env_frames_[i]));
+        }
+        // else: remap[i] stays -1 (from init), don't touch
+    }
+
+    // Step 5: rewrite Closure::env_id (unique lock).
+    // All closures pointing to a freed frame would have been
+    // marked non-referenced in step 2, so the frame would have
+    // been reclaimed. But — defense in depth — if any closure
+    // got env_id pointing to a freed frame between the shared
+    // read and the unique take (closure was added/updated),
+    // remap returns -1 and we clear env_id to NULL_ENV_ID.
+    std::size_t rewritten = 0;
+    {
+        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        for (auto& kv : closures_) {
+            const auto id = kv.second.env_id;
+            if (id == NULL_ENV_ID || id >= remap.size())
+                continue;
+            const auto new_id = remap[id];
+            if (new_id >= 0) {
+                kv.second.env_id = static_cast<EnvId>(new_id);
+                ++rewritten;
+            } else {
+                // Frame was reclaimed; clear the dangling env_id.
+                kv.second.env_id = NULL_ENV_ID;
+            }
+        }
+    }
+
+    const std::size_t reclaimed = orig_size - new_env_frames.size();
+    env_frames_ = std::move(new_env_frames);
+    defuse_version_.fetch_add(1, std::memory_order_release);
+    ++env_generation_;
+    bump_envframe_compact(reclaimed, rewritten);
+    return reclaimed;
+}
+
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
 // Walks env_frames_ via index lookup (no pointer chase) and
 // returns the first match (closest frame wins, shadowing
