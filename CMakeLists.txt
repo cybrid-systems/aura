@@ -4701,6 +4701,12 @@ aura_issue_test_link_llvm_jit(test_issue_1400)
 # cs.eval concurrent crash from #1399 honest gap).
 aura_add_issue_test(test_issue_1401)
 aura_issue_test_link_llvm_jit(test_issue_1401)
+# Issue #1402: kPrimSecPrivileged capability gate contract test.
+# Verifies that Privileged primitives (security:*, fiber:spawn) return
+# merr in sandboxed mode without the required capability, and succeed
+# after granting kCapWildcard. Locks the enforcement invariant.
+aura_add_issue_test(test_issue_1402)
+aura_issue_test_link_llvm_jit(test_issue_1402)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
