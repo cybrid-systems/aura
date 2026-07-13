@@ -14,6 +14,7 @@ Usage:
 
 Argument: number of DNA base characters (default 10000).
 """
+
 import random
 import sys
 
@@ -24,7 +25,7 @@ def main():
     seq = "".join(rng.choice("acgt") for _ in range(n))
     out = [">regexredux"]
     for i in range(0, len(seq), 70):
-        out.append(seq[i:i + 70])
+        out.append(seq[i : i + 70])
     sys.stdout.write("\n".join(out) + "\n")
 
 

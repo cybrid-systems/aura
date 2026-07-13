@@ -1518,8 +1518,16 @@ public:
     // Core module cannot depend on Evaluator; bind save/restore via void*.
     [[nodiscard]] static aura::core::panic_cp::PanicCheckpointHost
     panic_checkpoint_host(Evaluator& ev) noexcept {
+        // Issue #1393: bind expected_evaluator_id = &ev so the Guard
+        // dtor can detect cross-evaluator restore attempts (aot:reload,
+        // persist:load, fiber with cross-evaluator body). When the host
+        // is rebound to a different Evaluator between ctor and dtor,
+        // expected_evaluator_id (set here) != ctx (current binding)
+        // → Guard skips restore + bumps
+        // restores_discriminator_failed counter (no UB).
         return aura::core::panic_cp::PanicCheckpointHost{
             &ev,
+            &ev, // expected_evaluator_id discriminator (Issue #1393)
             [](void* p) noexcept -> bool {
                 return static_cast<Evaluator*>(p)->save_panic_checkpoint();
             },
