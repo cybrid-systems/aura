@@ -309,6 +309,16 @@ aura_add_issue_test(test_mutation_log_query_race)
 aura_issue_test_link_llvm_jit_minimal(test_mutation_log_query_race)
 add_dependencies(all_test_issue_targets test_mutation_log_query_race)
 
+# Issue #1390: request_defrag feedback + defrag×alloc contract
+# test. Verifies the new bool return on request_defrag(), the
+# (arena:safepoint-registered?) and (arena:warn-no-safepoint)
+# primitives, and that concurrent arena.create<T>() + defrag()
+# runs without UB. llvm_jit_minimal sufficient (uses Aura
+# primitives + direct C++ arena API).
+aura_add_issue_test(test_arena_defrag_concurrent)
+aura_issue_test_link_llvm_jit_minimal(test_arena_defrag_concurrent)
+add_dependencies(all_test_issue_targets test_arena_defrag_concurrent)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==
