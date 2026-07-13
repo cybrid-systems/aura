@@ -39,7 +39,9 @@ struct FakeHost {
         return h->restore_ok;
     }
 
-    PanicCheckpointHost host() { return PanicCheckpointHost{this, &save_fn, &restore_fn}; }
+    // Issue #1393: host is {ctx, expected_evaluator_id, save, restore}.
+    // For the fake host, discriminator == ctx (same identity).
+    PanicCheckpointHost host() { return PanicCheckpointHost{this, this, &save_fn, &restore_fn}; }
 };
 
 } // namespace
