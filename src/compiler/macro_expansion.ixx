@@ -21,7 +21,17 @@ namespace aura::compiler::macro_exp {
 // clone_macro_body nesting. Exported so tests + other modules
 // can read it (and so operators can detect when their macros
 // are close to the limit via compile-time diagnostic).
-export constexpr int MAX_HYGIENE_DEPTH = 256;
+//
+// Issue #1392: raised from 256 → 1024. Modern Linux default
+// thread stack is 8MB; 256 was conservative (only pathological
+// inputs triggered the silent NULL_NODE fallback). When the
+// limit IS exceeded the fallback is still observable via
+// `g_macro_origin_provenance_errors` atomic counter (read
+// through `(compile:macro-origin-provenance-errors)` primitive).
+// Returning a NodeId-typed merr would require changing the
+// function signature (invasive); observability path is the
+// scope-limited fix.
+export constexpr int MAX_HYGIENE_DEPTH = 1024;
 
 // Issue #1245 Phase 1: concurrent macro-clone hygiene counters (defined in .cpp).
 export extern std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total;

@@ -21,6 +21,7 @@ import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.compiler.pass_manager;
 import aura.compiler.query;
+import aura.compiler.macro_expansion;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
 
@@ -475,6 +476,25 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
     //     deciding if the std::meta refactor is worth it.
     // Returns a hash with the counts (all 0 if no workspace
     // is set). Companion to (compile:invalidations-stats).
+    // (compile:macro-origin-provenance-errors) — Issue #1392:
+    // observability primitive for the macro hygiene depth-exceeded
+    // fallback. clone_macro_body (macro_expansion.cpp:206-228)
+    // falls back to silent NULL_NODE + unhygienic substitution when
+    // s_hygiene_depth >= MAX_HYGIENE_DEPTH (now 1024). Each fallback
+    // path bumps the existing g_macro_origin_provenance_errors atomic
+    // counter. This primitive exposes the counter so Agents can
+    // detect the misconfiguration via (compile:macro-origin-provenance-errors)
+    // and (eventually) wire it into (eval-warnings) emission.
+    //
+    // Returning a NodeId-typed merr would require changing
+    // clone_macro_body's signature (invasive); observability path
+    // is the scope-limited fix. Documented in macro_expansion.ixx.
+    add("compile:macro-origin-provenance-errors", [](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(
+            aura::compiler::macro_exp::g_macro_origin_provenance_errors.load(
+                std::memory_order_relaxed)));
+    });
+
     add("compile:ast-ops-stats", [&ev](const auto&) -> EvalValue {
         // Re-use the build_hash pattern from above primitives.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
