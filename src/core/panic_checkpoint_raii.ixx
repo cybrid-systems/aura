@@ -23,6 +23,14 @@ struct PanicCheckpointStats {
     std::uint64_t saves_failed = 0;
     std::uint64_t restores_ok = 0;
     std::uint64_t restores_failed = 0;
+    // Issue #1393: count of restore attempts where
+    // PanicCheckpointGuard's bound Evaluator (host.expected_evaluator_id)
+    // no longer matches the host's ctx pointer. This signals a
+    // cross-evaluator restore attempt (e.g. via aot:reload /
+    // persist:load / fiber with cross-evaluator body). The Guard
+    // bumps this counter and skips restore (no UB) — operators
+    // can monitor via the stats accessor or primitive.
+    std::uint64_t restores_discriminator_failed = 0;
 };
 
 inline PanicCheckpointStats g_panic_checkpoint_raii_stats{};
@@ -33,8 +41,19 @@ inline void reset_panic_checkpoint_raii_stats() noexcept {
 
 // Type-erased host: Evaluator (or a test double) binds save/restore.
 // save/restore may be null (stats-only / no-op host).
+//
+// Issue #1393: added `expected_evaluator_id` discriminator.
+// PanicCheckpointGuard dtor verifies host.expected_evaluator_id ==
+// host.ctx; on mismatch it bumps restores_discriminator_failed and
+// skips restore. This catches cross-evaluator restore attempts
+// (aot:reload / persist:load / fiber cross-evaluator body) where
+// the void* ctx is no longer the active Evaluator. The
+// discriminator lives in the host (not Guard) so a Guard that
+// outlives its Evaluator can detect the mismatch on dtor without
+// needing a thread_local "current evaluator" pointer.
 struct PanicCheckpointHost {
     void* ctx = nullptr;
+    void* expected_evaluator_id = nullptr; // Issue #1393: cross-evaluator discriminator
     bool (*save)(void* ctx) noexcept = nullptr;
     bool (*restore)(void* ctx) noexcept = nullptr;
 };
@@ -58,6 +77,19 @@ public:
     ~PanicCheckpointGuard() noexcept {
         if (committed_)
             return;
+        // Issue #1393: cross-evaluator discriminator check.
+        // If expected_evaluator_id is set (non-null) AND differs
+        // from ctx, this Guard was constructed on a different
+        // Evaluator than the host is now bound to. Cross-evaluator
+        // restore would operate on the wrong state → bump the
+        // discriminator-failed counter and skip restore. The user
+        // is expected to manually re-establish the checkpoint on
+        // the new Evaluator if needed.
+        if (host_.expected_evaluator_id != nullptr && host_.expected_evaluator_id != host_.ctx) {
+            ++g_panic_checkpoint_raii_stats.restores_discriminator_failed;
+            ++g_panic_checkpoint_raii_stats.auto_rollbacks;
+            return;
+        }
         if (saved_ && host_.restore && host_.ctx) {
             if (host_.restore(host_.ctx))
                 ++g_panic_checkpoint_raii_stats.restores_ok;

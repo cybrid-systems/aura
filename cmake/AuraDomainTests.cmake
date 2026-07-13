@@ -343,6 +343,18 @@ aura_add_issue_test(test_issue_1392_macro_hygiene_depth)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1392_macro_hygiene_depth)
 add_dependencies(all_test_issue_targets test_issue_1392_macro_hygiene_depth)
 
+# Issue #1393: PanicCheckpoint cross-evaluator discriminator
+# contract test. Verifies PanicCheckpointHost's new
+# expected_evaluator_id field + Guard dtor's mismatch check
+# (skips restore + bumps restores_discriminator_failed counter
+# when ctx != expected_evaluator_id). Tests cover AC1 (mismatch
+# bumps counter), AC2 (matching preserves normal restore flow),
+# AC3 (field exposed). llvm_jit_minimal sufficient — uses core
+# type-erased host API directly, no Aura compiler needed.
+aura_add_issue_test(test_issue_1393_panic_checkpoint_cross_evaluator)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1393_panic_checkpoint_cross_evaluator)
+add_dependencies(all_test_issue_targets test_issue_1393_panic_checkpoint_cross_evaluator)
+
 # Issue #1384: EnvFrame::version_ must be initialized to the
 # current defuse_version_ BEFORE push_back (not via default ctor
 # + post-fill), so concurrent readers never observe version_ ==
