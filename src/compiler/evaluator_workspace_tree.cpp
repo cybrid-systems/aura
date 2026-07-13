@@ -393,12 +393,19 @@ void Evaluator::update_shared_tree_root() {
     // synchronization cost (the active_node mutation above is
     // already under whatever lock owns workspace_tree_).
     //
-    // The fiber-side check (Option 2 follow-up) will compare its
-    // captured generation against this bumped value and emit merr
-    // on mismatch — closing the drift window that the existing
-    // lazy ensure_stable_ref_workspace_consistency leaves open.
-    if (workspace_flat_)
+    // MUST restamp live node_gen_ after the bump. is_valid(id)
+    // requires node_gen_[id] == generation_; bump alone leaves every
+    // existing NodeId stale, so (eval-current) after (workspace:create)
+    // + (set-code ...) aborts at contract_assert(f->is_valid) —
+    // suite/edsl_self_test synthesize:optimize path.
+    //
+    // The fiber-side check (Option 2 follow-up) still sees the new
+    // generation() value; restamp only keeps local NodeIds live for
+    // the current evaluator thread.
+    if (workspace_flat_) {
         workspace_flat_->bump_generation();
+        workspace_flat_->restamp_all_node_generations();
+    }
 }
 
 void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
