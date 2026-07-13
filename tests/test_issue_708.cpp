@@ -37,14 +37,16 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t reload_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:aot-reload-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:aot-reload-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
 static std::int64_t checkpoint_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:aot-checkpoint-version-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:aot-checkpoint-version-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);

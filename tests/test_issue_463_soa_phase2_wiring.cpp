@@ -199,7 +199,8 @@ bool test_edsl_stats_returns_hash() {
     auto v = *r;
     CHECK(aura::compiler::types::is_hash(v), "(query:soa-adoption-stats) returns a hash");
     for (auto key : {"soa-functions-visited", "soa-instructions-visited", "aos-view-built-count"}) {
-        auto rr = cs.eval(std::format("(hash-ref (query:soa-adoption-stats) '{}')", key));
+        auto rr = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:soa-adoption-stats\") '{}')", key));
         if (!rr) {
             CHECK(false, std::format("hash-ref for '{}' failed", key));
             continue;

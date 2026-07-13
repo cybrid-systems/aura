@@ -110,8 +110,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "defrag-blocked-fibers",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(
-            std::format("(hash-ref (query:arena-auto-compact-defrag-fiber-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

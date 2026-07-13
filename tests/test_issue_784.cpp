@@ -101,8 +101,9 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "recommendation",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(
-            std::format("(hash-ref (query:envframe-dualpath-mandatory-enforce-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\") '{}')",
+            k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

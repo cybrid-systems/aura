@@ -102,7 +102,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "linear-violations-post-mutate", "gc-root-syncs",
                                            "dangling-prevented", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:closure-env-epoch-safety-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:closure-env-epoch-safety-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

@@ -59,7 +59,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t guard_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:verify-tool-guard-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:verify-tool-guard-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -71,7 +72,8 @@ static void run_ac1_stats_reachable(aura::compiler::CompilerService& cs) {
     CHECK(r && aura::compiler::types::is_hash(*r), "query:verify-tool-guard-stats returns hash");
     for (const auto& k :
          {"guard-captures", "dirty-propagation", "stable-ref-hits", "feedback-mutate-success"}) {
-        auto f = cs.eval(std::format("(hash-ref (query:verify-tool-guard-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:verify-tool-guard-stats\") '{}')", k));
         CHECK(f && aura::compiler::types::is_int(*f), std::format("field '{}' is an int", k));
     }
 }

@@ -80,7 +80,8 @@ static void run_ac2_seven_fields(aura::compiler::CompilerService& cs) {
         "capture-violations-detected", "style-compliance-pct", "registry-slots", "documented-count",
         "capture-contract-version",    "recommended-action",   "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:primitives-consistency-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:primitives-consistency-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

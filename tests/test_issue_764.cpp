@@ -105,8 +105,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "cross-violations-prevented", "invalidate-ast-refresh",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(
-            std::format("(hash-ref (query:compiler-arena-closure-lifetime-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:compiler-arena-closure-lifetime-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

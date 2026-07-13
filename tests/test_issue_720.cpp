@@ -105,7 +105,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"unhandled-opcode-spikes", "metadata-mismatches",
                                            "deopt-on-mutate", "fallback-to-interpreter", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:jit-interpreter-parity-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:jit-interpreter-parity-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

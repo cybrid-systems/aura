@@ -72,7 +72,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     for (const auto& k : {std::string("validated-edsl"), std::string("hygiene-invariants-held"),
                           std::string("schema-fail-by-type"),
                           std::string("macro-correlated-violations"), std::string("schema")}) {
-        auto f = cs.eval(std::format("(hash-ref (query:edsl-reflection-stats) \'{}\')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:edsl-reflection-stats\") \'{}\')", k));
         CHECK(f, std::format("field \'{} \' present", k));
     }
 }

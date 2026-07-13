@@ -68,7 +68,8 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:cxx26-hotpath-invariants) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:cxx26-hotpath-invariants\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -94,11 +95,16 @@ bool test_primitive_returns_hash() {
 bool test_five_fields_present() {
     std::println("\n--- AC2: 5 fields present ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(hash-ref (query:cxx26-hotpath-invariants) 'fixnum-tag-encoding)");
-    auto r2 = cs.eval("(hash-ref (query:cxx26-hotpath-invariants) 'ref-tag-encoding)");
-    auto r3 = cs.eval("(hash-ref (query:cxx26-hotpath-invariants) 'string-v2-tag-encoding)");
-    auto r4 = cs.eval("(hash-ref (query:cxx26-hotpath-invariants) 'special-tag-encoding)");
-    auto r5 = cs.eval("(hash-ref (query:cxx26-hotpath-invariants) 'float-tag-encoding)");
+    auto r1 = cs.eval(
+        "(hash-ref (engine:metrics \"query:cxx26-hotpath-invariants\") 'fixnum-tag-encoding)");
+    auto r2 =
+        cs.eval("(hash-ref (engine:metrics \"query:cxx26-hotpath-invariants\") 'ref-tag-encoding)");
+    auto r3 = cs.eval(
+        "(hash-ref (engine:metrics \"query:cxx26-hotpath-invariants\") 'string-v2-tag-encoding)");
+    auto r4 = cs.eval(
+        "(hash-ref (engine:metrics \"query:cxx26-hotpath-invariants\") 'special-tag-encoding)");
+    auto r5 = cs.eval(
+        "(hash-ref (engine:metrics \"query:cxx26-hotpath-invariants\") 'float-tag-encoding)");
     if (!r1 || !r2 || !r3 || !r4 || !r5) {
         CHECK(false, "one or more hash-refs returned error");
         return true;

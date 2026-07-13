@@ -137,8 +137,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "shape-inval-count",     "defrag-blocked-fibers",
                                            "production-readiness",  "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(
-            std::format("(hash-ref (query:arena-auto-compact-defrag-fiber-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
@@ -327,7 +327,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "#685 (query:arena-auto-compact-stats) still returns a hash");
     for (const auto& k : {"auto-triggers", "frag-reduced", "shape-inval-on-compact",
                           "defrag-savings", "yield-checks-hit"}) {
-        auto f = cs.eval(std::format("(hash-ref (query:arena-auto-compact-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:arena-auto-compact-stats\") '{}')", k));
         CHECK(f, std::format("#685 field '{}' still present", k));
     }
 
@@ -339,7 +340,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     const auto schema_642 = hash_int_field(cs, "(query:arena-auto-compaction-stats)", "schema");
     CHECK(schema_642 == 642, std::format("#642 schema = {} (expected 642)", schema_642));
     for (const auto& k : {"auto-trigger", "live-move-yield", "guard-defrag"}) {
-        auto f = cs.eval(std::format("(hash-ref (query:arena-auto-compaction-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-auto-compaction-stats\") '{}')", k));
         CHECK(f, std::format("#642 field '{}' still present", k));
     }
 

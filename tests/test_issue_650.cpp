@@ -76,8 +76,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:scheduler-stealbudget-yield-class-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:scheduler-stealbudget-yield-class-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -181,8 +181,9 @@ int aura_issue_650_run() {
         // fields (avoid hash-ref on missing keys — see
         // #644/#645 lessons).
         const auto check_new_field = [&](std::string_view k) {
-            auto r = cs.eval(
-                std::format("(hash-ref (query:scheduler-stealbudget-yield-class-stats) '{}')", k));
+            auto r = cs.eval(std::format("(hash-ref (engine:metrics "
+                                         "\"query:scheduler-stealbudget-yield-class-stats\") '{}')",
+                                         k));
             return r.has_value() && aura::compiler::types::is_int(*r);
         };
         CHECK(check_new_field("outermost-bias"), "new primitive 'outermost-bias' field reachable");

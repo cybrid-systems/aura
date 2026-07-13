@@ -153,8 +153,8 @@ int aura_issue_603_run() {
         auto h = cs.eval("(query:irsoa-incremental-stats)");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "(query:irsoa-incremental-stats) still returns hash");
-        auto wired =
-            cs.eval(std::format("(hash-ref (query:irsoa-incremental-stats) 'soa-wired-hits')"));
+        auto wired = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:irsoa-incremental-stats\") 'soa-wired-hits')"));
         CHECK(wired && aura::compiler::types::is_int(*wired) &&
                   aura::compiler::types::as_int(*wired) >= 1,
               "soa-wired-hits >= 1 after eval-current");

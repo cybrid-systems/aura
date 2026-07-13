@@ -131,14 +131,16 @@ static void run_ac5_stats_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"meta-hits", "documented-count", "schema-documented",
                                            "total-registered", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:primitives-meta-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:primitives-meta-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
-    auto total = cs.eval("(hash-ref (query:primitives-meta-stats) 'total-registered)");
+    auto total =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-meta-stats\") 'total-registered)");
     CHECK(total && aura::compiler::types::is_int(*total) &&
               aura::compiler::types::as_int(*total) > 0,
           "total-registered > 0 (sanity: at least some primitives are registered)");
-    auto schema = cs.eval("(hash-ref (query:primitives-meta-stats) 'schema)");
+    auto schema = cs.eval("(hash-ref (engine:metrics \"query:primitives-meta-stats\") 'schema)");
     CHECK(schema && aura::compiler::types::is_int(*schema) &&
               aura::compiler::types::as_int(*schema) == 669,
           "stats schema == 669");
@@ -146,7 +148,8 @@ static void run_ac5_stats_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac6_meta_hits_bump(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: meta-hits counter increments on per-name query ---");
-    const auto before = cs.eval("(hash-ref (query:primitives-meta-stats) 'meta-hits)");
+    const auto before =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-meta-stats\") 'meta-hits)");
     if (!before || !aura::compiler::types::is_int(*before)) {
         ++g_failed;
         std::println(std::cerr, "  FAIL: meta-hits before not an int");
@@ -155,7 +158,8 @@ static void run_ac6_meta_hits_bump(aura::compiler::CompilerService& cs) {
     const std::int64_t before_n = aura::compiler::types::as_int(*before);
     // One more per-name call.
     cs.eval(R"aura((query:primitives-meta "+"))aura");
-    const auto after = cs.eval("(hash-ref (query:primitives-meta-stats) 'meta-hits)");
+    const auto after =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-meta-stats\") 'meta-hits)");
     const std::int64_t after_n =
         aura::compiler::types::is_int(*after) ? aura::compiler::types::as_int(*after) : -1;
     CHECK(after_n - before_n >= 1, "meta-hits incremented by >=1 after per-name query");
@@ -165,8 +169,10 @@ static void run_ac7_no_arg_form_preserved(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: no-arg form returns foundation counters (preserved) ---");
     auto r = cs.eval("(query:primitives-meta)");
     CHECK(r && aura::compiler::types::is_hash(*r), "no-arg form returns a hash");
-    auto define_used = cs.eval("(hash-ref (query:primitives-meta) 'define-macro-used)");
-    auto prim_err = cs.eval("(hash-ref (query:primitives-meta) 'prim-error-unified)");
+    auto define_used =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-meta\") 'define-macro-used)");
+    auto prim_err =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-meta\") 'prim-error-unified)");
     CHECK(define_used, "foundation counter 'define-macro-used' still present");
     CHECK(prim_err, "foundation counter 'prim-error-unified' still present");
 }
@@ -178,7 +184,8 @@ static void run_ac8_regression(aura::compiler::CompilerService& cs) {
     CHECK(catalog && aura::compiler::types::is_hash(*catalog),
           "query:primitives-meta-catalog (#617) regression [hash]");
     CHECK(describe, "primitive:describe (#480/#559) regression");
-    auto total_field = cs.eval("(hash-ref (query:primitives-meta-catalog) 'total-registered)");
+    auto total_field =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-meta-catalog\") 'total-registered)");
     CHECK(total_field && aura::compiler::types::is_int(*total_field) &&
               aura::compiler::types::as_int(*total_field) > 0,
           "query:primitives-meta-catalog total-registered > 0 (regression)");

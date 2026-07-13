@@ -27,7 +27,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t snap_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:hotpath-bottleneck-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:hotpath-bottleneck-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);

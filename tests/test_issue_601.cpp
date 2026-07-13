@@ -32,7 +32,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t snap_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:jit-hotswap-closure-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:jit-hotswap-closure-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -124,8 +125,8 @@ int aura_issue_601_run() {
         auto stats = cs.eval("(query:jit-stats-hash)");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:jit-stats-hash still returns hash after #601 wiring");
-        auto r =
-            cs.eval(std::format("(hash-ref (query:jit-stats-hash) 'hotswap-invalidate-total')"));
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:jit-stats-hash\") 'hotswap-invalidate-total')"));
         CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) >= 1,
               "jit-stats-hash still reports hotswap-invalidate-total >= 1");
     }

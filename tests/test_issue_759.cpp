@@ -94,7 +94,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "guard-rollback-hygiene-safe",
                                            "reflect-schema-macro-edsl", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:code-as-data-maturity-stats) \'{}\')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:code-as-data-maturity-stats\") \'{}\')", k));
         CHECK(f, std::format("field \'{}\' present", k));
     }
 }

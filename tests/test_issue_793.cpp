@@ -129,7 +129,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "recommendation",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:jit-aot-hotswap-fidelity-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:jit-aot-hotswap-fidelity-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

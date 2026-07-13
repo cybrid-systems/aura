@@ -60,7 +60,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:primitives-regex-error-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:primitives-regex-error-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -68,7 +69,7 @@ static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_vi
 
 static void run_ac1_schema(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:primitives-regex-error-stats reachable (schema 668) ---");
-    auto r = cs.eval("(hash-ref (query:primitives-regex-error-stats) 'schema)");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:primitives-regex-error-stats\") 'schema)");
     CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 668,
           "schema field == 668");
 }
@@ -152,7 +153,8 @@ static void run_ac10_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC10: regression — adjacent observability primitives reachable ---");
     auto apply_stats = cs.eval("(query:primitives-apply-stats)");
     auto meta_catalog = cs.eval("(query:primitives-meta-catalog)");
-    auto apply_schema = cs.eval("(hash-ref (query:primitives-apply-stats) 'schema)");
+    auto apply_schema =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-apply-stats\") 'schema)");
     CHECK(apply_stats && aura::compiler::types::is_hash(*apply_stats),
           "query:primitives-apply-stats (schema 667) regression [hash]");
     CHECK(meta_catalog, "query:primitives-meta-catalog (schema 617) regression");

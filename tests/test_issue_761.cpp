@@ -99,7 +99,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "cross-fiber-steals-during-batch",
                                            "hygiene-violations-in-batch", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:mutate-batch-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:mutate-batch-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

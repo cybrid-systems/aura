@@ -90,7 +90,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys = {"convergence-rate", "closed-loop-rounds",
                                            "convergence-hits", "feedback-mutate-rounds", "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:closed-loop-convergence-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:closed-loop-convergence-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

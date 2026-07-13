@@ -89,8 +89,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
                                            "stale-ref-prevented-eda-loops",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:workspace-closedloop-fiber-eda-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:workspace-closedloop-fiber-eda-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }

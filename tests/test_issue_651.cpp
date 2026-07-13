@@ -80,7 +80,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:gc-panic-deferral-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:gc-panic-deferral-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -188,7 +189,8 @@ int aura_issue_651_run() {
         // fields.
         CHECK(hash_int(cs, "schema") == 651, "new primitive schema == 651");
         const auto check_new_field = [&](std::string_view k) {
-            auto r = cs.eval(std::format("(hash-ref (query:gc-panic-deferral-stats) '{}')", k));
+            auto r = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:gc-panic-deferral-stats\") '{}')", k));
             return r.has_value() && aura::compiler::types::is_int(*r);
         };
         CHECK(check_new_field("pending-panic-deferral"),

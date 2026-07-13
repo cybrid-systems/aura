@@ -128,7 +128,8 @@ static void run_ac2_linear_primitives(aura::compiler::CompilerService& cs) {
     const std::vector<std::string> keys_747 = {"revalidate-hits", "escape-violations-prevented",
                                                "predicate-branch-linear-safe", "schema"};
     for (const auto& k : keys_747) {
-        auto f = cs.eval(std::format("(hash-ref (query:linear-occurrence-mutate-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:linear-occurrence-mutate-stats\") '{}')", k));
         CHECK(f, std::format("#747 field '{}' present", k));
     }
     const auto schema_747 = hash_int_field(cs, "(query:linear-occurrence-mutate-stats)", "schema");
@@ -155,8 +156,8 @@ static void run_ac3_runtime_linear_primitives(aura::compiler::CompilerService& c
                                                "runtime-linear-violations", "env-version-sync",
                                                "schema"};
     for (const auto& k : keys_763) {
-        auto f =
-            cs.eval(std::format("(hash-ref (query:linear-ownership-gc-compiler-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:linear-ownership-gc-compiler-stats\") '{}')", k));
         CHECK(f, std::format("#763 field '{}' present", k));
     }
     const auto schema_763 =

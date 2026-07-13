@@ -127,7 +127,8 @@ static void run_ac1_safe_boundary_surface(aura::compiler::CompilerService& cs) {
                                            "region-violations-prevented", "concurrent-safe-reloads",
                                            "deopt-on-steal"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:aot-safe-swap-boundary-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:aot-safe-swap-boundary-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present in #732 primitive", k));
     }
 }
@@ -147,7 +148,8 @@ static void run_ac2_hotupdate_surface(aura::compiler::CompilerService& cs) {
                                            "recommendation",
                                            "schema"};
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:aot-concurrent-hotupdate-stats) '{}')", k));
+        auto f = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:aot-concurrent-hotupdate-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present in #785 primitive", k));
     }
     const auto schema = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "schema");

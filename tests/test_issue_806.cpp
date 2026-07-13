@@ -119,7 +119,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
         "recommendation",     "schema",
     };
     for (const auto& k : keys) {
-        auto f = cs.eval(std::format("(hash-ref (query:registry-extension-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:registry-extension-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
 }
@@ -272,7 +273,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     CHECK(schema_775 == 775, std::format("#775 schema = {} (expected 775)", schema_775));
     for (const auto& k : {"extensions_registered", "contract_violations_caught",
                           "meta_completeness_pct", "test_skeletons_generated"}) {
-        auto f = cs.eval(std::format("(hash-ref (query:extension-kit-stats) '{}')", k));
+        auto f = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:extension-kit-stats\") '{}')", k));
         CHECK(f, std::format("#775 field '{}' still present", k));
     }
 

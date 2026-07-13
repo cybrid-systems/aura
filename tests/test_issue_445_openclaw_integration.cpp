@@ -74,7 +74,7 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 }
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:seva-audit-log) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"query:seva-audit-log\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -244,7 +244,7 @@ bool test_end_to_end_loop() {
     // Step 3: query audit log
     auto audit = hash_int(cs, "mutations-total");
     // Step 4: read readiness
-    auto dbr = run_on(cs, "(hash-ref (query:edsl-readiness) 'dirty-block-rate)");
+    auto dbr = run_on(cs, "(hash-ref (engine:metrics \"query:edsl-readiness\") 'dirty-block-rate)");
     CHECK(aura::compiler::types::is_int(gap), "step 1: gap is an int");
     CHECK(audit >= 0, "step 3: audit log mutations-total >= 0");
     CHECK(aura::compiler::types::is_int(dbr), "step 4: dirty-block-rate is an int");

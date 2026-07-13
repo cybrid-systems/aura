@@ -70,7 +70,7 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 }
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:aot-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"query:aot-stats\") '{}')", key));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -107,9 +107,11 @@ bool test_aot_stats_is_hash() {
 bool test_three_fields_present() {
     std::println("\n--- AC2: 3 fields present ---");
     aura::compiler::CompilerService cs;
-    auto v1 = run_on(cs, "(hash-ref (query:aot-stats) 'aot-stale-reject-count)");
-    auto v2 = run_on(cs, "(hash-ref (query:aot-stats) 'aot-region-mismatch-count)");
-    auto v3 = run_on(cs, "(hash-ref (query:aot-stats) 'aot-hot-update-success-count)");
+    auto v1 = run_on(cs, "(hash-ref (engine:metrics \"query:aot-stats\") 'aot-stale-reject-count)");
+    auto v2 =
+        run_on(cs, "(hash-ref (engine:metrics \"query:aot-stats\") 'aot-region-mismatch-count)");
+    auto v3 =
+        run_on(cs, "(hash-ref (engine:metrics \"query:aot-stats\") 'aot-hot-update-success-count)");
     CHECK(aura::compiler::types::is_int(v1), "aot-stale-reject-count is int");
     CHECK(aura::compiler::types::is_int(v2), "aot-region-mismatch-count is int");
     CHECK(aura::compiler::types::is_int(v3), "aot-hot-update-success-count is int");
