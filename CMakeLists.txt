@@ -4694,6 +4694,13 @@ aura_issue_test_link_llvm_jit(test_issue_1399)
 # so a future decoupling fails to compile at the call site.
 aura_add_issue_test(test_issue_1400)
 aura_issue_test_link_llvm_jit(test_issue_1400)
+# Issue #1401: load_module_file ↔ compact_env_frames() mutex interlock.
+# Evaluator::compact_env_frames_lock_ serializes both call sites
+# (canonical order: interlock → env_frames_mtx_ | workspace_mtx_).
+# Test exercises direct Evaluator method calls (bypasses pre-existing
+# cs.eval concurrent crash from #1399 honest gap).
+aura_add_issue_test(test_issue_1401)
+aura_issue_test_link_llvm_jit(test_issue_1401)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
