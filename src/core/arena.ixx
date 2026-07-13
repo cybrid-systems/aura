@@ -318,18 +318,32 @@ public:
     // request / clear, acquire-release for the read in the
     // safepoint check (so the fiber sees the most recent flag
     // state across threads).
-    // Issue #1390: returns true iff a safepoint is registered
-    // to observe the defrag flag on the next allocation. When
-    // false, the request sets the flag but the flag will never
-    // be observed (no allocation will see it), so the defrag
-    // effectively becomes a no-op. Operators calling
-    // request_defrag() should check the return value and either
-    // register a safepoint (fiber:spawn path) or call
-    // (arena:defrag-now) for explicit compaction.
+    // Issue #1390 + #1397: request_defrag() returns whether THIS
+    // call transitioned the defrag_requested flag from false to
+    // true (newly_set semantics, atomic compare_exchange_strong).
+    // Returns true on the call that actually set the flag; every
+    // subsequent call returns false until either (arena:defrag)
+    // resets the flag via clear_defrag_request() (cycle reset)
+    // or the operator manually clears it.
     //
-    // Side effect: emits a one-shot stderr warning the first time
-    // it's called with no safepoint registered. See
-    // warn_no_safepoint_once() below.
+    // Side effects:
+    //   - Sets the defrag_requested flag to true (idempotent — a
+    //     subsequent call while the flag is already set still
+    //     leaves it true; only the return value changes).
+    //   - Emits a one-shot stderr warning the first time it's
+    //     called with no safepoint registered. See
+    //     warn_no_safepoint_once() below. The warning fires
+    //     once per process regardless of how many calls happen
+    //     afterward — it's a misconfiguration signal, not a
+    //     per-call nag.
+    //
+    // To check safepoint registration status independently of
+    // the request's newly-set state, use
+    // ASTArena::safepoint_registered() (returns the static
+    // registration check) or call `(arena:safepoint-registered?)`
+    // from Aura. The CAS return value here is specifically the
+    // transition signal — use it to decide whether to clear the
+    // flag via `(arena:defrag)` or to keep it for later.
     [[nodiscard]] bool request_defrag() noexcept {
         // Issue #1397: atomic compare-exchange so the return value
         // distinguishes "newly set this call" from "already set by
