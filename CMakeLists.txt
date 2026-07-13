@@ -4717,6 +4717,11 @@ aura_issue_test_link_llvm_jit(test_issue_1402)
 # concurrent crash documented in #1399's honest gap.
 aura_add_issue_test(test_issue_1404)
 aura_issue_test_link_llvm_jit(test_issue_1404)
+# Issue #1405: workspace_flat_ generation counter (Option 1 — infra only).
+# Source change: update_shared_tree_root now bumps workspace_flat_->generation.
+# Fiber-side check + merr (full Option 2 per body) is documented follow-up.
+aura_add_issue_test(test_issue_1405)
+aura_issue_test_link_llvm_jit(test_issue_1405)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
