@@ -2185,11 +2185,17 @@ private:
             primitives_.add(std::move(name), std::move(fn), std::move(meta));
         };
     }
-    // Load a module file, return module object (or void on failure)
+
+public:
+    // Load a module file, return module object (or void on failure).
+    // Public for direct Evaluator access (tests + future
+    // evaluator-driven tooling). Aura primitive `(load-module ...)` is
+    // the user-facing surface; this is the underlying implementation.
     types::EvalValue load_module_file(const std::string& path);
-    // Resolve a module path (supports AURA_PATH, .aura extension)
+    // Resolve a module path (supports AURA_PATH, .aura extension).
     std::string resolve_module_path(const std::string& path) const;
 
+private:
     // Centralized tagged error pair builder ("error" . ("kind" . "message")).
     // Replaces the ~14 duplicated local `auto merr = [this](...)` lambdas
     // (see docs/contributing.md §3). Body implemented in evaluator_adt.cpp.
@@ -2366,6 +2372,25 @@ public:
     // push_back / set-car! / set-cdr! paths to keep the Aura
     // primitive surface thread-safe under fiber:spawn.
     mutable std::mutex alloc_storage_lock_;
+    // Issue #1401: serializes load_module_file ↔ compact_env_frames().
+    // compact_env_frames (Issue #1386) re-packs env_frames_ and
+    // rewrites Closure::env_id via a remap table. load_module_file
+    // allocates fresh env_frames_ + adds new closures_ for the
+    // loaded module. Without this interlock, a concurrent
+    // compact_env_frames could miss freshly-added closures (Step 2
+    // walk) and reclaim frames the loader is about to use (Step 3
+    // pack), producing torn env_id remap + iterator invalidation.
+    //
+    // Lock order: compact_env_frames_lock_ is acquired FIRST in both
+    // call sites, before env_frames_mtx_ / workspace_mtx_. No
+    // caller holds any other lock before taking this one, so the
+    // canonical order is `compact_env_frames_lock_ → env_frames_mtx_
+    // | workspace_mtx_`, and these two functions cannot interleave
+    // (mutex-exclusive). Regular std::mutex (not shared) — both
+    // paths are exclusive and rare (module reload / env-frame GC
+    // are not hot paths), so we serialize fully rather than allow
+    // concurrent reloads.
+    mutable std::mutex compact_env_frames_lock_;
     // Issue #145 Phase 2.1 — SoA arena for Env. Frames are
     // appended in alloc_env_frame and indexed by EnvId. Frame
     // data is parallel to Env; parent walks go via parent_id_
