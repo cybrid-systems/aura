@@ -12,6 +12,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
+import aura.core.type;
 import aura.compiler.type_checker;
 
 using aura::compiler::CompilerService;
