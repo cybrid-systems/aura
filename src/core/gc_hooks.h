@@ -75,6 +75,14 @@ inline bool fiber_active() noexcept {
     return fn ? fn() : false;
 }
 
+// Issue #1390: query whether a safepoint check function is
+// registered. Used by ASTArena::request_defrag() to decide
+// whether to emit a one-shot "no safepoint" warning, and
+// exposed as (arena:safepoint-registered?) primitive.
+inline bool safepoint_registered() noexcept {
+    return g_arena_safepoint_check.load(std::memory_order_acquire) != nullptr;
+}
+
 // ── Safepoint active flag (Issue #1364) ───────────────────
 // Set true for the duration of a STW GC pause (after all fibers
 // arrived, until resume). Mutation primitives consult this via

@@ -16,7 +16,53 @@ module;
 export module aura.core.arena;
 import std;
 
+// Issue #1390: one-shot stderr warning when request_defrag() is
+// called with no GC safepoint registered. Exported as free
+// functions inside namespace aura::ast so callers (and the
+// (arena:warn-no-safepoint) primitive) can find them via the
+// qualified name aura::ast::was_no_safepoint_warned().
+//
+// warn_no_safepoint_once(): emit a stderr warning the FIRST time
+// it's called (across the whole process). Subsequent calls are
+// silent — operators already know about the issue.
+//
+// was_no_safepoint_warned(): read-only query — has the warning
+// fired yet? Used by (arena:warn-no-safepoint) primitive.
+//
+// IMPORTANT: both functions share the SAME static atomic flag.
+// Using two separate static locals would give was_..._warned()
+// its own copy (always false), so it would never observe the
+// warning fired by warn_..._once(). Sharing the flag via a
+// function-local static in a shared accessor guarantees they
+// observe the same state.
+
 namespace aura::ast {
+
+namespace arena_no_safepoint_detail {
+    export inline std::atomic<bool>& no_safepoint_warned_flag() noexcept {
+        static std::atomic<bool> flag{false};
+        return flag;
+    }
+} // namespace arena_no_safepoint_detail
+
+export inline void warn_no_safepoint_once() noexcept {
+    bool expected = false;
+    if (arena_no_safepoint_detail::no_safepoint_warned_flag().compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+        std::fprintf(stderr, "[aura arena] WARNING: request_defrag() called "
+                             "but no GC safepoint is registered "
+                             "(g_arena_safepoint_check is null). The defrag "
+                             "flag will never be observed by an allocation "
+                             "safepoint. Either register a safepoint via "
+                             "gc_hooks.h (fiber:spawn path) or use "
+                             "(arena:defrag-now) for explicit compaction. "
+                             "This warning is emitted once per process.\n");
+    }
+}
+
+export inline bool was_no_safepoint_warned() noexcept {
+    return arena_no_safepoint_detail::no_safepoint_warned_flag().load(std::memory_order_acquire);
+}
 
 // Issue #658: small-object tier exhaustion fallbacks to main pmr arena.
 export inline std::atomic<std::uint64_t> arena_small_tier_fallback_total{0};
@@ -272,7 +318,29 @@ public:
     // request / clear, acquire-release for the read in the
     // safepoint check (so the fiber sees the most recent flag
     // state across threads).
-    void request_defrag() noexcept { defrag_requested_.store(true, std::memory_order_release); }
+    // Issue #1390: returns true iff a safepoint is registered
+    // to observe the defrag flag on the next allocation. When
+    // false, the request sets the flag but the flag will never
+    // be observed (no allocation will see it), so the defrag
+    // effectively becomes a no-op. Operators calling
+    // request_defrag() should check the return value and either
+    // register a safepoint (fiber:spawn path) or call
+    // (arena:defrag-now) for explicit compaction.
+    //
+    // Side effect: emits a one-shot stderr warning the first time
+    // it's called with no safepoint registered. See
+    // warn_no_safepoint_once() below.
+    [[nodiscard]] bool request_defrag() noexcept {
+        const bool registered = aura::gc_hooks::safepoint_registered();
+        if (!registered) {
+            warn_no_safepoint_once();
+        }
+        defrag_requested_.store(true, std::memory_order_release);
+        return registered;
+    }
+    [[nodiscard]] bool safepoint_registered() const noexcept {
+        return aura::gc_hooks::safepoint_registered();
+    }
     [[nodiscard]] bool defrag_requested() const noexcept {
         return defrag_requested_.load(std::memory_order_acquire);
     }
@@ -660,7 +728,7 @@ private:
             // Issue #658: tier exhausted — fall through to main pmr arena.
             arena_small_tier_fallback_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #743: tier pressure → defer live defrag at next safe point.
-            request_defrag();
+            (void)request_defrag();
             aura::core::cpp26::record_hotpath_invariant_hit();
         }
 

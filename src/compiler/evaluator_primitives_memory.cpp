@@ -392,14 +392,40 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // defrag_requested flag on the main arena. The actual defrag
     // runs when something observes the flag and decides to act
     // (typically the main thread or a fiber coordinator at the
-    // next safe opportunity). Returns 1 if the flag was newly
-    // set, 0 if it was already set.
+    // next safe opportunity). Returns true iff a safepoint is
+    // registered to observe the flag. If false, the flag is set
+    // but no allocation will ever see it (and a one-shot stderr
+    // warning is emitted by the arena).
     add("arena:request-defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_)
-            return make_int(0);
+            return make_bool(false);
         bool was_set = ev.arena_->defrag_requested();
-        ev.arena_->request_defrag();
-        return make_bool(!was_set); // true = newly set, false = already set
+        bool observed = ev.arena_->request_defrag();
+        // observed=false means the flag will not be observed by
+        // any allocation (no safepoint). Caller can use the
+        // return value to decide whether to fall back to
+        // (arena:defrag-now) for explicit compaction.
+        (void)was_set;
+        return make_bool(observed);
+    });
+    // (arena:safepoint-registered?) — Issue #1390: boolean
+    // query for whether the GC has registered a safepoint
+    // callback. Operators can call this before requesting
+    // defrag to decide whether to fall back to (arena:defrag-now).
+    add("arena:safepoint-registered?", [&ev](const auto&) -> EvalValue {
+        if (!ev.arena_)
+            return make_bool(false);
+        return make_bool(ev.arena_->safepoint_registered());
+    });
+    // (arena:warn-no-safepoint) — Issue #1390: returns true iff
+    // the one-shot "no safepoint registered" stderr warning has
+    // already fired (i.e., request_defrag() was called while no
+    // safepoint was registered). Read-only side-effect: fires
+    // the warning the first time it's true. Operators can poll
+    // this primitive to detect the misconfiguration.
+    add("arena:warn-no-safepoint", [](const auto&) -> EvalValue {
+        bool was = aura::ast::was_no_safepoint_warned();
+        return make_bool(was);
     });
 
     // ── Issue #1320 Phase 1: explicit live-defrag policy primitive ──
