@@ -8742,13 +8742,18 @@ public:
     // reaches a unique section to drain readers and then erase.
     // Simpler: we use a plain mutex that both hold exclusively. The
     // critical section is sub-ms in practice.
+    // Lock-order contract (Issue #1388): this is the FIRST lock
+    // in the canonical order. Acquire this BEFORE workspace_mtx_,
+    // env_frames_mtx_, or dep_graph_mtx_. Reverse is NOT allowed.
     std::shared_mutex mutate_mtx_;
 
     // Issue #1376: protects dep_graph_ (calls / called_by edges).
     // Writers (record_dependency, invalidate_function erase, unload_module)
     // take unique_lock; readers (public_dep_graph_*, get_dependents,
-    // cascade BFS) take shared_lock. Lock order when both needed:
-    // mutate_mtx_ first, then dep_graph_mtx_ (never reverse).
+    // cascade BFS) take shared_lock.
+    // Lock-order contract (Issue #1388): this is the LAST lock in
+    // the canonical order. Acquire ONLY after mutate_mtx_ +
+    // workspace_mtx_ + env_frames_mtx_. Reverse is NOT allowed.
     mutable std::shared_mutex dep_graph_mtx_;
 
     // Issue #1377: SoA dual-emit opt-in (default off). Mirrors the
