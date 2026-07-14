@@ -33,6 +33,69 @@ class Primitive:
     name: str
     file: str
     category: str = "core"  # Issue #559: classification tag
+    deprecated: bool = False  # Issue #1438: surface deprecation in docs
+
+
+# Issue #1434–#1437: names marked PrimMeta.deprecated in the engine.
+# Keep in sync with mark_p1b_top_stats / query·mutate·workspace dispatch.
+_DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset(
+    {
+        # #1435 query
+        "query:node",
+        "query:children",
+        "query:children-stable",
+        "query:parent",
+        "query:parent-stable",
+        "query:find",
+        "query:def-use",
+        "query:mutation-log",
+        # #1436 mutate
+        "mutate:rebind",
+        "mutate:replace-pattern",
+        "mutate:replace-subtree",
+        "mutate:replace-value",
+        "mutate:replace-type",
+        "mutate:move-node",
+        "mutate:extract-function",
+        "mutate:validate-against-schema",
+        "mutate:atomic-batch",
+        "mutate:sv-add-coverpoint",
+        "mutate:sv-weaken-property",
+        # #1437 workspace
+        "workspace:create",
+        "workspace:switch",
+        "workspace:merge",
+        "workspace:lock",
+        "workspace:unlock",
+        "workspace:list",
+        "workspace:current",
+    }
+)
+
+# #1434 top-20 stats (scripts/find_top_stats.py PINNED_TOP20)
+try:
+    import importlib.util
+
+    _fts = ROOT / "scripts" / "find_top_stats.py"
+    _spec = importlib.util.spec_from_file_location("find_top_stats", _fts)
+    _mod = importlib.util.module_from_spec(_spec) if _spec and _spec.loader else None
+    if _mod and _spec and _spec.loader:
+        _spec.loader.exec_module(_mod)
+        _DEPRECATED_TOP_STATS: frozenset[str] = frozenset(getattr(_mod, "PINNED_TOP20", []))
+    else:
+        _DEPRECATED_TOP_STATS = frozenset()
+except Exception:  # noqa: BLE001 — docs gen must not fail on import noise
+    _DEPRECATED_TOP_STATS = frozenset()
+
+DEPRECATED_PRIMITIVES: frozenset[str] = _DEPRECATED_CORE_ALIASES | _DEPRECATED_TOP_STATS
+
+
+def is_deprecated_name(name: str) -> bool:
+    """Issue #1438: mark deprecated in generated primitives.md."""
+    if name in DEPRECATED_PRIMITIVES:
+        return True
+    # Broad freeze-surface: all *-stats still public but discouraged
+    return name.endswith("-stats") or name.endswith("-stats-hash") or "-stats-" in name
 
 
 # Issue #559: 4-category classification (matches the issue's
@@ -161,12 +224,22 @@ def scan_primitives() -> list[Primitive]:
             for m in FFI_ADD_RE.finditer(text):
                 name = m.group(1)
                 if name not in found:
-                    found[name] = Primitive(name, rel, classify_primitive(name, overrides))
+                    found[name] = Primitive(
+                        name,
+                        rel,
+                        classify_primitive(name, overrides),
+                        is_deprecated_name(name),
+                    )
         else:
             for m in PRIMITIVE_RE.finditer(text):
                 name = m.group(1)
                 if name not in found:
-                    found[name] = Primitive(name, rel, classify_primitive(name, overrides))
+                    found[name] = Primitive(
+                        name,
+                        rel,
+                        classify_primitive(name, overrides),
+                        is_deprecated_name(name),
+                    )
 
     return sorted(found.values(), key=lambda p: p.name)
 
@@ -226,12 +299,15 @@ def render_primitives(primitives: list[Primitive]) -> str:
     for p in primitives:
         cat = p.category if p.category in by_cat else "core"
         by_cat[cat].append(p)
+    n_dep = sum(1 for p in primitives if p.deprecated)
     lines = [
         GENERATED_BANNER,
         "# Primitives (generated)",
         "",
-        f"**{len(primitives)}** registrations scanned from `src/**/*.cpp`.",
-        "Runtime canonical list: `(api-reference)`.",
+        f"**{len(primitives)}** registrations scanned from `src/**/*.cpp` "
+        f"({n_dep} marked **deprecated** — Issue #1438).",
+        "Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).",
+        "Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.",
         "",
         "**Classification (Issue #559)**:",
         "",
@@ -250,6 +326,13 @@ def render_primitives(primitives: list[Primitive]) -> str:
         "`docs/primitive_categories.yaml`."
     )
     lines.append("")
+
+    def _fmt_line(p: Primitive, with_cat: bool = True) -> str:
+        dep = " **deprecated**" if p.deprecated else ""
+        if with_cat:
+            return f"- `{p.name}` *[{p.category}]*{dep} — `{p.file}`"
+        return f"- `{p.name}`{dep} — `{p.file}`"
+
     # Legacy group-by-prefix rendering (kept for backward
     # compat with the existing primitives.md layout).
     groups = group_primitives(primitives)
@@ -261,10 +344,8 @@ def render_primitives(primitives: list[Primitive]) -> str:
         }.get(group, group.rstrip(":").title() + (":" if group.endswith(":") else ""))
         lines.append(f"## {title} ({len(items)})")
         lines.append("")
-        # Within each prefix group, also tag each primitive
-        # with its category for easy scanning.
         for p in items:
-            lines.append(f"- `{p.name}` *[{p.category}]* — `{p.file}`")
+            lines.append(_fmt_line(p, with_cat=True))
         lines.append("")
     # New: 4-category section (Issue #559 primary deliverable).
     lines.append("## By category (Issue #559)")
@@ -276,6 +357,20 @@ def render_primitives(primitives: list[Primitive]) -> str:
         lines.append(f"### {CATEGORY_TITLE[cat]} ({len(items)})")
         lines.append("")
         for p in items:
+            lines.append(_fmt_line(p, with_cat=False))
+        lines.append("")
+    # Issue #1438: collapsed deprecated index
+    dep_items = [p for p in primitives if p.deprecated]
+    if dep_items:
+        lines.append("## Deprecated (Issue #1438)")
+        lines.append("")
+        lines.append(
+            "Still registered for compatibility. Prefer "
+            "`(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. "
+            f"**{len(dep_items)}** names:"
+        )
+        lines.append("")
+        for p in dep_items:
             lines.append(f"- `{p.name}` — `{p.file}`")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
