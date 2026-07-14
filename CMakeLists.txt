@@ -4737,6 +4737,21 @@ aura_issue_test_link_llvm_jit(test_issue_1406)
 # cache hit/miss/hash/epoch-bump. 2 follow-ups: per-node
 # re-inference integration, full SolveResult in TypeCheckResult.
 aura_add_issue_test(test_issue_1407_constraint_solver_cache)
+# Issue #1408: R2 Composite typed_mutation transaction + rollback.
+# TypedTransactionGuard RAII + typed_mutate_atomic(span<string_view>)
+# wraps N typed_mutate calls in one transaction — all-or-nothing via
+# workspace_flat_->rollback_since(snapshot_id) on guard destruction.
+# 4 ACs: happy/abort/empty/snapshot. EDSL primitive (typed-mutate-atomic)
+# is a follow-up (typed-mutate itself is tree-walker-dispatched).
+aura_add_issue_test(test_composite_typed_mutate)
+# Issue #1408: TypedTransactionGuard test exercises the full
+# CompilerService::eval path, which references the JIT runtime
+# (AuraJIT::invalidate / set_string_pool / compile / register_function /
+# get_function_ptr + the AOT emit_native_object / run_escape_analysis
+# shims). These live in aura_jit_test_objects with AURA_HAVE_LLVM=1
+# properly defined. Use the existing helper that wires LLVM includes +
+# libs (same pattern as test_issue_1406 / test_ir / test_spec_jit).
+aura_issue_test_link_llvm_jit(test_composite_typed_mutate)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
