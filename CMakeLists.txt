@@ -4802,6 +4802,19 @@ aura_add_issue_test(test_bidirectional_annotation)
 # undefined references (g_tl_arena, tl_arena_push/pop,
 # AuraJIT::unhandled_opcode_count_for_function, aura_set_aot_metrics, etc).
 aura_issue_test_link_llvm_jit(test_bidirectional_annotation)
+# Issue #1416: Runtime GuardShape enforcement — kPrimSec* capability
+# gate at primitive dispatch site. Production code lives in
+# src/compiler/security_capabilities.h (new kCapSandbox constant),
+# src/compiler/primitives_detail.h (DEFINE_PRIMITIVE_META_SECURE macro
+# taking 7th SECURITY param), src/compiler/evaluator.ixx
+# (invoke_prim_with_telemetry capability gate at the dispatch site
+# using name → meta → sec_tier lookup), and src/compiler/evaluator_ctor.cpp
+# (backfill_capability_tiers() tier-assigning the 7 Part 4 #1396 EDSL
+# escape hatches to kPrimSecPrivileged). This test exercises direct
+# CompilerService::eval calls, so aura_issue_test_link_llvm_jit is
+# required (same reusable invariant from #1408/#1410/#1411).
+aura_add_issue_test(test_capability_gating)
+aura_issue_test_link_llvm_jit(test_capability_gating)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash

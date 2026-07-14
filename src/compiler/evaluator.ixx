@@ -2172,6 +2172,12 @@ private:
     void build_primitive_slots();
     // Issue #697: post-registration SV/EDA PrimMeta backfill.
     void backfill_eda_sv_primitive_meta();
+    // Issue #1416: post-registration tier-assignment for the 7 EDSL
+    // escape-hatch primitives (Part 4 #1396) so the dispatch-site
+    // capability gate in invoke_prim_with_telemetry can deny
+    // unauthorized calls. All 7 are set to kPrimSecPrivileged
+    // (require kCapWildcard to invoke).
+    void backfill_capability_tiers();
     // Dynamic ADT ctor registration (define-type eval path).
     void register_adt_ctor(const std::string& ctor_name, types::EvalValue tag_str, int field_count);
     [[nodiscard]] types::EvalValue make_adt_zero_arg_ctor(types::EvalValue tag_str);
@@ -3422,9 +3428,52 @@ public:
 
     // Issue #1357: invoke PrimFn; latency is recorded by hot PrimFn wrappers
     // installed in finalize_hot_table() (covers IR + tree-walker).
+    // Issue #1416: capability gate based on PrimMeta.security_level.
+    // On dispatch we look up the primitive's security tier and gate
+    // the call against the evaluator's capability set. kPrimSecPrivileged
+    // requires kCapWildcard, kPrimSecSandboxed requires kCapSandbox,
+    // kPrimSecSafe (default) and 0/unknown pass through. The gate
+    // lives here (vs inside each primitive body) so individual primitives
+    // don't each re-implement the same check (DRY) and so that
+    // tier-assignment can be done post-registration via
+    // set_meta_for_name (used by backfill_capability_tiers in
+    // evaluator_ctor.cpp to tier-assign the 7 EDSL escape hatches).
+    // The O(1) name → slot → meta lookup is only paid for the
+    // gate path (skipped when name is empty or security_level is 0).
     template <typename Call>
-    inline types::EvalValue invoke_prim_with_telemetry(std::string_view /*name*/, Call&& call) {
+    inline types::EvalValue invoke_prim_with_telemetry(std::string_view name, Call&& call) {
         bump_primitive_call_count();
+
+        if (!name.empty()) {
+            const auto slot = primitives_.slot_for_name(name);
+            if (slot < primitives_.slot_count()) {
+                const auto& meta = primitives_.meta_for_slot(slot);
+                if (meta.security_level == kPrimSecPrivileged &&
+                    !has_capability(security::kCapWildcard)) {
+                    bump_capability_denial();
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
+                        m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    return make_primitive_error(
+                        string_heap_, error_values_,
+                        "capability denied: privileged primitive requires kCapWildcard",
+                        primitive_error_counter_ptr());
+                }
+                if (meta.security_level == kPrimSecSandboxed &&
+                    !has_capability(security::kCapSandbox)) {
+                    bump_capability_denial();
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    return make_primitive_error(
+                        string_heap_, error_values_,
+                        "capability denied: sandboxed primitive requires kCapSandbox",
+                        primitive_error_counter_ptr());
+                }
+            }
+        }
+
         return call();
     }
 

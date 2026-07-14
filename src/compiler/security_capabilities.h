@@ -10,6 +10,8 @@ extern "C" std::uint64_t aura_fiber_current_id();
 namespace aura::compiler::security {
 
 inline constexpr const char* kCapWildcard = "*";
+// Issue #1416: sandbox capability for kPrimSecSandboxed tier dispatch gate.
+inline constexpr const char* kCapSandbox = "sandbox";
 inline constexpr const char* kCapMutate = "mutate";
 inline constexpr const char* kCapIo = "io";
 inline constexpr const char* kCapIoRead = "io-read";
