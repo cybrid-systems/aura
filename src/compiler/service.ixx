@@ -1681,7 +1681,12 @@ public:
         // unaffected — it protects cells_/pairs_/string_heap_
         // writes during eval, while eval_mutex_ protects the
         // parse + typecheck setup that runs before those writes.
-        std::lock_guard<std::mutex> lock(eval_mutex_);
+        //
+        // recursive_mutex: Path B (workspace fn call shortcut) may
+        // re-enter eval() for non-literal args (e.g. string args
+        // after eval_arg_fast fails). A plain mutex deadlocks the
+        // calling thread and timed out jit_late1 on (f "hi") paths.
+        std::lock_guard<std::recursive_mutex> lock(eval_mutex_);
         // Issue #411: snapshot the workspace mutation_log_ size at
         // entry so the post-eval auto-incremental typecheck can
         // detect whether this eval produced a new mutation
@@ -7475,7 +7480,8 @@ private:
         // Void
         if (t == "()" || t == "#!void")
             return make_void();
-        // Sentinel for non-primitive input — caller falls back to full eval.
+        // Sentinel for non-primitive input — caller falls back to full
+        // eval() (recursive under eval_mutex_ / recursive_mutex).
         return EvalValue(0);
     }
 
@@ -9593,7 +9599,8 @@ public:
     // eval_mutex_ protects the parse + typecheck setup that runs
     // before those writes. Heavy-handed but ship-fast: see
     // issue #1431 for the architectural follow-up.
-    mutable std::mutex eval_mutex_;
+    // recursive: Path B re-enters eval() for non-literal args.
+    mutable std::recursive_mutex eval_mutex_;
     // Issue #684: pending SoA snapshot consumed by store_define_v2.
     std::optional<LowerSoAEmitSnapshot> pending_soa_snapshot_;
     // ── Speculative JIT controller (Phase 2, #53) ──────────────
