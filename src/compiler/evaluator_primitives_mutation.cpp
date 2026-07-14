@@ -15,6 +15,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+import aura.compiler.service; // Issue #1415: typed-mutate-atomic primitive
 
 namespace aura::compiler::primitives_detail {
 
@@ -777,6 +778,47 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
+    });
+
+    // Issue #1415: (typed-mutate-atomic mutations:list) — EDSL exposure
+    // of CompilerService::typed_mutate_atomic. Atomic multi-mutate
+    // from the tree-walker path. mutations is a list of mutation sexpr
+    // strings, e.g. `(list "(mutate:rebind ...)" "(mutate:set-child ...)")`.
+    // Walks the pair chain (canonical Aura list representation) and
+    // extracts each car as a string_view pointing into ev.string_heap_.
+    // On success returns #t; on failure returns an error value with
+    // the abort message (e.g., "tx_abort" if any sub-mutation fails,
+    // triggering TypedTransactionGuard's RAII rollback).
+    add("typed-mutate-atomic", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto* svc_void = ev.compiler_service();
+        if (!svc_void)
+            return make_error(std::string_view("no compiler service"));
+        auto* svc = static_cast<CompilerService*>(svc_void);
+        if (a.empty() || !is_pair(a[0]))
+            return make_error(std::string_view("usage: (typed-mutate-atomic mutations:list)"));
+
+        // Walk the pair list (head=pair.car, tail=pair.cdr).
+        // Same walk pattern as evaluator_primitives_char.cpp list ops.
+        std::vector<std::string_view> mutations;
+        auto v = a[0];
+        while (is_pair(v)) {
+            auto idx = as_pair_idx(v);
+            if (idx >= ev.pairs_.size())
+                break;
+            auto car = ev.pairs_[idx].car;
+            if (!is_string(car))
+                return make_error(std::string_view("mutation list element must be a string sexpr"));
+            auto sidx = as_string_idx(car);
+            if (sidx >= ev.string_heap_.size())
+                return make_error(std::string_view("string index out of range"));
+            mutations.emplace_back(ev.string_heap_[sidx]);
+            v = ev.pairs_[idx].cdr;
+        }
+        if (mutations.empty())
+            return make_error(std::string_view("empty mutations list"));
+
+        auto result = svc->typed_mutate_atomic(mutations);
+        return result.success ? make_bool(true) : make_error(std::string_view(result.error));
     });
 }
 

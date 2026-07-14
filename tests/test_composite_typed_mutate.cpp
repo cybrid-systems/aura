@@ -257,6 +257,57 @@ bool test_atomic_after_normal_mutate() {
     return true;
 }
 
+// ── AC6: explicit force-fail — distinct from AC2's unbalanced-parens
+// (parse-time) failure, this test injects a forced failure via
+// (mutate:rebind ...) with an extra argument (rebind expects 3,
+// gets 4 → arity error). Verifies the rollback semantics work for
+// the "force-fail" AC path explicitly (not just the natural "abort"
+// path of AC2). This is the 3rd coverage path called out in #1415
+// AC: happy (AC1) + abort (AC2) + force-fail (AC6).
+bool test_atomic_force_fail_path() {
+    PRINTLN("\n--- AC6: atomic typed-mutate force-fail (arity error in sub-mutation) ---");
+    aura::compiler::CompilerService cs;
+    if (!setup_initial_workspace(cs)) {
+        std::print("  FAIL: initial setup\n");
+        return false;
+    }
+    const std::size_t committed_before =
+        cs.evaluator().workspace_flat()
+            ? cs.evaluator().workspace_flat()->committed_mutation_count()
+            : 0;
+
+    // First 2 succeed; 3rd has 4 args (mutate:rebind expects 3:
+    // var, expr, reason). Arity mismatch → parse-time failure.
+    // Distinct from AC2's unbalanced-parens failure (different
+    // syntax error mode → exercises the same TypedTransactionGuard
+    // rollback path from a different angle).
+    std::array<std::string_view, 3> mutations = {
+        "(mutate:rebind \"x\" \"100\")",
+        "(mutate:rebind \"y\" \"200\")",
+        "(mutate:rebind \"z\" \"300\" \"reason\" \"EXTRA-ARG-FORCE-FAIL-1415\")",
+    };
+    auto result = cs.typed_mutate_atomic(mutations);
+    if (result.success) {
+        std::print(
+            "  FAIL: typed_mutate_atomic returned success=true (expected force-fail abort)\n");
+        return false;
+    }
+    const std::size_t committed_after =
+        cs.evaluator().workspace_flat()
+            ? cs.evaluator().workspace_flat()->committed_mutation_count()
+            : 0;
+    if (committed_after != committed_before) {
+        std::print("  FAIL: committed_mutation_count grew by {} after force-fail "
+                   "(expected 0)\n",
+                   committed_after - committed_before);
+        return false;
+    }
+    std::print("  PASS: force-fail (arity error) rolled back all 3 sub-mutations "
+               "(committed count unchanged: {})\n",
+               committed_before);
+    return true;
+}
+
 } // namespace aura_issue_1408_detail
 
 int aura_issue_composite_typed_mutate_run() {
@@ -269,6 +320,7 @@ int aura_issue_composite_typed_mutate_run() {
     ok &= test_atomic_empty_mutations();
     ok &= test_atomic_snapshot_semantics();
     ok &= test_atomic_after_normal_mutate();
+    ok &= test_atomic_force_fail_path();
 
     std::print("\n\u2550\u2550\u255d Results: {}/{} passed, {}/{} failed \u2550\u2550\u255d\n",
                ::aura::test::g_passed, ::aura::test::g_passed + ::aura::test::g_failed,
