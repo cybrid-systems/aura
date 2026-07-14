@@ -1,0 +1,89 @@
+; ── fasta — Computer Language Benchmarks Game ──
+;
+; Port of https://benchmarksgame-team.pages.debian.net/benchmarksgame/
+;         description/fasta.html
+;
+; Algorithm: write FASTA sequences — ONE (cycling a fixed alu repeat) and
+; TWO (weighted-random over the IUB ambiguous alphabet) — 60 chars per line.
+;
+; Usage:
+;   N=50 ./build-gcc16/aura < tests/bench/fasta.aura
+;       N = sequence scale (default 50). ONE gets N chars, TWO gets N*3.
+;
+; Pseudorandom source: the canonical fasta LCG (IM=139968 IA=3877 IC=29573,
+; seed 42). Aura has no random primitive, so the LCG is hand-rolled in
+; integer arithmetic (max product ~139967*3877 = 5.4e8, well within int64).
+;
+; Weighted random: r in [0,1) via `(/ (* (rand) 1.0) IM)` (the `1.0` coerces
+; to float division — integer `/` is floor division and would yield 0),
+; then a 15-deep named-let walk over the cumulative-prob table for the
+; first cum > r.
+;
+; NOTE on the THREE-sequence limit: the official fasta emits a third sequence
+; (THREE, weighted over homo-sapiens frequencies). This port omits it. When
+; THREE's code is present in the same begin block, the Aura compiler/
+; evaluator corrupts TWO's rand-char output from ~the 5th character onward
+; (TWO[5] becomes 'a' instead of 't') — even though THREE executes AFTER TWO
+; and even when THREE doesn't call rand. The corruption is static (code-text
+; presence), not execution-order, and survives every rewrite tried (while vs
+; named-let vs pre-generated vector, let vs define, list vs vector cum table).
+; It's a compiler bug, not an algorithm one. The two-sequence version below
+; is byte-identical to the Python reference for ONE + TWO.
+;
+; write-seq uses a named-let recursion (no set!) — Aura's set! in a while
+; body contaminates later generator calls even when the set! variable isn't
+; read by the generator (see tests/bench/revcomp.aura for the define+set!
+; variant of the same family of bugs). Depth = n, so this trips the >2000
+; recursion guard on sequences above ~2000 chars.
+
+(begin
+  ; ── constants ──
+  (define IA 3877)
+  (define IC 29573)
+  (define IM 139968)
+  (define seed 42)
+  (define (rand) (set! seed (modulo (+ (* seed IA) IC) IM)) seed)
+
+  ; ── alu repeat (287 chars, cycled for ONE) ──
+  (define alu
+"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGATCGAGACCATCCTGGTAACACGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGGGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATGGCGTGAACCCGGGAGGCAGAGCTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCAACAGAGCGAGACTCCGTCTCAAAAA")
+  (define alu-len (string-length alu))
+  (define (gen-alu i) (substring alu (modulo i alu-len) (+ (modulo i alu-len) 1)))
+
+  ; ── IUB alphabet + cumulative probabilities ──
+  ;   a 0.27  c 0.12  g 0.12  t 0.27  B/D/H/K/M/N/R/S/V/W/Y each 0.02
+  (define iub-chars "acgtBDHKMNRSVWY")
+  (define iub-cum (list 0.27 0.39 0.51 0.78 0.80 0.82 0.84 0.86 0.88 0.90 0.92 0.94 0.96 0.98 1.0))
+
+  ; weighted-random char: r in [0,1), 15-deep named-let walk for first cum > r
+  (define (rand-char chars cum)
+    (let ((r (/ (* (rand) 1.0) IM)))
+      (let walk ((cl cum) (idx 0))
+        (if (or (null? cl) (< r (car cl)))
+          (substring chars idx (+ idx 1))
+          (walk (cdr cl) (+ idx 1))))))
+
+  ; write n chars from gen(i), 60/line, pure named-let recursion (no set!)
+  (define (write-seq n gen)
+    (let loop ((i 0) (col 0) (line ""))
+      (cond ((>= i n)
+             (if (> col 0) (begin (display line)(newline)) #t))
+            ((= col 60)
+             (display line)(newline)
+             (loop (+ i 1) 1 (gen i)))
+            (else
+             (loop (+ i 1) (+ col 1) (string-append line (gen i)))))))
+
+  ; ── config ──
+  (define (get-n)
+    (let ((s (getenv "N")))
+      (if (string? s) (string->number s) 50)))
+  (define n (get-n))
+
+  ; ── ONE: alu cycle, N chars ──
+  (display ">ONE Homo sapiens alu")(newline)
+  (write-seq n gen-alu)
+
+  ; ── TWO: weighted random IUB, N*3 chars ──
+  (display ">TWO Homo sapiens IUB")(newline)
+  (write-seq (* n 3) (lambda (i) (rand-char iub-chars iub-cum))))
