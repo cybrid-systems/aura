@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**1000** registrations scanned from `src/**/*.cpp` (416 marked **deprecated** — Issue #1438).
+**1001** registrations scanned from `src/**/*.cpp` (416 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 - **mutation-safety**: 126 primitives (13%)
 - **core**: 263 primitives (26%)
 - **internal-observable**: 441 primitives (44%)
-- **convenience**: 170 primitives (17%)
+- **convenience**: 171 primitives (17%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
@@ -626,7 +626,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (276)
+## Core builtins (277)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -887,6 +887,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `typecheck-current` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-status` *[convenience]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `typed-mutate-atomic` *[convenience]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `use` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -2003,7 +2004,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:yield-checkpoint-panic-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:zero-copy-framebuffer-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
-### Convenience (candidates for stdlib migration) (170)
+### Convenience (candidates for stdlib migration) (171)
 
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -2167,6 +2168,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-status` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `typed-mutate-atomic` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` — `src/compiler/evaluator_primitives_vector.cpp`

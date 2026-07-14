@@ -6858,13 +6858,50 @@ public:
             return {0, false, "no AST loaded"};
         }
         TypedTransactionGuard guard{this};
+
+        // Issue #1415: batch optimization — suppress per-mutation
+        // post_mutation_invariant_check during the batch. The
+        // combined check on the dirty union runs once at commit
+        // below. Same final status, 1/N the work for N mutations.
+        // Restore the flag before running the combined check so
+        // the check path itself is not gated.
+        const bool prev_suppress = suppress_invariant_check_;
+        suppress_invariant_check_ = true;
+
         for (const auto& m : mutations) {
             if (!guard.apply_one(m)) {
                 // Destructor will roll back via TypedTransactionGuard's RAII.
+                // Restore suppress flag before returning so subsequent
+                // single typed_mutate runs its check normally.
+                suppress_invariant_check_ = prev_suppress;
                 return {0, false, "tx_abort"};
             }
         }
-        return guard.commit();
+
+        // Restore the flag before running the combined check.
+        suppress_invariant_check_ = prev_suppress;
+
+        auto result = guard.commit();
+        if (result.success) {
+            // Combined post_mutation_invariant_check on the dirty
+            // union. Same pipeline as the per-mutation check
+            // (PostMutationInvariantVisitor walks the workspace
+            // log and emits OwnershipNotes), but runs once for the
+            // batch instead of N times — the result is identical
+            // because the visitor's analysis depends on the final
+            // workspace state, not the intermediate states.
+            auto* ws_flat = evaluator_.workspace_flat();
+            if (ws_flat) {
+                aura::compiler::PostMutationInvariantVisitor invariant_visitor(
+                    *current_pool_, type_registry_, &metrics_);
+                aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
+                invariant_visitor.apply_status_updates(*ws_flat);
+                result.invariant_status = invariant_visitor.worst_status();
+                result.invariant_diagnostics =
+                    std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
+            }
+        }
+        return result;
     }
 
     // Evaluate an S-expression by parsing it INTO persistent AST (current_ast_).
@@ -7103,13 +7140,20 @@ public:
             // contract — it works because earlier entries already
             // got their status set by prior typed_mutate calls.
             // Issue #274: fold invariant checks via MutationVisitor pipeline.
-            aura::compiler::PostMutationInvariantVisitor invariant_visitor(
-                *current_pool_, type_registry_, &metrics_);
-            aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
-            invariant_visitor.apply_status_updates(*ws_flat);
-            res.invariant_status = invariant_visitor.worst_status();
-            res.invariant_diagnostics =
-                std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
+            // Issue #1415: when suppress_invariant_check_ is true (set by
+            // typed_mutate_atomic during a batch), skip the per-mutation
+            // check here. A single combined check on the dirty union
+            // runs at typed_mutate_atomic's commit, giving the same
+            // final status with 1/N the work for an N-mutation batch.
+            if (!suppress_invariant_check_) {
+                aura::compiler::PostMutationInvariantVisitor invariant_visitor(
+                    *current_pool_, type_registry_, &metrics_);
+                aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
+                invariant_visitor.apply_status_updates(*ws_flat);
+                res.invariant_status = invariant_visitor.worst_status();
+                res.invariant_diagnostics =
+                    std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
+            }
             auto& log = ws_flat->all_mutations();
 
             // Issue #165 Phase 1B: post-mutation macro re-expansion.
@@ -8351,6 +8395,15 @@ private:
     // set_invariant_check_mode() when soundness enforcement is
     // desired (e.g. in CI runs or --strict CLI flag).
     InvariantCheckMode invariant_check_mode_ = InvariantCheckMode::WarningsOnly;
+    // Issue #1415: per-call flag to suppress post_mutation_invariant_check
+    // inside typed_mutate. Set to true during typed_mutate_atomic so
+    // per-mutation checks don't fire 3× for a 3-mutation batch; the
+    // combined check on the dirty union runs once at commit instead.
+    // Distinct from invariant_check_mode_ (which is a user-facing
+    // strict/permissive/disabled knob) — this is an internal batch
+    // optimization. Reset by typed_mutate_atomic before returning so
+    // a follow-up typed_mutate (single) runs its check normally.
+    bool suppress_invariant_check_ = false;
 
     // Issue #1383: mode-flip counter + last-disabled-warn flip.
     // Bumped by set_invariant_check_mode on every change. The
