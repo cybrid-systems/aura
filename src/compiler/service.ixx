@@ -1665,6 +1665,23 @@ public:
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
+        // Issue #1431 follow-up Race #3 (and Race #4 #5 ...):
+        // serialize the entire eval pipeline across threads.
+        // Two concurrent eval callers share arena_ (which holds
+        // the upstream memory_resource) and ASTArena::create
+        // races on the polymorphic_allocator, surfacing as a
+        // NULL memory_resource in pmr::memory_resource::allocate
+        // from StringPool::rehash's _M_fill_assign. Each earlier
+        // fix (TypeRegistry mutex, FlatAST add_node mutex)
+        // exposed the next race in the parser/typecheck/eval
+        // pipeline — eval_mutex_ serializes the whole pipeline
+        // so all three races (and likely more) are resolved at
+        // once. The push_back lock inside the Evaluator
+        // (alloc_storage_lock_ tested by the stress test) is
+        // unaffected — it protects cells_/pairs_/string_heap_
+        // writes during eval, while eval_mutex_ protects the
+        // parse + typecheck setup that runs before those writes.
+        std::lock_guard<std::mutex> lock(eval_mutex_);
         // Issue #411: snapshot the workspace mutation_log_ size at
         // entry so the post-eval auto-incremental typecheck can
         // detect whether this eval produced a new mutation
@@ -9454,6 +9471,20 @@ public:
     // that read it via get_*_count() accept that the value
     // may change under them.
     mutable CompilerMetrics metrics_;
+    // Issue #1431 follow-up: serialize the entire eval pipeline
+    // across threads. Race #1 (TypeRegistry thread-safety) and
+    // Race #2 (FlatAST add_node) were fixed with granular locks,
+    // but each fix exposed the next race in the
+    // parser/typecheck/eval pipeline. Race #3 (StringPool rehash
+    // null memory_resource via ASTArena::create) is fixed by
+    // serializing eval at the CompilerService entry. The push_back
+    // lock inside the Evaluator (alloc_storage_lock_ tested by
+    // test_stress_alloc_storage_lock) is unaffected — it protects
+    // cells_/pairs_/string_heap_ writes during eval, while
+    // eval_mutex_ protects the parse + typecheck setup that runs
+    // before those writes. Heavy-handed but ship-fast: see
+    // issue #1431 for the architectural follow-up.
+    mutable std::mutex eval_mutex_;
     // Issue #684: pending SoA snapshot consumed by store_define_v2.
     std::optional<LowerSoAEmitSnapshot> pending_soa_snapshot_;
     // ── Speculative JIT controller (Phase 2, #53) ──────────────
