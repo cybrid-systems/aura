@@ -4752,6 +4752,14 @@ aura_add_issue_test(test_composite_typed_mutate)
 # properly defined. Use the existing helper that wires LLVM includes +
 # libs (same pattern as test_issue_1406 / test_ir / test_spec_jit).
 aura_issue_test_link_llvm_jit(test_composite_typed_mutate)
+# Issue #1410: Linear ∩ Refinement type-driven discovery in
+# validate_ownership_full (src/compiler/type_checker_impl.cpp:5387+).
+# Production code already has the type-driven path (uses reg.linear_of
+# on flat.type_id of the let-value child); this test exercises both
+# paths (syntactic Linear wrapper + type-driven linear-registered
+# type) and defense-in-depth. 3 ACs: type-driven only, syntactic
+# regression, both-paths fire independently.
+aura_add_issue_test(test_issue_1410)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
