@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**999** registrations scanned from `src/**/*.cpp`.
+**1000** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 126 primitives (13%)
-- **core**: 262 primitives (26%)
+- **core**: 263 primitives (26%)
 - **internal-observable**: 441 primitives (44%)
 - **convenience**: 170 primitives (17%)
 
@@ -625,7 +625,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (275)
+## Core builtins (276)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -897,6 +897,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `void?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `while` *[core]* — `src/compiler/evaluator_primitives_control.cpp`
 - `with-capability` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `workspace` *[core]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace-persist-format-version` *[mutation-safety]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` *[mutation-safety]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` *[mutation-safety]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1291,7 +1292,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (262)
+### Core builtins (must remain primitive) (263)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1553,6 +1554,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `void` — `src/compiler/evaluator_primitives_core.cpp`
 - `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_primitives_control.cpp`
+- `workspace` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 

@@ -66,9 +66,23 @@
 ```
 
 EDA/SV（`mutate:sv-*`、`eda:*`）仍注册但标 deprecated，计划迁出内核（extensions/eda）。
+
+### `(workspace :op …)` — Issue #1437
+
+```scheme
+(workspace :create "name")     ; → id
+(workspace :switch id)
+(workspace :merge id)
+(workspace :lock id)           ; 可选 read-only?
+(workspace :unlock id)
+(workspace :list)              ; 便捷
+(workspace :current)
+```
+
+旧 `workspace:create` / `:switch` / `:merge` / `:lock` / `:unlock` 等仍注册，标 deprecated。
 | 验证 | `query:schema` `mutate:validate-against-schema` |
 | 版本 | `ast:snapshot` `ast:restore` `rollback` `mutation-history` |
-| Workspace | `workspace:create` `workspace:switch` `workspace:merge` `workspace:lock` … |
+| Workspace | **`(workspace :op …)`**（#1437）· 旧 `workspace:create` 等仍可用但 deprecated |
 
 示例：[tutorial.md](tutorial.md) §EDSL · `tests/suite/mutate-structured.aura`
 
