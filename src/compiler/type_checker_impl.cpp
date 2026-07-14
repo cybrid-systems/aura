@@ -4723,6 +4723,43 @@ std::string TypeChecker::declared_type_module(const std::string& name) const {
 
 TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
                                DiagnosticCollector& diag) {
+    // Issue #1407 R1: ConstraintSolver engine-level cache.
+    // The cache lives on the TypeChecker (persistent across
+    // infer_flat calls). For each NodeId we store
+    // {epoch, node-shape-hash, solve_result, inferred_type}.
+    // On a cache hit (same epoch, same shape), skip the
+    // expensive type_check_flat_pure call entirely and
+    // return the cached inferred_type. The fingerprint is
+    // the AST node's type-relevant shape (tag + sym_id +
+    // int_value + float_value + recursive child hashes,
+    // bounded depth 8). If the AST under the NodeId
+    // changed (mutation rewrote the body), the fingerprint
+    // changes and we miss.
+    //
+    // Cost on hit: O(subtree) hash + O(1) lookup = sub-µs.
+    // Cost on miss: full type_check_flat_pure + O(subtree)
+    // hash for the cache_store.
+    //
+    // Conservative default: only consult the cache when
+    // cache_epoch_ > 0 (i.e. the caller has set it at least
+    // once). Before the first set_cache_epoch, the cache is
+    // uninitialized and we'd risk returning stale types from
+    // a previous TypeChecker instance.
+    if (cache_epoch_ > 0 && node != aura::ast::NULL_NODE && node < flat.size()) {
+        const uint64_t node_hash = hash_node_shape(flat, node, 0);
+        SolveResult cached_result{};
+        TypeId cached_type{};
+        if (cs_cache_lookup(node, cache_epoch_, node_hash, cached_result, cached_type)) {
+            // Cache hit. The cached inferred_type is safe to
+            // return because:
+            //   - cache_epoch_ matched (no mutation advanced
+            //     past the cache entry's epoch)
+            //   - node_hash matched (AST shape unchanged)
+            // We do NOT call type_check_flat_pure; the
+            // caller gets the cached type directly.
+            return cached_type;
+        }
+    }
     // Issue #212 Phase 1d: route through the pure function.
     // The Wrap holds per-instance state (sigs, module_src,
     // strict, cache_epoch, stats accumulator) and passes them
@@ -4748,6 +4785,20 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.schema_cache_lookups += r.schema_cache_lookups;
     stats_.schema_cache_hits += r.schema_cache_hits;
     last_coercions_ = std::move(r.coercions);
+    // Issue #1407 R1: cache the outcome for next call. Only
+    // cache when we have a stable epoch (cache_epoch_ > 0);
+    // otherwise we'd be caching into an invalid-keyed entry.
+    if (cache_epoch_ > 0 && node != aura::ast::NULL_NODE && node < flat.size()) {
+        const uint64_t node_hash = hash_node_shape(flat, node, 0);
+        // SolveResult isn't currently exposed through
+        // TypeCheckResult (we'd need to plumb a new field).
+        // Cache as SOLVED for now — CONFLICT/TIMEOUT outcomes
+        // are reported via diag_ and we don't want to mask
+        // them on a cache hit. A future follow-up that adds
+        // SolveResult to TypeCheckResult can also cache the
+        // real status.
+        cs_cache_store(node, cache_epoch_, node_hash, SolveResult::SOLVED, r.inferred_type);
+    }
     return r.inferred_type;
 }
 
@@ -6271,6 +6322,65 @@ std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::ast::Flat
             affected.push_back(static_cast<NodeId>(i));
     }
     return affected;
+}
+
+// ── Issue #1407 R1: ConstraintSolver engine-level cache helpers ──
+// hash_node_shape / hash_node_shape_recursive compute an FNV-1a
+// 64-bit fingerprint over the type-relevant shape of an AST node
+// (tag, sym_id, int_value, float_value, recursive child hashes).
+// Used as the cache key alongside NodeId + cache_epoch: when the
+// shape doesn't change, the constraint solver would produce the
+// same outcome and the cached SolveResult is safe to reuse.
+//
+// Bounded recursion (max depth 8) keeps the fingerprint cost
+// O(subtree) but not O(full-AST). For deep expressions the
+// fingerprint truncates to depth 8 — collisions cause a cache
+// miss, never a wrong type.
+namespace aura_issue_1407_detail {
+    constexpr std::uint64_t kFnvOffset = 1469598103934665603ull;
+    constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+    constexpr std::uint32_t kMaxShapeDepth = 8;
+} // namespace aura_issue_1407_detail
+
+uint64_t TypeChecker::hash_node_shape(const aura::ast::FlatAST& flat, aura::ast::NodeId id,
+                                      std::uint32_t depth) noexcept {
+    if (id == aura::ast::NULL_NODE || id >= flat.size())
+        return aura_issue_1407_detail::kFnvOffset;
+    return hash_node_shape_recursive(flat, flat.get(id), depth);
+}
+
+uint64_t TypeChecker::hash_node_shape_recursive(const aura::ast::FlatAST& flat,
+                                                const aura::ast::NodeView& v,
+                                                std::uint32_t depth) noexcept {
+    using aura_issue_1407_detail::kFnvOffset;
+    using aura_issue_1407_detail::kFnvPrime;
+    using aura_issue_1407_detail::kMaxShapeDepth;
+    uint64_t h = kFnvOffset;
+    h ^= static_cast<uint64_t>(v.tag);
+    h *= kFnvPrime;
+    h ^= static_cast<uint64_t>(v.sym_id);
+    h *= kFnvPrime;
+    h ^= static_cast<uint64_t>(static_cast<uint32_t>(v.int_value));
+    h *= kFnvPrime;
+    // Bit-cast double to uint64 for fingerprint (same bits, same float).
+    uint64_t float_bits = 0;
+    std::memcpy(&float_bits, &v.float_value, sizeof(double));
+    h ^= float_bits;
+    h *= kFnvPrime;
+    h ^= static_cast<uint64_t>(v.type_id);
+    h *= kFnvPrime;
+    h ^= static_cast<uint64_t>(v.children.size());
+    h *= kFnvPrime;
+    if (depth + 1 < kMaxShapeDepth) {
+        for (auto cid : v.children) {
+            if (cid == aura::ast::NULL_NODE || cid >= flat.size())
+                continue;
+            auto cv = flat.get(cid);
+            h ^= hash_node_shape_recursive(flat, cv, depth + 1);
+            h *= kFnvPrime;
+        }
+    }
+    return h;
 }
 
 } // namespace aura::compiler

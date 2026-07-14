@@ -5782,7 +5782,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hot_update_race_detected{0};           // #1264
     std::atomic<std::uint64_t> hot_update_epoch_fences{1};            // #1264
     std::atomic<std::uint64_t> query_and_replace_all_or_nothing{0};   // #1265
-    std::atomic<std::uint64_t> query_and_replace_parse_abort{0};      // #1265
+    // Issue #1407 R1: typed_mutate epoch bumps. Bumped on every
+    // successful typed_mutate after tx.commit() so persistent
+    // downstream caches (TypeChecker::cs_cache_, IR JIT cache,
+    // evaluator_workspace FlatAST caches) observe staleness.
+    // Distinct from hot_swap_versioned_mangle_enforced
+    // (typed_mutate isn't a hot-swap) and from
+    // ir_soa_cache_reset_epoch_bumps (typed_mutate doesn't
+    // reset the arena; the bump is pure cache invalidation).
+    std::atomic<std::uint64_t> typed_mutate_epoch_bumps{0};      // #1407
+    std::atomic<std::uint64_t> query_and_replace_parse_abort{0}; // #1265
 
     // ── Issues #1266–#1270: inline/set-body/panic/SoA/steal Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1266_1270_active{1};

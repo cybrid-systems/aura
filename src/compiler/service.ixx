@@ -6846,6 +6846,24 @@ public:
 
             tx.commit();
 
+            // Issue #1407 R1: bump the mutation epoch so any
+            // persistent caches that survived the typed_mutate
+            // (TypeChecker::cs_cache_, IR JIT cache,
+            // evaluator_workspace FlatAST caches, etc.) observe
+            // staleness on their next lookup. Without this bump,
+            // a typed_mutate that committed cleanly would leave
+            // downstream caches pointing at pre-mutation state.
+            //
+            // This mirrors the bump_bridge_epoch() call in
+            // invalidate_function (line ~7769) and the explicit
+            // fetch_add in hot_swap_function_impl (~1029) and
+            // reset_arena (~1152). typed_mutate was the missing
+            // site — it commits an AST mutation but never
+            // advanced the epoch. Locks in the typed_mutate ↔
+            // epoch invariant: every successful commit bumps.
+            bump_bridge_epoch();
+            metrics_.typed_mutate_epoch_bumps.fetch_add(1, std::memory_order_relaxed);
+
             // Issue #147: post-mutation invariant check. Runs only
             // if invariant_check_mode_ is not Disabled. Iterates
             // every MutationRecord added during this transaction

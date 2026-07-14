@@ -4728,6 +4728,15 @@ aura_issue_test_link_llvm_jit(test_issue_1405)
 # deferred (no explicit layer-merge/finalize path; separate issue).
 aura_add_issue_test(test_issue_1406)
 aura_issue_test_link_llvm_jit(test_issue_1406)
+# Issue #1407 R1: ConstraintSolver engine-level cache +
+# typed_mutation epoch bump. Ships cs_cache_ (NodeId → {epoch,
+# node-shape-hash, SolveResult, TypeId}) on TypeChecker +
+# hash_node_shape fingerprint + bump_bridge_epoch() in the
+# typed_mutate success path + 2 metrics
+# (cs_cache_lookups/hits + typed_mutate_epoch_bumps). 5 ACs:
+# cache hit/miss/hash/epoch-bump. 2 follow-ups: per-node
+# re-inference integration, full SolveResult in TypeCheckResult.
+aura_add_issue_test(test_issue_1407_constraint_solver_cache)
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
