@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**997** registrations scanned from `src/**/*.cpp`.
+**998** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 126 primitives (13%)
-- **core**: 260 primitives (26%)
+- **core**: 261 primitives (26%)
 - **internal-observable**: 441 primitives (44%)
 - **convenience**: 170 primitives (17%)
 
@@ -625,7 +625,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (273)
+## Core builtins (274)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -808,6 +808,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `prim-hot-dispatch-hits` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `prim-hot-table-size` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `procedure?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `query` *[core]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query-annotate-functions` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-type-of` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1289,7 +1290,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (260)
+### Core builtins (must remain primitive) (261)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1458,6 +1459,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `primitives:alias` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
 - `primitives:contract-probe` — `src/compiler/evaluator_primitives_test.cpp`
 - `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
+- `query` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `quotient` — `src/compiler/evaluator_primitives_math.cpp`
 - `raise` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `read` — `src/compiler/evaluator_primitives_file.cpp`

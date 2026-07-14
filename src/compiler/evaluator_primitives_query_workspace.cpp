@@ -2084,6 +2084,165 @@ void register_workspace_query_primitives(
         return result;
     });
 
+    // ── Issue #1435: (query :op …) unified dispatcher ──────────────
+    // Canonical surface for the 6 core structural ops. Existing
+    // query:node / query:children / … remain registered (thin aliases
+    // with PrimMeta.deprecated) and are invoked via lookup so behavior
+    // stays identical. Call-time lookup also reaches query:def-use and
+    // query:mutation-log registered later in the boot sequence.
+    add("query", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+        auto kw_name = [&](const EvalValue& v) -> std::string {
+            if (!is_keyword(v))
+                return {};
+            auto kidx = as_keyword_idx(v);
+            const auto& kt = ev.keyword_table();
+            if (kidx >= kt.size())
+                return {};
+            std::string k = kt[kidx];
+            if (!k.empty() && k[0] == ':')
+                k = k.substr(1);
+            return k;
+        };
+        auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
+            auto fn = ev.primitives().lookup(prim);
+            if (!fn)
+                return mev("no-prim", std::string("query dispatch: missing ") + prim);
+            return (*fn)(args);
+        };
+
+        if (a.empty() || !is_keyword(a[0]))
+            return mev("bad-arg",
+                       "usage: (query :op …)  ops: :node :children :parent :find :def-use "
+                       ":mutation-log");
+
+        const std::string op = kw_name(a[0]);
+        auto rest = a.subspan(1);
+
+        // (query :node id)
+        if (op == "node")
+            return call_named("query:node", rest);
+
+        // (query :children id) | (query :children id :stable #t|#f)
+        // (query :children-stable id) → same as :children + :stable #t  (#393 / #1435)
+        if (op == "children" || op == "children-stable") {
+            bool stable = (op == "children-stable");
+            std::vector<EvalValue> forwarded;
+            forwarded.reserve(rest.size());
+            for (std::size_t i = 0; i < rest.size(); ++i) {
+                if (is_keyword(rest[i]) && kw_name(rest[i]) == "stable") {
+                    if (i + 1 < rest.size() && is_bool(rest[i + 1])) {
+                        stable = as_bool(rest[i + 1]);
+                        ++i; // skip bool
+                        continue;
+                    }
+                    stable = true; // bare :stable
+                    continue;
+                }
+                forwarded.push_back(rest[i]);
+            }
+            return call_named(stable ? "query:children-stable" : "query:children",
+                              std::span<const EvalValue>(forwarded));
+        }
+
+        // (query :parent id) | (query :parent id :stable #t)
+        // (query :parent-stable id)
+        if (op == "parent" || op == "parent-stable") {
+            bool stable = (op == "parent-stable");
+            std::vector<EvalValue> forwarded;
+            forwarded.reserve(rest.size());
+            for (std::size_t i = 0; i < rest.size(); ++i) {
+                if (is_keyword(rest[i]) && kw_name(rest[i]) == "stable") {
+                    if (i + 1 < rest.size() && is_bool(rest[i + 1])) {
+                        stable = as_bool(rest[i + 1]);
+                        ++i;
+                        continue;
+                    }
+                    stable = true;
+                    continue;
+                }
+                forwarded.push_back(rest[i]);
+            }
+            return call_named(stable ? "query:parent-stable" : "query:parent",
+                              std::span<const EvalValue>(forwarded));
+        }
+
+        // (query :find name) | (query :find name :where …)
+        // :where rest is forwarded to query:filter when present.
+        if (op == "find") {
+            std::vector<EvalValue> where_preds;
+            std::vector<EvalValue> find_args;
+            bool in_where = false;
+            for (std::size_t i = 0; i < rest.size(); ++i) {
+                if (is_keyword(rest[i]) && kw_name(rest[i]) == "where") {
+                    in_where = true;
+                    continue;
+                }
+                if (in_where)
+                    where_preds.push_back(rest[i]);
+                else
+                    find_args.push_back(rest[i]);
+            }
+            if (!where_preds.empty()) {
+                // Prefer filter when predicates supplied; fall back to find.
+                return call_named("query:filter", std::span<const EvalValue>(where_preds));
+            }
+            return call_named("query:find", std::span<const EvalValue>(find_args));
+        }
+
+        // (query :def-use var)
+        if (op == "def-use" || op == "defuse")
+            return call_named("query:def-use", rest);
+
+        // (query :mutation-log [n])
+        if (op == "mutation-log" || op == "mutation_log")
+            return call_named("query:mutation-log", rest);
+
+        // (query :root) — handy extra (not in the 6, but zero-cost)
+        if (op == "root")
+            return call_named("query:root", rest);
+
+        return mev("bad-arg", "unknown query op ':" + op +
+                                  "' — use :node :children :parent :find :def-use :mutation-log");
+    });
+
+    // Issue #1435: mark core query:* names deprecated in favor of (query :op).
+    {
+        static constexpr const char* kCoreQueryAliases[] = {
+            "query:node",          "query:children", "query:children-stable", "query:parent",
+            "query:parent-stable", "query:find",     "query:mutation-log",
+        };
+        for (const char* name : kCoreQueryAliases) {
+            const auto slot = ev.primitives().slot_for_name(name);
+            if (slot >= ev.primitives().slot_count())
+                continue;
+            PrimMeta meta = ev.primitives().meta_for_slot(slot);
+            meta.deprecated = true;
+            if (meta.category.empty() || meta.category == "general")
+                meta.category = "deprecated";
+            const std::string op =
+                std::string(name).size() > 6 ? std::string(name).substr(6) : std::string(name);
+            const std::string hint =
+                std::string("DEPRECATED (#1435): prefer (query :") + op + " …)";
+            if (meta.doc.empty())
+                meta.doc = hint;
+            else if (meta.doc.find("DEPRECATED") == std::string::npos)
+                meta.doc = hint + ". " + meta.doc;
+            ev.primitives().set_meta_for_name(name, std::move(meta));
+        }
+        {
+            const auto slot = ev.primitives().slot_for_name("query");
+            if (slot < ev.primitives().slot_count()) {
+                PrimMeta meta = ev.primitives().meta_for_slot(slot);
+                meta.doc =
+                    "Canonical query dispatcher (#1435): (query :node|:children|:parent|:find|"
+                    ":def-use|:mutation-log …). :children/:parent accept :stable #t (#393).";
+                meta.category = "general";
+                meta.arity = 255;
+                ev.primitives().set_meta_for_name("query", std::move(meta));
+            }
+        }
+    }
+
     // Issue #279 follow-up #4: (register-predicate! name
     // type-name) — register a custom Occurrence Typing
     // predicate. After this, (if (name x) body) refines x to

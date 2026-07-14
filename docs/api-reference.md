@@ -32,8 +32,25 @@
 | 集群 | 代表原语 |
 |------|----------|
 | 加载 | `set-code` `current-source` `eval-current` `eval-current-output` |
-| Query | `query:find` `query:pattern` `query:where` `query:calls` `query:def-use` … |
+| Query | **`(query :op …)`**（#1435 规范入口）· `query:pattern` · `query:calls` · … |
 | Mutate | `mutate:rebind` `mutate:query-and-replace` `mutate:extract-function` `mutate:atomic-batch` … |
+
+### `(query :op …)` — Issue #1435
+
+规范调度（旧 `query:node` / `query:children` / … 仍注册，标 deprecated）：
+
+```scheme
+(query :node id)
+(query :children id)                    ; 裸 NodeId 列表
+(query :children id :stable #t)         ; (id . gen) — Issue #393
+(query :children-stable id)             ; 同上
+(query :parent id)
+(query :parent id :stable #t)
+(query :find "name")
+(query :def-use "var")
+(query :mutation-log)                   ; 可选 n
+(query :root)                           ; 便捷
+```
 | 验证 | `query:schema` `mutate:validate-against-schema` |
 | 版本 | `ast:snapshot` `ast:restore` `rollback` `mutation-history` |
 | Workspace | `workspace:create` `workspace:switch` `workspace:merge` `workspace:lock` … |
