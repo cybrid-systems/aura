@@ -116,6 +116,13 @@ Evaluator::Evaluator() {
     // eda:run-verification-feedback and eda:demo-sv-self-evolution.
     backfill_eda_sv_primitive_meta();
 
+    // Issue #1416: tier-assign the 7 EDSL escape-hatch primitives
+    // (Part 4 #1396) to kPrimSecPrivileged so the dispatch-site
+    // capability gate in invoke_prim_with_telemetry can deny
+    // unauthorized calls. Called after backfill_eda_sv_primitive_meta
+    // so the dispatch gate sees the tier-assigned security_level.
+    backfill_capability_tiers();
+
     // Issue #1356: rebuild HotTierTable after all registrations + meta backfill.
     primitives_.finalize_hot_table();
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
@@ -212,6 +219,97 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
                  .schema = "(int) -> bool"});
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->primitive_eda_meta_backfill_total.fetch_add(10, std::memory_order_relaxed);
+}
+
+// Issue #1416: tier-assign the 7 EDSL escape-hatch primitives (Part 4
+// #1396) to kPrimSecPrivileged so the dispatch-site capability gate
+// in invoke_prim_with_telemetry can deny unauthorized calls. All 7
+// are write-side primitives that mutate IR cache state — they
+// should require kCapWildcard (the same gate that EDSL escape-hatch
+// mutations already check individually in their lambda bodies; this
+// centralizes the gate at dispatch for the 7 cases listed below).
+//
+// Note: the primitive lambdas still contain their own per-primitive
+// capability checks (e.g. compile:mark-block-dirty! checks
+// kCapCompileDirty / kCapCompile at the lambda body). The dispatch-
+// site gate adds a STRONGER outer envelope (kCapWildcard required)
+// on top of the existing inner check — defense-in-depth. If a
+// future refactor removes the inner check, the outer gate still
+// holds.
+void Evaluator::backfill_capability_tiers() {
+    // 1. compile:mark-block-dirty! (compile_03.cpp:224)
+    primitives_.set_meta_for_name(
+        "compile:mark-block-dirty!",
+        PrimMeta{.arity = 3,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Mark a single (function, block) dirty in the named define's IR cache.",
+                 .category = "compile",
+                 .schema = "(string int int) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    // 2. compile:clear-block-dirty! (compile_03.cpp:264)
+    primitives_.set_meta_for_name(
+        "compile:clear-block-dirty!",
+        PrimMeta{.arity = 3,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc =
+                     "Clear a single (function, block) dirty bit in the named define's IR cache.",
+                 .category = "compile",
+                 .schema = "(string int int) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    // 3. compile:mark-dirty-upward-fast (compile_02.cpp:616)
+    primitives_.set_meta_for_name(
+        "compile:mark-dirty-upward-fast",
+        PrimMeta{.arity = 1,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Fast path: mark all callers of a name dirty in the dep_graph.",
+                 .category = "compile",
+                 .schema = "(string) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    // 4. compile:mark-instruction-dirty! (compile_03.cpp:323)
+    primitives_.set_meta_for_name(
+        "compile:mark-instruction-dirty!",
+        PrimMeta{.arity = 4,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Mark a single instruction dirty in a function's IR cache.",
+                 .category = "compile",
+                 .schema = "(string int int int) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    // 5. compile:clear-instruction-dirty! (compile_03.cpp:354)
+    primitives_.set_meta_for_name(
+        "compile:clear-instruction-dirty!",
+        PrimMeta{.arity = 4,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Clear a single instruction dirty bit in a function's IR cache.",
+                 .category = "compile",
+                 .schema = "(string int int int) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    // 6. compile:clear-macro-dirty! (compile_04.cpp:78)
+    primitives_.set_meta_for_name(
+        "compile:clear-macro-dirty!",
+        PrimMeta{.arity = 1,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Clear macro dirty flag after macro re-expansion.",
+                 .category = "compile",
+                 .schema = "(string) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    // 7. compile:mark-narrowing-dirty! (compile_04.cpp:745)
+    primitives_.set_meta_for_name(
+        "compile:mark-narrowing-dirty!",
+        PrimMeta{.arity = 1,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Mark narrowing-derived bindings dirty for re-analysis.",
+                 .category = "compile",
+                 .schema = "(int) -> bool",
+                 .security_level = kPrimSecPrivileged});
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->primitive_capability_tier_backfill_total.fetch_add(7, std::memory_order_relaxed);
 }
 
 void Evaluator::set_type_registry(void* reg) {

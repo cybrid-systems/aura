@@ -597,6 +597,12 @@ struct CompilerMetrics {
     // Issue #697: Declarative primitives extension kit observability.
     std::atomic<std::uint64_t> primitive_skeleton_generations_total{0};
     std::atomic<std::uint64_t> primitive_eda_meta_backfill_total{0};
+    // Issue #1416: counts how many EDSL escape-hatch primitives were
+    // tier-assigned kPrimSecPrivileged by backfill_capability_tiers().
+    // Bumps by 7 (the 7 Part 4 #1396 escape hatches) at Evaluator
+    // construction. Visible via (compile:primitive-meta-stats) or
+    // direct CompilerMetrics field access.
+    std::atomic<std::uint64_t> primitive_capability_tier_backfill_total{0};
     // Issue #617: AI-Native primitive introspection query counters.
     // Each new query primitive bumps its own counter so
     // (query:primitives-meta-catalog) can surface a hit-rate

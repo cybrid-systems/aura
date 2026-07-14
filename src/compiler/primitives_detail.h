@@ -46,6 +46,19 @@ inline constexpr int kPrimCaptureContractVersion = 2;
         .schema = SCHEMA                                                                           \
     }
 
+// Issue #1416: same as DEFINE_PRIMITIVE_META but takes a 7th SECURITY param
+// (kPrimSecSafe | kPrimSecSandboxed | kPrimSecPrivileged). Used to tier-assign
+// EDSL escape-hatch primitives via backfill_capability_tiers() so the
+// dispatch-site capability gate in invoke_prim_with_telemetry can deny
+// unauthorized calls. Default tier for primitives registered without this
+// overload is kPrimSecSafe (no gate required).
+#define DEFINE_PRIMITIVE_META_SECURE(ARITY, PURE, SAFETY, CATEGORY, DOC, SCHEMA, SECURITY)         \
+    ::aura::compiler::PrimMeta {                                                                   \
+        .arity = static_cast<std::uint8_t>(ARITY), .pure = (PURE),                                 \
+        .safety_flags = static_cast<std::uint8_t>(SAFETY), .doc = DOC, .category = CATEGORY,       \
+        .schema = SCHEMA, .security_level = static_cast<std::uint8_t>(SECURITY)                    \
+    }
+
 // Issue #1317: high-perf render primitive template — perf_tier=hot, category=rendering,
 // safety includes I/O (+ optional fiber). Agents use this when adding terminal/draw primitives.
 #define RENDER_PRIMITIVE_META(ARITY, DOC, SCHEMA)                                                  \
