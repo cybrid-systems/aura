@@ -1073,6 +1073,16 @@ export struct TypeChecker {
         // to per_symbol_visited tells the user how much
         // wall-clock work the optimization is saving.
         std::uint64_t per_defuse_index_visited_total = 0;
+        // Issue #1407 R1: constraint solution cache
+        // observability. cs_cache_lookups bumps on every
+        // cs_cache_lookup() call; cs_cache_hits bumps only
+        // when the lookup found a valid entry (epoch + hash
+        // match). Hit rate ≈ cs_cache_hits / cs_cache_lookups.
+        // High hit rate means repeated infer_flat calls on
+        // the same NodeId with the same AST shape are
+        // skipping the constraint solver entirely.
+        std::uint64_t cs_cache_lookups = 0;
+        std::uint64_t cs_cache_hits = 0;
     };
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
@@ -1253,6 +1263,118 @@ private:
     // call. Forwarded to the per-call InferenceEngine, which
     // invalidates its cache on epoch advance.
     std::uint64_t cache_epoch_ = 0;
+
+    // Issue #1407 R1: ConstraintSolver engine-level cache.
+    // Per NodeId, store the (epoch, constraints_hash, solve_result)
+    // tuple that was observed on the most recent infer_flat call.
+    // A repeat call with the same (NodeId, epoch, hash) skips
+    // the constraint solver entirely — returns the cached
+    // SolveResult. The cache lives on the TypeChecker (not the
+    // per-call InferenceEngine) because the engine is
+    // short-lived and re-constructed every infer_flat.
+    //
+    // Why this matters: today every infer_flat call builds a
+    // fresh ConstraintSystem, runs cs_.add() N times for the
+    // node's children, and runs cs_.solve() — even when the
+    // same node is inferred over and over with no mutation in
+    // between. The constraint solver is the dominant cost on
+    // large workspaces; caching its outcome per NodeId turns
+    // a typical repeat-infer into an O(1) hash lookup.
+    //
+    // Invalidated by:
+    //   - epoch advance (any mutation that bumps mutation_epoch_
+    //     and is propagated here via set_cache_epoch)
+    //   - constraints hash mismatch (the AST changed shape under
+    //     the same NodeId — e.g. a typed_mutation rewrote the body)
+    //
+    // Bound: cap at 4096 entries; on overflow, evict the entire
+    // cache (cheap, repopulates on demand). Same pattern as
+    // predicate_memo_.
+    static constexpr std::size_t CS_CACHE_MAX_ENTRIES = 4096;
+    struct CachedConstraintSolution {
+        std::uint64_t epoch = 0;
+        std::uint64_t constraints_hash = 0;
+        SolveResult result = SolveResult::SOLVED;
+        aura::core::TypeId inferred_type{}; // Issue #1407 R1: also cache the inferred type
+    };
+    std::unordered_map<aura::ast::NodeId, CachedConstraintSolution> cs_cache_;
+
+public:
+    // Issue #1407 R1: look up a cached constraint solution.
+    // Returns true (and fills `out_result` + `out_type`) on a
+    // hit (epoch + constraints_hash match); returns false on
+    // miss or when called without a prior set_cache_epoch.
+    [[nodiscard]] bool cs_cache_lookup(aura::ast::NodeId id, std::uint64_t expected_epoch,
+                                       std::uint64_t constraints_hash, SolveResult& out_result,
+                                       aura::core::TypeId& out_type) noexcept {
+        ++stats_.cs_cache_lookups;
+        auto it = cs_cache_.find(id);
+        if (it == cs_cache_.end())
+            return false;
+        if (it->second.epoch != expected_epoch)
+            return false;
+        if (it->second.constraints_hash != constraints_hash)
+            return false;
+        ++stats_.cs_cache_hits;
+        out_result = it->second.result;
+        out_type = it->second.inferred_type;
+        return true;
+    }
+    // Issue #1407 R1: store a constraint solution. Bumps
+    // predicate_memo_evictions_-style counter on overflow.
+    void cs_cache_store(aura::ast::NodeId id, std::uint64_t epoch, std::uint64_t constraints_hash,
+                        SolveResult result, aura::core::TypeId inferred_type) {
+        if (cs_cache_.size() >= CS_CACHE_MAX_ENTRIES) {
+            // Wholesale eviction (same pattern as predicate_memo_).
+            cs_cache_.clear();
+        }
+        cs_cache_[id] = CachedConstraintSolution{epoch, constraints_hash, result, inferred_type};
+    }
+    // Issue #1407 R1: clear the cache (e.g. on arena reset or
+    // explicit test setup). Test-visible via stats_ counters.
+    void cs_cache_clear() noexcept { cs_cache_.clear(); }
+    [[nodiscard]] std::size_t cs_cache_size() const noexcept { return cs_cache_.size(); }
+    // Issue #1407 R1: hash a Constraint set. Used by callers
+    // (InferenceEngine / ConstraintSystem path) to compute the
+    // fingerprint stored alongside the cached SolveResult.
+    // Cheap O(N) mix over kind + lhs.index + rhs.index; not
+    // cryptographically strong — just needs to detect "same
+    // shape" reliably.
+    static std::uint64_t hash_constraints(const std::vector<Constraint>& cs) noexcept {
+        std::uint64_t h = 1469598103934665603ull; // FNV-1a 64-bit offset
+        for (const auto& c : cs) {
+            h ^= static_cast<std::uint64_t>(c.kind);
+            h *= 1099511628211ull;
+            h ^= static_cast<std::uint64_t>(c.lhs.index);
+            h *= 1099511628211ull;
+            h ^= static_cast<std::uint64_t>(c.rhs.index);
+            h *= 1099511628211ull;
+        }
+        // Mix in the count so an empty set ≠ 1-element set ≠ 2-element set.
+        h ^= static_cast<std::uint64_t>(cs.size());
+        h *= 1099511628211ull;
+        return h;
+    }
+    // Issue #1407 R1: hash a single AST node's "type-relevant
+    // shape" — tag, sym_id, integer / float value, and the
+    // hashes of immediate children. This is the fingerprint
+    // used to validate a cached SolveResult: if the AST shape
+    // under the NodeId hasn't changed, the constraints
+    // generated will be the same and the cached solve outcome
+    // is safe to reuse.
+    //
+    // Bounded depth (8) so a deep AST doesn't cause a stack
+    // overflow or an O(n²) hash walk on every lookup. The
+    // fingerprint is for cache validation only — collisions
+    // cause a (rare) cache miss, never a wrong type.
+    static std::uint64_t hash_node_shape(const aura::ast::FlatAST& flat, aura::ast::NodeId id,
+                                         std::uint32_t depth = 0) noexcept;
+    // Issue #1407 R1: same shape hash, but computed from an
+    // already-fetched NodeView (avoids the flat.get call in
+    // the recursive step). Internal helper.
+    static std::uint64_t hash_node_shape_recursive(const aura::ast::FlatAST& flat,
+                                                   const aura::ast::NodeView& v,
+                                                   std::uint32_t depth) noexcept;
 
     // Issue #518: Evaluator observability hooks + last refresh
     // count from infer_flat_partial.
