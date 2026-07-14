@@ -4773,6 +4773,22 @@ aura_add_issue_test(test_issue_1410)
 # preserves, add_mutation backward-compat, set after construction.
 # Wiring the fields at typed_mutate sites is a follow-up issue.
 aura_add_issue_test(test_mutation_provenance)
+# Issue #1413: True bidirectional type checking (Synth + Check) —
+# annotation mismatch detection at compile time. Production
+# bidirectional check-mode plumbing is already wired in
+# type_checker_impl.cpp:3087+ (Issue #384 first slice) +
+# check_flat_call/lambda at 4606/4641. This test exercises the
+# full CompilerService pipeline (cs.eval) to verify annotation
+# mismatch produces TypeError. 4 ACs: matches pass, mismatches
+# reject, bidirectional body check, backward compat.
+aura_add_issue_test(test_bidirectional_annotation)
+# Reusable invariant (per #1408/#1410/#1411): any test that exercises
+# full CompilerService::eval path needs this helper. Wires
+# aura_jit_test_objects + LLVM libs + AURA_HAVE_LLVM=1 PUBLIC.
+# Without it: JIT-runtime + AOT-shim + AuraJIT-method triangle of
+# undefined references (g_tl_arena, tl_arena_push/pop,
+# AuraJIT::unhandled_opcode_count_for_function, aura_set_aot_metrics, etc).
+aura_issue_test_link_llvm_jit(test_bidirectional_annotation)
 # Issue #1411: DeadCoercionEliminationPass wire-up to pass_manager
 # pipeline. Production code is already wired in
 # service.ixx:run_coercion_elim_on_function (line 7390+); this test
