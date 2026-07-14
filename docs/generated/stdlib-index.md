@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**61** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**62** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -23,6 +23,7 @@
 | `std/datetime` | `;` `Core` `timestamp` `timestamp->year` `timestamp->month` `timestamp->day` `timestamp->hour` `timestamp->minute` … (+17) | datetime.aura — Date and time utilities |
 | `std/eda` | `;` `Issue` `#1012` `helper` `eda:strcat` `IR` `constructors` `make-eda:module` … (+260) | — |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
+| `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
 | `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |

@@ -62,8 +62,17 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 `./build.py gate` 跑 `scripts/check_primitive_surface.py` + `tests/test_primitive_surface_gate.py`。故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。
 
-**观测读取（P1）**：测试与 Agent 优先  
-`(hash-ref (engine:metrics "query:foo-stats") 'field)`，勿再新增直接依赖新 stats 名的 API。
+**观测读取（P1 / #1433）**：测试与 Agent 优先 facade：
+
+```scheme
+(engine:metrics)                      ; schema 2 + compile/jit/mutate/… 分组
+(engine:metrics :group "jit")         ; 单组 CompilerMetrics 字段
+(engine:metrics :prefix "query:")     ; 按前缀过滤 stats 名 + 字段
+(engine:metrics "query:foo-stats")    ; 过渡期按名单取
+(require "std/engine-metrics" all:)   ; engine-metrics:get / :group / …
+```
+
+勿再为每个 counter 新增 `query:*-stats` 名（见 P0b 冻结）。
 
 **运行时分层（P2a/P2b）**：默认 full。s0 跳过 bulk observability stats 与扩展簇（eda / security / verify-tool / stdlib-review），只保留 `engine:metrics` facade：
 

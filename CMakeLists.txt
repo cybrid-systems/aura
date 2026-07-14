@@ -4722,6 +4722,10 @@ aura_issue_test_link_llvm_jit(test_issue_1404)
 # Fiber-side check + merr (full Option 2 per body) is documented follow-up.
 aura_add_issue_test(test_issue_1405)
 aura_issue_test_link_llvm_jit(test_issue_1405)
+# Issue #1433: (engine:metrics) facade — nested CompilerMetrics groups +
+# :prefix / :group + golden hash shape (≥200 fields).
+aura_add_issue_test(test_engine_metrics_facade)
+aura_issue_test_link_llvm_jit(test_engine_metrics_facade)
 # Issue #1406: propagate_cow_pins_after_clone Option 2 — bounded retention
 # cap (kMaxPinnedBoundaryRefs=4096, drop oldest) + version-check retry
 # using cow_boundary_pins_total_ as the version counter. Unpin-on-merge

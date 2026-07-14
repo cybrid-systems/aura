@@ -420,8 +420,54 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
-// P2b: minimal observability surface for AURA_PRIMITIVES=s0.
-// stats:list / stats:count / engine:metrics — no bulk query:*-stats.
+// Issue #1433: map CompilerMetrics field name → facade group.
+// Groups: compile | jit | mutate | query | arena | gc | eval | telemetry.
+static const char* metrics_group_for_field(std::string_view name) noexcept {
+    if (name.size() >= 4 && name.substr(0, 4) == "jit_")
+        return "jit";
+    if (name.size() >= 6 && name.substr(0, 6) == "arena_")
+        return "arena";
+    if (name.size() >= 10 && name.substr(0, 10) == "ast_arena_")
+        return "arena";
+    if (name.size() >= 3 && name.substr(0, 3) == "gc_")
+        return "gc";
+    if (name.size() >= 6 && name.substr(0, 6) == "mutate")
+        return "mutate";
+    if (name.size() >= 8 && name.substr(0, 8) == "mutation")
+        return "mutate";
+    if (name.size() >= 6 && name.substr(0, 6) == "dirty_")
+        return "mutate";
+    if (name.size() >= 6 && name.substr(0, 6) == "query_")
+        return "query";
+    if (name.size() >= 8 && name.substr(0, 8) == "pattern_")
+        return "query";
+    if (name.size() >= 5 && name.substr(0, 5) == "eval_")
+        return "eval";
+    if (name.size() >= 12 && name.substr(0, 12) == "hotpath_eval")
+        return "eval";
+    if (name.size() >= 8 && name.substr(0, 8) == "compile_")
+        return "compile";
+    if (name.size() >= 8 && name.substr(0, 8) == "relower_")
+        return "compile";
+    if (name.size() >= 12 && name.substr(0, 12) == "module_dirty")
+        return "compile";
+    if (name.size() >= 10 && name.substr(0, 10) == "invalidate")
+        return "compile";
+    if (name.size() >= 8 && name.substr(0, 8) == "cascade_")
+        return "compile";
+    if (name.size() >= 7 && name.substr(0, 7) == "define_")
+        return "compile";
+    if (name.size() >= 12 && name.substr(0, 12) == "value_define")
+        return "compile";
+    if (name.size() >= 7 && name.substr(0, 7) == "aot_emi")
+        return "compile";
+    if (name.size() >= 11 && name.substr(0, 11) == "aot_fallbac")
+        return "compile";
+    return "telemetry";
+}
+
+// P2b / #1433: observability facade for AURA_PRIMITIVES=s0 and full.
+// stats:list / stats:count / engine:metrics — no bulk query:*-stats on s0.
 void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& ev) {
     // Issue #560: (stats:list)
     add("stats:list", [&ev](const auto&) -> EvalValue {
@@ -442,10 +488,9 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         return make_int(static_cast<std::int64_t>(ObservabilityPrims::stats_primitives().size()));
     });
 
-    // P1a: (engine:metrics [name | :all])
+    // Issue #1433 / P1a: (engine:metrics [name | :all | :prefix s | :group g])
     add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Capacity: next power-of-two >= 2*kv.size() (min 16)
             std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
             std::uint64_t cap = 16;
             while (cap < need)
@@ -487,7 +532,63 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             return make_hash(hidx);
         };
 
+        auto kw_str = [&](const EvalValue& v) -> std::string {
+            if (!types::is_keyword(v))
+                return {};
+            auto kidx = types::as_keyword_idx(v);
+            if (kidx >= ev.keyword_table_.size())
+                return {};
+            return ev.keyword_table_[kidx];
+        };
+        auto as_text = [&](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto sidx = as_string_idx(v);
+                if (sidx < ev.string_heap_.size())
+                    return ev.string_heap_[sidx];
+                return {};
+            }
+            // Keywords used as group tags: :jit / jit
+            auto k = kw_str(v);
+            if (!k.empty()) {
+                if (k.size() > 1 && k[0] == ':')
+                    return k.substr(1);
+                return k;
+            }
+            return {};
+        };
+
         const auto& stats = ObservabilityPrims::stats_primitives();
+
+        // Collect CompilerMetrics atomics into group maps (Issue #1433).
+        auto dump_metric_groups = [&](CompilerMetrics* m)
+            -> std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>> {
+            std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>> groups;
+            if (!m)
+                return groups;
+            if (auto* svc = static_cast<CompilerService*>(ev.compiler_service()))
+                svc->refresh_env_arena_metrics(*m);
+#define AURA_COMPILER_METRICS_FIELD(name)                                                          \
+    groups[metrics_group_for_field(#name)].emplace_back(                                           \
+        #name, make_int(static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed))));
+#include "compiler_metrics_fields.inc"
+            return groups;
+        };
+
+        auto groups_to_nested =
+            [&](std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>>&
+                    groups) -> std::vector<std::pair<std::string, EvalValue>> {
+            static const char* kOrder[] = {"compile", "jit", "mutate", "query",
+                                           "arena",   "gc",  "eval",   "telemetry"};
+            std::vector<std::pair<std::string, EvalValue>> out;
+            out.reserve(8);
+            for (const char* g : kOrder) {
+                auto it = groups.find(g);
+                if (it == groups.end() || it->second.empty())
+                    continue;
+                out.emplace_back(g, build_hash(it->second));
+            }
+            return out;
+        };
 
         // (engine:metrics "query:foo-stats") → single stats value
         if (a.size() >= 1 && is_string(a[0])) {
@@ -501,34 +602,90 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             return (*fn)({});
         }
 
-        // (engine:metrics :all) → full nested hash name→value
-        bool dump_all = false;
+        // Keyword sub-ops: :all | :prefix s | :group g
         if (a.size() >= 1 && types::is_keyword(a[0])) {
-            auto kidx = types::as_keyword_idx(a[0]);
-            if (kidx < ev.keyword_table_.size() &&
-                (ev.keyword_table_[kidx] == ":all" || ev.keyword_table_[kidx] == "all"))
-                dump_all = true;
-        }
+            std::string k = kw_str(a[0]);
+            if (!k.empty() && k[0] == ':')
+                k = k.substr(1);
 
-        if (dump_all) {
-            std::vector<std::pair<std::string, EvalValue>> kv;
-            kv.reserve(stats.size() + 2);
-            kv.push_back({"schema", make_int(1)});
-            kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
-            for (const auto& name : stats) {
-                auto fn = ev.primitives_.lookup(name);
-                if (!fn)
-                    continue;
-                kv.push_back({name, (*fn)({})});
+            // (engine:metrics :all) → stats name→value hash (+ schema)
+            if (k == "all") {
+                std::vector<std::pair<std::string, EvalValue>> kv;
+                kv.reserve(stats.size() + 4);
+                kv.push_back({"schema", make_int(2)});
+                kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
+                for (const auto& name : stats) {
+                    auto fn = ev.primitives_.lookup(name);
+                    if (!fn)
+                        continue;
+                    kv.push_back({name, (*fn)({})});
+                }
+                return build_hash(kv);
             }
-            return build_hash(kv);
+
+            // (engine:metrics :prefix "query:") → filtered stats / field keys
+            if (k == "prefix" && a.size() >= 2) {
+                std::string prefix = as_text(a[1]);
+                std::vector<std::pair<std::string, EvalValue>> kv;
+                kv.reserve(64);
+                kv.push_back({"schema", make_int(2)});
+                kv.push_back({"prefix", make_string([&] {
+                                  auto i = ev.string_heap_.size();
+                                  ev.string_heap_.push_back(prefix);
+                                  return i;
+                              }())});
+                // Stats catalog names matching prefix (values when registered).
+                for (const auto& name : stats) {
+                    if (name.size() < prefix.size() || name.compare(0, prefix.size(), prefix) != 0)
+                        continue;
+                    auto fn = ev.primitives_.lookup(name);
+                    if (fn)
+                        kv.push_back({name, (*fn)({})});
+                    else
+                        kv.push_back({name, make_void()});
+                }
+                // Also CompilerMetrics fields whose names start with prefix
+                // after treating ':' as '_' for matching (query: → query_).
+                std::string field_pfx = prefix;
+                for (char& c : field_pfx) {
+                    if (c == ':')
+                        c = '_';
+                }
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    auto groups = dump_metric_groups(m);
+                    for (auto& [g, fields] : groups) {
+                        (void)g;
+                        for (auto& [fname, val] : fields) {
+                            if (fname.size() >= field_pfx.size() &&
+                                fname.compare(0, field_pfx.size(), field_pfx) == 0)
+                                kv.push_back({fname, val});
+                        }
+                    }
+                }
+                return build_hash(kv);
+            }
+
+            // (engine:metrics :group "jit" | :jit)
+            if (k == "group" && a.size() >= 2) {
+                std::string group = as_text(a[1]);
+                if (group.empty())
+                    return make_void();
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+                auto groups = dump_metric_groups(m);
+                auto it = groups.find(group);
+                if (it == groups.end()) {
+                    // Empty group hash still valid
+                    return build_hash(std::span<const std::pair<std::string, EvalValue>>{});
+                }
+                return build_hash(it->second);
+            }
         }
 
-        // Default summary (fast): schema + count + optional compiler arena fields
+        // Default (engine:metrics): nested CompilerMetrics groups + catalog meta.
+        // schema 2 = #1433 full facade (groups present).
         std::vector<std::pair<std::string, EvalValue>> kv;
-        kv.push_back({"schema", make_int(1)});
+        kv.push_back({"schema", make_int(2)});
         kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
-        // Discoverability: re-use stats:list semantics as a list value
         {
             EvalValue names_list = make_void();
             for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
@@ -540,11 +697,17 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             }
             kv.push_back({"stats-names", names_list});
         }
-        // Nested compiler env/arena snapshot when available (Issue #1385 fields)
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            if (auto* svc = static_cast<CompilerService*>(ev.compiler_service())) {
-                svc->refresh_env_arena_metrics(*m);
-            }
+            auto groups = dump_metric_groups(m);
+            auto nested = groups_to_nested(groups);
+            // Total atomic field count for golden tests (≥200).
+            std::int64_t field_total = 0;
+            for (auto& [g, fields] : groups)
+                field_total += static_cast<std::int64_t>(fields.size());
+            kv.push_back({"metrics-field-count", make_int(field_total)});
+            for (auto& p : nested)
+                kv.push_back(std::move(p));
+            // Back-compat nested "compiler" key with env/arena snapshot (#1385).
             std::vector<std::pair<std::string, EvalValue>> ck;
             ck.push_back({"env_frames_size_total",
                           make_int(static_cast<std::int64_t>(m->env_frames_size_total.load()))});
