@@ -14,6 +14,7 @@ Usage:
 
 Argument: number of DNA bases (default 100000).
 """
+
 import random
 import sys
 
@@ -26,7 +27,7 @@ def main():
     seq = "".join(rng.choice(codes) for _ in range(n))
     out = [">revcomp"]
     for i in range(0, len(seq), 60):
-        out.append(seq[i:i + 60])
+        out.append(seq[i : i + 60])
     sys.stdout.write("\n".join(out) + "\n")
 
 

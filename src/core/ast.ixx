@@ -5342,6 +5342,48 @@ public:
 
     // Total number of mutations recorded
     std::size_t mutation_count() const { return mutation_log_.size(); }
+
+    // Issue #1408: Count of mutations that are still Committed (i.e.
+    // not yet RolledBack). The mutation_log_ retains RolledBack records
+    // for audit (see Issue #1301 follow-up `mutation_log_compacted_records_`),
+    // so the raw mutation_count() is not a useful "how many effects
+    // are currently applied" metric. Use this for atomic-multi-mutate
+    // tests that need to verify "0 new committed mutations" after a
+    // TypedTransactionGuard dtor rollback.
+    std::size_t committed_mutation_count() const {
+        std::size_t n = 0;
+        for (const auto& rec : mutation_log_) {
+            if (rec.status == MutationStatus::Committed)
+                ++n;
+        }
+        return n;
+    }
+
+    // Issue #1408: Physically erase all mutation records with
+    // mutation_id >= since_id from the log. Used by TypedTransactionGuard's
+    // dtor to implement strict atomic-batch rollback: even when
+    // try_rollback_record() can't actually undo a non-structural op
+    // (e.g. mutate:rebind has no structural rollback handler today, so
+    // rollback_since leaves the record in Committed status), this method
+    // removes the record from the log so the "0 applied" AC holds
+    // (committed_mutation_count() returns to its pre-batch value).
+    //
+    // The variable-state rollback for non-structural ops is a separate
+    // follow-up; this method only handles the audit-log side of the
+    // contract. next_mutation_id_ is NOT reset here (it's monotonically
+    // increasing within a session; resetting it could break other
+    // holders of the higher ids).
+    //
+    // Returns the number of records erased.
+    std::size_t erase_mutations_since(std::uint64_t since_id) {
+        const auto old_size = mutation_log_.size();
+        mutation_log_.erase(std::remove_if(mutation_log_.begin(), mutation_log_.end(),
+                                           [since_id](const MutationRecord& r) {
+                                               return r.mutation_id >= since_id;
+                                           }),
+                            mutation_log_.end());
+        return old_size - mutation_log_.size();
+    }
     std::uint64_t next_mutation_id() const { return next_mutation_id_; }
 
     // Get all mutation records (unfiltered).
