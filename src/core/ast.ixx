@@ -808,6 +808,19 @@ export template <typename Id, typename C, typename Tag>
 }
 
 export class FlatAST {
+    // Issue #1431 follow-up (Race #2): FlatAST parser race. Two
+    // threads concurrently calling CompilerService::eval share
+    // the same workspace_flat_ FlatAST and race on add_node /
+    // reset_node_slot push_backs, corrupting std::pmr memory_resource
+    // and surfacing as SIGSEGV at pmr::memory_resource::allocate
+    // (called from push_back via _M_realloc_append via the
+    // polymorphic_allocator inside the NodeTag vector). TypeRegistry
+    // Race #1 (the previous fix) used to crash first, hiding this
+    // one. recursive_mutex because reset_node_slot is invoked from
+    // inside add_node on the recycled-slot path.
+    mutable std::recursive_mutex flatast_mutex_;
+
+public:
 public:
     // Issue #261 / #1299: node_gen_[id] == 0 marks a recycled (free-list)
     // or ghost-orphan slot. Public so query:* can skip freed ghosts after
@@ -1002,6 +1015,15 @@ public:
     }
 
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+        // Issue #1431 follow-up Race #2: serialize FlatAST node
+        // allocation across threads. Two CompilerService::eval
+        // callers share workspace_flat_ and race on the per-node
+        // push_backs (tag_ / int_val_ / float_val_ / sym_id_ /
+        // children_ / etc.), corrupting std::pmr memory_resource
+        // and crashing at pmr::memory_resource::allocate from
+        // _M_realloc_append. recursive_mutex because reset_node_slot
+        // is invoked on the recycled-slot path (free_list_.back()).
+        std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);
         // Issue #402: tag-based summary flags. Update eagerly
         // before allocation so a fast-path consumer (next
         // add_node's caller) sees the correct bit-set.

@@ -338,6 +338,21 @@ private:
     TypeEntryArena arena_;        // bump-allocates Entry objects
     std::unordered_map<std::string, TypeId> name_to_id_;
     uint32_t next_generation_ = 1;
+
+    // Issue #1431: TypeRegistry thread-safety. InferenceEngine is
+    // constructed fresh per infer_flat() call (cached InferenceEngine
+    // was not adopted because the engine carries per-call bidirectional
+    // state). When two fibers/threads concurrently enter type checking,
+    // each constructs its own InferenceEngine and calls init_primitive_env
+    // → register_effect/register_capability/etc. on the SHARED TypeRegistry
+    // (passed by reference through CompilerService::eval). Without this
+    // mutex, TypeEntryArena::bump_slot races and returns overlapping or
+    // stale memory, surfacing as `Entry::Entry(this=0x0)` SIGSEGV.
+    //
+    // The mutex serializes all register_* methods. Read-only accessors
+    // (*_of, lookup_type, *_type() predefined, etc.) are lock-free
+    // because entries_ pointers are stable across registrations.
+    mutable std::recursive_mutex type_registry_mutex_;
 };
 
 } // namespace aura::core
