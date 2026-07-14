@@ -525,17 +525,31 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     });
 
     // (api-reference) — Return all registered primitives as a string for LLM reference
+    // Issue #1434: list *deprecated* section (prefer engine:metrics) separately.
     add("api-reference", [&ev](const auto&) -> EvalValue {
         std::string out = "Available Aura primitives:\n\n";
+        std::vector<std::string> deprecated;
+        deprecated.reserve(32);
         for (std::size_t i = 0; i < ev.primitives_.slot_count(); ++i) {
             auto name = ev.primitives_.name_for_slot(i);
-            if (!name.empty()) {
-                out += "  " + std::string(name) + "\n";
+            if (name.empty())
+                continue;
+            const auto& meta = ev.primitives_.meta_for_slot(i);
+            if (meta.deprecated) {
+                deprecated.emplace_back(name);
+                continue; // listed under *deprecated* section
             }
+            out += "  " + std::string(name) + "\n";
+        }
+        if (!deprecated.empty()) {
+            out += "\n*deprecated* (prefer (engine:metrics …) / std/engine-metrics):\n";
+            for (const auto& n : deprecated)
+                out += "  " + n + "  [use (engine:metrics \"" + n + "\")]\n";
         }
         out += "\nStandard library: (require std/name) loads with prefix (std/name:func-name)\n";
         out += "Or (require std/name all:) for bare names\n";
         out += "Try it: (require std/list all:) then (sort (list 3 1 2))\n";
+        out += "Metrics facade: (engine:metrics) / (require \"std/engine-metrics\" all:)\n";
         auto id = ev.string_heap_.size();
         ev.string_heap_.push_back(std::move(out));
         return make_string(id);

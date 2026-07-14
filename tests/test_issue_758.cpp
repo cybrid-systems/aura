@@ -12,7 +12,7 @@
 // root_id, edsl_type_name) using reflect_members + auto_validate + macro
 // descendant provenance check, (2) MutationBoundaryGuard integration on
 // EDSL-tagged nodes before commit, (3) (reflect:validate-edsl node-id
-// [type]) primitive with optional type arg + (query:edsl-reflection-stats)
+// [type]) primitive with optional type arg + (engine:metrics \"query:edsl-reflection-stats\")
 // primitive, (4) tests/test_reflection_edsl_struct_validate_guard_mutate.cpp
 // harness, (5) SEVA custom EDSL demo + dirty/epoch cascade on violation +
 // mutation-impact-snapshot correlation + docs. Each is a non-trivial focused
@@ -66,9 +66,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:edsl-reflection-stats) hash shape ---");
-    auto r = cs.eval("(query:edsl-reflection-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:edsl-reflection-stats) returns a hash");
+    std::println("\n--- AC1: (engine:metrics \"query:edsl-reflection-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:edsl-reflection-stats\") returns a hash");
     for (const auto& k : {std::string("validated-edsl"), std::string("hygiene-invariants-held"),
                           std::string("schema-fail-by-type"),
                           std::string("macro-correlated-violations"), std::string("schema")}) {
@@ -80,19 +81,24 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "validated-edsl") == 0,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "validated-edsl") == 0,
           "validated-edsl == 0 on fresh");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "hygiene-invariants-held") == 0,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "hygiene-invariants-held") == 0,
           "hygiene-invariants-held == 0 on fresh");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "schema-fail-by-type") == 0,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "schema-fail-by-type") == 0,
           "schema-fail-by-type == 0 on fresh");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "macro-correlated-violations") == 0,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "macro-correlated-violations") == 0,
           "macro-correlated-violations == 0 on fresh");
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 758 (drift sentinel) ---");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "schema") == 758, "schema == 758");
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")", "schema") == 758,
+          "schema == 758");
 }
 
 static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
@@ -108,30 +114,37 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_edsl_macro_correlated_violation();
     ev.bump_edsl_macro_correlated_violation();
     ev.bump_edsl_macro_correlated_violation();
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "validated-edsl") == 3,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "validated-edsl") == 3,
           "3 validated bumps → 3");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "hygiene-invariants-held") == 2,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "hygiene-invariants-held") == 2,
           "2 hygiene-invariants-held bumps → 2");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "schema-fail-by-type") == 1,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "schema-fail-by-type") == 1,
           "1 schema-fail-by-type bump → 1");
-    CHECK(hash_int_field(cs, "(query:edsl-reflection-stats)", "macro-correlated-violations") == 4,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")",
+                         "macro-correlated-violations") == 4,
           "4 macro-correlated bumps → 4");
 }
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression ---");
-    CHECK(cs.eval("(query:macro-provenance-stats)") &&
-              aura::compiler::types::is_hash(*cs.eval("(query:macro-provenance-stats)")),
+    CHECK(cs.eval("(engine:metrics \"query:macro-provenance-stats\")") &&
+              aura::compiler::types::is_hash(
+                  *cs.eval("(engine:metrics \"query:macro-provenance-stats\")")),
           "query:macro-provenance-stats hash regression (#735)");
-    CHECK(cs.eval("(query:envframe-dualpath-policy-stats)") &&
-              aura::compiler::types::is_hash(*cs.eval("(query:envframe-dualpath-policy-stats)")),
+    CHECK(cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")") &&
+              aura::compiler::types::is_hash(
+                  *cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")")),
           "query:envframe-dualpath-policy-stats hash regression (#756)");
     CHECK(cs.eval("(query:macro-hygiene-provenance-stats)") &&
               aura::compiler::types::is_hash(*cs.eval("(query:macro-hygiene-provenance-stats)")),
           "query:macro-hygiene-provenance-stats hash regression (#757)");
-    CHECK(hash_int_field(cs, "(query:macro-provenance-stats)", "schema") == 735,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:macro-provenance-stats\")", "schema") == 735,
           "macro-provenance schema 735");
-    CHECK(hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "schema") == 756,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-policy-stats\")",
+                         "schema") == 756,
           "envframe-policy schema 756");
     CHECK(hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema") == 757,
           "macro-hygiene-provenance schema 757");

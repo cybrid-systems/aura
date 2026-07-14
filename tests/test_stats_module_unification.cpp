@@ -90,10 +90,10 @@ bool test_stats_list_entries_invocable() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    auto r1 = cs.eval("(query:envframe-dualpath-stats)");
-    CHECK(r1.has_value(), "(query:envframe-dualpath-stats) invocable");
-    auto r2 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
-    CHECK(r2.has_value(), "(query:panic-checkpoint-lifecycle-stats) invocable");
+    auto r1 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+    CHECK(r1.has_value(), "(engine:metrics \"query:envframe-dualpath-stats\") invocable");
+    auto r2 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
+    CHECK(r2.has_value(), "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") invocable");
     auto r3 = cs.eval("(query:self-evolution-stability-stats)");
     CHECK(r3.has_value(), "(query:self-evolution-stability-stats) invocable");
     auto r4 = cs.eval("(query:edsl-concurrency-stats)");
@@ -110,10 +110,11 @@ bool test_stats_get_routing() {
     // The std/stats.aura (stats:get) wraps (eval "name") for
     // each registered stat. We verify the underlying name
     // resolves to an invocable primitive.
-    auto r = cs.eval("(query:envframe-dualpath-stats)");
-    CHECK(r.has_value(), "(query:envframe-dualpath-stats) returns (routing target)");
+    auto r = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+    CHECK(r.has_value(),
+          "(engine:metrics \"query:envframe-dualpath-stats\") returns (routing target)");
     CHECK(aura::compiler::types::is_int(*r),
-          "(query:envframe-dualpath-stats) returns int (routed value)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") returns int (routed value)");
     return true;
 }
 
@@ -240,16 +241,18 @@ bool test_stats_count_baseline() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC10: regression — prior stats primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:envframe-dualpath-stats)");
-    CHECK(r1.has_value(), "(query:envframe-dualpath-stats) (regression for #543)");
-    auto r2 = cs.eval("(query:pattern-index-stats)");
-    CHECK(r2.has_value(), "(query:pattern-index-stats) (regression for #547)");
-    auto r3 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
-    CHECK(r3.has_value(), "(query:panic-checkpoint-lifecycle-stats) (regression for #548)");
+    auto r1 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+    CHECK(r1.has_value(),
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
+    auto r2 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
+    CHECK(r2.has_value(), "(engine:metrics \"query:pattern-index-stats\") (regression for #547)");
+    auto r3 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
+    CHECK(r3.has_value(),
+          "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");
     auto r4 = cs.eval("(query:self-evolution-stability-stats)");
     CHECK(r4.has_value(), "(query:self-evolution-stability-stats) (regression for #549)");
-    auto r5 = cs.eval("(query:typed-mutation-stats)");
-    CHECK(r5.has_value(), "(query:typed-mutation-stats) (regression for #550)");
+    auto r5 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
+    CHECK(r5.has_value(), "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
     auto r6 = cs.eval("(query:edsl-concurrency-stats)");
     CHECK(r6.has_value(), "(query:edsl-concurrency-stats) (regression for #556)");
     auto r7 = cs.eval("(query:closure-env-safety-stats)");

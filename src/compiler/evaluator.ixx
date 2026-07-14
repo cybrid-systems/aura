@@ -128,8 +128,10 @@ export struct PrimMeta {
     // security_level: 0=unknown, 1=safe, 2=sandboxed, 3=privileged/network
     std::uint8_t perf_tier = 0;
     std::uint8_t security_level = 0;
+    // Issue #1434 / P1b: prefer (engine:metrics …) over direct query:*-stats.
+    bool deprecated = false;
     std::string doc;
-    std::string category; // eda | sva | verification | general
+    std::string category; // eda | sva | verification | general | deprecated
     std::string schema;   // e.g. "(int string) -> bool"
 };
 

@@ -322,8 +322,9 @@ bool test_long_running_shape_stress() {
 bool test_regression_related_primitives() {
     std::println("\n--- AC12: regression primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:value-dispatch-stats)");
-    CHECK(r1.has_value() && is_int(*r1), "(query:value-dispatch-stats) regression for #571");
+    auto r1 = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
+    CHECK(r1.has_value() && is_int(*r1),
+          "(engine:metrics \"query:value-dispatch-stats\") regression for #571");
     auto r2 = cs.eval("(query:task4-hotpath-safety-score)");
     CHECK(r2.has_value() && is_int(*r2), "(query:task4-hotpath-safety-score) regression for #607");
     auto r3 = cs.eval("(query:shape-stability-stats)");

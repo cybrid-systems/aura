@@ -96,10 +96,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:incremental-relower-stats) hash shape ---");
-    auto r = cs.eval("(query:incremental-relower-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:incremental-relower-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:incremental-relower-stats) returns a hash");
+          "(engine:metrics \"query:incremental-relower-stats\") returns a hash");
     const std::vector<std::string> keys = {"impact-blocks-hit", "partial-relowers",
                                            "full-fallbacks", "time-saved-us", "schema"};
     for (const auto& k : keys) {
@@ -111,25 +111,27 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto hits = hash_int_field(cs, "(query:incremental-relower-stats)", "impact-blocks-hit");
+    const auto hits = hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")",
+                                     "impact-blocks-hit");
     CHECK(hits == 0, std::format("impact-blocks-hit = {} (expected 0 on fresh service)", hits));
-    const auto partials =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "partial-relowers");
+    const auto partials = hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")",
+                                         "partial-relowers");
     CHECK(partials == 0,
           std::format("partial-relowers = {} (expected 0 on fresh service)", partials));
-    const auto fallbacks =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "full-fallbacks");
+    const auto fallbacks = hash_int_field(
+        cs, "(engine:metrics \"query:incremental-relower-stats\")", "full-fallbacks");
     CHECK(fallbacks == 0,
           std::format("full-fallbacks = {} (expected 0 on fresh service)", fallbacks));
     const auto time_saved =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "time-saved-us");
+        hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "time-saved-us");
     CHECK(time_saved == 0,
           std::format("time-saved-us = {} (expected 0 on fresh service)", time_saved));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 718 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "schema");
     CHECK(schema == 718, std::format("schema = {} (expected 718)", schema));
 }
 
@@ -147,13 +149,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_incremental_full_fallback();
     ev.bump_incremental_time_saved_us(1500);
     ev.bump_incremental_time_saved_us(2500);
-    const auto hits = hash_int_field(cs, "(query:incremental-relower-stats)", "impact-blocks-hit");
-    const auto partials =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "partial-relowers");
-    const auto fallbacks =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "full-fallbacks");
+    const auto hits = hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")",
+                                     "impact-blocks-hit");
+    const auto partials = hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")",
+                                         "partial-relowers");
+    const auto fallbacks = hash_int_field(
+        cs, "(engine:metrics \"query:incremental-relower-stats\")", "full-fallbacks");
     const auto time_saved =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "time-saved-us");
+        hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "time-saved-us");
     CHECK(
         hits == 2,
         std::format("after 2 impact-blocks-hit bumps: impact-blocks-hit = {} (expected 2)", hits));
@@ -193,12 +196,12 @@ static void run_ac5_helper_behavior() {
 
 static void run_ac6_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — #712 + #713 + #714 + #715 + #716 + #717 unaffected ---");
-    auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
-    auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
-    auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
-    auto stable_ref_layer = cs.eval("(query:stable-ref-layer-stats)");
-    auto pattern = cs.eval("(query:pattern-stats)");
-    auto fiber_boundary = cs.eval("(query:fiber-boundary-violation-stats)");
+    auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
+    auto jit = cs.eval("(engine:metrics \"query:macro-jit-hygiene-stats\")");
+    auto self_evo = cs.eval("(engine:metrics \"query:self-evolution-closedloop-stats\")");
+    auto stable_ref_layer = cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")");
+    auto pattern = cs.eval("(engine:metrics \"query:pattern-stats\")");
+    auto fiber_boundary = cs.eval("(engine:metrics \"query:fiber-boundary-violation-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     CHECK(jit && aura::compiler::types::is_hash(*jit),
@@ -212,25 +215,27 @@ static void run_ac6_regression(aura::compiler::CompilerService& cs) {
     CHECK(fiber_boundary && aura::compiler::types::is_hash(*fiber_boundary),
           "query:fiber-boundary-violation-stats hash regression (#717)");
     const auto reflect_schema =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
-    const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
+    const auto jit_schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")", "schema");
     CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "schema");
     CHECK(self_evo_schema == 714,
           std::format("self-evo schema = {} (expected 714, no drift)", self_evo_schema));
     const auto stable_ref_layer_schema =
-        hash_int_field(cs, "(query:stable-ref-layer-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:stable-ref-layer-stats\")", "schema");
     CHECK(stable_ref_layer_schema == 715,
           std::format("stable-ref-layer schema = {} (expected 715, no drift)",
                       stable_ref_layer_schema));
-    const auto pattern_schema = hash_int_field(cs, "(query:pattern-stats)", "schema");
+    const auto pattern_schema =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "schema");
     CHECK(pattern_schema == 716,
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
-        hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:fiber-boundary-violation-stats\")", "schema");
     CHECK(
         fiber_boundary_schema == 717,
         std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));

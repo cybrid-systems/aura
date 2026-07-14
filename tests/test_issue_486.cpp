@@ -120,7 +120,7 @@ int aura_issue_486_run() {
         std::println("\n--- AC5: marker query regression ---");
         auto macro_n = cs.eval("(length (query:macro-introduced))");
         auto by_marker = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
-        auto phs = cs.eval("(query:pattern-hygiene-stats)");
+        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         auto hys = cs.eval("(query:hygiene-stats)");
         CHECK(macro_n && aura::compiler::types::is_int(*macro_n), "macro-introduced reachable");
         CHECK(by_marker && aura::compiler::types::is_int(*by_marker), "by-marker reachable");

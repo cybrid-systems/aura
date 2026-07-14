@@ -129,7 +129,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(chaos_corruptions(cs) - s0_corr >= 12, "chaos-corruptions accumulated >=12");
 
     std::println("\n--- AC7: query regression — existing recovery stats still reachable ---");
-    auto pcl_stats = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto pcl_stats = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     auto abr_stats = cs.eval("(query:atomic-batch-rollback-stats)");
     auto src_stats = cs.eval("(query:stable-ref-cow-fiber-stats)");
     auto rrc_stats = cs.eval("(query:runtime-observability-correlated-stats)");

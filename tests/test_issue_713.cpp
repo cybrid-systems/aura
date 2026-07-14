@@ -84,10 +84,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:macro-jit-hygiene-stats) hash shape ---");
-    auto r = cs.eval("(query:macro-jit-hygiene-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:macro-jit-hygiene-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:macro-jit-hygiene-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:macro-jit-hygiene-stats) returns a hash");
+          "(engine:metrics \"query:macro-jit-hygiene-stats\") returns a hash");
     const std::vector<std::string> keys = {"deopt-on-hygiene", "aot-reload-marker-mismatches",
                                            "interpreter-fallback-hygiene-hits", "schema"};
     for (const auto& k : keys) {
@@ -99,21 +99,23 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto deopt = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "deopt-on-hygiene");
+    const auto deopt = hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                                      "deopt-on-hygiene");
     CHECK(deopt == 0, std::format("deopt-on-hygiene = {} (expected 0 on fresh service)", deopt));
-    const auto aot =
-        hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "aot-reload-marker-mismatches");
+    const auto aot = hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                                    "aot-reload-marker-mismatches");
     CHECK(aot == 0,
           std::format("aot-reload-marker-mismatches = {} (expected 0 on fresh service)", aot));
-    const auto ib =
-        hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "interpreter-fallback-hygiene-hits");
+    const auto ib = hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                                   "interpreter-fallback-hygiene-hits");
     CHECK(ib == 0,
           std::format("interpreter-fallback-hygiene-hits = {} (expected 0 on fresh service)", ib));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 713 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")", "schema");
     CHECK(schema == 713, std::format("schema = {} (expected 713)", schema));
 }
 
@@ -130,11 +132,12 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_macro_jit_hygiene_deopt();
     ev.bump_macro_aot_reload_marker_mismatches();
     ev.bump_macro_interpreter_fallback_hygiene_hits();
-    const auto deopt = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "deopt-on-hygiene");
-    const auto aot =
-        hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "aot-reload-marker-mismatches");
-    const auto ib =
-        hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "interpreter-fallback-hygiene-hits");
+    const auto deopt = hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                                      "deopt-on-hygiene");
+    const auto aot = hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                                    "aot-reload-marker-mismatches");
+    const auto ib = hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                                   "interpreter-fallback-hygiene-hits");
     CHECK(deopt == 1, std::format("after 1 bump: deopt-on-hygiene = {} (expected 1)", deopt));
     CHECK(aot == 1,
           std::format("after 1 bump: aot-reload-marker-mismatches = {} (expected 1)", aot));
@@ -145,13 +148,13 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #697 + #712 surfaces unaffected ---");
     auto ext = cs.eval("(query:primitives-extension-stats)");
-    auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
+    auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
     CHECK(ext && aura::compiler::types::is_hash(*ext),
           "query:primitives-extension-stats hash regression (#697)");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     const auto reflect_schema =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
 }

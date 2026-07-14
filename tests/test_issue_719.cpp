@@ -94,10 +94,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:closure-env-epoch-safety-stats) hash shape ---");
-    auto r = cs.eval("(query:closure-env-epoch-safety-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:closure-env-epoch-safety-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:closure-env-epoch-safety-stats) returns a hash");
+          "(engine:metrics \"query:closure-env-epoch-safety-stats\") returns a hash");
     const std::vector<std::string> keys = {"epoch-mismatches-caught",
                                            "linear-violations-post-mutate", "gc-root-syncs",
                                            "dangling-prevented", "schema"};
@@ -110,25 +111,28 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto epoch =
-        hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "epoch-mismatches-caught");
+    const auto epoch = hash_int_field(
+        cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "epoch-mismatches-caught");
     CHECK(epoch == 0,
           std::format("epoch-mismatches-caught = {} (expected 0 on fresh service)", epoch));
-    const auto linear = hash_int_field(cs, "(query:closure-env-epoch-safety-stats)",
-                                       "linear-violations-post-mutate");
+    const auto linear =
+        hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")",
+                       "linear-violations-post-mutate");
     CHECK(linear == 0,
           std::format("linear-violations-post-mutate = {} (expected 0 on fresh service)", linear));
-    const auto gc = hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "gc-root-syncs");
+    const auto gc = hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")",
+                                   "gc-root-syncs");
     CHECK(gc == 0, std::format("gc-root-syncs = {} (expected 0 on fresh service)", gc));
-    const auto dangling =
-        hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "dangling-prevented");
+    const auto dangling = hash_int_field(
+        cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "dangling-prevented");
     CHECK(dangling == 0,
           std::format("dangling-prevented = {} (expected 0 on fresh service)", dangling));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 719 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "schema");
     CHECK(schema == 719, std::format("schema = {} (expected 719)", schema));
 }
 
@@ -148,13 +152,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_gc_root_sync();
     ev.bump_gc_root_sync();
     ev.bump_dangling_prevented();
-    const auto epoch =
-        hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "epoch-mismatches-caught");
-    const auto linear = hash_int_field(cs, "(query:closure-env-epoch-safety-stats)",
-                                       "linear-violations-post-mutate");
-    const auto gc = hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "gc-root-syncs");
-    const auto dangling =
-        hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "dangling-prevented");
+    const auto epoch = hash_int_field(
+        cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "epoch-mismatches-caught");
+    const auto linear =
+        hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")",
+                       "linear-violations-post-mutate");
+    const auto gc = hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")",
+                                   "gc-root-syncs");
+    const auto dangling = hash_int_field(
+        cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "dangling-prevented");
     CHECK(epoch == 2,
           std::format("after 2 epoch-mismatch bumps: epoch-mismatches-caught = {} (expected 2)",
                       epoch));
@@ -170,13 +176,13 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #712..#718 sibling primitives unaffected ---");
-    auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
-    auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
-    auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
-    auto stable_ref_layer = cs.eval("(query:stable-ref-layer-stats)");
-    auto pattern = cs.eval("(query:pattern-stats)");
-    auto fiber_boundary = cs.eval("(query:fiber-boundary-violation-stats)");
-    auto incremental = cs.eval("(query:incremental-relower-stats)");
+    auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
+    auto jit = cs.eval("(engine:metrics \"query:macro-jit-hygiene-stats\")");
+    auto self_evo = cs.eval("(engine:metrics \"query:self-evolution-closedloop-stats\")");
+    auto stable_ref_layer = cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")");
+    auto pattern = cs.eval("(engine:metrics \"query:pattern-stats\")");
+    auto fiber_boundary = cs.eval("(engine:metrics \"query:fiber-boundary-violation-stats\")");
+    auto incremental = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     CHECK(jit && aura::compiler::types::is_hash(*jit),
@@ -192,30 +198,32 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(incremental && aura::compiler::types::is_hash(*incremental),
           "query:incremental-relower-stats hash regression (#718)");
     const auto reflect_schema =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
-    const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
+    const auto jit_schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")", "schema");
     CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "schema");
     CHECK(self_evo_schema == 714,
           std::format("self-evo schema = {} (expected 714, no drift)", self_evo_schema));
     const auto stable_ref_layer_schema =
-        hash_int_field(cs, "(query:stable-ref-layer-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:stable-ref-layer-stats\")", "schema");
     CHECK(stable_ref_layer_schema == 715,
           std::format("stable-ref-layer schema = {} (expected 715, no drift)",
                       stable_ref_layer_schema));
-    const auto pattern_schema = hash_int_field(cs, "(query:pattern-stats)", "schema");
+    const auto pattern_schema =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "schema");
     CHECK(pattern_schema == 716,
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
-        hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:fiber-boundary-violation-stats\")", "schema");
     CHECK(
         fiber_boundary_schema == 717,
         std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "schema");
     CHECK(incremental_schema == 718,
           std::format("incremental-relower schema = {} (expected 718, no drift)",
                       incremental_schema));

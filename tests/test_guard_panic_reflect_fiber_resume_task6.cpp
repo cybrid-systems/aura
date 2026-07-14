@@ -116,7 +116,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: query regression ---");
     auto rsm = cs.eval("(query:reflection-selfmod-stats)");
     auto sel = cs.eval("(query:self-evolution-loop-stats)");
-    auto pcl = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto pcl = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(rsm && is_int(*rsm), "reflection-selfmod-stats regression");
     CHECK(sel && is_int(*sel), "self-evolution-loop-stats regression");
     CHECK(pcl && is_int(*pcl), "panic-checkpoint-lifecycle-stats regression");

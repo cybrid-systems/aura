@@ -7,7 +7,7 @@
 //   - consteval low-2-bit dispatch table correctness
 //   - classify_eval_value_tag + is_/as_ contract wiring
 //   - shape_profiler inline_shape_of v2 string tag path
-//   - (query:value-dispatch-stats) observability
+//   - (engine:metrics \"query:value-dispatch-stats\") observability
 //   - fuzz/stress under fibers with zero collision attempts
 
 #include "test_harness.hpp"
@@ -141,11 +141,11 @@ bool test_collision_indices_dispatch_string() {
 
 // ── AC4: query:value-dispatch-stats reachable ─────────────
 bool test_value_dispatch_stats_reachable() {
-    std::println("\n--- AC4: (query:value-dispatch-stats) reachable ---");
+    std::println("\n--- AC4: (engine:metrics \"query:value-dispatch-stats\") reachable ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    const auto s = eval_int(cs, "(query:value-dispatch-stats)");
+    const auto s = eval_int(cs, "(engine:metrics \"query:value-dispatch-stats\")");
     std::println("  value-dispatch-stats baseline: {}", s);
     CHECK(s >= 0, "value-dispatch-stats >= 0");
     return true;
@@ -156,13 +156,13 @@ bool test_dispatch_stats_grow_under_eval() {
     std::println("\n--- AC5: dispatch stats grow under eval ---");
     CompilerService cs;
     CHECK(setup_value_workspace(cs), "value workspace setup");
-    const auto s0 = eval_int(cs, "(query:value-dispatch-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:value-dispatch-stats\")");
     const auto h0 = value_dispatch_hit_count.load();
     for (int i = 0; i < 20; ++i) {
         (void)cs.eval("(+ base acc)");
         (void)cs.eval("(add1 acc)");
     }
-    const auto s1 = eval_int(cs, "(query:value-dispatch-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:value-dispatch-stats\")");
     const auto h1 = value_dispatch_hit_count.load();
     std::println("  dispatch stats: {} -> {} hits: {} -> {}", s0, s1, h0, h1);
     CHECK(s1 >= s0, "value-dispatch-stats monotonic under eval");
@@ -284,7 +284,7 @@ bool test_long_running_dispatch_stress() {
     std::println("\n--- AC10: {} iters long stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_value_workspace(cs), "workspace for stress");
-    const auto s0 = eval_int(cs, "(query:value-dispatch-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:value-dispatch-stats\")");
     std::mt19937 rng(5719u);
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
@@ -299,7 +299,7 @@ bool test_long_running_dispatch_stress() {
         if ((i & 15) == 0)
             (void)cs.eval("(eval-current)");
     }
-    const auto s1 = eval_int(cs, "(query:value-dispatch-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:value-dispatch-stats\")");
     const auto collisions = v2_string_collision_attempts.load();
     const auto misses = value_dispatch_miss_count.load();
     const auto v = prompt6_violations(cs);

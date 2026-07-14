@@ -195,14 +195,14 @@ bool test_pattern_ir_hygiene_closed_loop_stats(CompilerService& cs) {
 bool test_combined_metrics_monotonic(CompilerService& cs) {
     std::println("\n--- AC8: combined metrics monotonic ---");
     const auto capture0 = hash_int(cs, "capture-prevented");
-    const auto phs0 = cs.eval("(query:pattern-hygiene-stats)");
+    const auto phs0 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     const auto prod0 = cs.eval("(hash-ref (query:macro-production-hygiene-stats) "
                                "'macro-production-hygiene-total')");
     (void)cs.eval("(query:pattern \"*\")");
     (void)cs.eval("(query:pattern \"base\" :respect-hygiene #t)");
     cs.evaluator().ensure_macro_hygiene_contract();
     const auto capture1 = hash_int(cs, "capture-prevented");
-    const auto phs1 = cs.eval("(query:pattern-hygiene-stats)");
+    const auto phs1 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     const auto prod1 = cs.eval("(hash-ref (query:macro-production-hygiene-stats) "
                                "'macro-production-hygiene-total')");
     CHECK(capture1 >= capture0,
@@ -259,9 +259,9 @@ bool test_regression_hygiene_primitives(CompilerService& cs) {
     auto r1 = cs.eval("(query:macro-hygiene-stats)");
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
           "(query:macro-hygiene-stats) regression");
-    auto r2 = cs.eval("(query:pattern-hygiene-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:pattern-hygiene-stats) regression");
+          "(engine:metrics \"query:pattern-hygiene-stats\") regression");
     auto r3 = cs.eval("(query:ir-hygiene-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_hash(*r3),
           "(query:ir-hygiene-stats) regression");

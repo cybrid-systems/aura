@@ -137,10 +137,14 @@ bool test_combined_task4_stats_bundle() {
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for stats bundle");
     const char* stats[] = {
-        "(query:task4-hotpath-safety-score)", "(query:task4-cache-locality-win)",
-        "(query:task4-mutation-stability)",   "(query:pattern-index-stats)",
-        "(query:typed-mutation-stats)",       "(query:typed-mutation-stats-task1)",
-        "(query:incremental-effectiveness)",  "(gc-arena-stats)",
+        "(query:task4-hotpath-safety-score)",
+        "(query:task4-cache-locality-win)",
+        "(query:task4-mutation-stability)",
+        "(engine:metrics \"query:pattern-index-stats\")",
+        "(engine:metrics \"query:typed-mutation-stats\")",
+        "(query:typed-mutation-stats-task1)",
+        "(query:incremental-effectiveness)",
+        "(gc-arena-stats)",
     };
     for (const char* prim : stats) {
         auto r = cs.eval(prim);
@@ -240,7 +244,7 @@ bool test_fuzz_hotpath_sequences() {
                 (void)cs.eval("(query:tag-arity-count 32 0)");
                 break;
             case 3:
-                (void)cs.eval("(query:pattern-index-stats)");
+                (void)cs.eval("(engine:metrics \"query:pattern-index-stats\")");
                 break;
             case 4:
                 (void)cs.eval("(gc-heap)");
@@ -374,9 +378,9 @@ bool test_regression_related_primitives() {
     auto r1 = cs.eval("(query:prompt6-violation-count)");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(query:prompt6-violation-count) (regression for #602)");
-    auto r2 = cs.eval("(query:pattern-index-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:pattern-index-stats) (regression for #547)");
+          "(engine:metrics \"query:pattern-index-stats\") (regression for #547)");
     auto r3 = cs.eval("(query:compiler-cache-stats)");
     CHECK(r3.has_value(), "(query:compiler-cache-stats) (regression)");
     auto r4 = cs.eval("(query:macro-reflect-self-evo-stats)");

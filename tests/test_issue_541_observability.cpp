@@ -146,8 +146,8 @@ int aura_issue_541_observability_run() {
     {
         std::println("\n--- AC4: regression ---");
         auto prod = cs.eval("(query:pattern-production-index-stats)");
-        auto pis = cs.eval("(query:pattern-index-stats)");
-        auto phs = cs.eval("(query:pattern-hygiene-stats)");
+        auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
+        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         CHECK(prod && aura::compiler::types::is_hash(*prod),
               "query:pattern-production-index-stats hash regression");
         CHECK(pis && aura::compiler::types::is_int(*pis), "pattern-index-stats int regression");

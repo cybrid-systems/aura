@@ -4,7 +4,7 @@
 //
 // Scope-limited close matching the #601/#491/#479/#604/#606/#614/
 // #615/#616/#617/#618/#620 pattern: ship the Agent-discoverable
-// structured-hash companion to (query:pattern-index-stats) + test
+// structured-hash companion to (engine:metrics \"query:pattern-index-stats\") + test
 // coverage now; the bigger hot-path / guard-side work (full index
 // rebuild + patch + query:pattern default-path wiring + Guard
 // success path index patch) described in the issue body remains
@@ -20,9 +20,9 @@
 //   - Evaluator::get_pattern_index_lazy_rebuilds() /
 //     get_pattern_index_eager_mutate_rebuilds() /
 //     get_pattern_index_eager_cow_rebuilds()
-//   - (query:pattern-index-stats) returns int (sum of 6) for back-compat
+//   - (engine:metrics \"query:pattern-index-stats\") returns int (sum of 6) for back-compat
 //   - (query:pattern-index-rebuild-stats) returns 5-field hash
-//   - (query:pattern-hygiene-stats) / (query:pattern-marker-stats) /
+//   - (engine:metrics \"query:pattern-hygiene-stats\") / (query:pattern-marker-stats) /
 //     (query:pattern-macro-filter-stats) for hygiene/marker/filter layers
 
 #include <atomic>
@@ -104,13 +104,14 @@ int aura_issue_621_run() {
         CHECK(schema == 621, std::format("schema == 621 (got {})", schema));
     }
 
-    // AC2: (query:pattern-index-stats) legacy int primitive
+    // AC2: (engine:metrics \"query:pattern-index-stats\") legacy int primitive
     // still works (Issue #547 back-compat).
     {
-        std::println("\n--- AC2: legacy (query:pattern-index-stats) back-compat ---");
-        auto legacy = cs.eval("(query:pattern-index-stats)");
+        std::println(
+            "\n--- AC2: legacy (engine:metrics \"query:pattern-index-stats\") back-compat ---");
+        auto legacy = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
         CHECK(legacy && aura::compiler::types::is_int(*legacy),
-              "(query:pattern-index-stats) returns an int (#547 back-compat)");
+              "(engine:metrics \"query:pattern-index-stats\") returns an int (#547 back-compat)");
         // (query:pattern-index-stats-hash) returns a hash, not the
         // legacy int — the new primitive's contract is hash-shaped.
         auto newer = cs.eval("(query:pattern-index-stats-hash)");

@@ -98,10 +98,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:arena-auto-compact-defrag-fiber-stats) hash shape ---");
-    auto r = cs.eval("(query:arena-auto-compact-defrag-fiber-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") hash "
+                 "shape ---");
+    auto r = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:arena-auto-compact-defrag-fiber-stats) returns a hash");
+          "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") returns a hash");
     const std::vector<std::string> keys = {"auto-compact-triggers",
                                            "frag-reduced-bp",
                                            "live-defrag-savings",
@@ -120,44 +121,49 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters reachable + new atomics == 0 on fresh service ---");
     // The 4 reused arena stats fields can be non-zero on a fresh service
     // (the service init may trigger compactions); we just check reachability.
-    const auto act = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                    "auto-compact-triggers");
+    const auto act =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "auto-compact-triggers");
     CHECK(act >= 0,
           std::format("auto-compact-triggers = {} (expected >= 0, fresh-service arena stats "
                       "may be non-zero)",
                       act));
-    const auto frb =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "frag-reduced-bp");
+    const auto frb = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "frag-reduced-bp");
     CHECK(frb >= 0,
           std::format("frag-reduced-bp = {} (expected >= 0, fresh-service arena stats may be "
                       "non-zero)",
                       frb));
     const auto lds =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "live-defrag-savings");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "live-defrag-savings");
     CHECK(lds >= 0,
           std::format("live-defrag-savings = {} (expected >= 0, fresh-service arena stats may be "
                       "non-zero)",
                       lds));
     const auto sic =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "shape-inval-count");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "shape-inval-count");
     CHECK(sic >= 0,
           std::format("shape-inval-count = {} (expected >= 0, fresh-service arena stats may be "
                       "non-zero)",
                       sic));
     // The 2 truly NEW atomics (introduced by #767) must be 0 on fresh service.
-    const auto fydc = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                     "fiber-yield-during-compact");
+    const auto fydc =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "fiber-yield-during-compact");
     CHECK(fydc == 0,
           std::format("fiber-yield-during-compact = {} (expected 0 on fresh service)", fydc));
-    const auto dbf = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                    "defrag-blocked-fibers");
+    const auto dbf =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "defrag-blocked-fibers");
     CHECK(dbf == 0, std::format("defrag-blocked-fibers = {} (expected 0 on fresh service)", dbf));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 767 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(schema == 767, std::format("schema = {} (expected 767)", schema));
 }
 
@@ -172,10 +178,12 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_arena_auto_compact_defrag_blocked_fibers();
     ev.bump_arena_auto_compact_defrag_blocked_fibers();
     ev.bump_arena_auto_compact_defrag_blocked_fibers();
-    const auto fydc = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                     "fiber-yield-during-compact");
-    const auto dbf = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                    "defrag-blocked-fibers");
+    const auto fydc =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "fiber-yield-during-compact");
+    const auto dbf =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "defrag-blocked-fibers");
     CHECK(fydc == 4,
           std::format("after 4 fiber-yield-during-compact bumps: fiber-yield-during-compact = {} "
                       "(expected 4)",
@@ -185,21 +193,24 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
               "after 3 defrag-blocked-fibers bumps: defrag-blocked-fibers = {} (expected 3)", dbf));
     // The 4 reused arena stats fields should still be reachable (>= 0)
     // and untouched by these new atomic bumps.
-    const auto act = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                    "auto-compact-triggers");
+    const auto act =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "auto-compact-triggers");
     CHECK(
         act >= 0,
         std::format("auto-compact-triggers = {} (expected >= 0, not affected by #767 bumps)", act));
-    const auto frb =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "frag-reduced-bp");
+    const auto frb = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "frag-reduced-bp");
     CHECK(frb >= 0,
           std::format("frag-reduced-bp = {} (expected >= 0, not affected by #767 bumps)", frb));
     const auto lds =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "live-defrag-savings");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "live-defrag-savings");
     CHECK(lds >= 0,
           std::format("live-defrag-savings = {} (expected >= 0, not affected by #767 bumps)", lds));
     const auto sic =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "shape-inval-count");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "shape-inval-count");
     CHECK(sic >= 0,
           std::format("shape-inval-count = {} (expected >= 0, not affected by #767 bumps)", sic));
 }

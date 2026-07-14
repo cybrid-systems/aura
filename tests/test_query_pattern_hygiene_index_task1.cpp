@@ -76,7 +76,8 @@ bool test_rebuild_timing_delta_counters_reachable() {
 // ── AC2: query:pattern-index-stats returns integer sum
 //         of 6 counters ────────────────────────────────────
 bool test_query_pattern_index_stats_6_counters() {
-    std::println("\n--- AC2: (query:pattern-index-stats) returns 6-counter sum ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"query:pattern-index-stats\") returns 6-counter sum ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
@@ -84,13 +85,15 @@ bool test_query_pattern_index_stats_6_counters() {
     for (int i = 0; i < 5; ++i) {
         (void)cs.eval("(query:tag-arity-count 32 0)");
     }
-    auto r = cs.eval("(query:pattern-index-stats)");
-    CHECK(r.has_value(), "(query:pattern-index-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:pattern-index-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:pattern-index-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:pattern-index-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-index-stats = {}", v);
-        CHECK(v > 0, "(query:pattern-index-stats) > 0 after 5 queries (4 + 2 new counters)");
+        CHECK(v > 0, "(engine:metrics \"query:pattern-index-stats\") > 0 after 5 queries (4 + 2 "
+                     "new counters)");
     }
     return true;
 }
@@ -270,12 +273,12 @@ bool test_eight_thread_concurrent_pattern_query() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — #547 + #549 + #553 primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:pattern-index-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:pattern-index-stats) (extended for #554)");
-    auto r2 = cs.eval("(query:pattern-hygiene-stats)");
+          "(engine:metrics \"query:pattern-index-stats\") (extended for #554)");
+    auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:pattern-hygiene-stats) (regression for #547)");
+          "(engine:metrics \"query:pattern-hygiene-stats\") (regression for #547)");
     auto r3 = cs.eval("(query:mutation-log-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:mutation-log-stats) (regression for #553)");

@@ -168,7 +168,7 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #758/#763/#764 sibling primitives unaffected ---");
-    auto edsl_reflection = cs.eval("(query:edsl-reflection-stats)");
+    auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
     auto linear_ownership_gc_compiler = cs.eval("(query:linear-ownership-gc-compiler-stats)");
     auto compiler_arena_closure_lifetime = cs.eval("(query:compiler-arena-closure-lifetime-stats)");
     CHECK(edsl_reflection && aura::compiler::types::is_hash(*edsl_reflection),
@@ -180,7 +180,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
               aura::compiler::types::is_hash(*compiler_arena_closure_lifetime),
           "query:compiler-arena-closure-lifetime-stats hash regression (#764)");
     const auto edsl_reflection_schema =
-        hash_int_field(cs, "(query:edsl-reflection-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")", "schema");
     CHECK(edsl_reflection_schema == 758,
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));

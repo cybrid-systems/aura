@@ -5,7 +5,7 @@
 //
 // Scope-limited close (pair with #488/#654/#712's predecessor
 // work):
-//   - (query:macro-reflect-validation-stats) — new standalone
+//   - (engine:metrics \"query:macro-reflect-validation-stats\") — new standalone
 //     primitive, schema=712. 4 fields + sentinel:
 //       validation-calls / schema-mismatches-caught /
 //       post-mutate-hygiene-drift / schema-pass / schema=712
@@ -42,7 +42,7 @@
 //     regression for non-macro mutations)
 //
 // ACs (light, per Anqi's "测试轻量" guidance):
-//   AC1: (query:macro-reflect-validation-stats) is a hash with the
+//   AC1: (engine:metrics \"query:macro-reflect-validation-stats\") is a hash with the
 //        4-field shape + schema=712
 //   AC2: validation-calls starts at 0 on a fresh CompilerService
 //   AC3: schema field is exactly 712 (drift sentinel)
@@ -88,10 +88,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:macro-reflect-validation-stats) hash shape ---");
-    auto r = cs.eval("(query:macro-reflect-validation-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:macro-reflect-validation-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:macro-reflect-validation-stats) returns a hash");
+          "(engine:metrics \"query:macro-reflect-validation-stats\") returns a hash");
     const std::vector<std::string> keys = {"validation-calls", "schema-mismatches-caught",
                                            "post-mutate-hygiene-drift", "schema-pass", "schema"};
     for (const auto& k : keys) {
@@ -103,22 +104,25 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: validation-calls == 0 on fresh service ---");
-    const auto calls =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "validation-calls");
+    const auto calls = hash_int_field(
+        cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "validation-calls");
     CHECK(calls == 0, std::format("validation-calls = {} (expected 0 on fresh service)", calls));
     const auto mismatches =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema-mismatches-caught");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")",
+                       "schema-mismatches-caught");
     CHECK(mismatches == 0,
           std::format("schema-mismatches-caught = {} (expected 0 on fresh service)", mismatches));
     const auto drift =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "post-mutate-hygiene-drift");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")",
+                       "post-mutate-hygiene-drift");
     CHECK(drift == 0,
           std::format("post-mutate-hygiene-drift = {} (expected 0 on fresh service)", drift));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 712 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(schema == 712, std::format("schema = {} (expected 712)", schema));
 }
 
@@ -136,17 +140,18 @@ static void run_ac4_subtree_walk(aura::compiler::CompilerService& cs) {
     // trigger a non-zero bump requires a real macro expansion +
     // post-mutate walk, which is exercised by the integration
     // tests for #488/#654 (out of scope here).
-    const auto calls =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "validation-calls");
+    const auto calls = hash_int_field(
+        cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "validation-calls");
     const auto drift =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "post-mutate-hygiene-drift");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")",
+                       "post-mutate-hygiene-drift");
     CHECK(calls >= 0, std::format("validation-calls non-negative ({})", calls));
     CHECK(drift >= 0, std::format("post-mutate-hygiene-drift non-negative ({})", drift));
     // Also verify that the schema-pass field reflects the #488
     // whole-workspace counter. On a fresh service it should be 0
     // (no mutation has run yet).
-    const auto schema_pass =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema-pass");
+    const auto schema_pass = hash_int_field(
+        cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema-pass");
     CHECK(schema_pass >= 0, std::format("schema-pass non-negative ({})", schema_pass));
 }
 

@@ -108,7 +108,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b > stats6a, "violation stats grow over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto phs = cs.eval("(query:pattern-hygiene-stats)");
+    auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     auto mbi = cs.eval("(query:mutation-boundary-invariant-stats)");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(mbi && is_int(*mbi), "mutation-boundary-invariant-stats regression");

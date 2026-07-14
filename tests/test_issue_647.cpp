@@ -14,7 +14,7 @@
 //   - (query:envframe-dualpath-stale-stats) (#418) — existing
 //     flat-int primitive (returns a single sum of 7 counters
 //     — no field breakdown)
-//   - (query:envframe-dualpath-stats) — base dualpath primitive
+//   - (engine:metrics \"query:envframe-dualpath-stats\") — base dualpath primitive
 //   - (query:envframe-stale-stats) — stale refresh stats
 //   - (query:envframe-bump-stats) — bump stats
 //   - env_frames_ EnvFrame arena (walk + lookup_by_symid_chain)
@@ -120,9 +120,9 @@ int aura_issue_647_run() {
         auto s_418 = cs.eval("(query:envframe-dualpath-stale-stats)");
         CHECK(s_418.has_value(), "(query:envframe-dualpath-stale-stats) reachable (#418 "
                                  "back-compat — flat-int summary)");
-        auto s_dp = cs.eval("(query:envframe-dualpath-stats)");
-        CHECK(s_dp.has_value(),
-              "(query:envframe-dualpath-stats) reachable (existing base dualpath primitive)");
+        auto s_dp = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+        CHECK(s_dp.has_value(), "(engine:metrics \"query:envframe-dualpath-stats\") reachable "
+                                "(existing base dualpath primitive)");
         auto s_646 = cs.eval("(query:gc-safepoint-deferral-stats)");
         CHECK(s_646.has_value(),
               "(query:gc-safepoint-deferral-stats) reachable (#646 back-compat)");

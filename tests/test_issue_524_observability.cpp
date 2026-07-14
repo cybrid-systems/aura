@@ -119,7 +119,7 @@ int aura_issue_524_observability_run() {
         std::println("\n--- AC4: regression ---");
         auto pms = cs.eval("(query:pattern-marker-stats)");
         auto ihs = cs.eval("(query:ir-hygiene-stats)");
-        auto phs = cs.eval("(query:pattern-hygiene-stats)");
+        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         CHECK(pms && aura::compiler::types::is_hash(*pms), "pattern-marker-stats hash regression");
         CHECK(ihs && aura::compiler::types::is_hash(*ihs), "ir-hygiene-stats hash regression");
         CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats int regression");

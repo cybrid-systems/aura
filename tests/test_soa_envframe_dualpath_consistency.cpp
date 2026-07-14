@@ -7,7 +7,7 @@
 // snapshot), #322 (dual-path smoke + compaction). This
 // binary focuses on the **observability surface** wired
 // in commit 7affe6aa (4 atomic counters + 4 bump helpers
-// + the (query:envframe-dualpath-stats) primitive) and
+// + the (engine:metrics \"query:envframe-dualpath-stats\") primitive) and
 // the matrix of scenarios that prove dual-path consistency
 // + version stamping + stale handling under production
 // load.
@@ -20,7 +20,7 @@
 //  - AC4: multi-thread concurrent rebind on shared env
 //    chain (no desync, no crash)
 //  - AC5: GCEnvWalkFn + stale integration
-//  - AC6: (query:envframe-dualpath-stats) primitive
+//  - AC6: (engine:metrics \"query:envframe-dualpath-stats\") primitive
 //  - AC7: regression on existing primitives
 
 #include "test_harness.hpp"
@@ -44,14 +44,17 @@ using aura::compiler::NULL_ENV_ID;
 
 // ── AC1: query:envframe-dualpath-stats returns an integer ─
 bool test_query_envframe_dualpath_stats() {
-    std::println("\n--- AC1: (query:envframe-dualpath-stats) returns an integer ---");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:envframe-dualpath-stats\") returns an integer ---");
     CompilerService cs;
-    auto r = cs.eval("(query:envframe-dualpath-stats)");
-    CHECK(r.has_value(), "(query:envframe-dualpath-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:envframe-dualpath-stats) is an integer");
+    auto r = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:envframe-dualpath-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:envframe-dualpath-stats\") is an integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
-        CHECK(v >= 0, "(query:envframe-dualpath-stats) >= 0 (4 counters sum, all start at 0)");
+        CHECK(v >= 0, "(engine:metrics \"query:envframe-dualpath-stats\") >= 0 (4 counters sum, "
+                      "all start at 0)");
     }
     return true;
 }
@@ -60,19 +63,20 @@ bool test_query_envframe_dualpath_stats() {
 bool test_accessor_baselines() {
     std::println("\n--- AC2: 4 accessor baselines + monotonic ---");
     CompilerService cs;
-    auto r0 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     if (!r0) {
         ++g_failed;
         return false;
     }
     const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
-    auto r1 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     if (!r1) {
         ++g_failed;
         return false;
     }
     const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(after >= baseline, "(query:envframe-dualpath-stats) monotonic (>= baseline)");
+    CHECK(after >= baseline,
+          "(engine:metrics \"query:envframe-dualpath-stats\") monotonic (>= baseline)");
     // Direct accessor reachability (sanity — the
     // primitive reads from these via get_*_accessors).
     const auto d = cs.evaluator().get_envframe_desync_detected();
@@ -272,9 +276,9 @@ bool test_gc_heap_walk_metrics() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC11: regression — existing primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:envframe-dualpath-stats) (new for #543)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (new for #543)");
     auto r2 = cs.eval("(query:mutation-coordination-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:mutation-coordination-stats) (regression for #448)");
@@ -289,7 +293,7 @@ bool test_regression_existing_primitives() {
 
 int run_tests() {
     std::println("═══ Issue #543 verification tests ═══\n");
-    std::println("Layer 1: (query:envframe-dualpath-stats) primitive");
+    std::println("Layer 1: (engine:metrics \"query:envframe-dualpath-stats\") primitive");
     test_query_envframe_dualpath_stats();
     test_accessor_baselines();
     std::println("\nLayer 2: dual-path + version stamping + stale");

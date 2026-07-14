@@ -63,9 +63,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats2b > stats2a, "coverage feedback bumps EDA verification counters");
 
     std::println("\n--- AC3: P2 Persistence checkpoint lifecycle ---");
-    auto pcs = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto pcs = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     (void)cs.eval("(panic-checkpoint)");
-    auto pcs2 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto pcs2 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(pcs && is_int(*pcs), "panic-checkpoint-lifecycle-stats returns int");
     CHECK(pcs2 && is_int(*pcs2), "panic-checkpoint-lifecycle after save");
     CHECK(as_int(*pcs2) >= as_int(*pcs), "checkpoint save bumps persistence counters");

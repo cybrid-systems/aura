@@ -9,7 +9,7 @@
 //
 //   - AC1: 4 panic-checkpoint lifecycle counters reachable
 //          + monotonic (save/restore/commit/rollback-success)
-//   - AC2: (query:panic-checkpoint-lifecycle-stats) returns
+//   - AC2: (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") returns
 //          integer sum of 4 counters
 //   - AC3: Nested Guard basic (per-fiber depth cooperation)
 //   - AC4: Panic at depth 0 (defensive — no Guard active)
@@ -89,7 +89,8 @@ bool test_panic_checkpoint_lifecycle_counters() {
 // ── AC2: query:panic-checkpoint-lifecycle-stats returns
 //         integer sum of 4 counters ─────────────────────────
 bool test_query_panic_checkpoint_lifecycle_stats() {
-    std::println("\n--- AC2: (query:panic-checkpoint-lifecycle-stats) returns integer ---");
+    std::println("\n--- AC2: (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") returns "
+                 "integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
@@ -99,13 +100,15 @@ bool test_query_panic_checkpoint_lifecycle_stats() {
         (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
                       std::to_string(i) + "))");
     }
-    auto r = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
-    CHECK(r.has_value(), "(query:panic-checkpoint-lifecycle-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:panic-checkpoint-lifecycle-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:panic-checkpoint-lifecycle-stats = {}", v);
-        CHECK(v > 0, "(query:panic-checkpoint-lifecycle-stats) > 0 after saves + mutates");
+        CHECK(v > 0, "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") > 0 after saves "
+                     "+ mutates");
     }
     return true;
 }
@@ -332,15 +335,15 @@ bool test_regression_existing_primitives() {
     CompilerService cs;
     auto r1 = cs.eval("(panic-checkpoint)");
     CHECK(r1.has_value(), "(panic-checkpoint) (regression for #548)");
-    auto r2 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:panic-checkpoint-lifecycle-stats) (new for #548)");
-    auto r3 = cs.eval("(query:envframe-dualpath-stats)");
+          "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (new for #548)");
+    auto r3 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:envframe-dualpath-stats) (regression for #543)");
-    auto r4 = cs.eval("(query:pattern-hygiene-stats)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
+    auto r4 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:pattern-hygiene-stats) (regression for #547)");
+          "(engine:metrics \"query:pattern-hygiene-stats\") (regression for #547)");
     // Define + eval still works.
     if (!cs.eval("(define reg-548-a 10)")) {
         CHECK(false, "define (regression)");

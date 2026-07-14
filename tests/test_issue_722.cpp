@@ -93,10 +93,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:arena-integration-stats) hash shape ---");
-    auto r = cs.eval("(query:arena-integration-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:arena-integration-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:arena-integration-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:arena-integration-stats) returns a hash");
+          "(engine:metrics \"query:arena-integration-stats\") returns a hash");
     const std::vector<std::string> keys = {"tier-fallbacks", "dtor-dirty-hooks",
                                            "auto-compact-triggers", "fragmentation-post-mutate",
                                            "schema"};
@@ -109,20 +109,24 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto fb = hash_int_field(cs, "(query:arena-integration-stats)", "tier-fallbacks");
+    const auto fb =
+        hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")", "tier-fallbacks");
     CHECK(fb == 0, std::format("tier-fallbacks = {} (expected 0 on fresh service)", fb));
-    const auto dh = hash_int_field(cs, "(query:arena-integration-stats)", "dtor-dirty-hooks");
+    const auto dh = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                   "dtor-dirty-hooks");
     CHECK(dh == 0, std::format("dtor-dirty-hooks = {} (expected 0 on fresh service)", dh));
-    const auto ac = hash_int_field(cs, "(query:arena-integration-stats)", "auto-compact-triggers");
+    const auto ac = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                   "auto-compact-triggers");
     CHECK(ac == 0, std::format("auto-compact-triggers = {} (expected 0 on fresh service)", ac));
-    const auto fr =
-        hash_int_field(cs, "(query:arena-integration-stats)", "fragmentation-post-mutate");
+    const auto fr = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                   "fragmentation-post-mutate");
     CHECK(fr == 0, std::format("fragmentation-post-mutate = {} (expected 0 on fresh service)", fr));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 722 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:arena-integration-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")", "schema");
     CHECK(schema == 722, std::format("schema = {} (expected 722)", schema));
 }
 
@@ -143,11 +147,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     // Fragmentation is a snapshot setter (not a counter delta).
     // Scale the float ratio 0..1.0 to 0..1e6 — here 0.42 -> 420000.
     ev.set_arena_fragmentation_post_mutate(420000);
-    const auto fb = hash_int_field(cs, "(query:arena-integration-stats)", "tier-fallbacks");
-    const auto dh = hash_int_field(cs, "(query:arena-integration-stats)", "dtor-dirty-hooks");
-    const auto ac = hash_int_field(cs, "(query:arena-integration-stats)", "auto-compact-triggers");
-    const auto fr =
-        hash_int_field(cs, "(query:arena-integration-stats)", "fragmentation-post-mutate");
+    const auto fb =
+        hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")", "tier-fallbacks");
+    const auto dh = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                   "dtor-dirty-hooks");
+    const auto ac = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                   "auto-compact-triggers");
+    const auto fr = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                   "fragmentation-post-mutate");
     CHECK(fb == 2,
           std::format("after 2 tier-fallback bumps: tier-fallbacks = {} (expected 2)", fb));
     CHECK(dh == 3,
@@ -161,8 +168,8 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
     // Edge case: setter overwrites (not delta) — set to 0.75 should overwrite to 750000
     ev.set_arena_fragmentation_post_mutate(750000);
-    const auto fr2 =
-        hash_int_field(cs, "(query:arena-integration-stats)", "fragmentation-post-mutate");
+    const auto fr2 = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                                    "fragmentation-post-mutate");
     CHECK(fr2 == 750000,
           std::format("after setter overwrite: fragmentation-post-mutate = {} (expected 750000)",
                       fr2));
@@ -170,15 +177,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #712..#721 sibling primitives unaffected ---");
-    auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
-    auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
-    auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
-    auto stable_ref_layer = cs.eval("(query:stable-ref-layer-stats)");
-    auto pattern = cs.eval("(query:pattern-stats)");
-    auto fiber_boundary = cs.eval("(query:fiber-boundary-violation-stats)");
-    auto incremental = cs.eval("(query:incremental-relower-stats)");
-    auto closure_env = cs.eval("(query:closure-env-epoch-safety-stats)");
-    auto jit_parity = cs.eval("(query:jit-interpreter-parity-stats)");
+    auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
+    auto jit = cs.eval("(engine:metrics \"query:macro-jit-hygiene-stats\")");
+    auto self_evo = cs.eval("(engine:metrics \"query:self-evolution-closedloop-stats\")");
+    auto stable_ref_layer = cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")");
+    auto pattern = cs.eval("(engine:metrics \"query:pattern-stats\")");
+    auto fiber_boundary = cs.eval("(engine:metrics \"query:fiber-boundary-violation-stats\")");
+    auto incremental = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
+    auto closure_env = cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")");
+    auto jit_parity = cs.eval("(engine:metrics \"query:jit-interpreter-parity-stats\")");
     auto ir_soa = cs.eval("(query:ir-soa-completeness-stats)");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
@@ -201,40 +208,42 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(ir_soa && aura::compiler::types::is_hash(*ir_soa),
           "query:ir-soa-completeness-stats hash regression (#721)");
     const auto reflect_schema =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
-    const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
+    const auto jit_schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")", "schema");
     CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "schema");
     CHECK(self_evo_schema == 714,
           std::format("self-evo schema = {} (expected 714, no drift)", self_evo_schema));
     const auto stable_ref_layer_schema =
-        hash_int_field(cs, "(query:stable-ref-layer-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:stable-ref-layer-stats\")", "schema");
     CHECK(stable_ref_layer_schema == 715,
           std::format("stable-ref-layer schema = {} (expected 715, no drift)",
                       stable_ref_layer_schema));
-    const auto pattern_schema = hash_int_field(cs, "(query:pattern-stats)", "schema");
+    const auto pattern_schema =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "schema");
     CHECK(pattern_schema == 716,
           std::format("pattern schema = {} (expected 716, no drift)", pattern_schema));
     const auto fiber_boundary_schema =
-        hash_int_field(cs, "(query:fiber-boundary-violation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:fiber-boundary-violation-stats\")", "schema");
     CHECK(
         fiber_boundary_schema == 717,
         std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
-        hash_int_field(cs, "(query:incremental-relower-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "schema");
     CHECK(incremental_schema == 718,
           std::format("incremental-relower schema = {} (expected 718, no drift)",
                       incremental_schema));
     const auto closure_env_schema =
-        hash_int_field(cs, "(query:closure-env-epoch-safety-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "schema");
     CHECK(
         closure_env_schema == 719,
         std::format("closure-env-epoch schema = {} (expected 719, no drift)", closure_env_schema));
     const auto jit_parity_schema =
-        hash_int_field(cs, "(query:jit-interpreter-parity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:jit-interpreter-parity-stats\")", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
     const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");

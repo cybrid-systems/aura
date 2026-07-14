@@ -138,7 +138,8 @@ static void run_ac4_jit_friendly_concept() {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — sibling primitives + #769 observation reachability ---");
     auto shape_pass_hotpath = cs.eval("(query:shape-pass-hotpath-stats)");
-    auto arena_defrag_fiber = cs.eval("(query:arena-auto-compact-defrag-fiber-stats)");
+    auto arena_defrag_fiber =
+        cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
     auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
     CHECK(shape_pass_hotpath && aura::compiler::types::is_hash(*shape_pass_hotpath),
           "query:shape-pass-hotpath-stats hash regression (#768)");
@@ -149,8 +150,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     const auto a768_schema = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "schema");
     CHECK(a768_schema == 768,
           std::format("#768 schema = {} (expected 768, no drift)", a768_schema));
-    const auto a767_schema =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "schema");
+    const auto a767_schema = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(a767_schema == 767,
           std::format("#767 schema = {} (expected 767, no drift)", a767_schema));
     const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");

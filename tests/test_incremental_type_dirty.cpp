@@ -93,7 +93,7 @@ static void test_query_primitives() {
     cs.eval("(set-code \"(define z 1)\")");
     cs.eval("(eval-current)");
 
-    auto r1 = cs.eval("(query:typed-mutation-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r1 && is_int(*r1), "query:typed-mutation-stats returns int");
     CHECK(as_int(*r1) >= 0, "typed-mutation-stats >= 0");
 

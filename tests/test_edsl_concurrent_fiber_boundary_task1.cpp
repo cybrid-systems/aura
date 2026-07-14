@@ -269,12 +269,12 @@ bool test_regression_existing_primitives() {
     auto r2 = cs.eval("(query:typed-mutation-stats-task1)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:typed-mutation-stats-task1) (regression for #555)");
-    auto r3 = cs.eval("(query:typed-mutation-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:typed-mutation-stats) (regression for #550)");
-    auto r4 = cs.eval("(query:pattern-index-stats)");
+          "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
+    auto r4 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:pattern-index-stats) (regression for #554)");
+          "(engine:metrics \"query:pattern-index-stats\") (regression for #554)");
     if (!cs.eval("(define reg-556-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

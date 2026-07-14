@@ -105,7 +105,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto soa = cs.eval("(query:soa-dirty-stats)");
-    auto vdisp = cs.eval("(query:value-dispatch-stats)");
+    auto vdisp = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
     auto shape = cs.eval("(query:shape-stability-stats)");
     CHECK(soa && is_hash(*soa), "soa-dirty-stats regression");
     // #571 was int; later observability surfaces upgraded to hash with schema.

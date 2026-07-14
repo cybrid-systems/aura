@@ -12,7 +12,7 @@
 // Discovery before this PR: the Panic Checkpoint
 // observability surface already covers the high-level panic
 // checkpoint lifecycle summary via existing primitives:
-//   - (query:panic-checkpoint-lifecycle-stats) — high-level
+//   - (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") — high-level
 //     panic checkpoint lifecycle summary
 //   - #264 yield checkpoint foundation
 //   - #356 INVALID_VERSION env_frames_ sentinel + post-rollback
@@ -106,9 +106,10 @@ int aura_issue_648_run() {
     // (back-compat — #648 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_life = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
-        CHECK(s_life.has_value(), "(query:panic-checkpoint-lifecycle-stats) reachable (existing "
-                                  "high-level panic lifecycle primitive back-compat)");
+        auto s_life = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
+        CHECK(s_life.has_value(),
+              "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") reachable (existing "
+              "high-level panic lifecycle primitive back-compat)");
         auto s_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
         CHECK(s_647.has_value(),
               "(query:envframe-dualpath-stale-stats-hash) reachable (#647 back-compat)");
@@ -157,11 +158,12 @@ int aura_issue_648_run() {
     {
         std::println("\n--- AC5: naming distinction from panic-checkpoint-lifecycle-stats ---");
         auto new_p = cs.eval("(query:panic-checkpoint-fiber-stats)");
-        auto old_p = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+        auto old_p = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
         CHECK(new_p.has_value(),
               "new primitive (query:panic-checkpoint-fiber-stats) reachable (-fiber- midfix)");
-        CHECK(old_p.has_value(), "existing (query:panic-checkpoint-lifecycle-stats) still "
-                                 "reachable (high-level lifecycle)");
+        CHECK(old_p.has_value(),
+              "existing (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") still "
+              "reachable (high-level lifecycle)");
         // The new primitive returns a hash; the existing one
         // may return int or hash — verify type distinction
         // via documented fields reachability (avoid hash-ref

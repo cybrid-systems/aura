@@ -112,7 +112,7 @@ int aura_issue_523_observability_run() {
     // AC4: related EnvFrame primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto eds = cs.eval("(query:envframe-dualpath-stats)");
+        auto eds = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
         auto stale = cs.eval("(query:envframe-dualpath-stale-stats)");
         auto ces = cs.eval("(query:closure-env-safety-stats)");
         CHECK(eds && aura::compiler::types::is_int(*eds), "envframe-dualpath-stats regression");

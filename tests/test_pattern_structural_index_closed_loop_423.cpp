@@ -115,7 +115,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b > stats6a, "structural stats grow over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto pis = cs.eval("(query:pattern-index-stats)");
+    auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     auto pmf = cs.eval("(query:pattern-macro-filter-stats)");
     CHECK(pis && is_int(*pis), "pattern-index-stats regression");
     CHECK(pmf && is_int(*pmf), "pattern-macro-filter-stats regression");

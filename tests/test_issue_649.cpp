@@ -14,7 +14,7 @@
 // lifecycle summary + yield checkpoint foundation:
 //   - (query:panic-checkpoint-fiber-stats) (#648) — fiber
 //     resume panic checkpoint transfer (transport layer)
-//   - (query:panic-checkpoint-lifecycle-stats) — high-level
+//   - (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") — high-level
 //     panic checkpoint lifecycle summary
 //   - #264 yield checkpoint foundation
 //   - #356 INVALID_VERSION + post-rollback frames

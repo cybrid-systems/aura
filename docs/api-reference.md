@@ -20,6 +20,11 @@
 
 实现：`evaluator_primitives_eval.cpp` 中 `primitives_.add("api-reference", …)`，遍历 `Primitives` 槽位生成。
 
+**Issue #1434 / P1b**：top-20 高频 `query:*-stats` 在 `PrimMeta.deprecated = true` 后，
+`api-reference` 会单独输出 `*deprecated*` 段（推荐 `(engine:metrics "query:…")` /
+`(require "std/engine-metrics" all:)`），不再混在主列表中。排序与名单见
+`scripts/find_top_stats.py`（`--print-pinned`）。
+
 静态扫描（CI 校验）：[generated/primitives.md](generated/primitives.md) — `./build.py docs`
 
 ## 自修改 EDSL（摘要）
@@ -39,13 +44,24 @@
 
 ## 观测原语（hash 形态）
 
+**首选 facade（#1433 / #1434）**：
+
+```scheme
+(engine:metrics)                              ; schema 2 + compile/jit/… 分组
+(engine:metrics "query:pattern-stats")        ; 过渡期按名单取
+(engine:metrics :group "jit")
+(engine:metrics :prefix "query:")
+(require "std/engine-metrics" all:)           ; engine-metrics:get / :group / …
+```
+
 `compile:*` 与 `query:*` 中带 `-stats` 后缀的原语大多返回 hash
-（非 4 元素 list）。通过 `hash-ref` 直接按键取：
+（非 4 元素 list）。**新代码勿新增 stats 名**（P0b 冻结）；读旧 counter 用 facade。
+通过 `hash-ref` 直接按键取：
 
 ```scheme
 (compile:snapshot)                          ; → hash  8 keys
 (hash-ref (compile:snapshot) "marker-user-count") ; → int
-(hash-ref (compile:invalidations-stats) "bump-generation-count") ; → int
+(hash-ref (engine:metrics "query:pattern-stats") "schema") ; → int
 (hash-ref (dirty:summary) "present-bits")   ; → int (followups)
 ```
 

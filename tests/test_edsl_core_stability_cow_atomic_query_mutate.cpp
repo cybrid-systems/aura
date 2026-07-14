@@ -112,7 +112,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: query regression ---");
     auto cow = cs.eval("(query:stable-ref-cow-fiber-stats)");
     auto edsl = cs.eval("(query:edsl-stability-stats)");
-    auto pindex = cs.eval("(query:pattern-index-stats)");
+    auto pindex = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(cow && is_int(*cow), "stable-ref-cow-fiber-stats regression");
     CHECK(edsl && is_int(*edsl), "edsl-stability-stats regression");
     CHECK(pindex && is_int(*pindex), "pattern-index-stats regression");

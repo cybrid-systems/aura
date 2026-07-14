@@ -112,7 +112,7 @@ int aura_issue_511_observability_run() {
         const auto total_after = hash_int(cs, "workspace-snapshot-total");
         CHECK(total_after > total_before,
               std::format("workspace-snapshot-total bumped ({} -> {})", total_before, total_after));
-        auto pcs = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+        auto pcs = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
         CHECK(pcs && aura::compiler::types::is_int(*pcs),
               "query:panic-checkpoint-lifecycle-stats int regression");
         auto srl = cs.eval("(query:stable-ref-lifecycle-stats)");

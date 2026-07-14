@@ -184,7 +184,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #570 + #767 + #766 sibling primitives "
                  "unaffected ---");
     auto shape_stability = cs.eval("(query:shape-stability-stats)");
-    auto arena_defrag_fiber = cs.eval("(query:arena-auto-compact-defrag-fiber-stats)");
+    auto arena_defrag_fiber =
+        cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
     auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
     CHECK(shape_stability && aura::compiler::types::is_int(*shape_stability),
           "query:shape-stability-stats int regression (#570)");
@@ -192,8 +193,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           "query:arena-auto-compact-defrag-fiber-stats hash regression (#767)");
     CHECK(ir_soa_migration && aura::compiler::types::is_hash(*ir_soa_migration),
           "query:ir-soa-migration-stats hash regression (#766)");
-    const auto a767_schema =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "schema");
+    const auto a767_schema = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(a767_schema == 767,
           std::format("#767 schema = {} (expected 767, no drift)", a767_schema));
     const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");

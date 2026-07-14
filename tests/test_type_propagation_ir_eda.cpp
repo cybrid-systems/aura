@@ -2,7 +2,7 @@
 // TypeId/TypeScheme propagation from TypeChecker to IR for
 // hardware optimization & synthesis (EDA track).
 //
-// Non-duplicative with #550 (query:typed-mutation-stats). This
+// Non-duplicative with #550 (engine:metrics \"query:typed-mutation-stats\"). This
 // binary focuses on the EDA-specific observability surface for
 // TypePropagationPass + bit-width inference:
 //   - AC1: 4 new type_propagation counters reachable + start at 0
@@ -258,15 +258,15 @@ bool test_regression_existing_primitives() {
     auto r1 = cs.eval("(query:type-propagation-stats)");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(query:type-propagation-stats) (new for #305)");
-    auto r2 = cs.eval("(query:typed-mutation-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:typed-mutation-stats) (regression for #550)");
+          "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
     auto r3 = cs.eval("(query:self-evolution-stability-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:self-evolution-stability-stats) (regression for #549)");
-    auto r4 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r4 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:envframe-dualpath-stats) (regression for #543)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     if (!cs.eval("(define reg-305-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

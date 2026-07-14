@@ -231,9 +231,9 @@ bool test_regression_existing_primitives() {
     auto r1 = cs.eval("(query:closure-env-safety-stats)");
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
           "(query:closure-env-safety-stats) (new for #531)");
-    auto r2 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:envframe-dualpath-stats) (regression for #543)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     auto r3 = cs.eval("(query:self-evolution-stability-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:self-evolution-stability-stats) (regression for #549)");

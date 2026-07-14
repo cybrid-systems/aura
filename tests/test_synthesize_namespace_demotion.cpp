@@ -211,8 +211,9 @@ bool test_regression_existing_primitives() {
     CHECK(r3.has_value(), "(synthesize:fill) (regression)");
     auto r4 = cs.eval("(synthesize:optimize)");
     CHECK(r4.has_value(), "(synthesize:optimize) (regression)");
-    auto r5 = cs.eval("(query:envframe-dualpath-stats)");
-    CHECK(r5.has_value(), "(query:envframe-dualpath-stats) (regression for #543)");
+    auto r5 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+    CHECK(r5.has_value(),
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     if (!cs.eval("(define reg-561-a 10)")) {
         CHECK(false, "define (regression)");
         return false;
