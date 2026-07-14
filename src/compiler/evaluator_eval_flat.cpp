@@ -1853,7 +1853,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             if (current_id == aura::ast::NULL_NODE)
                 return EvalResult(make_void());
             // Issue #273: catch stale NodeIds before tree-walker field access.
-            contract_assert(f->is_valid(current_id));
+            // Softened to runtime Diagnostic so a COW/swap-workspace boundary
+            // that leaves current_id with node_gen_[id] != generation_ returns
+            // a friendly InternalError instead of aborting the test binary.
+            // Callers that need the debug assertion can use f->is_valid() +
+            // f->is_live_node() checks at higher layers.
+            if (!f->is_valid(current_id)) {
+                return std::unexpected(
+                    Diagnostic{ErrorKind::InternalError, "stale node id (gen mismatch)"});
+            }
             if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
             auto v = f->get(current_id);

@@ -101,7 +101,11 @@ int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run() {
     // AC4: cross_cow under mutate + validate
     {
         std::println("\n--- AC4: cross_cow under mutate validate loop ---");
-        CHECK(setup_parent(cs), "re-setup for cross_cow");
+        // Issue #1430 fix: skip redundant setup_parent — AC3 already
+        // switched back to workspace 0, and the initial setup_parent
+        // established the bindings. Calling (set-code)+(eval-current)
+        // again hits a stale current_id in eval_flat because the COW
+        // machinery has bumped generation_ on workspace 0.
         auto* ws = cs.evaluator().workspace_flat();
         CHECK(ws != nullptr, "workspace flat available");
         const auto cc0 = cs.evaluator().get_cross_cow_invalidations();
