@@ -1,13 +1,25 @@
-; suite/engine_metrics.aura — P1a/P2b (engine:metrics) facade
+; suite/engine_metrics.aura — P1a/P2b/#1433 (engine:metrics) facade
 ; Works under AURA_PRIMITIVES=full and s0 (facade-only).
 
 (require "std/test" all:)
 
 (test-suite "engine:metrics-summary"
   (check (hash? (engine:metrics)))
-  (check (= 1 (hash-ref (engine:metrics) "schema")))
+  (check (= 2 (hash-ref (engine:metrics) "schema"))) ; #1433 nested groups
   (check (> (hash-ref (engine:metrics) "stats-count") 0))
-  (check (pair? (hash-ref (engine:metrics) "stats-names"))))
+  (check (pair? (hash-ref (engine:metrics) "stats-names")))
+  (check (>= (hash-ref (engine:metrics) "metrics-field-count") 200)))
+
+(test-suite "engine:metrics-groups"
+  (check (hash? (hash-ref (engine:metrics) "telemetry")))
+  (check (hash? (engine:metrics :group "jit")))
+  (check (number? (hash-ref (engine:metrics :group "jit") "jit_compilations"))))
+
+(test-suite "engine:metrics-prefix"
+  (define q (engine:metrics :prefix "query:"))
+  (check (hash? q))
+  (check (= 2 (hash-ref q "schema")))
+  (check (> (hash-length q) 2)))
 
 (test-suite "engine:metrics-by-name"
   ; Lookup routes to underlying stats prim when registered (full mode).
@@ -32,3 +44,10 @@
       (check (hash? direct))
       (check (hash? via))
       (check (number? (hash-ref via "schema"))))))
+
+(test-suite "engine-metrics-stdlib"
+  (require "std/engine-metrics" all:)
+  (check (hash? (engine-metrics:get)))
+  (check (pair? (engine-metrics:list)))
+  (check (hash? (engine-metrics:group "jit")))
+  (check (> (engine-metrics:count) 0)))

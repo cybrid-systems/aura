@@ -9,7 +9,7 @@
 >  
 > **Shipped**:  
 > - P0b/#1432: `scripts/check_primitive_surface.py` freezes stats **and** convenience (`string`/`json`/`math`/`vector`/`path`/`time`) + `ast:ref-*` vs baseline; gate + unit test  
-> - P1a: `(engine:metrics)` / name / `:all`  
+> - P1a/#1433: `(engine:metrics)` schema 2 + nested groups + `:prefix` / `:group` / `:all`; `lib/std/engine-metrics.aura`  
 > - P1b: issue tests use `(hash-ref (engine:metrics "query:…") …)` (~195 files)  
 > - P2a: `AURA_PRIMITIVES=s0|full` / `AURA_FULL_PRIMITIVES=0` gates eda/security/verify/stdlib-review  
 > - P2b: s0 skips bulk eval/jit observability; registers `register_metrics_facade` only  

@@ -1,0 +1,34 @@
+; lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics)
+;
+; Prefer this module for Agent / app code over calling dozens of query:*-stats.
+; Underlying C++ facade remains the single engine entry; stdlib only renames
+; and documents the product API.
+;
+; Import: (require "std/engine-metrics" all:)
+
+(export engine-metrics:get engine-metrics:list engine-metrics:group
+        engine-metrics:prefix engine-metrics:all engine-metrics:count)
+
+; Full nested facade (schema 2 + compile/jit/mutate/… groups).
+(define (engine-metrics:get)
+  (engine:metrics))
+
+; Catalog of known stats primitive names (list).
+(define (engine-metrics:list)
+  (hash-ref (engine:metrics) "stats-names"))
+
+; One CompilerMetrics group: "jit" | "compile" | "mutate" | "query" |
+; "arena" | "gc" | "eval" | "telemetry"
+(define (engine-metrics:group g)
+  (engine:metrics :group g))
+
+; Filter by name prefix (e.g. "query:" or "jit_").
+(define (engine-metrics:prefix p)
+  (engine:metrics :prefix p))
+
+; Expensive: call every registered *-stats prim (full mode).
+(define (engine-metrics:all)
+  (engine:metrics :all))
+
+(define (engine-metrics:count)
+  (hash-ref (engine:metrics) "stats-count"))
