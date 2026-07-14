@@ -76,6 +76,8 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 **P1b / #1434**：高频 top-20 `query:*-stats` 已标 `deprecated`（`api-reference` 的 `*deprecated*` 段）。调用点请改 `(engine:metrics "query:…")`；分析脚本 `scripts/find_top_stats.py` / 批量迁移 `scripts/migrate_top_stats_to_facade.py`。
 
+**结构查询（#1435）**：优先 `(query :node|:children|:parent|:find|:def-use|:mutation-log …)`；`:children` / `:parent` 支持 `:stable #t`（#393）。旧 `query:children` 等仍可用但已 deprecated。
+
 **运行时分层（P2a/P2b）**：默认 full。s0 跳过 bulk observability stats 与扩展簇（eda / security / verify-tool / stdlib-review），只保留 `engine:metrics` facade：
 
 ```bash

@@ -963,5 +963,20 @@ void Evaluator::install_defuse_subsystem() {
                                    static_cast<std::uint64_t>(idx->def_syms_.size()),
                                    static_cast<std::uint64_t>(idx->uses_.size()));
         });
+
+    // Issue #1435: query:def-use registers here (after workspace query).
+    // Mark deprecated in favor of (query :def-use …).
+    {
+        const char* name = "query:def-use";
+        const auto slot = primitives_.slot_for_name(name);
+        if (slot < primitives_.slot_count()) {
+            PrimMeta meta = primitives_.meta_for_slot(slot);
+            meta.deprecated = true;
+            meta.category = "deprecated";
+            if (meta.doc.empty() || meta.doc.find("DEPRECATED") == std::string::npos)
+                meta.doc = "DEPRECATED (#1435): prefer (query :def-use …)";
+            primitives_.set_meta_for_name(name, std::move(meta));
+        }
+    }
 }
 } // namespace aura::compiler
