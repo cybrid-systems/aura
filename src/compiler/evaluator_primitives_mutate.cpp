@@ -4471,6 +4471,180 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
+
+    // ── Issue #1436: (mutate :op …) unified dispatcher ─────────────
+    // Canonical surface for the 6 core mutate ops. Existing mutate:*
+    // names remain registered (thin aliases, PrimMeta.deprecated) and
+    // are invoked via lookup so behavior stays identical.
+    // EDA/SV (mutate:sv-*, eda:*) stay registered but are flagged as
+    // extension-scope (not part of the 6-op kernel surface).
+    add("mutate", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+        auto kw_name = [&](const EvalValue& v) -> std::string {
+            if (!is_keyword(v))
+                return {};
+            auto kidx = as_keyword_idx(v);
+            if (kidx >= ev.keyword_table_.size())
+                return {};
+            std::string k = ev.keyword_table_[kidx];
+            if (!k.empty() && k[0] == ':')
+                k = k.substr(1);
+            return k;
+        };
+        auto as_text = [&](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto i = as_string_idx(v);
+                if (i < ev.string_heap_.size())
+                    return ev.string_heap_[i];
+                return {};
+            }
+            auto k = kw_name(v);
+            return k;
+        };
+        auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
+            auto fn = ev.primitives_.lookup(prim);
+            if (!fn)
+                return mev("no-prim", std::string("mutate dispatch: missing ") + prim);
+            return (*fn)(args);
+        };
+
+        if (a.empty() || !is_keyword(a[0]))
+            return mev("bad-arg",
+                       "usage: (mutate :op …)  ops: :rebind :replace :move :extract :validate "
+                       ":atomic");
+
+        const std::string op = kw_name(a[0]);
+        auto rest = a.subspan(1);
+
+        // (mutate :rebind name code [summary] …)
+        if (op == "rebind")
+            return call_named("mutate:rebind", rest);
+
+        // (mutate :replace target kind expr…)
+        // kind ∈ pattern | subtree | value | type  (keyword or string)
+        if (op == "replace") {
+            if (rest.size() < 2)
+                return mev("bad-arg",
+                           "usage: (mutate :replace target :pattern|:subtree|:value|:type …)");
+            // Detect kind as second arg if keyword/string matching known kinds.
+            std::string kind;
+            std::vector<EvalValue> forwarded;
+            forwarded.reserve(rest.size());
+            if (!rest.empty()) {
+                // Always forward target as first arg
+                forwarded.push_back(rest[0]);
+                if (rest.size() >= 2) {
+                    kind = as_text(rest[1]);
+                    // If second is a known kind, skip it when forwarding
+                    if (kind == "pattern" || kind == "subtree" || kind == "value" ||
+                        kind == "type") {
+                        for (std::size_t i = 2; i < rest.size(); ++i)
+                            forwarded.push_back(rest[i]);
+                    } else {
+                        // No kind keyword — treat remaining as replace-subtree args
+                        kind = "subtree";
+                        for (std::size_t i = 1; i < rest.size(); ++i)
+                            forwarded.push_back(rest[i]);
+                    }
+                }
+            }
+            const char* prim = "mutate:replace-subtree";
+            if (kind == "pattern")
+                prim = "mutate:replace-pattern";
+            else if (kind == "value")
+                prim = "mutate:replace-value";
+            else if (kind == "type")
+                prim = "mutate:replace-type";
+            else if (kind == "subtree")
+                prim = "mutate:replace-subtree";
+            return call_named(prim, std::span<const EvalValue>(forwarded));
+        }
+
+        // (mutate :move node new-parent idx)
+        if (op == "move" || op == "move-node")
+            return call_named("mutate:move-node", rest);
+
+        // (mutate :extract node-id name)
+        if (op == "extract" || op == "extract-function")
+            return call_named("mutate:extract-function", rest);
+
+        // (mutate :validate code-or-target schema)
+        if (op == "validate")
+            return call_named("mutate:validate-against-schema", rest);
+
+        // (mutate :atomic mutations-list …)
+        if (op == "atomic" || op == "atomic-batch")
+            return call_named("mutate:atomic-batch", rest);
+
+        return mev("bad-arg", "unknown mutate op ':" + op +
+                                  "' — use :rebind :replace :move :extract :validate :atomic");
+    });
+
+    // Issue #1436: deprecate core mutate:* aliases in favor of (mutate :op).
+    {
+        static constexpr const char* kCoreMutateAliases[] = {
+            "mutate:rebind",
+            "mutate:replace-pattern",
+            "mutate:replace-subtree",
+            "mutate:replace-value",
+            "mutate:replace-type",
+            "mutate:move-node",
+            "mutate:extract-function",
+            "mutate:validate-against-schema",
+            "mutate:atomic-batch",
+            // SV/EDA flagged as extension-scope (stay registered; not kernel surface)
+            "mutate:sv-add-coverpoint",
+            "mutate:sv-weaken-property",
+        };
+        for (const char* name : kCoreMutateAliases) {
+            const auto slot = ev.primitives_.slot_for_name(name);
+            if (slot >= ev.primitives_.slot_count())
+                continue;
+            PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+            meta.deprecated = true;
+            if (meta.category.empty() || meta.category == "general")
+                meta.category = "deprecated";
+            std::string hint;
+            if (std::string_view(name).starts_with("mutate:sv-") ||
+                std::string_view(name).starts_with("eda:")) {
+                hint = std::string("DEPRECATED (#1436): EDA/SV extension surface — prefer "
+                                   "extensions/eda (not kernel); was ") +
+                       name;
+            } else {
+                // Map to :op hint
+                std::string op = "…";
+                if (std::string_view(name) == "mutate:rebind")
+                    op = "rebind";
+                else if (std::string_view(name).starts_with("mutate:replace-"))
+                    op = "replace";
+                else if (std::string_view(name) == "mutate:move-node")
+                    op = "move";
+                else if (std::string_view(name) == "mutate:extract-function")
+                    op = "extract";
+                else if (std::string_view(name) == "mutate:validate-against-schema")
+                    op = "validate";
+                else if (std::string_view(name) == "mutate:atomic-batch")
+                    op = "atomic";
+                hint = "DEPRECATED (#1436): prefer (mutate :" + op + " …)";
+            }
+            if (meta.doc.empty())
+                meta.doc = hint;
+            else if (meta.doc.find("DEPRECATED") == std::string::npos)
+                meta.doc = hint + ". " + meta.doc;
+            ev.primitives_.set_meta_for_name(name, std::move(meta));
+        }
+        {
+            const auto slot = ev.primitives_.slot_for_name("mutate");
+            if (slot < ev.primitives_.slot_count()) {
+                PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+                meta.doc = "Canonical mutate dispatcher (#1436): (mutate :rebind|:replace|:move|"
+                           ":extract|:validate|:atomic …). :replace takes kind "
+                           "pattern|subtree|value|type.";
+                meta.category = "general";
+                meta.arity = 255;
+                ev.primitives_.set_meta_for_name("mutate", std::move(meta));
+            }
+        }
+    }
 }
 
 } // namespace aura::compiler::primitives_detail
