@@ -1117,6 +1117,62 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     return SolveResult::SOLVED;
 }
 
+// Issue #1414: hash helpers for solved_delta_cache_ in
+// CompilerService. FNV-1a 64-bit hash, deterministic across
+// processes (no address-based mixing).
+//
+// compute_dirty_set_hash hashes the indices + content of all
+// currently-dirty constraints. Two dirty sets with the same
+// indices + kind + lhs + rhs hash identically, so a re-solve
+// on the same dirty set hits the cache. Adding a new
+// constraint via add_delta changes the dirty set, changing
+// the hash, causing a cache miss (correct).
+//
+// compute_vars_hash hashes the Union-Find state (parent_,
+// binding_, rank_) at the time of the call. Captures the
+// "starting state" of the solver so cache invalidates when
+// bindings have changed since the last cached solve.
+std::uint64_t ConstraintSystem::compute_dirty_set_hash() const {
+    std::uint64_t h = 1469598103934665603ull; // FNV offset basis
+    auto mix = [&h](std::uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ull; // FNV prime
+    };
+    for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+        if (constraint_dirty_[i] && i < constraints_.size()) {
+            mix(static_cast<std::uint64_t>(i));
+            const auto& c = constraints_[i];
+            mix(static_cast<std::uint64_t>(c.kind));
+            // TypeId is {index, generation}; combine both
+            // to detect re-binding that changes either field.
+            mix((static_cast<std::uint64_t>(c.lhs.index) << 32) |
+                static_cast<std::uint64_t>(c.lhs.generation));
+            mix((static_cast<std::uint64_t>(c.rhs.index) << 32) |
+                static_cast<std::uint64_t>(c.rhs.generation));
+        }
+    }
+    return h;
+}
+
+std::uint64_t ConstraintSystem::compute_vars_hash() const {
+    std::uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](std::uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ull;
+    };
+    // parent_ uses int64_t (sentinel -1 for uninitialized).
+    for (auto p : parent_) {
+        mix(static_cast<std::uint64_t>(static_cast<std::int64_t>(p)));
+    }
+    for (auto b : binding_) {
+        mix((static_cast<std::uint64_t>(b.index) << 32) | static_cast<std::uint64_t>(b.generation));
+    }
+    for (auto r : rank_) {
+        mix(static_cast<std::uint64_t>(r));
+    }
+    return h;
+}
+
 void ConstraintSystem::clear() {
     constraints_.clear();
     parent_.assign(parent_.size(), -1);

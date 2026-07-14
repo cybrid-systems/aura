@@ -217,6 +217,17 @@ public:
         std::fill(constraint_dirty_.begin(), constraint_dirty_.end(), false);
         dirty_count_ = 0;
     }
+    // Issue #1414: hash helpers used by
+    // CompilerService::solved_delta_cache_ as cache key.
+    // compute_dirty_set_hash() hashes the current set of dirty
+    // constraints (indices + kind + lhs + rhs). Two dirty sets
+    // with the same content hash identically. compute_vars_hash()
+    // hashes the current Union-Find state (parent_ + binding_ +
+    // rank_) so cache invalidates when bindings change between
+    // solve_delta calls. Both helpers are O(n) but cheaper than
+    // a full solve_delta worklist scan for small delta sets.
+    [[nodiscard]] std::uint64_t compute_dirty_set_hash() const;
+    [[nodiscard]] std::uint64_t compute_vars_hash() const;
     void clear();
     aura::core::TypeId fresh_var();
     // Issue #79: variant that takes a name hint, so the resulting type var
@@ -490,6 +501,13 @@ public:
     [[nodiscard]] std::size_t constraint_touched_roots_size() const noexcept {
         return cs_.touched_roots_size();
     }
+    // Issue #1414: expose ConstraintSystem so
+    // CompilerService::solve_delta_cached can compute the
+    // (dirty_set_hash, vars_hash) cache key. Read-only-ish
+    // (callers should not mutate cs_ state directly — use the
+    // public ConstraintSystem methods or TypeChecker wrappers).
+    [[nodiscard]] ConstraintSystem& constraint_system() noexcept { return cs_; }
+    [[nodiscard]] const ConstraintSystem& constraint_system() const noexcept { return cs_; }
     void seed_mutation_touched_roots(const aura::ast::FlatAST& flat,
                                      const aura::ast::StringPool& pool,
                                      const std::vector<aura::ast::NodeId>& occurrence_targets,
