@@ -72,6 +72,23 @@ export struct MutationRecord {
     std::string old_subtree_source;
     bool has_subtree_rollback = false;
     InvariantStatus invariant_status = InvariantStatus::NotChecked;
+    // Issue #1412: compound provenance for AI audit trail.
+    // 0 = system (default, backward compatible — pre-#1412 records
+    // and system-initiated mutations read as system).
+    // Non-zero = hash(agent_id) set by typed_mutate's caller-chain
+    // capture. Lets query:mutation-provenance answer "which AI
+    // agent did this mutation?" without parsing operator_name.
+    std::uint64_t author_fingerprint = 0;
+    // Parent mutation ID (single-link chain — Issue #1408 composite
+    // transaction can set this to its transaction-root mutation_id,
+    // letting query:mutation-log walk the sub-mutation tree).
+    // 0 = no parent (root mutation or pre-#1412 record).
+    std::uint64_t parent_mutation_id = 0;
+    // Composite transaction id (Issue #1408 TypedTransactionGuard
+    // sets this to a fresh id on guard construction; all sub-
+    // mutations in the atomic batch carry the same id).
+    // 0 = not part of a composite transaction.
+    std::uint64_t composite_transaction_id = 0;
 };
 
 // Issue #282: provenance record for Occurrence Typing
