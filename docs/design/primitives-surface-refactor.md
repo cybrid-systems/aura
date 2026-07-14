@@ -12,6 +12,7 @@
 > - P1a/#1433: `(engine:metrics)` schema 2 + nested groups + `:prefix` / `:group` / `:all`; `lib/std/engine-metrics.aura`  
 > - P1b/#1434: top-20 stats callers migrated to facade; `PrimMeta.deprecated` + `api-reference *deprecated*`; `scripts/find_top_stats.py`  
 > - P2a/#1435: `(query :op …)` dispatcher for node/children/parent/find/def-use/mutation-log; core `query:*` aliases deprecated  
+> - P2b/#1436: `(mutate :op …)` dispatcher for rebind/replace/move/extract/validate/atomic; core `mutate:*` + SV aliases deprecated  
 > - P2a: `AURA_PRIMITIVES=s0|full` / `AURA_FULL_PRIMITIVES=0` gates eda/security/verify/stdlib-review  
 > - P2b: s0 skips bulk eval/jit observability; registers `register_metrics_facade` only  
 > - P3: `lib/std/surface.aura` re-exports string/json/math convenience; `tests/suite/stdlib_surface.aura`  

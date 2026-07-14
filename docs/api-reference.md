@@ -33,7 +33,7 @@
 |------|----------|
 | 加载 | `set-code` `current-source` `eval-current` `eval-current-output` |
 | Query | **`(query :op …)`**（#1435 规范入口）· `query:pattern` · `query:calls` · … |
-| Mutate | `mutate:rebind` `mutate:query-and-replace` `mutate:extract-function` `mutate:atomic-batch` … |
+| Mutate | **`(mutate :op …)`**（#1436 规范入口）· 旧 `mutate:rebind` 等仍可用但 deprecated |
 
 ### `(query :op …)` — Issue #1435
 
@@ -51,6 +51,21 @@
 (query :mutation-log)                   ; 可选 n
 (query :root)                           ; 便捷
 ```
+
+### `(mutate :op …)` — Issue #1436
+
+规范调度（旧 `mutate:rebind` / `mutate:replace-*` / … 仍注册，标 deprecated）：
+
+```scheme
+(mutate :rebind "f" "(lambda (x) (* x 2))" "summary")
+(mutate :replace target :pattern|:subtree|:value|:type …)
+(mutate :move node new-parent idx)
+(mutate :extract node-id "name")
+(mutate :validate code-string schema)
+(mutate :atomic (list …))                 ; → mutate:atomic-batch
+```
+
+EDA/SV（`mutate:sv-*`、`eda:*`）仍注册但标 deprecated，计划迁出内核（extensions/eda）。
 | 验证 | `query:schema` `mutate:validate-against-schema` |
 | 版本 | `ast:snapshot` `ast:restore` `rollback` `mutation-history` |
 | Workspace | `workspace:create` `workspace:switch` `workspace:merge` `workspace:lock` … |

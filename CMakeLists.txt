@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 4.3)
+# CMake 4.4+ gate UUID (was 451f2fe2… on 4.3).
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
-    "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+    "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 project(aura LANGUAGES CXX C)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
@@ -4732,6 +4733,9 @@ aura_issue_test_link_llvm_jit(test_stats_facade_bench)
 # Issue #1435: (query :op) unified dispatcher for core structural ops.
 aura_add_issue_test(test_query_dispatch)
 aura_issue_test_link_llvm_jit(test_query_dispatch)
+# Issue #1436: (mutate :op) unified dispatcher for core mutate ops.
+aura_add_issue_test(test_mutate_dispatch)
+aura_issue_test_link_llvm_jit(test_mutate_dispatch)
 # Issue #1406: propagate_cow_pins_after_clone Option 2 — bounded retention
 # cap (kMaxPinnedBoundaryRefs=4096, drop oldest) + version-check retry
 # using cow_boundary_pins_total_ as the version counter. Unpin-on-merge

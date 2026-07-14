@@ -330,6 +330,9 @@ def _phase(label: str, t0: float) -> None:
 
 def _cmake_configure_args() -> list[str]:
     args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"]
+    # CMake 4.4+ experimental gate for `import std` (must be set before
+    # project()/toolchain detection). UUID from CMake binary (CxxImportStd).
+    args.append("-DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=f35a9ac6-8463-4d38-8eec-5d6008153e7d")
     build_type = os.environ.get("AURA_BUILD_TYPE", "").strip()
     if build_type:
         args.append(f"-DCMAKE_BUILD_TYPE={build_type}")
