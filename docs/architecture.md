@@ -98,10 +98,10 @@ flowchart TB
 | 集群 | 示例 | 测试 |
 |------|------|------|
 | 加载/执行 | `set-code`, `eval-current` | `tests/suite/core.aura` |
-| Query | `query:find`, `query:pattern`, `query:where` | `tests/suite/edsl_errors.aura` |
-| Mutate | `mutate:rebind`, `mutate:query-and-replace` | `tests/suite/mutate-structured.aura` |
+| Query | `(query :find …)`, `query:pattern` | `tests/suite/edsl_errors.aura` · #1435 |
+| Mutate | `(mutate :rebind …)`, `mutate:query-and-replace` | `tests/suite/mutate-structured.aura` · #1436 |
 | 版本 | `ast:snapshot`, `ast:restore`, `rollback` | `tests/panic_rollback.aura` |
-| Workspace | `workspace:create`, `workspace:merge`, `workspace:lock` | `tests/suite/module.aura` |
+| Workspace | `(workspace :create|:merge|:lock …)` | `tests/suite/module.aura` · #1437 |
 
 Aura 层 helper：`lib/std/query.aura`（3 个）、`lib/std/refactor.aura`、`lib/std/workspace.aura`。
 

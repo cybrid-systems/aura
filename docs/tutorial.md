@@ -7,7 +7,9 @@
 echo '(+ 1 2 3)' | ./build/aura    # → 6
 ```
 
-原语全貌：`(api-reference)` 或见 [api-reference.md](api-reference.md)。
+- 运行时全名表：`(api-reference)`（含 `*deprecated*` 段）
+- 静态索引：[api-reference.md](api-reference.md) · [generated/primitives.md](generated/primitives.md)
+- **Agent 一页提示词**：[agent-prompt-template.md](agent-prompt-template.md)
 
 **Agent 推荐入口**：`./build/aura --serve-async` + [wire-formats.md](wire-formats.md)
 
@@ -32,57 +34,89 @@ echo '(+ 1 2 3)' | ./build/aura    # → 6
 ## 标准库
 
 ```scheme
+(require "std/surface" all:)   ;; string/json/math 产品面（P3）
 (require "std/list" all:)
 (map (lambda (x) (* x 2)) (list 1 2 3))   ;; → (2 4 6)
 
 (require "std/json" all:)
 (json-parse "{\"a\":1}")
 
-;; 模块列表见 lib/std/*.aura
+(require "std/engine-metrics" all:)  ;; 观测 facade 包装
 ```
+
+模块列表：`lib/std/*.aura` · 索引 [generated/stdlib-index.md](generated/stdlib-index.md)
 
 ---
 
-## 自修改 EDSL（核心）
+## 核心自修改循环（规范名 — Issue #1438）
 
-工作区模型：`set-code` 锁定 AST → `query:*` 导航 → `mutate:*` 修改 → `eval-current` 执行。
+工作区模型：
+
+`set-code` 锁定 AST → **`(query :op …)`** 导航 → **`(mutate :op …)`** 修改 → `eval-current` 执行。
 
 ```scheme
-(set-code "(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))")
+;; 1) 装入源码
+(set-code "(define (f x) (+ x 1))")
 
-(query:find "fact")           ;; 按名查节点
-(query:pattern "(fact ...)")  ;; 模式匹配
+;; 2) 执行当前工作区
+(eval-current)                    ;; f 已绑定
 
-(mutate:rebind "fact"
-  "(define (fact n)
-     (let loop ((n n) (acc 1))
-       (if (= n 0) acc (loop (- n 1) (* acc n)))))"
-  "迭代化")
+;; 3) 结构查询（规范入口）
+(query :find "f")                 ;; 按符号名找节点
+(query :root)                     ;; 根节点 id
+(query :children (query :root) :stable #t)  ;; (id . gen) — #393
 
+;; 4) 变异（规范入口）
+(mutate :rebind "f" "(lambda (x) (* x 2))" "double body")
+
+;; 5) 再执行 — f 现在是 ×2
 (eval-current)
-(fact 10)                     ;; → 3628800
+(f 21)                            ;; → 42
+```
+
+### 观测（不要新增 query:*-stats）
+
+```scheme
+(engine:metrics)                         ;; schema 2 + compile/jit/… 分组
+(engine:metrics :group "jit")
+(engine:metrics "query:pattern-stats")   ;; 过渡期按名单取
+(require "std/engine-metrics" all:)
+(engine-metrics:get)
 ```
 
 ### 快照与回滚
 
 ```scheme
 (define snap (ast:snapshot "checkpoint"))
-(mutate:rebind "fact" "..." "try")
-(if (not (= 120 (fact 5)))
-  (ast:restore snap))
+(mutate :rebind "f" "(lambda (x) 0)" "try")
+(if (not (= 42 (begin (eval-current) (f 21))))
+    (ast:restore snap))
 ```
 
-### Workspace 分层
+### Workspace 分层（规范入口）
 
 ```scheme
-(workspace:create "sandbox")
-(workspace:switch 1)
-(mutate:rebind "fact" "...")
-(workspace:switch 0)
-(workspace:merge 1)
+(workspace :create "sandbox")     ;; → id
+(workspace :switch 1)
+(mutate :rebind "f" "(lambda (x) (* x 3))" "sandbox try")
+(workspace :switch 0)
+(workspace :merge 1)
+(workspace :lock 1)
+(workspace :unlock 1)
 ```
 
-更多：`tests/suite/mutate-structured.aura` · `tests/suite/edsl_errors.aura`
+### 旧名（deprecated，仍可用）
+
+| 旧 | 新（优先） |
+|----|------------|
+| `(query:find "f")` | `(query :find "f")` |
+| `(mutate:rebind …)` | `(mutate :rebind …)` |
+| `(workspace:create …)` | `(workspace :create …)` |
+| `(query:foo-stats)` | `(engine:metrics "query:foo-stats")` |
+
+完整 deprecated 列表见运行时 `(api-reference)` 的 `*deprecated*` 段。
+
+更多：`tests/suite/mutate-structured.aura` · `tests/test_query_dispatch.cpp` · `tests/test_mutate_dispatch.cpp`
 
 ---
 
@@ -138,6 +172,8 @@ LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3
 
 | 目标 | 文档 |
 |------|------|
+| Agent 一页提示 | [agent-prompt-template.md](agent-prompt-template.md) |
+| API 表 | [api-reference.md](api-reference.md) |
 | 模块结构 | [architecture.md](architecture.md) |
 | 改运行时 | [contributing.md](contributing.md) |
 | JSON 协议 | [wire-formats.md](wire-formats.md) |

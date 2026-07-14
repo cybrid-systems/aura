@@ -14,6 +14,7 @@
 > - P2a/#1435: `(query :op …)` dispatcher for node/children/parent/find/def-use/mutation-log; core `query:*` aliases deprecated  
 > - P2b/#1436: `(mutate :op …)` dispatcher for rebind/replace/move/extract/validate/atomic; core `mutate:*` + SV aliases deprecated  
 > - P2c/#1437: `(workspace :op …)` dispatcher for create/switch/merge/lock/unlock; core `workspace:*` aliases deprecated  
+> - P3/#1438: tutorial + api-reference + agent-prompt-template use op-dispatch as canonical; gen_docs marks deprecated  
 > - P2a: `AURA_PRIMITIVES=s0|full` / `AURA_FULL_PRIMITIVES=0` gates eda/security/verify/stdlib-review  
 > - P2b: s0 skips bulk eval/jit observability; registers `register_metrics_facade` only  
 > - P3: `lib/std/surface.aura` re-exports string/json/math convenience; `tests/suite/stdlib_surface.aura`  

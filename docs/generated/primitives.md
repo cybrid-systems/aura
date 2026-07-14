@@ -2,8 +2,9 @@
 
 # Primitives (generated)
 
-**1000** registrations scanned from `src/**/*.cpp`.
-Runtime canonical list: `(api-reference)`.
+**1000** registrations scanned from `src/**/*.cpp` (416 marked **deprecated** — Issue #1438).
+Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
+Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
@@ -16,454 +17,454 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Query: (441)
 
-- `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ai-native-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:ai-native-meta-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:aot-checkpoint-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-concurrent-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:aot-hot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-hotswap-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:aot-hotupdate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:aot-production-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-reload-func-table-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:aot-reload-primitive-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:aot-reload-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:arena-auto-compact-defrag-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:arena-auto-compact-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
-- `query:arena-auto-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
-- `query:arena-auto-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:arena-auto-policy-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:arena-auto-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:arena-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:arena-compaction-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:adt-exhaustiveness-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:adt-match-exhaust-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ai-native-extension-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:ai-native-meta-extension-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:aot-checkpoint-version-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:aot-concurrent-hotupdate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:aot-hot-reload-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-hotswap-pipeline-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:aot-hotupdate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:aot-production-reload-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-reload-func-table-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:aot-reload-primitive-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:aot-reload-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:aot-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:arena-auto-compact-defrag-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compact-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compaction-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:arena-auto-policy-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:arena-auto-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-compaction-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-compaction-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:arena-fragmentation-snapshot` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
-- `query:arena-live-defrag-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:arena-live-defrag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:arena-production-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-live-defrag-full-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:arena-live-defrag-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:arena-production-compaction-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:ast-column-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:atomic-batch-rollback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:atomic-batch-snapshot-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:atomic-batch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:atomic-batch-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:atomic-batch-sv-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:bidirectional-narrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ast-column-compaction-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:atomic-batch-rollback-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:atomic-batch-snapshot-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:atomic-batch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:atomic-batch-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:atomic-batch-sv-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:bidirectional-narrow-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:build-index` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:bundle-codegen-decouple-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:bundle-codegen-decouple-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:ci-reproducibility-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:closed-loop-convergence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:closure-bridge-safety-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `query:closure-env-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:closure-epoch-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
-- `query:closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:children` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:children-stable` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:ci-reproducibility-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:closed-loop-convergence-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:closure-bridge-safety-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:closure-env-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:closure-epoch-concurrency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
+- `query:closure-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `query:code-as-data-production-health` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:coercion-elim-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:coercion-narrowing-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:commercial-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:compiler-cache-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:compiler-closure-inval-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-core-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:compiler-gc-root-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:compiler-invalidate-guard-steal-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:compiler-root-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
-- `query:compiler-runtime-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:concurrent-safety-full-cycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:consolidated-p0-production-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:consolidated-production-priority-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-delta-blame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-delta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-reverify-occurrence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:constraint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `query:constraint-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:contracts-hotpath-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:contracts-production-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:cpp26-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:cpp26-modernization-sweep-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:coercion-elim-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:coercion-narrowing-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:coercion-zerooverhead-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:commercial-production-readiness-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:compiler-cache-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-closure-inval-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:compiler-core-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:compiler-gc-root-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:compiler-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-invalidate-guard-steal-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:compiler-root-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:compiler-runtime-production-readiness-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:concurrent-safety-full-cycle-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:consolidated-p0-production-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:consolidated-production-priority-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-blame-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-reverify-occurrence-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:constraint-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `query:constraint-typed-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:contracts-hotpath-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:contracts-production-hotpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:cpp26-contracts-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:cpp26-modernization-sweep-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:cxx26-hotpath-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `query:cxx26-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `query:dead-coercion-elim-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `query:dead-coercion-elision-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `query:dead-coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:declarative-primitive-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:def-use` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:define-mutate-ir-invalidation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dead-coercion-elim-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-elision-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-zerooverhead-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:declarative-primitive-registry-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:def-use` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:define-mutate-ir-invalidation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
 - `query:defines` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defuse-infer-partial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:defuse-version-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:deployment-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:dirty-epoch-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:defuse-infer-partial-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:defuse-version-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:deployment-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dirty-epoch-marker-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:dirty-propagation-cost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-reason-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-region-rendering-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:dirty-propagation-cost-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-propagation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-reason-propagation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-region-rendering-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 - `query:dirty-subtree` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirtyaware-impact-enforcement-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:dirtyaware-ir-cache-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:eda-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-foundation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:eda-hw-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:eda-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:eda-primitives-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dirtyaware-impact-enforcement-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:dirtyaware-ir-cache-consistency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:eda-concurrency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-foundation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-hw-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-infra-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-primitives-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-production-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:eda-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:eda-sv-closedloop-stress-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-core-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:edsl-eda-sv-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-hotpath-real-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:edsl-query-mutate-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:eda-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:eda-sv-closedloop-stress-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-verification-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-concurrency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-core-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:edsl-eda-sv-closedloop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-hotpath-real-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:edsl-query-mutate-commercial-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:edsl-readiness` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `query:edsl-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-struct-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:edsl-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-struct-meta-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:envframe-dualpath-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:envframe-dualpath-mandatory-enforce-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:envframe-dualpath-stale-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:envframe-dualpath-stale-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:envframe-dualpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:envframe-production-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-dualpath-enforce-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:envframe-dualpath-mandatory-enforce-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:envframe-dualpath-stale-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-dualpath-stale-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:envframe-dualpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-production-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:epoch-delta-since-last-query` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:error-handling-policy-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:extension-kit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:ffi-call-overhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:fiber-epoch-type-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:fiber-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:fiber-scheduler-init-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:epoch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:error-handling-policy-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:extension-kit-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:ffi-call-overhead-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:fiber-epoch-type-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:fiber-migration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:fiber-scheduler-init-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:find` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:full-closedloop-compiler-edsl-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:gc-panic-deferral-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:gc-safepoint-deferral-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:gc-safepoint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:gcc16-modules-buildenv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `query:find` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:full-closedloop-compiler-edsl-fidelity-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:gc-panic-deferral-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:gc-safepoint-deferral-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:gc-safepoint-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:gcc16-modules-buildenv-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
 - `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `query:generation-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:guard-panic-reflect-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:guard-production-impact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-steal-gc-safety-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:hardware-backend-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:hardware-backend-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:hardware-backend-sv-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:hardware-backend-sv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:highperf-cpp26-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:hotpath-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:hygiene-violation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:incremental-closure-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
-- `query:incremental-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:generation-epoch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:guard-error-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:guard-panic-reflect-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:guard-production-impact-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:guard-steal-gc-safety-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:hardware-backend-commercial-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-sv-closedloop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-sv-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:highperf-cpp26-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:hotpath-bottleneck-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:hygiene-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:hygiene-violation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:incremental-closure-bridge-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-closure-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
 - `query:incremental-effectiveness` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:incremental-production-relower-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ir-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-metadata-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-dirty-hybrid-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:ir-soa-full-enforcement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:ir-soa-full-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:ir-soa-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:irsoa-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:jit-aot-hotswap-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:jit-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-exception-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:jit-fallback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-fiber-exception-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:jit-hotswap-closure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:jit-rendering-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:jit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:jit-typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:l2-specialization-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:large-sv-pattern-defuse-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:incremental-production-relower-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:index-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:ir-hygiene-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-marker-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-metadata-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-dirty-hybrid-full-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:ir-soa-full-enforcement-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:ir-soa-full-migration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:ir-soa-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-migration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:irsoa-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:jit-aot-hotswap-fidelity-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:jit-consistency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-exception-bridge-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:jit-fallback-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-fiber-exception-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:jit-hotswap-closure-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-rendering-coverage-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:jit-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-typed-mutation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:l2-specialization-deopt-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:large-sv-pattern-defuse-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:last-mutation-blame` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-escape-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:linear-jit-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-occurrence-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:linear-ownership-enforcement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-ownership-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-ownership-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-runtime-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-postmutate-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:list-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:live-irclosure-envframe-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:load-or-zero-helper-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:longrunning-ai-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:longrunning-infra-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:longrunning-stable-ref-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:macro-hygiene-contract-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-hygiene-fiber-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
-- `query:macro-hygiene-query-provenance-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:macro-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-escape-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:linear-jit-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-occurrence-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:linear-ownership-enforcement-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-ownership-gc-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-ownership-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-mutation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-runtime-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-typed-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-postmutate-fidelity-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:list-soa-hotpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:live-irclosure-envframe-gc-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:load-or-zero-helper-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:longrunning-ai-infra-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:longrunning-infra-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:longrunning-stable-ref-dirty-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:macro-hygiene-contract-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-hygiene-fiber-panic-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:macro-hygiene-query-provenance-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:macro-hygiene-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-introduced` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:macro-introduced-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:macro-production-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-reflect-self-evo-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-reflect-self-evo-followup-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-reflect-self-evo-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-introduced-provenance-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:macro-production-hygiene-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-commercial-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-followup-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mark-occurrence-stale` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:marker-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:match-exhaustiveness-notes` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:metrics-meta-reflection-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:metrics-meta-reflection-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:multi-fiber-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutate-atomic-batch-e2e-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:mutate-batch-atomic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:multi-fiber-orchestration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutate-atomic-batch-e2e-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:mutate-batch-atomic-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:mutation-audit-log` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:mutation-boundary-invariant-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-boundary-invariant-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-boundary-log` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-coordination-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-coordination-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact-snapshot` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-lightweight-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `query:mutation-log` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-log-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:mutation-log-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-rollback-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-lightweight-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:mutation-log` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-log-compact-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:mutation-log-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-rollback-coverage-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutations-since` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:narrow-blame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:narrow-blame-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:narrowings-at-mutation` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:nested-guard-atomic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:node` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:nested-guard-atomic-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:node` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:occurrence-blame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-narrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-narrowing-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-renarrow-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:occurrence-blame-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-narrow-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-narrowing-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-renarrow-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:occurrence-stale-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-typing-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:opcode-coverage-deopt-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:orchestration-llm-bottleneck-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:occurrence-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-typing-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:opcode-coverage-deopt-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:orchestration-llm-bottleneck-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:orchestration-metrics` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:orchestration-steal-arena-gc-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:orchestration-steal-outermost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:orchestration-telemetry-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:ownership-escape-postmutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:panic-checkpoint-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:panic-checkpoint-lifecycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:parent` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:parent-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pass-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-dirtyaware-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:pass-pipeline-incremental-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:pass-shape-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:orchestration-steal-arena-gc-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:orchestration-steal-outermost-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:orchestration-telemetry-pipeline-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:ownership-escape-postmutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:panic-checkpoint-fiber-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:panic-checkpoint-lifecycle-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:parent` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:parent-stable` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pass-contracts-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pass-pipeline-dirtyaware-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-pipeline-incremental-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pass-pipeline-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-shape-epoch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern-defuse-hygiene-full-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:pattern-hygiene-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:pattern-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-defuse-hygiene-full-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:pattern-hygiene-provenance-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:pattern-hygiene-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-policy` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:pattern-index-rebuild-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-index-safe-span-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:pattern-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-index-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-ir-hygiene-closed-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:pattern-macro-filter-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-production-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-structural-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-sv-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:per-fiber-exception-state-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:per-fiber-stack-pool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:prim-dispatch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:primitive-error-unified-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:pattern-index-rebuild-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-safe-span-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:pattern-index-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-ir-hygiene-closed-loop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:pattern-macro-filter-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-marker-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-production-index-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-structural-index-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-sv-verification-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:per-fiber-exception-state-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:per-fiber-stack-pool-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:prim-dispatch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:primitive-error-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-error-unified-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-fastpath-per-prim` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:primitive-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:primitive-meta-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:primitive-metadata` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:primitive-perf-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:primitives-ai-native-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-apply-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-contract-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-governance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-hotpath-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:primitives-hotpath-slo-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:primitives-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:primitive-perf-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitives-ai-native-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-apply-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-consistency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-contract-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-error-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-governance-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-hotpath-registry-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:primitives-hotpath-slo-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:primitives-hotpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-meta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-namespace-alias-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:primitives-regex-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-registry-core-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-registry-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-resource-quota-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:primitives-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:production-roadmap-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:prompt6-memory-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:primitives-meta-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-namespace-alias-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:primitives-regex-error-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-registry-core-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-registry-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-resource-quota-fiber-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:primitives-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:production-roadmap-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:prompt6-memory-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:prompt6-safety-score` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:prompt6-violation-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:query-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:query-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-counts` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:ref-valid?` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reflect-edsl-bridge-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-edsl-bridge-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:reflect-node-members` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reflect-postmutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:reflect-schema-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_reflect.cpp`
-- `query:reflection-edsl-extension-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:reflection-schema-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:reflection-selfmod-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:registry-extension-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:render-arena-frame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:reflect-postmutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-schema-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_reflect.cpp`
+- `query:reflection-edsl-extension-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:reflection-schema-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:reflection-selfmod-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:registry-extension-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-arena-frame-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:render-ffi-available` *[internal-observable]* — `src/compiler/evaluator_primitives_io.cpp`
-- `query:render-ffi-buffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-ffi-buffer-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-ffi-count` *[internal-observable]* — `src/compiler/ffi_primitives_impl.cpp`
 - `query:render-frame-time-histogram` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `query:render-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:render-jit-soa-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:render-jit-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_io.cpp`
-- `query:render-observability-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:render-prim-call-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:render-hotpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-jit-soa-hotpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-jit-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_io.cpp`
+- `query:render-observability-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-prim-call-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:runtime-observability-correlated-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:runtime-orchestration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:runtime-observability-correlated-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:runtime-orchestration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:runtime-production-health` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:safepoint-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:scheduler-mutation-coord-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:scheduler-steal-bias-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:scheduler-stealbudget-adaptive-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:scheduler-stealbudget-yield-class-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:safepoint-mutation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:scheduler-mutation-coord-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:scheduler-steal-bias-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:scheduler-stealbudget-adaptive-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:scheduler-stealbudget-yield-class-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:security-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:self-evolution-chaos-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:self-evolution-hygiene-dirty-epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:self-evolution-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:self-evolution-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:security-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:self-evolution-chaos-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:self-evolution-hygiene-dirty-epoch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:self-evolution-loop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:self-evolution-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:seva-audit-log` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `query:seva-longrunning-concurrent-slo` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:seva-longrunning-harness-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:shape-deopt-burst-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-folding-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:shape-jit-pass-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:shape-pass-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:shape-pass-hotpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:shape-profiler-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-stability-jit-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-value-hotpath-contracts-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:shape-value-pass-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
+- `query:seva-longrunning-harness-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:shape-deopt-burst-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-folding-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:shape-jit-pass-closedloop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:shape-pass-hotpath-contracts-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:shape-pass-hotpath-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:shape-profiler-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-stability-jit-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-value-hotpath-contracts-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:shape-value-pass-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
 - `query:siblings` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:soa-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:soa-children-columnar-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:soa-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:soa-hotpath-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:soa-production-columnar-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:solve-delta-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:source-marker-linear-consistency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:span-lifetime-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-adoption-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:soa-children-columnar-migration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-dirty-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:soa-hotpath-adoption-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-production-columnar-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:solve-delta-safety-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:source-marker-linear-consistency-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:span-lifetime-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:stable-ref-boundary-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-cow-fiber-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-cross-cow-provenance-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:stable-ref-full-provenance-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:stable-ref-lifecycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-mutation-log-hardening-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:stable-ref-boundary-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-cow-fiber-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-cross-cow-provenance-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:stable-ref-full-provenance-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:stable-ref-lifecycle-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-mutation-log-hardening-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:stable-ref-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-provenance-sv-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:stable-ref-provenance-sv-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-sv-scale-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:stable-ref-workspace-tree-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-provenance-sv-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:stable-ref-provenance-sv-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-sv-scale-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:stable-ref-workspace-tree-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stale-ref-policy` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:stale-ref-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:stats-builder-refactor-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:stdlib-compiler-demands-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `query:strategy-evolution-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:sv-backend-emit-bidirectional-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:stale-ref-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
+- `query:stats-builder-refactor-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:stdlib-compiler-demands-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:strategy-evolution-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `query:sv-backend-emit-bidirectional-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:sv-closedloop-slo` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:sv-commercial-emit-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:sv-defuse-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-eda-primitives-cluster-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:sv-interface-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:sv-node-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-production-verification-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:sv-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-structured-edsl-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-sva-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-verification-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:sv-verification-closedloop-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `query:sv-verification-feedback-closedloop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:sv-verification-feedback-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:sv-verification-self-evolution-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:sv-verification-structure-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-commercial-emit-fidelity-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-defuse-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-eda-primitives-cluster-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:sv-interface-structure-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-node-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-production-verification-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:sv-stability-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-structured-edsl-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-sva-structure-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-verification-closedloop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-verification-closedloop-stats-hash` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `query:sv-verification-feedback-closedloop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:sv-verification-feedback-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:sv-verification-self-evolution-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-verification-structure-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:tag-arity-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:task2-refinement-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:task2-refinement-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-cache-locality-win` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-contracts` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-safety-score` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-mutation-stability` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task6-concurrent-fidelity` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:task6-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:task6-production-readiness-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:terminal-buffer-diff-present-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:terminal-diff-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_io.cpp`
-- `query:terminal-render-production-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:terminal-rendering-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:test-bundle-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-harness-bootstrap-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-harness-module-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-json-report-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-profile-flag-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:top5-commercial-coverage-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-incremental-fidelity-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-mutate-coercion-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:typed-mutation-audit-pass-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:typed-mutation-audit-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-mutation-stats-task1` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typesystem-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:value-dispatch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:value-shape-consteval-full-v2-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:verification-feedback-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:verification-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:verify-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:verify-tool-guard-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:verify-tool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:terminal-buffer-diff-present-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:terminal-diff-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_io.cpp`
+- `query:terminal-render-production-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:terminal-rendering-module-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:test-bundle-migration-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-bootstrap-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-module-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-json-report-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-profile-flag-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:top5-commercial-coverage-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-incremental-fidelity-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-propagation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-incremental-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutate-coercion-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-audit-pass-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:typed-mutation-audit-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutation-stats-task1` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typesystem-typed-mutate-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:value-dispatch-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:value-shape-consteval-full-v2-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:verification-feedback-loop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:verification-loop-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:verify-dirty-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:verify-tool-guard-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:verify-tool-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:work-steal-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
-- `query:workspace-closedloop-fiber-eda-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:workspace-closedloop-fiber-multi-agent-yield-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:workspace-snapshot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:yield-checkpoint-panic-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:zero-copy-framebuffer-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:work-steal-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:workspace-closedloop-fiber-eda-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:workspace-closedloop-fiber-multi-agent-yield-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:workspace-snapshot-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:yield-checkpoint-panic-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:zero-copy-framebuffer-stats` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
 ## Mutate: (4)
 
-- `mutate:extract-function` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:extract-function` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-against-schema` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:validate-against-schema` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 
 ## Ast: (25)
 
@@ -471,11 +472,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:defs` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `ast:generation-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `ast:list-snapshots` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:node-lifecycle-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:node-lifecycle-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:post-restore-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:post-restore-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-deserialize` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -498,16 +499,16 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:can-write?` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:cow-refused-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:create` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:current` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:create` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:current` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:find-define` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:list` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:lock` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:list` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:lock` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-used` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:merge-3way` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:mutation-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:resolve-stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -515,9 +516,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:rollback-to` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:switch` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:switch` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:unlock` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:unlock` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ## Fiber: (3)
 
@@ -543,22 +544,22 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Compile: (66)
 
-- `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:and-or-precision-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:ast-ops-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:cache-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:constraint-dep-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `compile:constraint-solver-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-dep-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-solver-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:dead-coercion-elapsed` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:dead-coercion-kept-for-debug` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:dead-coercion-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dead-coercion-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:dep-edges` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:dirty-impact-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dirty-impact-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:dirty-reason-counts` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:epoch` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
@@ -568,46 +569,46 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:hw-coercion-lossy?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:hw-coercion-warning` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `compile:incremental-typecheck-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:inline-pass-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:invalidations-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:ir-soa-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:ir-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:incremental-typecheck-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:inline-pass-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:invalidations-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-soa-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:let-poly-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:let-poly-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:linear-elide-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:macro-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:macro-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:macro-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:macro-origin-provenance-errors` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:match-narrowing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:multi-mutation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:mutation-log-invalidation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:mutator-dispatch-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:narrowing-blame-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:match-narrowing-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:multi-mutation-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:mutation-log-invalidation-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:mutator-dispatch-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:narrowing-blame-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:occ-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:occurrence-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `compile:occurrence-typing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occ-cache-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occurrence-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occurrence-typing-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-defuse-index-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-symbol-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:per-symbol-reinfer-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-defuse-index-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:per-symbol-reinfer-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:schema-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:schema-cache-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:status` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:subtree-bump-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:subtree-generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:type-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:type-dep-graph-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:type-propagation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:type-cache-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:type-dep-graph-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:type-propagation-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 
 ## C FFI (12)
@@ -715,12 +716,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `gap-buffer-structural-mutate-demo` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
 - `gc` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-arena-info` *[convenience]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `gc-arena-stats` *[convenience]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `gc-arena-stats` *[convenience]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-freeze` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module-count` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `gc-stats` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-stats` *[convenience]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gcd` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `generate-type-sigs` *[convenience]* — `src/compiler/evaluator_primitives_types.cpp`
@@ -881,7 +882,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `tcp-send` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
 - `type-of` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `type-registry-stats` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `type-registry-stats` *[convenience]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -920,7 +921,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 ## Arena: (19)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:adaptive-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:adaptive-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -928,7 +929,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-requested?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:safepoint-registered?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -954,7 +955,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 ## Closure: (3)
 
 - `closure:free!` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `closure:free-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `closure:free-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:stats` *[core]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 
 ## Compiler: (1)
@@ -1008,7 +1009,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Ffi: (1)
 
-- `ffi:opaque-stats` *[core]* — `src/compiler/ffi_primitives_impl.cpp`
+- `ffi:opaque-stats` *[core]* **deprecated** — `src/compiler/ffi_primitives_impl.cpp`
 
 ## Hot-Swap: (1)
 
@@ -1170,11 +1171,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `ast:generation-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:node-lifecycle-stats` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:post-restore-stats` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1191,22 +1192,22 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:version` — `src/compiler/evaluator_primitives_ast.cpp`
-- `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:and-or-precision-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:ast-ops-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:cache-size` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-dep-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-solver-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:dead-coercion-elapsed` — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:dead-coercion-kept-for-debug` — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dead-coercion-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:dep-edges` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:dirty-count` — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:dirty-impact-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dirty-impact-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:dirty-reason-counts` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:epoch` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
@@ -1216,51 +1217,51 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:hw-coercion-lossy?` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:hw-coercion-warning` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:ir-stats` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:incremental-typecheck-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:inline-pass-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:invalidations-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-soa-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:let-poly-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:macro-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:macro-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:macro-origin-provenance-errors` — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:match-narrowing-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:multi-mutation-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:mutation-log-invalidation-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:mutator-dispatch-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:narrowing-blame-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:occ-cache-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `compile:occurrence-typing-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occ-cache-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occurrence-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occurrence-typing-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-defuse-index-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:per-symbol-reinfer-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-defuse-index-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:per-symbol-reinfer-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:schema-cache-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:status` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:subtree-bump-count` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:subtree-generation` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:type-cache-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:type-dep-graph-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:type-propagation-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
 - `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:extract-function` **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:validate-against-schema` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-restore` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
@@ -1271,16 +1272,16 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:cow-refused-count` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:create` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:current` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:find-define` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:list` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:lock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-used` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:mutation-count` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -1288,9 +1289,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:rollback-to` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:switch` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ### Core builtins (must remain primitive) (263)
 
@@ -1310,7 +1311,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arena:adaptive-compact` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:adaptive-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:adaptive-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1318,7 +1319,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-requested?` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:safepoint-registered?` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1361,7 +1362,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `check` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `closure:free!` — `src/compiler/evaluator_primitives_memory.cpp`
-- `closure:free-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `closure:free-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `compiler:metrics` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `concurrency:stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
@@ -1401,7 +1402,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
 - `evaluator:compact-env-frames` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
-- `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
+- `ffi:opaque-stats` **deprecated** — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1560,447 +1561,447 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ### Internal observable (stats/counters) (441)
 
-- `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ai-native-extension-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:ai-native-meta-extension-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:aot-checkpoint-version-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-concurrent-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:aot-hot-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-hotswap-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:aot-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:aot-production-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:aot-reload-primitive-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:aot-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:arena-auto-compact-defrag-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:arena-auto-compact-defrag-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
-- `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
-- `query:arena-auto-compaction-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:arena-auto-policy-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:arena-auto-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:arena-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:arena-compaction-stats-hash` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:adt-exhaustiveness-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:adt-exhaustiveness-typed-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:adt-match-exhaust-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ai-native-extension-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:ai-native-meta-extension-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:aot-checkpoint-version-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:aot-concurrent-hotupdate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:aot-hot-reload-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-hotswap-pipeline-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:aot-hotupdate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:aot-production-reload-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-reload-func-table-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:aot-reload-primitive-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:aot-reload-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:aot-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:arena-auto-compact-defrag-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compact-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compaction-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:arena-auto-policy-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:arena-auto-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-compaction-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-compaction-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
 - `query:arena-fragmentation-snapshot` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
-- `query:arena-live-defrag-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:arena-live-defrag-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:arena-production-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-live-defrag-full-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:arena-live-defrag-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:arena-production-compaction-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:ast-column-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:atomic-batch-rollback-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:atomic-batch-snapshot-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:atomic-batch-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:atomic-batch-sv-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:bidirectional-narrow-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ast-column-compaction-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:atomic-batch-rollback-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:atomic-batch-snapshot-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:atomic-batch-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:atomic-batch-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:atomic-batch-sv-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:bidirectional-narrow-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:bundle-codegen-decouple-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:bundle-codegen-decouple-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:ci-reproducibility-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:closed-loop-convergence-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:closure-bridge-safety-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `query:closure-env-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:closure-epoch-concurrency-stats` — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
-- `query:closure-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:children` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:children-stable` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:ci-reproducibility-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:closed-loop-convergence-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:closure-bridge-safety-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:closure-env-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:closure-epoch-concurrency-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
+- `query:closure-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `query:code-as-data-production-health` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:coercion-elim-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:coercion-narrowing-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:commercial-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:compiler-cache-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:compiler-closure-inval-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-core-incremental-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:compiler-gc-root-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:compiler-incremental-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:compiler-invalidate-guard-steal-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:compiler-root-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
-- `query:compiler-runtime-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:concurrent-safety-full-cycle-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:consolidated-p0-production-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:consolidated-production-priority-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-delta-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-delta-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:constraint-reverify-occurrence-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:constraint-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
-- `query:constraint-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:contracts-hotpath-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:contracts-production-hotpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:cpp26-contracts-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:cpp26-modernization-sweep-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:coercion-elim-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:coercion-narrowing-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:coercion-zerooverhead-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:commercial-production-readiness-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:compiler-cache-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-closure-inval-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:compiler-core-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:compiler-gc-root-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:compiler-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-invalidate-guard-steal-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:compiler-root-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:compiler-runtime-production-readiness-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:concurrent-safety-full-cycle-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:consolidated-p0-production-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:consolidated-production-priority-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-blame-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-reverify-occurrence-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:constraint-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `query:constraint-typed-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:contracts-hotpath-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:contracts-production-hotpath-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:cpp26-contracts-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:cpp26-modernization-sweep-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:cxx26-hotpath-invariants` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `query:cxx26-invariants` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `query:dead-coercion-elim-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `query:dead-coercion-elision-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
-- `query:dead-coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:declarative-primitive-registry-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:define-mutate-ir-invalidation-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dead-coercion-elim-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-elision-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-zerooverhead-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:declarative-primitive-registry-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:def-use` **deprecated** — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:define-mutate-ir-invalidation-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
 - `query:defines` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defuse-infer-partial-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:defuse-version-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:deployment-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:dirty-epoch-marker-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:defuse-infer-partial-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:defuse-version-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:deployment-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dirty-epoch-marker-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:dirty-impact` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:dirty-propagation-cost-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-reason-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-region-rendering-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:dirty-propagation-cost-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-propagation-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-reason-propagation-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-region-rendering-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 - `query:dirty-subtree` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirtyaware-impact-enforcement-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:dirtyaware-ir-cache-consistency-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:eda-concurrency-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-foundation-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:eda-hw-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:eda-infra-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:eda-primitives-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dirtyaware-impact-enforcement-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:dirtyaware-ir-cache-consistency-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:eda-concurrency-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-foundation-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-hw-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-infra-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-primitives-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
 - `query:eda-production-readiness` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:eda-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:eda-sv-closedloop-stress-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:eda-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-concurrency-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-core-stability-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:edsl-eda-sv-closedloop-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-hotpath-real-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:edsl-query-mutate-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:eda-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:eda-sv-closedloop-stress-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-verification-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-concurrency-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-core-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:edsl-eda-sv-closedloop-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-hotpath-real-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:edsl-query-mutate-commercial-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:edsl-readiness` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `query:edsl-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:edsl-struct-meta-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:edsl-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-struct-meta-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:envframe-dualpath-enforce-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:envframe-dualpath-mandatory-enforce-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:envframe-dualpath-stale-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:envframe-dualpath-stale-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:envframe-dualpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:envframe-production-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-dualpath-enforce-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:envframe-dualpath-mandatory-enforce-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:envframe-dualpath-stale-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-dualpath-stale-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:envframe-dualpath-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-production-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:epoch-delta-since-last-query` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:epoch-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:error-handling-policy-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:extension-kit-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:ffi-call-overhead-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:fiber-epoch-type-safety-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:fiber-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:fiber-scheduler-init-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:epoch-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:error-handling-policy-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:extension-kit-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:ffi-call-overhead-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:fiber-epoch-type-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:fiber-migration-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:fiber-scheduler-init-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:find` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:full-closedloop-compiler-edsl-fidelity-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:gc-panic-deferral-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:gc-safepoint-deferral-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:gc-safepoint-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:gcc16-modules-buildenv-stats` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `query:find` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:full-closedloop-compiler-edsl-fidelity-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:gc-panic-deferral-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:gc-safepoint-deferral-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:gc-safepoint-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:gcc16-modules-buildenv-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
 - `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `query:generation-epoch-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-error-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:guard-panic-reflect-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:guard-production-impact-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:guard-steal-gc-safety-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:hardware-backend-commercial-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:hardware-backend-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:hardware-backend-sv-closedloop-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:hardware-backend-sv-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:highperf-cpp26-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:hotpath-bottleneck-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:hygiene-violation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:incremental-closure-bridge-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
-- `query:incremental-closure-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:generation-epoch-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:guard-error-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:guard-panic-reflect-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:guard-production-impact-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:guard-steal-gc-safety-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:hardware-backend-commercial-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-sv-closedloop-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-sv-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:highperf-cpp26-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:hotpath-bottleneck-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:hygiene-violation-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:incremental-closure-bridge-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-closure-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
 - `query:incremental-effectiveness` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:incremental-production-relower-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:index-stats` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ir-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-metadata-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-dirty-hybrid-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:ir-soa-full-enforcement-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:ir-soa-full-migration-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:ir-soa-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:ir-soa-migration-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:irsoa-incremental-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:jit-aot-hotswap-fidelity-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:jit-consistency-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-exception-bridge-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:jit-fallback-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:jit-fiber-exception-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:jit-hotswap-closure-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:jit-rendering-coverage-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:jit-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:jit-stats-hash` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:jit-typed-mutation-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:l2-specialization-deopt-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:large-sv-pattern-defuse-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:incremental-production-relower-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:index-stats` **deprecated** — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:ir-hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-marker-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-metadata-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-dirty-hybrid-full-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:ir-soa-full-enforcement-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:ir-soa-full-migration-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:ir-soa-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-migration-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:irsoa-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:jit-aot-hotswap-fidelity-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:jit-consistency-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-exception-bridge-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:jit-fallback-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-fiber-exception-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:jit-hotswap-closure-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-rendering-coverage-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:jit-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-typed-mutation-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:l2-specialization-deopt-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:large-sv-pattern-defuse-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:last-mutation-blame` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-escape-mutate-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:linear-jit-safety-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-occurrence-mutate-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:linear-ownership-enforcement-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-ownership-gc-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-ownership-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-mutation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-runtime-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:linear-ownership-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:linear-postmutate-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:list-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:live-irclosure-envframe-gc-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:load-or-zero-helper-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:longrunning-ai-infra-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:longrunning-infra-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:longrunning-stable-ref-dirty-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:macro-hygiene-contract-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-hygiene-fiber-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
-- `query:macro-hygiene-query-provenance-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:macro-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-escape-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:linear-jit-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-occurrence-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:linear-ownership-enforcement-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-ownership-gc-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-ownership-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-mutation-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-runtime-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-typed-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-postmutate-fidelity-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:list-soa-hotpath-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:live-irclosure-envframe-gc-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:load-or-zero-helper-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:longrunning-ai-infra-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:longrunning-infra-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:longrunning-stable-ref-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:macro-hygiene-contract-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-hygiene-fiber-panic-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:macro-hygiene-query-provenance-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:macro-hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:macro-introduced-provenance-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:macro-production-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-reflect-self-evo-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-reflect-self-evo-followup-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:macro-reflect-self-evo-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-introduced-provenance-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:macro-production-hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-commercial-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-followup-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mark-occurrence-stale` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:marker-stats` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:marker-stats` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:match-exhaustiveness-notes` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:metrics-meta-reflection-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:metrics-meta-reflection-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:multi-fiber-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutate-atomic-batch-e2e-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:mutate-batch-atomic-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:multi-fiber-orchestration-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutate-atomic-batch-e2e-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:mutate-batch-atomic-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
 - `query:mutation-audit-log` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:mutation-boundary-invariant-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-boundary-invariant-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-boundary-log` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-coordination-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-coordination-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact-snapshot` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-lightweight-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `query:mutation-log` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-log-compact-stats` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:mutation-log-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-rollback-coverage-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-lightweight-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:mutation-log` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-log-compact-stats` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:mutation-log-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-rollback-coverage-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutations-since` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:narrow-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:narrow-blame-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:narrowings-at-mutation` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:nested-guard-atomic-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:nested-guard-atomic-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:node` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:occurrence-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-narrow-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-narrowing-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-renarrow-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:occurrence-blame-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-narrow-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-narrowing-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-renarrow-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:occurrence-stale-count` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:occurrence-typing-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:opcode-coverage-deopt-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:orchestration-llm-bottleneck-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:occurrence-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-typing-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:opcode-coverage-deopt-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:orchestration-llm-bottleneck-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
 - `query:orchestration-metrics` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:orchestration-steal-arena-gc-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:orchestration-steal-outermost-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:orchestration-telemetry-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:ownership-escape-postmutate-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:panic-checkpoint-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:panic-checkpoint-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pass-contracts-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-dirtyaware-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:pass-pipeline-incremental-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pass-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:pass-shape-epoch-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:orchestration-steal-arena-gc-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:orchestration-steal-outermost-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:orchestration-telemetry-pipeline-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:ownership-escape-postmutate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:panic-checkpoint-fiber-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:panic-checkpoint-lifecycle-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:parent` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:parent-stable` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pass-contracts-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pass-pipeline-dirtyaware-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-pipeline-incremental-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pass-pipeline-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-shape-epoch-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern-defuse-hygiene-full-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:pattern-hygiene-provenance-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:pattern-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-defuse-hygiene-full-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:pattern-hygiene-provenance-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:pattern-hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:pattern-index-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:pattern-index-rebuild-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-index-safe-span-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:pattern-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-index-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-ir-hygiene-closed-loop-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:pattern-macro-filter-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-production-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-structural-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:pattern-sv-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:per-fiber-exception-state-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:per-fiber-stack-pool-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:prim-dispatch-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `query:primitive-error-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:primitive-error-unified-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:pattern-index-rebuild-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-safe-span-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:pattern-index-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-ir-hygiene-closed-loop-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:pattern-macro-filter-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-marker-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-production-index-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-structural-index-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-sv-verification-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:per-fiber-exception-state-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:per-fiber-stack-pool-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:prim-dispatch-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:primitive-error-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-error-unified-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
 - `query:primitive-fastpath-per-prim` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:primitive-meta-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:primitive-meta-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:primitive-metadata` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:primitive-perf-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:primitives-ai-native-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-apply-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-consistency-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-contract-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-error-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-governance-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-hotpath-registry-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:primitives-hotpath-slo-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:primitives-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:primitive-perf-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitives-ai-native-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-apply-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-consistency-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-contract-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-error-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-governance-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-hotpath-registry-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:primitives-hotpath-slo-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:primitives-hotpath-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-meta-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:primitives-namespace-alias-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:primitives-regex-error-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-registry-core-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-registry-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:primitives-resource-quota-fiber-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:primitives-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:production-roadmap-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:prompt6-memory-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:primitives-meta-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-namespace-alias-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:primitives-regex-error-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-registry-core-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-registry-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-resource-quota-fiber-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:primitives-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:production-roadmap-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:prompt6-memory-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:prompt6-safety-score` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:prompt6-violation-count` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:query-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:query-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-counts` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:ref-valid?` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reflect-edsl-bridge-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-edsl-bridge-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:reflect-node-members` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reflect-postmutate-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:reflect-schema-stats` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `query:reflection-edsl-extension-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:reflection-schema-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:reflection-selfmod-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:registry-extension-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:render-arena-frame-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:reflect-postmutate-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-schema-stats` **deprecated** — `src/compiler/evaluator_primitives_reflect.cpp`
+- `query:reflection-edsl-extension-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:reflection-schema-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:reflection-selfmod-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:registry-extension-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-arena-frame-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:render-ffi-available` — `src/compiler/evaluator_primitives_io.cpp`
-- `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-ffi-buffer-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `query:render-ffi-count` — `src/compiler/ffi_primitives_impl.cpp`
 - `query:render-frame-time-histogram` — `src/compiler/evaluator_primitives_memory.cpp`
-- `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:render-jit-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:render-jit-stability-stats` — `src/compiler/evaluator_primitives_io.cpp`
-- `query:render-observability-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:render-prim-call-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:render-hotpath-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-jit-soa-hotpath-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-jit-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_io.cpp`
+- `query:render-observability-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-prim-call-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:runtime-observability-correlated-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:runtime-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:runtime-observability-correlated-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:runtime-orchestration-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:runtime-production-health` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
-- `query:safepoint-mutation-stats` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `query:scheduler-mutation-coord-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:scheduler-steal-bias-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
-- `query:scheduler-stealbudget-adaptive-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:scheduler-stealbudget-yield-class-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:safepoint-mutation-stats` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:scheduler-mutation-coord-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:scheduler-steal-bias-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:scheduler-stealbudget-adaptive-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:scheduler-stealbudget-yield-class-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:security-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:self-evolution-chaos-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:self-evolution-hygiene-dirty-epoch-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:self-evolution-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:self-evolution-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:security-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:self-evolution-chaos-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:self-evolution-hygiene-dirty-epoch-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:self-evolution-loop-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:self-evolution-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:seva-audit-log` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `query:seva-longrunning-concurrent-slo` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:seva-longrunning-harness-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:shape-deopt-burst-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-folding-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:shape-jit-pass-closedloop-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
-- `query:shape-pass-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:shape-pass-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:shape-profiler-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-stability-jit-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:shape-value-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `query:shape-value-pass-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:seva-longrunning-harness-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:shape-deopt-burst-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-folding-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:shape-jit-pass-closedloop-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:shape-pass-hotpath-contracts-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:shape-pass-hotpath-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:shape-profiler-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-stability-jit-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-value-hotpath-contracts-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:shape-value-pass-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:soa-adoption-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
-- `query:soa-children-columnar-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:soa-dirty-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `query:soa-hotpath-adoption-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:soa-production-columnar-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:solve-delta-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:source-marker-linear-consistency-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:span-lifetime-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-adoption-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:soa-children-columnar-migration-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:soa-hotpath-adoption-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-production-columnar-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:solve-delta-safety-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:source-marker-linear-consistency-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:span-lifetime-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:stability-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:stable-ref-boundary-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-cow-fiber-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-cross-cow-provenance-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:stable-ref-full-provenance-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:stable-ref-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-mutation-log-hardening-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:stable-ref-boundary-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-cow-fiber-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-cross-cow-provenance-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:stable-ref-full-provenance-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:stable-ref-lifecycle-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-mutation-log-hardening-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
 - `query:stable-ref-provenance` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-provenance-sv-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:stable-ref-provenance-sv-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:stable-ref-sv-scale-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:stable-ref-workspace-tree-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-provenance-sv-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:stable-ref-provenance-sv-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-sv-scale-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:stable-ref-workspace-tree-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:stale-ref-stats` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:stats-builder-refactor-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:stdlib-compiler-demands-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `query:strategy-evolution-stats` — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:sv-backend-emit-bidirectional-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:stale-ref-stats` **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
+- `query:stats-builder-refactor-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:stdlib-compiler-demands-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:strategy-evolution-stats` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `query:sv-backend-emit-bidirectional-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
 - `query:sv-closedloop-slo` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:sv-commercial-emit-fidelity-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:sv-defuse-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-eda-primitives-cluster-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
-- `query:sv-interface-structure-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:sv-node-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-production-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:sv-stability-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-structured-edsl-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-sva-structure-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:sv-verification-closedloop-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
-- `query:sv-verification-closedloop-stats-hash` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `query:sv-verification-feedback-closedloop-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
-- `query:sv-verification-feedback-mutate-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:sv-verification-self-evolution-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
-- `query:sv-verification-structure-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-commercial-emit-fidelity-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-defuse-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-eda-primitives-cluster-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:sv-interface-structure-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-node-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-production-verification-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:sv-stability-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-structured-edsl-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-sva-structure-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-verification-closedloop-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-verification-closedloop-stats-hash` **deprecated** — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `query:sv-verification-feedback-closedloop-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:sv-verification-feedback-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:sv-verification-self-evolution-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-verification-structure-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
 - `query:tag-arity-count` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:task2-refinement-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:task2-refinement-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-cache-locality-win` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-contracts` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-hotpath-safety-score` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task4-mutation-stability` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:task6-concurrent-fidelity` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `query:task6-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:task6-production-readiness-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` — `src/compiler/evaluator_primitives_agent.cpp`
-- `query:terminal-buffer-diff-present-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
-- `query:terminal-diff-stats` — `src/compiler/evaluator_primitives_io.cpp`
-- `query:terminal-render-production-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `query:terminal-rendering-module-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
-- `query:test-bundle-migration-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-harness-bootstrap-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-harness-module-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-json-report-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:test-profile-flag-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
-- `query:top5-commercial-coverage-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-incremental-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-mutate-coercion-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:typed-mutation-audit-pass-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:typed-mutation-audit-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
-- `query:typed-mutation-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typed-mutation-stats-task1` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:typesystem-typed-mutate-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
-- `query:value-dispatch-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:value-shape-consteval-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
-- `query:verification-feedback-loop-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:verification-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `query:verify-tool-guard-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:verify-tool-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:terminal-buffer-diff-present-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:terminal-diff-stats` **deprecated** — `src/compiler/evaluator_primitives_io.cpp`
+- `query:terminal-render-production-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:terminal-rendering-module-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:test-bundle-migration-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-bootstrap-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-module-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-json-report-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-profile-flag-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:top5-commercial-coverage-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-incremental-fidelity-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-propagation-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-incremental-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutate-coercion-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-audit-pass-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:typed-mutation-audit-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutation-stats-task1` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typesystem-typed-mutate-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:value-dispatch-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:value-shape-consteval-full-v2-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:verification-feedback-loop-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:verification-loop-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:verify-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:verify-tool-guard-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:verify-tool-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:work-steal-stats` — `src/compiler/evaluator_primitives_security.cpp`
-- `query:workspace-closedloop-fiber-eda-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
-- `query:workspace-closedloop-fiber-multi-agent-yield-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
-- `query:workspace-snapshot-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
-- `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:work-steal-stats` **deprecated** — `src/compiler/evaluator_primitives_security.cpp`
+- `query:workspace-closedloop-fiber-eda-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:workspace-closedloop-fiber-multi-agent-yield-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:workspace-snapshot-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `query:yield-checkpoint-panic-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:zero-copy-framebuffer-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
 
 ### Convenience (candidates for stdlib migration) (170)
 
@@ -2053,12 +2054,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `format` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `gap-buffer-structural-mutate-demo` — `src/compiler/evaluator_primitives_io.cpp`
 - `gc-arena-info` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `gc-arena-stats` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `gc-arena-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module-count` — `src/compiler/evaluator_primitives_memory.cpp`
-- `gc-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` — `src/compiler/evaluator_primitives_memory.cpp`
 - `generate-type-sigs` — `src/compiler/evaluator_primitives_types.cpp`
 - `get-inferred-type` — `src/compiler/evaluator_primitives_eval.cpp`
@@ -2162,7 +2163,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
-- `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `type-registry-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-status` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
@@ -2174,3 +2175,424 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `vector?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `with-capability` — `src/compiler/evaluator_primitives_policy.cpp`
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
+
+## Deprecated (Issue #1438)
+
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **416** names:
+
+- `arena:adaptive-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
+- `closure:free-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:dirty-impact-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:ir-stats` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:occ-cache-stats` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:occurrence-typing-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:per-defuse-index-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:per-symbol-reinfer-stats` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
+- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
+- `gc-arena-stats` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `gc-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ai-native-extension-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:ai-native-meta-extension-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:aot-checkpoint-version-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:aot-concurrent-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:aot-hot-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-hotswap-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:aot-hotupdate-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:aot-production-reload-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:aot-reload-func-table-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:aot-reload-primitive-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:aot-reload-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:aot-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-auto-compact-defrag-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:arena-auto-compact-defrag-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:arena-auto-compaction-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:arena-auto-policy-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:arena-auto-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:arena-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-compaction-stats-hash` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:arena-live-defrag-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:arena-live-defrag-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:arena-production-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ast-column-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:atomic-batch-rollback-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:atomic-batch-snapshot-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:atomic-batch-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:atomic-batch-sv-stats-hash` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:bidirectional-narrow-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:bundle-codegen-decouple-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:ci-reproducibility-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:closed-loop-convergence-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:closure-bridge-safety-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:closure-env-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:closure-epoch-concurrency-stats` — `src/compiler/evaluator_primitives_obs_eval_13.cpp`
+- `query:closure-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:coercion-elim-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:coercion-narrowing-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:commercial-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:compiler-cache-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-closure-inval-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:compiler-core-incremental-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:compiler-gc-root-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:compiler-incremental-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:compiler-invalidate-guard-steal-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:compiler-root-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:compiler-runtime-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:concurrent-safety-full-cycle-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:consolidated-p0-production-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:consolidated-production-priority-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-reverify-occurrence-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:constraint-stats` — `src/compiler/evaluator_primitives_compile_01.cpp`
+- `query:constraint-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:contracts-hotpath-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:contracts-production-hotpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:cpp26-contracts-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:cpp26-modernization-sweep-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:dead-coercion-elim-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-elision-stats` — `src/compiler/evaluator_primitives_compile_00.cpp`
+- `query:dead-coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:declarative-primitive-registry-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:define-mutate-ir-invalidation-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:defuse-infer-partial-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:defuse-version-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:deployment-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:dirty-epoch-marker-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:dirty-propagation-cost-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-reason-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-region-rendering-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:dirtyaware-impact-enforcement-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:dirtyaware-ir-cache-consistency-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:eda-concurrency-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-foundation-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-hw-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-infra-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:eda-primitives-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:eda-sv-closedloop-stress-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:eda-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-concurrency-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-core-stability-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:edsl-eda-sv-closedloop-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-hotpath-real-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:edsl-query-mutate-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-struct-meta-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:envframe-dualpath-enforce-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:envframe-dualpath-mandatory-enforce-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:envframe-dualpath-stale-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-dualpath-stale-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:envframe-dualpath-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:envframe-production-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:epoch-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:error-handling-policy-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:extension-kit-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:ffi-call-overhead-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:fiber-epoch-type-safety-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:fiber-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:fiber-scheduler-init-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:find` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:full-closedloop-compiler-edsl-fidelity-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:gc-panic-deferral-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:gc-safepoint-deferral-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:gc-safepoint-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:gcc16-modules-buildenv-stats` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `query:generation-epoch-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:guard-error-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:guard-panic-reflect-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:guard-production-impact-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:guard-steal-gc-safety-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:hardware-backend-commercial-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-sv-closedloop-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:hardware-backend-sv-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:highperf-cpp26-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:hotpath-bottleneck-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:hygiene-violation-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:incremental-closure-bridge-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-closure-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:incremental-production-relower-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:index-stats` — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:ir-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-metadata-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-dirty-hybrid-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:ir-soa-full-enforcement-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:ir-soa-full-migration-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:ir-soa-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:ir-soa-migration-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:irsoa-incremental-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:jit-aot-hotswap-fidelity-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:jit-consistency-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-exception-bridge-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:jit-fallback-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-fiber-exception-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:jit-hotswap-closure-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-rendering-coverage-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:jit-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-stats-hash` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:jit-typed-mutation-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:l2-specialization-deopt-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:large-sv-pattern-defuse-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:linear-escape-mutate-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:linear-jit-safety-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-occurrence-mutate-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:linear-ownership-enforcement-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-ownership-gc-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-ownership-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-mutation-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-runtime-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:linear-postmutate-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:list-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:live-irclosure-envframe-gc-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:load-or-zero-helper-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:longrunning-ai-infra-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:longrunning-infra-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:longrunning-stable-ref-dirty-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:macro-hygiene-contract-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-hygiene-fiber-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_04.cpp`
+- `query:macro-hygiene-query-provenance-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:macro-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-introduced-provenance-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:macro-production-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-followup-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-reflect-self-evo-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:marker-stats` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:metrics-meta-reflection-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:multi-fiber-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutate-atomic-batch-e2e-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:mutate-batch-atomic-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:mutation-boundary-invariant-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-coordination-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-lightweight-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:mutation-log` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-log-compact-stats` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:mutation-log-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-rollback-coverage-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:narrow-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:nested-guard-atomic-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:occurrence-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-narrow-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-narrowing-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-renarrow-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:occurrence-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-typing-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:opcode-coverage-deopt-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:orchestration-llm-bottleneck-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:orchestration-steal-arena-gc-stats` — `src/compiler/evaluator_primitives_obs_jit_05.cpp`
+- `query:orchestration-steal-outermost-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:orchestration-telemetry-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:ownership-escape-postmutate-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:panic-checkpoint-fiber-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:panic-checkpoint-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pass-contracts-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pass-pipeline-dirtyaware-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-pipeline-incremental-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pass-pipeline-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:pass-shape-epoch-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:pattern-defuse-hygiene-full-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:pattern-hygiene-provenance-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:pattern-hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-rebuild-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-safe-span-stats` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `query:pattern-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-ir-hygiene-closed-loop-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:pattern-macro-filter-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-production-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-structural-index-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-sv-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:per-fiber-exception-state-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:per-fiber-stack-pool-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:prim-dispatch-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:primitive-error-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-error-unified-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitive-meta-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:primitive-perf-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:primitives-ai-native-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-apply-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-consistency-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-contract-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-error-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-governance-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-hotpath-registry-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:primitives-hotpath-slo-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:primitives-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
+- `query:primitives-meta-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-namespace-alias-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:primitives-regex-error-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-registry-core-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-registry-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:primitives-resource-quota-fiber-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:primitives-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:production-roadmap-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:prompt6-memory-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:query-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-edsl-bridge-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-postmutate-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reflect-schema-stats` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `query:reflection-edsl-extension-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:reflection-schema-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:reflection-selfmod-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:registry-extension-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:render-arena-frame-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:render-ffi-buffer-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:render-jit-soa-hotpath-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-jit-stability-stats` — `src/compiler/evaluator_primitives_io.cpp`
+- `query:render-observability-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:render-prim-call-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `query:runtime-observability-correlated-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:runtime-orchestration-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:safepoint-mutation-stats` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `query:scheduler-mutation-coord-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:scheduler-steal-bias-stats` — `src/compiler/evaluator_primitives_obs_eval_02.cpp`
+- `query:scheduler-stealbudget-adaptive-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:scheduler-stealbudget-yield-class-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:security-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:self-evolution-chaos-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:self-evolution-hygiene-dirty-epoch-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:self-evolution-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:self-evolution-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:seva-longrunning-harness-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:shape-deopt-burst-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-folding-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:shape-jit-pass-closedloop-stats` — `src/compiler/evaluator_primitives_obs_eval_06.cpp`
+- `query:shape-pass-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:shape-pass-hotpath-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:shape-profiler-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-stability-jit-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:shape-value-hotpath-contracts-stats` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `query:shape-value-pass-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:soa-adoption-stats` — `src/compiler/evaluator_primitives_obs_eval_11.cpp`
+- `query:soa-children-columnar-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-dirty-stats` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `query:soa-hotpath-adoption-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:soa-production-columnar-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:solve-delta-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:source-marker-linear-consistency-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:span-lifetime-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-boundary-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-cow-fiber-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-cross-cow-provenance-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:stable-ref-full-provenance-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:stable-ref-lifecycle-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-mutation-log-hardening-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:stable-ref-provenance-sv-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:stable-ref-provenance-sv-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-stats-hash` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stable-ref-sv-scale-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:stable-ref-workspace-tree-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stale-ref-stats` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `query:stats-builder-refactor-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:stdlib-compiler-demands-stats-hash` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:strategy-evolution-stats` — `src/compiler/evaluator_primitives_agent.cpp`
+- `query:sv-backend-emit-bidirectional-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:sv-commercial-emit-fidelity-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-defuse-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-eda-primitives-cluster-stats` — `src/compiler/evaluator_primitives_obs_jit_12.cpp`
+- `query:sv-interface-structure-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-node-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-production-verification-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:sv-stability-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-structured-edsl-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-sva-structure-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:sv-verification-closedloop-stats` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:sv-verification-closedloop-stats-hash` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `query:sv-verification-feedback-closedloop-stats` — `src/compiler/evaluator_primitives_obs_jit_09.cpp`
+- `query:sv-verification-feedback-mutate-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:sv-verification-self-evolution-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:sv-verification-structure-stats` — `src/compiler/evaluator_primitives_obs_eval_07.cpp`
+- `query:task2-refinement-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:task6-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:terminal-buffer-diff-present-stats` — `src/compiler/evaluator_primitives_obs_jit_10.cpp`
+- `query:terminal-diff-stats` — `src/compiler/evaluator_primitives_io.cpp`
+- `query:terminal-render-production-stats` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `query:terminal-rendering-module-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `query:test-bundle-migration-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-bootstrap-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-harness-module-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-json-report-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:test-profile-flag-stats` — `src/compiler/evaluator_primitives_obs_jit_13.cpp`
+- `query:top5-commercial-coverage-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-incremental-fidelity-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:type-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-incremental-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutate-coercion-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-audit-pass-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:typed-mutation-audit-stats` — `src/compiler/evaluator_primitives_obs_jit_08.cpp`
+- `query:typed-mutation-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutation-stats-task1` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typesystem-typed-mutate-stats` — `src/compiler/evaluator_primitives_obs_eval_10.cpp`
+- `query:value-dispatch-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:value-shape-consteval-full-v2-stats` — `src/compiler/evaluator_primitives_obs_jit_11.cpp`
+- `query:verification-feedback-loop-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:verification-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:verify-tool-guard-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:verify-tool-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:work-steal-stats` — `src/compiler/evaluator_primitives_security.cpp`
+- `query:workspace-closedloop-fiber-eda-stats` — `src/compiler/evaluator_primitives_obs_eval_08.cpp`
+- `query:workspace-closedloop-fiber-multi-agent-yield-stats` — `src/compiler/evaluator_primitives_obs_jit_04.cpp`
+- `query:workspace-snapshot-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:yield-checkpoint-panic-stats` — `src/compiler/evaluator_primitives_obs_eval_03.cpp`
+- `query:zero-copy-framebuffer-stats` — `src/compiler/evaluator_primitives_obs_eval_09.cpp`
+- `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
