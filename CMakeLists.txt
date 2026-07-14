@@ -4760,6 +4760,26 @@ aura_issue_test_link_llvm_jit(test_composite_typed_mutate)
 # type) and defense-in-depth. 3 ACs: type-driven only, syntactic
 # regression, both-paths fire independently.
 aura_add_issue_test(test_issue_1410)
+# Issue #1412: Compound provenance on MutationRecord (author_fingerprint
+# + parent_mutation_id + composite_transaction_id). Production struct
+# change in src/core/mutation.ixx adds 3 fields (default 0 = system for
+# backward compat); this test exercises brace-init, defaults, post-construction
+# mutation, and that existing add_mutation call sites still work without
+# setting provenance. 5 ACs: struct has fields, defaults=0, brace-init
+# preserves, add_mutation backward-compat, set after construction.
+# Wiring the fields at typed_mutate sites is a follow-up issue.
+aura_add_issue_test(test_mutation_provenance)
+# Issue #1411: DeadCoercionEliminationPass wire-up to pass_manager
+# pipeline. Production code is already wired in
+# service.ixx:run_coercion_elim_on_function (line 7390+); this test
+# is a contract test that exercises the DCE pass directly on
+# synthetic IR with 5 CastOp instructions and verifies the pass
+# counts. 5 ACs: counts sum to total, elapsed_us nonzero,
+# keep_for_debug mode, run_function per-function path, idempotent.
+# NOTE: aura_add_issue_test(test_dead_coercion_elim) is already
+# registered at line 1405 (with aura_issue_test_link_llvm_jit on
+# line 1406) — do NOT add a second registration here (CMP0002
+# "target already exists" error).
 # Issue #786: P0 unified 'code-as-data' closed-loop
 # production health composite dashboard (Consolidate
 # #759/#758/#757/#750/#755/#773/#774 etc.). 0 NEW
