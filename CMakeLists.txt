@@ -4736,6 +4736,9 @@ aura_issue_test_link_llvm_jit(test_query_dispatch)
 # Issue #1436: (mutate :op) unified dispatcher for core mutate ops.
 aura_add_issue_test(test_mutate_dispatch)
 aura_issue_test_link_llvm_jit(test_mutate_dispatch)
+# Issue #1437: (workspace :op) unified dispatcher.
+aura_add_issue_test(test_workspace_dispatch)
+aura_issue_test_link_llvm_jit(test_workspace_dispatch)
 # Issue #1406: propagate_cow_pins_after_clone Option 2 — bounded retention
 # cap (kMaxPinnedBoundaryRefs=4096, drop oldest) + version-check retry
 # using cow_boundary_pins_total_ as the version counter. Unpin-on-merge

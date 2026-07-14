@@ -26,6 +26,7 @@ using types::as_closure_id;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
+using types::as_keyword_idx;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
@@ -38,6 +39,7 @@ using types::is_error;
 using types::is_float;
 using types::is_hash;
 using types::is_int;
+using types::is_keyword;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
@@ -986,6 +988,99 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         ev.pairs_.push_back({result, snap_id_opt});
         return make_pair(pid);
     });
+
+    // ── Issue #1437: (workspace :op …) unified dispatcher ──────────
+    // Canonical surface for create/switch/merge/lock/unlock (+ list/current).
+    // Existing workspace:* remain registered (thin aliases, deprecated).
+    add("workspace", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto kw_name = [&](const EvalValue& v) -> std::string {
+            if (!is_keyword(v))
+                return {};
+            auto kidx = as_keyword_idx(v);
+            if (kidx >= ev.keyword_table_.size())
+                return {};
+            std::string k = ev.keyword_table_[kidx];
+            if (!k.empty() && k[0] == ':')
+                k = k.substr(1);
+            return k;
+        };
+        auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
+            auto fn = ev.primitives_.lookup(prim);
+            if (!fn)
+                return make_void();
+            return (*fn)(args);
+        };
+
+        if (a.empty() || !is_keyword(a[0]))
+            return make_void(); // usage: (workspace :create|:switch|:merge|:lock|:unlock …)
+
+        const std::string op = kw_name(a[0]);
+        auto rest = a.subspan(1);
+
+        if (op == "create")
+            return call_named("workspace:create", rest);
+        if (op == "switch")
+            return call_named("workspace:switch", rest);
+        if (op == "merge")
+            return call_named("workspace:merge", rest);
+        if (op == "merge-3way" || op == "merge_3way")
+            return call_named("workspace:merge-3way", rest);
+        if (op == "lock")
+            return call_named("workspace:lock", rest);
+        if (op == "unlock")
+            return call_named("workspace:unlock", rest);
+        // Common extras (same lookup pattern)
+        if (op == "list")
+            return call_named("workspace:list", rest);
+        if (op == "current")
+            return call_named("workspace:current", rest);
+        if (op == "delete")
+            return call_named("workspace:delete", rest);
+        if (op == "discard")
+            return call_named("workspace:discard", rest);
+        if (op == "snapshot")
+            return call_named("workspace:snapshot", rest);
+
+        return make_void(); // unknown op
+    });
+
+    // Issue #1437: deprecate core workspace:* aliases.
+    {
+        static constexpr const char* kCoreWsAliases[] = {
+            "workspace:create", "workspace:switch", "workspace:merge",   "workspace:lock",
+            "workspace:unlock", "workspace:list",   "workspace:current",
+        };
+        for (const char* name : kCoreWsAliases) {
+            const auto slot = ev.primitives_.slot_for_name(name);
+            if (slot >= ev.primitives_.slot_count())
+                continue;
+            PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+            meta.deprecated = true;
+            if (meta.category.empty() || meta.category == "general")
+                meta.category = "deprecated";
+            const std::string op =
+                std::string(name).size() > 10 ? std::string(name).substr(10) : std::string(name);
+            const std::string hint =
+                std::string("DEPRECATED (#1437): prefer (workspace :") + op + " …)";
+            if (meta.doc.empty())
+                meta.doc = hint;
+            else if (meta.doc.find("DEPRECATED") == std::string::npos)
+                meta.doc = hint + ". " + meta.doc;
+            ev.primitives_.set_meta_for_name(name, std::move(meta));
+        }
+        {
+            const auto slot = ev.primitives_.slot_for_name("workspace");
+            if (slot < ev.primitives_.slot_count()) {
+                PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+                meta.doc =
+                    "Canonical workspace dispatcher (#1437): (workspace :create|:switch|:merge|"
+                    ":lock|:unlock|:list|:current …).";
+                meta.category = "general";
+                meta.arity = 255;
+                ev.primitives_.set_meta_for_name("workspace", std::move(meta));
+            }
+        }
+    }
 
 } // register_workspace_primitives
 
