@@ -4802,6 +4802,21 @@ aura_add_issue_test(test_bidirectional_annotation)
 # undefined references (g_tl_arena, tl_arena_push/pop,
 # AuraJIT::unhandled_opcode_count_for_function, aura_set_aot_metrics, etc).
 aura_issue_test_link_llvm_jit(test_bidirectional_annotation)
+# Issue #1414: ConstraintSolver engine-level cache + typed_mutation
+# epoch bump. Production code lives in
+# src/compiler/type_checker.ixx (ConstraintSystem public hash
+# helpers compute_dirty_set_hash / compute_vars_hash) +
+# src/compiler/type_checker_impl.cpp (hash implementations) +
+# src/compiler/service.ixx (solved_delta_cache_ + solve_delta_cached
+# + on_typed_mutation_epoch_bump, wired into invalidate_function
+# after bump_bridge_epoch). This test exercises direct TypeChecker
+# + ConstraintSystem calls (no full CompilerService::eval path), so
+# aura_issue_test_link_llvm_jit is NOT required. 6 ACs: cache hit
+# on identical dirty_set+vars, cache invalidates on epoch bump,
+# cached result matches direct solve_delta, 100 mutations × 5 calls
+# hit rate ≥ 80% (the issue's main perf AC), cache stability
+# across calls, clean state early-returns without cache touch.
+aura_add_issue_test(test_issue_1414)
 # Issue #1411: DeadCoercionEliminationPass wire-up to pass_manager
 # pipeline. Production code is already wired in
 # service.ixx:run_coercion_elim_on_function (line 7390+); this test
