@@ -54,7 +54,13 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 **加 primitive 前必须先回答** [`docs/design/primitive-vs-stdlib-decision-framework.md`](design/primitive-vs-stdlib-decision-framework.md) **中的问题**：默认应放入 stdlib (`lib/std/`)，只有满足 7 条红线的功能才下沉为 C++ primitive。决定后再回到下面的注册流程。
 
-**冻结（P0b）**：禁止新增公共 `*-stats` / `*-stats-hash` 原语名。计数器写入 `CompilerMetrics`，对外用 `(engine:metrics)`（见 [primitives-surface-refactor.md](design/primitives-surface-refactor.md)）。`./build.py gate` 会跑 `scripts/check_primitive_surface.py`；故意扩 baseline 需 `--update-baseline` 并在 PR 说明。
+**冻结（P0b / #1432）**：禁止新增匹配下列模式的公共原语名（既有名 grandfather 在 baseline 中）：
+
+- `*-stats` / `*-stats-hash`（计数器 → `CompilerMetrics` + `(engine:metrics)`）
+- `string-*` / `string:*`、`json-*`/`json:*`、`math-*`/`math:*`、`vector-*`/`vector:*`、`path-*`/`path:*`、`time-*`/`time:*`（→ `lib/std` / `std/surface`）
+- `ast:ref-*`（#393 StableRef；禁止新名）
+
+`./build.py gate` 跑 `scripts/check_primitive_surface.py` + `tests/test_primitive_surface_gate.py`。故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。
 
 **观测读取（P1）**：测试与 Agent 优先  
 `(hash-ref (engine:metrics "query:foo-stats") 'field)`，勿再新增直接依赖新 stats 名的 API。
