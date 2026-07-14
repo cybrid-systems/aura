@@ -227,13 +227,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #756 + #783 sibling primitives unaffected ---");
-    auto a756 = cs.eval("(query:envframe-dualpath-policy-stats)");
+    auto a756 = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
     auto a783 = cs.eval("(query:orchestration-steal-outermost-stats)");
     CHECK(a756 && aura::compiler::types::is_hash(*a756),
           "query:envframe-dualpath-policy-stats hash regression (#756)");
     CHECK(a783 && aura::compiler::types::is_hash(*a783),
           "query:orchestration-steal-outermost-stats hash regression (#783)");
-    const auto a756_schema = hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "schema");
+    const auto a756_schema =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-policy-stats\")", "schema");
     CHECK(a756_schema == 756,
           std::format("#756 schema = {} (expected 756, no drift)", a756_schema));
     const auto a783_schema =

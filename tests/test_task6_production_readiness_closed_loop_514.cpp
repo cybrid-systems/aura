@@ -93,7 +93,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: Top3 dirty/type incremental ---");
     auto dirty = cs.eval("(query:dirty-impact)");
-    auto typed = cs.eval("(query:typed-mutation-stats)");
+    auto typed = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(dirty && is_int(*dirty), "query:dirty-impact returns int");
     CHECK(typed && is_int(*typed), "query:typed-mutation-stats returns int");
     std::println("  dirty-impact={} typed-mutation-stats={}", as_int(*dirty), as_int(*typed));
@@ -118,9 +118,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats7b >= stats7a, "production-readiness stats monotonic");
 
     std::println("\n--- AC8: query regression ---");
-    auto phs = cs.eval("(query:pattern-hygiene-stats)");
+    auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     auto rps = cs.eval("(query:reflect-postmutate-stats)");
-    auto tms = cs.eval("(query:typed-mutation-stats)");
+    auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
     CHECK(reflect_postmutate_total(cs) >= 0, "reflect-postmutate-total non-negative");

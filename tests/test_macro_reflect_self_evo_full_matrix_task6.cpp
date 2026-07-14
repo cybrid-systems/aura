@@ -134,11 +134,11 @@ bool test_combined_path_stats_bundle() {
                   "(define user-val 42))");
     const char* stats[] = {
         "(query:hygiene-stats)",
-        "(query:pattern-hygiene-stats)",
+        "(engine:metrics \"query:pattern-hygiene-stats\")",
         "(query:epoch-stats)",
         "(query:mutation-impact)",
         "(query:reflect-postmutate-stats)",
-        "(query:panic-checkpoint-lifecycle-stats)",
+        "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")",
         "(query:self-evolution-stability-stats)",
         "(query:dirty-impact)",
         "(query:macro-reflect-self-evo-stats)",
@@ -374,15 +374,15 @@ bool test_long_running_self_evo_stress() {
 bool test_regression_related_primitives() {
     std::println("\n--- AC11b: regression — related Task6 primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:pattern-hygiene-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:pattern-hygiene-stats) (regression for #547)");
+          "(engine:metrics \"query:pattern-hygiene-stats\") (regression for #547)");
     auto r2 = cs.eval("(query:reflect-postmutate-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_hash(*r2),
           "(query:reflect-postmutate-stats) (regression for #502)");
-    auto r3 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:panic-checkpoint-lifecycle-stats) (regression for #548)");
+          "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");
     auto r4 = cs.eval("(query:self-evolution-stability-stats)");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
           "(query:self-evolution-stability-stats) (regression for #549)");

@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "pass-contracts stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto vds = cs.eval("(query:value-dispatch-stats)");
+    auto vds = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
     auto soa = cs.eval("(query:soa-hotpath-adoption-stats)");
     CHECK(vds && is_int(*vds), "value-dispatch-stats regression");
     CHECK(soa && is_int(*soa), "soa-hotpath-adoption-stats regression");

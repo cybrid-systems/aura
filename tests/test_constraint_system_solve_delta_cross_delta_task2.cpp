@@ -170,7 +170,7 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(stale_count == 0, "no stale occurrence nodes after auto re-narrow");
 
     std::println("\n--- AC8: query regression ---");
-    auto tms = cs.eval("(query:typed-mutation-stats)");
+    auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     auto cstats = cs.eval("(query:constraint-stats)");
     CHECK(tms && is_int(*tms), "query:typed-mutation-stats returns int");
     CHECK(cstats && is_int(*cstats), "query:constraint-stats returns int");

@@ -5,7 +5,7 @@
 // Scope-limited close: the issue body asks for: (1) real pattern_index_
 // in FlatAST with O(1) or log lookup for tag+arity, (2) is_macro_introduced
 // skip in matcher hot path (configurable user-focused vs macro-aware mode),
-// (3) (query:pattern-stats) primitive, (4) benchmark + fast-path promotion.
+// (3) (engine:metrics \"query:pattern-stats\") primitive, (4) benchmark + fast-path promotion.
 // Items (1)/(2)/(4) require dedicated wiring into query_matcher.cpp +
 // evaluator_primitives_query.cpp + a new bench harness; each is a
 // non-trivial focused session.
@@ -85,9 +85,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:pattern-stats) hash shape ---");
-    auto r = cs.eval("(query:pattern-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:pattern-stats) returns a hash");
+    std::println("\n--- AC1: (engine:metrics \"query:pattern-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:pattern-stats\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:pattern-stats\") returns a hash");
     const std::vector<std::string> keys = {"matcher-calls", "macro-intro-filtered",
                                            "fast-path-hits", "schema"};
     for (const auto& k : keys) {
@@ -99,18 +100,21 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto calls = hash_int_field(cs, "(query:pattern-stats)", "matcher-calls");
+    const auto calls =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "matcher-calls");
     CHECK(calls == 0, std::format("matcher-calls = {} (expected 0 on fresh service)", calls));
-    const auto filtered = hash_int_field(cs, "(query:pattern-stats)", "macro-intro-filtered");
+    const auto filtered =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "macro-intro-filtered");
     CHECK(filtered == 0,
           std::format("macro-intro-filtered = {} (expected 0 on fresh service)", filtered));
-    const auto fast = hash_int_field(cs, "(query:pattern-stats)", "fast-path-hits");
+    const auto fast =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "fast-path-hits");
     CHECK(fast == 0, std::format("fast-path-hits = {} (expected 0 on fresh service)", fast));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 716 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:pattern-stats)", "schema");
+    const auto schema = hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "schema");
     CHECK(schema == 716, std::format("schema = {} (expected 716)", schema));
 }
 
@@ -133,9 +137,12 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     // fast-path-hits: bump once per simple tag+arity served from cache
     ev.bump_pattern_fast_path_hit();
     ev.bump_pattern_fast_path_hit();
-    const auto calls = hash_int_field(cs, "(query:pattern-stats)", "matcher-calls");
-    const auto filtered = hash_int_field(cs, "(query:pattern-stats)", "macro-intro-filtered");
-    const auto fast = hash_int_field(cs, "(query:pattern-stats)", "fast-path-hits");
+    const auto calls =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "matcher-calls");
+    const auto filtered =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "macro-intro-filtered");
+    const auto fast =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "fast-path-hits");
     CHECK(calls == 3,
           std::format("after 3 matcher-call bumps: matcher-calls = {} (expected 3)", calls));
     CHECK(filtered == 5,
@@ -145,7 +152,8 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
     // Edge case: default-arg bump (N=1) should add 1 more to filtered
     ev.bump_pattern_macro_intro_filtered();
-    const auto filtered2 = hash_int_field(cs, "(query:pattern-stats)", "macro-intro-filtered");
+    const auto filtered2 =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-stats\")", "macro-intro-filtered");
     CHECK(
         filtered2 == 6,
         std::format("after 1 default-arg bump: macro-intro-filtered = {} (expected 6)", filtered2));
@@ -153,10 +161,10 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #712 + #713 + #714 + #715 surfaces unaffected ---");
-    auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
-    auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
-    auto self_evo = cs.eval("(query:self-evolution-closedloop-stats)");
-    auto stable_ref_layer = cs.eval("(query:stable-ref-layer-stats)");
+    auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
+    auto jit = cs.eval("(engine:metrics \"query:macro-jit-hygiene-stats\")");
+    auto self_evo = cs.eval("(engine:metrics \"query:self-evolution-closedloop-stats\")");
+    auto stable_ref_layer = cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     CHECK(jit && aura::compiler::types::is_hash(*jit),
@@ -166,17 +174,18 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(stable_ref_layer && aura::compiler::types::is_hash(*stable_ref_layer),
           "query:stable-ref-layer-stats hash regression (#715)");
     const auto reflect_schema =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
-    const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
+    const auto jit_schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")", "schema");
     CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
     const auto self_evo_schema =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "schema");
     CHECK(self_evo_schema == 714,
           std::format("self-evo schema = {} (expected 714, no drift)", self_evo_schema));
     const auto stable_ref_layer_schema =
-        hash_int_field(cs, "(query:stable-ref-layer-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:stable-ref-layer-stats\")", "schema");
     CHECK(stable_ref_layer_schema == 715,
           std::format("stable-ref-layer schema = {} (expected 715, no drift)",
                       stable_ref_layer_schema));

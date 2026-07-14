@@ -115,7 +115,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: query regression ---");
     auto icl = cs.eval("(query:incremental-closure-stats)");
     auto edsl = cs.eval("(query:edsl-core-stability-stats)");
-    auto pindex = cs.eval("(query:pattern-index-stats)");
+    auto pindex = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(icl && is_hash(*icl), "incremental-closure-stats regression");
     CHECK(edsl && is_hash(*edsl), "edsl-core-stability-stats regression");
     CHECK(pindex && is_int(*pindex), "pattern-index-stats regression");

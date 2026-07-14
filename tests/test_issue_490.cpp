@@ -121,8 +121,8 @@ int aura_issue_490_run() {
         std::println("\n--- AC5: lazy policy + pattern-index-stats regression ---");
         CHECK(cs.eval("(mutate:set-pattern-index-policy \"lazy\")").has_value(),
               "reset to lazy policy");
-        auto pis = cs.eval("(query:pattern-index-stats)");
-        auto phs = cs.eval("(query:pattern-hygiene-stats)");
+        auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
+        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         CHECK(pis && aura::compiler::types::is_int(*pis), "query:pattern-index-stats regression");
         CHECK(phs && aura::compiler::types::is_int(*phs), "query:pattern-hygiene-stats regression");
         CHECK(cs.eval("(query:pattern \"base\")").has_value(),

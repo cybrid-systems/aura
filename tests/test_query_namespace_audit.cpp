@@ -217,8 +217,9 @@ bool test_regression_core_query_primitives() {
     CHECK(r4.has_value(), "(query:tag-arity-count) (regression - core)");
     auto r5 = cs.eval("(query:templates)");
     CHECK(r5.has_value(), "(query:templates) (regression for #561)");
-    auto r6 = cs.eval("(query:envframe-dualpath-stats)");
-    CHECK(r6.has_value(), "(query:envframe-dualpath-stats) (regression for #543)");
+    auto r6 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+    CHECK(r6.has_value(),
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     if (!cs.eval("(define reg-562-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

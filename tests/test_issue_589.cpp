@@ -12,7 +12,7 @@
 // Discovery before this PR: the SoA EnvFrame dual-path
 // observability surface already covers the high-level
 // dual-path summary via existing primitives:
-//   - (query:envframe-dualpath-stats) — base flat-int dualpath
+//   - (engine:metrics \"query:envframe-dualpath-stats\") — base flat-int dualpath
 //     primitive (the AC4 surface listed in #589 body)
 //   - (query:envframe-dualpath-stale-stats) — existing flat-int
 //     stale summary
@@ -118,9 +118,10 @@ int aura_issue_589_run() {
     // (back-compat — #589 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_base = cs.eval("(query:envframe-dualpath-stats)");
-        CHECK(s_base.has_value(), "(query:envframe-dualpath-stats) reachable (existing base "
-                                  "flat-int dualpath primitive back-compat — AC4 surface)");
+        auto s_base = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
+        CHECK(s_base.has_value(),
+              "(engine:metrics \"query:envframe-dualpath-stats\") reachable (existing base "
+              "flat-int dualpath primitive back-compat — AC4 surface)");
         auto s_stale = cs.eval("(query:envframe-dualpath-stale-stats)");
         CHECK(s_stale.has_value(), "(query:envframe-dualpath-stale-stats) reachable (existing "
                                    "flat-int stale summary back-compat)");
@@ -169,14 +170,15 @@ int aura_issue_589_run() {
         std::println("\n--- AC5: naming distinction from #647 + existing ---");
         auto new_p = cs.eval("(query:envframe-dualpath-enforce-stats)");
         auto old_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
-        auto old_base = cs.eval("(query:envframe-dualpath-stats)");
+        auto old_base = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
         auto old_stale = cs.eval("(query:envframe-dualpath-stale-stats)");
         CHECK(new_p.has_value(),
               "new primitive (query:envframe-dualpath-enforce-stats) reachable (-enforce- midfix)");
         CHECK(old_647.has_value(), "existing #647 (query:envframe-dualpath-stale-stats-hash) still "
                                    "reachable (-stale- midfix)");
         CHECK(old_base.has_value(),
-              "existing base (query:envframe-dualpath-stats) still reachable (no midfix)");
+              "existing base (engine:metrics \"query:envframe-dualpath-stats\") still reachable "
+              "(no midfix)");
         CHECK(old_stale.has_value(),
               "existing (query:envframe-dualpath-stale-stats) still reachable (no -hash suffix)");
         // The new primitive uses `schema` as its primary

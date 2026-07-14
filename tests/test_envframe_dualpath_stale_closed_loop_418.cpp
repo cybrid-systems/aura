@@ -100,7 +100,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(desync6b <= desync6a, "matrix end: desync non-increasing");
 
     std::println("\n--- AC7: query regression ---");
-    auto eds = cs.eval("(query:envframe-dualpath-stats)");
+    auto eds = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     auto mbi = cs.eval("(query:mutation-boundary-invariant-stats)");
     CHECK(eds && is_int(*eds), "envframe-dualpath-stats regression");
     CHECK(mbi && is_int(*mbi), "mutation-boundary-invariant-stats regression");

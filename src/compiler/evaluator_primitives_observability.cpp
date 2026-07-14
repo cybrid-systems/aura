@@ -1440,6 +1440,52 @@ void ObservabilityPrims::register_jit_all(PrimRegistrar add, Evaluator& ev) {
     register_jit_p111(add, ev);
     register_jit_p112(add, ev);
     register_jit_p113(add, ev);
+    // Issue #1434: mark top-20 stats as deprecated after full registration.
+    ObservabilityPrims::mark_p1b_top_stats_deprecated(ev);
+}
+
+// Issue #1434 / P1b: top-20 query:*-stats → prefer (engine:metrics "…").
+// Names pinned by scripts/find_top_stats.py (usage rank). Still registered
+// for back-compat; PrimMeta.deprecated surfaces them under api-reference
+// *deprecated* section.
+void ObservabilityPrims::mark_p1b_top_stats_deprecated(Evaluator& ev) {
+    static constexpr const char* kTop20[] = {
+        "query:envframe-dualpath-stats",
+        "query:self-evolution-closedloop-stats",
+        "query:macro-reflect-validation-stats",
+        "query:macro-jit-hygiene-stats",
+        "query:pattern-index-stats",
+        "query:stable-ref-layer-stats",
+        "query:arena-auto-compact-defrag-fiber-stats",
+        "query:pattern-stats",
+        "query:typed-mutation-stats",
+        "query:fiber-boundary-violation-stats",
+        "query:value-dispatch-stats",
+        "query:incremental-relower-stats",
+        "query:edsl-reflection-stats",
+        "query:panic-checkpoint-lifecycle-stats",
+        "query:jit-interpreter-parity-stats",
+        "query:closure-env-epoch-safety-stats",
+        "query:arena-integration-stats",
+        "query:pattern-hygiene-stats",
+        "query:macro-provenance-stats",
+        "query:envframe-dualpath-policy-stats",
+    };
+    for (const char* name : kTop20) {
+        const auto slot = ev.primitives_.slot_for_name(name);
+        if (slot >= ev.primitives_.slot_count())
+            continue;
+        PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+        meta.deprecated = true;
+        meta.category = "deprecated";
+        const std::string hint =
+            std::string("DEPRECATED (#1434): prefer (engine:metrics \"") + name + "\")";
+        if (meta.doc.empty())
+            meta.doc = hint;
+        else if (meta.doc.find("DEPRECATED") == std::string::npos)
+            meta.doc = hint + ". " + meta.doc;
+        ev.primitives_.set_meta_for_name(name, std::move(meta));
+    }
 }
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -1450,10 +1496,13 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
 
 void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // P2b: full JIT/obs stats in full mode; s0 only metrics facade.
-    if (full_primitives_enabled())
+    if (full_primitives_enabled()) {
         ObservabilityPrims::register_jit_all(add, ev);
-    else
+    } else {
         ObservabilityPrims::register_metrics_facade(add, ev);
+        // s0: top-20 names usually unregistered — mark is a no-op for missing.
+        ObservabilityPrims::mark_p1b_top_stats_deprecated(ev);
+    }
 }
 
 } // namespace aura::compiler::primitives_detail

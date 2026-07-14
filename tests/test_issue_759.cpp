@@ -165,10 +165,10 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #735/#756/#757/#758 sibling primitives unaffected ---");
-    auto macro_provenance = cs.eval("(query:macro-provenance-stats)");
-    auto envframe_policy = cs.eval("(query:envframe-dualpath-policy-stats)");
+    auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
+    auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
     auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
-    auto edsl_reflection = cs.eval("(query:edsl-reflection-stats)");
+    auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
     CHECK(envframe_policy && aura::compiler::types::is_hash(*envframe_policy),
@@ -178,12 +178,12 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(edsl_reflection && aura::compiler::types::is_hash(*edsl_reflection),
           "query:edsl-reflection-stats hash regression (#758)");
     const auto macro_provenance_schema =
-        hash_int_field(cs, "(query:macro-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-provenance-stats\")", "schema");
     CHECK(macro_provenance_schema == 735,
           std::format("macro-provenance schema = {} (expected 735, no drift)",
                       macro_provenance_schema));
     const auto envframe_policy_schema =
-        hash_int_field(cs, "(query:envframe-dualpath-policy-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-policy-stats\")", "schema");
     CHECK(envframe_policy_schema == 756,
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
@@ -193,7 +193,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));
     const auto edsl_reflection_schema =
-        hash_int_field(cs, "(query:edsl-reflection-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:edsl-reflection-stats\")", "schema");
     CHECK(edsl_reflection_schema == 758,
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));

@@ -13,9 +13,9 @@
 //          flag (the integration hook for incremental
 //          rebuild)
 //   - AC3: rebuild_tag_arity_index() clears the dirty flag
-//   - AC4: (query:pattern-index-stats) returns integer sum
+//   - AC4: (engine:metrics \"query:pattern-index-stats\") returns integer sum
 //          of the 4 counters
-//   - AC5: (query:pattern-hygiene-stats) returns integer sum
+//   - AC5: (engine:metrics \"query:pattern-hygiene-stats\") returns integer sum
 //          of skips + violations
 //   - AC6: :respect-hygiene keyword alias for
 //          :include-macro-introduced (same semantics)
@@ -136,7 +136,7 @@ bool test_rebuild_clears_dirty_flag() {
 
 // ── AC4: query:pattern-index-stats returns integer sum ────
 bool test_query_pattern_index_stats() {
-    std::println("\n--- AC4: (query:pattern-index-stats) returns integer ---");
+    std::println("\n--- AC4: (engine:metrics \"query:pattern-index-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
@@ -146,30 +146,32 @@ bool test_query_pattern_index_stats() {
                       std::to_string(i) + "))");
         (void)cs.eval("(query:tag-arity-count 32 0)");
     }
-    auto r = cs.eval("(query:pattern-index-stats)");
-    CHECK(r.has_value(), "(query:pattern-index-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:pattern-index-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:pattern-index-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:pattern-index-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-index-stats = {}", v);
-        CHECK(v > 0, "(query:pattern-index-stats) > 0 after mutates + queries");
+        CHECK(v > 0, "(engine:metrics \"query:pattern-index-stats\") > 0 after mutates + queries");
     }
     return true;
 }
 
 // ── AC5: query:pattern-hygiene-stats returns integer sum ──
 bool test_query_pattern_hygiene_stats() {
-    std::println("\n--- AC5: (query:pattern-hygiene-stats) returns integer ---");
+    std::println("\n--- AC5: (engine:metrics \"query:pattern-hygiene-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:pattern-hygiene-stats)");
-    CHECK(r.has_value(), "(query:pattern-hygiene-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:pattern-hygiene-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:pattern-hygiene-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:pattern-hygiene-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-hygiene-stats = {}", v);
-        CHECK(v >= 0, "(query:pattern-hygiene-stats) >= 0 (skips + violations)");
+        CHECK(v >= 0, "(engine:metrics \"query:pattern-hygiene-stats\") >= 0 (skips + violations)");
     }
     return true;
 }
@@ -198,8 +200,8 @@ bool test_default_filters_macro_introduced() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define x 1)\")");
     (void)cs.eval("(eval-current)");
-    // Verify (query:pattern-hygiene-stats) is reachable + 0.
-    auto r = cs.eval("(query:pattern-hygiene-stats)");
+    // Verify (engine:metrics \"query:pattern-hygiene-stats\") is reachable + 0.
+    auto r = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++aura::test::g_failed;
         return false;
@@ -255,12 +257,12 @@ bool test_stress_mutate_dirty_marks() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:pattern-index-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:pattern-index-stats) (new for #547)");
-    auto r2 = cs.eval("(query:pattern-hygiene-stats)");
+          "(engine:metrics \"query:pattern-index-stats\") (new for #547)");
+    auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:pattern-hygiene-stats) (new for #547)");
+          "(engine:metrics \"query:pattern-hygiene-stats\") (new for #547)");
     auto r3 = cs.eval("(query:query-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:query-stats) (regression for #447)");

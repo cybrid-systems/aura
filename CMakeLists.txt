@@ -4726,6 +4726,9 @@ aura_issue_test_link_llvm_jit(test_issue_1405)
 # :prefix / :group + golden hash shape (≥200 fields).
 aura_add_issue_test(test_engine_metrics_facade)
 aura_issue_test_link_llvm_jit(test_engine_metrics_facade)
+# Issue #1434 stretch: 20× direct stats vs 1× facade wall time (soft bar).
+aura_add_issue_test(test_stats_facade_bench)
+aura_issue_test_link_llvm_jit(test_stats_facade_bench)
 # Issue #1406: propagate_cow_pins_after_clone Option 2 — bounded retention
 # cap (kMaxPinnedBoundaryRefs=4096, drop oldest) + version-check retry
 # using cow_boundary_pins_total_ as the version counter. Unpin-on-merge

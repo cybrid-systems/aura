@@ -75,7 +75,7 @@ void run_suite(CompilerService& cs) {
 
     // Optional workspace hygiene queries (may be empty without set-code).
     std::println("\n=== Workspace hygiene queries (smoke) ===");
-    auto hyg = cs.eval("(query:pattern-hygiene-stats)");
+    auto hyg = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     // May be hash or error depending on workspace; both acceptable as smoke.
     CHECK(hyg.has_value() || !hyg.has_value(), "pattern-hygiene-stats eval completes");
     (void)hyg;

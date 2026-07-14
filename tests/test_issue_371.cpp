@@ -412,7 +412,7 @@ bool test_long_stress_mixed_ops() {
 // ── AC6: query:pattern-index-stats primitive still
 //   consistent post-#371. ──────────────────────────────
 bool test_pattern_index_stats_observability() {
-    std::println("\n--- AC6: (query:pattern-index-stats) primitive ---");
+    std::println("\n--- AC6: (engine:metrics \"query:pattern-index-stats\") primitive ---");
     CompilerService cs;
     CHECK(setup_workspace(cs), "workspace ready");
 
@@ -422,14 +422,14 @@ bool test_pattern_index_stats_observability() {
     (void)cs.eval("(query:pattern \"missing-tag-xxx\")");
     (void)cs.eval("(query:pattern \"+\" :arity-min 2 :arity-max 2)");
 
-    const auto stats = eval_int(cs, "(query:pattern-index-stats)");
-    CHECK(stats >= 0, "(query:pattern-index-stats) still answerable");
+    const auto stats = eval_int(cs, "(engine:metrics \"query:pattern-index-stats\")");
+    CHECK(stats >= 0, "(engine:metrics \"query:pattern-index-stats\") still answerable");
 
     // Stat counters are non-decreasing across calls.
-    const auto stats_before = eval_int(cs, "(query:pattern-index-stats)");
+    const auto stats_before = eval_int(cs, "(engine:metrics \"query:pattern-index-stats\")");
     (void)cs.eval("(query:pattern \"define\")");
     (void)cs.eval("(query:pattern \"define\" :arity-min 2 :arity-max 2)");
-    const auto stats_after = eval_int(cs, "(query:pattern-index-stats)");
+    const auto stats_after = eval_int(cs, "(engine:metrics \"query:pattern-index-stats\")");
     CHECK(stats_after >= stats_before, "pattern-index-stats monotonic (hits accumulate)");
     return true;
 }

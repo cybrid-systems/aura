@@ -101,10 +101,11 @@ static std::string hash_str_field(aura::compiler::CompilerService& cs, std::stri
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:self-evolution-closedloop-stats) hash shape ---");
-    auto r = cs.eval("(query:self-evolution-closedloop-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:self-evolution-closedloop-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:self-evolution-closedloop-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:self-evolution-closedloop-stats) returns a hash");
+          "(engine:metrics \"query:self-evolution-closedloop-stats\") returns a hash");
     const std::vector<std::string> keys = {"hygiene-macro-introduced-count",
                                            "hygiene-violation-rate",
                                            "dirty-subtree-impact",
@@ -124,29 +125,31 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: hygiene fields default to 0 on fresh service ---");
-    const auto macro_intro = hash_int_field(cs, "(query:self-evolution-closedloop-stats)",
-                                            "hygiene-macro-introduced-count");
+    const auto macro_intro =
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                       "hygiene-macro-introduced-count");
     CHECK(macro_intro == 0,
           std::format("hygiene-macro-introduced-count = {} (expected 0 on fresh service — "
                       "Phase 1 stub; macro-introduced walk is follow-up)",
                       macro_intro));
-    const auto violation_rate =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "hygiene-violation-rate");
+    const auto violation_rate = hash_int_field(
+        cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "hygiene-violation-rate");
     CHECK(violation_rate == 0,
           std::format("hygiene-violation-rate = {} (expected 0 on fresh service)", violation_rate));
-    const auto dirty_impact =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "dirty-subtree-impact");
+    const auto dirty_impact = hash_int_field(
+        cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "dirty-subtree-impact");
     CHECK(dirty_impact == 0,
           std::format("dirty-subtree-impact = {} (expected 0 on fresh service)", dirty_impact));
-    const auto epoch_drift =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "epoch-drift-detected");
+    const auto epoch_drift = hash_int_field(
+        cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "epoch-drift-detected");
     CHECK(epoch_drift == 0,
           std::format("epoch-drift-detected = {} (expected 0 on fresh service)", epoch_drift));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 714 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "schema");
     CHECK(schema == 714, std::format("schema = {} (expected 714)", schema));
 }
 
@@ -161,12 +164,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_self_evo_strategy_recommend_balanced();
     ev.bump_self_evo_strategy_recommend_balanced();
     ev.bump_self_evo_strategy_recommend_balanced();
-    const auto safe =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "strategy-safe-count");
+    const auto safe = hash_int_field(
+        cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")", "strategy-safe-count");
     const auto balanced =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "strategy-balanced-count");
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                       "strategy-balanced-count");
     const auto aggressive =
-        hash_int_field(cs, "(query:self-evolution-closedloop-stats)", "strategy-aggressive-count");
+        hash_int_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                       "strategy-aggressive-count");
     CHECK(safe == 1, std::format("after 1 safe bump: strategy-safe-count = {} (expected 1)", safe));
     CHECK(
         balanced == 3,
@@ -176,8 +181,9 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
                       aggressive));
 
     // recommended-mutation-strategy should now be "balanced" (highest of 3).
-    const auto recommended = hash_str_field(cs, "(query:self-evolution-closedloop-stats)",
-                                            "recommended-mutation-strategy");
+    const auto recommended =
+        hash_str_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                       "recommended-mutation-strategy");
     CHECK(recommended == "balanced",
           std::format("recommended-mutation-strategy = '{}' (expected 'balanced' — highest "
                       "of 3 counts; ties go balanced)",
@@ -187,8 +193,9 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_self_evo_strategy_recommend_safe();
     ev.bump_self_evo_strategy_recommend_safe();
     ev.bump_self_evo_strategy_recommend_safe();
-    const auto recommended2 = hash_str_field(cs, "(query:self-evolution-closedloop-stats)",
-                                             "recommended-mutation-strategy");
+    const auto recommended2 =
+        hash_str_field(cs, "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                       "recommended-mutation-strategy");
     CHECK(
         recommended2 == "safe",
         std::format("after 3 more safe bumps: recommended = '{}' (expected 'safe')", recommended2));
@@ -196,17 +203,18 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #712 + #713 surfaces unaffected ---");
-    auto reflect = cs.eval("(query:macro-reflect-validation-stats)");
-    auto jit = cs.eval("(query:macro-jit-hygiene-stats)");
+    auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
+    auto jit = cs.eval("(engine:metrics \"query:macro-jit-hygiene-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     CHECK(jit && aura::compiler::types::is_hash(*jit),
           "query:macro-jit-hygiene-stats hash regression (#713)");
     const auto reflect_schema =
-        hash_int_field(cs, "(query:macro-reflect-validation-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-reflect-validation-stats\")", "schema");
     CHECK(reflect_schema == 712,
           std::format("reflect schema = {} (expected 712, no drift)", reflect_schema));
-    const auto jit_schema = hash_int_field(cs, "(query:macro-jit-hygiene-stats)", "schema");
+    const auto jit_schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-jit-hygiene-stats\")", "schema");
     CHECK(jit_schema == 713, std::format("jit schema = {} (expected 713, no drift)", jit_schema));
 }
 

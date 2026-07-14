@@ -105,7 +105,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b > stats6a, "contract stats grow over query matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto phs = cs.eval("(query:pattern-hygiene-stats)");
+    auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     auto ihs = cs.eval("(query:ir-hygiene-stats)");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(ihs && is_hash(*ihs), "ir-hygiene-stats regression");

@@ -348,9 +348,9 @@ bool test_regression_primitives(CompilerService& cs) {
     std::println("\n--- AC10: regression — lifecycle + fiber-stats primitives ---");
     (void)cs.eval("(set-code \"(define x 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r1 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:panic-checkpoint-lifecycle-stats) regression");
+          "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") regression");
     auto r2 = cs.eval("(query:panic-checkpoint-fiber-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_hash(*r2),
           "(query:panic-checkpoint-fiber-stats) regression");

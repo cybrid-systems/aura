@@ -84,7 +84,7 @@ int aura_issue_485_run() {
 
     const auto fms_before = eval_int(cs, "(query:fiber-migration-stats)");
     const auto mcs_before = eval_int(cs, "(query:mutation-coordination-stats)");
-    const auto eds_before = eval_int(cs, "(query:envframe-dualpath-stats)");
+    const auto eds_before = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
 
     // AC2: fiber migration stats monotonic after resume migration wiring
     {
@@ -158,7 +158,7 @@ int aura_issue_485_run() {
         CHECK(cs.eval("(set-code \"(define acc 0)\")").has_value(), "workspace setup");
         CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
         const auto dual_before = cs.evaluator().get_bindings_dual_sync_count();
-        const auto eds_mid = eval_int(cs, "(query:envframe-dualpath-stats)");
+        const auto eds_mid = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
         CHECK(cs.eval("(mutate:rebind \"acc\" \"42\")").has_value(), "mutate:rebind under Guard");
         CHECK(cs.eval("(define cap (let ((y acc)) (lambda () y)))").has_value(),
               "let-capture allocates mirrored EnvFrame");
@@ -166,7 +166,7 @@ int aura_issue_485_run() {
         const aura::compiler::EnvId probe_id = cs.evaluator().alloc_env_frame();
         cs.evaluator().ensure_envframe_dual_path_consistency(cs.evaluator().env_frame(probe_id));
         const auto dual_after = cs.evaluator().get_bindings_dual_sync_count();
-        const auto eds_after = eval_int(cs, "(query:envframe-dualpath-stats)");
+        const auto eds_after = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
         CHECK(dual_after > dual_before,
               std::format("bindings_dual_sync_count grew ({} -> {})", dual_before, dual_after));
         CHECK(eds_after > eds_mid,
@@ -256,7 +256,7 @@ int aura_issue_485_run() {
                 std::lock_guard<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(query:fiber-migration-stats)");
                 (void)cs.eval("(query:mutation-coordination-stats)");
-                (void)cs.eval("(query:envframe-dualpath-stats)");
+                (void)cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
                 aura_evaluator_resume_fiber_migration();
                 ok_count.fetch_add(1, std::memory_order_relaxed);
             }

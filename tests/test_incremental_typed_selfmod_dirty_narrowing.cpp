@@ -11,7 +11,7 @@
 //
 //   - AC1: 4 new dirty/narrowing counters reachable +
 //          start at 0
-//   - AC2: (query:typed-mutation-stats) returns integer
+//   - AC2: (engine:metrics \"query:typed-mutation-stats\") returns integer
 //          sum of 4 counters
 //   - AC3: (query:dirty-impact) returns touched_roots_size
 //   - AC4: narrowing_refresh_count_ bumps under Aura
@@ -72,17 +72,18 @@ bool test_dirty_narrowing_counters_reachable() {
 
 // ── AC2: query:typed-mutation-stats returns integer sum
 bool test_query_typed_mutation_stats() {
-    std::println("\n--- AC2: (query:typed-mutation-stats) returns integer ---");
+    std::println("\n--- AC2: (engine:metrics \"query:typed-mutation-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:typed-mutation-stats)");
-    CHECK(r.has_value(), "(query:typed-mutation-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:typed-mutation-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:typed-mutation-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:typed-mutation-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:typed-mutation-stats = {}", v);
-        CHECK(v >= 0, "(query:typed-mutation-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(engine:metrics \"query:typed-mutation-stats\") >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -222,9 +223,9 @@ bool test_gc_heap_with_dirty() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:typed-mutation-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:typed-mutation-stats) (new for #550)");
+          "(engine:metrics \"query:typed-mutation-stats\") (new for #550)");
     auto r2 = cs.eval("(query:dirty-impact)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:dirty-impact) (new for #550)");
@@ -234,9 +235,9 @@ bool test_regression_existing_primitives() {
     auto r4 = cs.eval("(query:stable-ref-stats)");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
           "(query:stable-ref-stats) (regression for #457)");
-    auto r5 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r5 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r5.has_value() && aura::compiler::types::is_int(*r5),
-          "(query:envframe-dualpath-stats) (regression for #543)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     if (!cs.eval("(define reg-550-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

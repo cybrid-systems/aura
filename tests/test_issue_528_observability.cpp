@@ -121,8 +121,8 @@ int aura_issue_528_observability_run() {
     // AC4: related pattern index/hygiene primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto pis = cs.eval("(query:pattern-index-stats)");
-        auto phs = cs.eval("(query:pattern-hygiene-stats)");
+        auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
+        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         auto pish = cs.eval("(query:pattern-index-stats-hash)");
         CHECK(pis && aura::compiler::types::is_int(*pis), "pattern-index-stats int regression");
         CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats int regression");

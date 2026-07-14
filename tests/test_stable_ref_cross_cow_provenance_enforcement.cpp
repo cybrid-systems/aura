@@ -146,7 +146,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(agg8b >= agg8a + 4, "aggregate #818 counters monotonic");
 
     auto s641 = cs.eval("(query:stable-ref-provenance-sv-stats)");
-    auto s715 = cs.eval("(query:stable-ref-layer-stats)");
+    auto s715 = cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")");
     CHECK(s641 && is_hash(*s641), "stable-ref-provenance-sv-stats regression (#641)");
     CHECK(s715 && is_hash(*s715), "stable-ref-layer-stats regression (#715)");
 }

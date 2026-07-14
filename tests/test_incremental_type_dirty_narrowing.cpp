@@ -50,7 +50,7 @@ static SolveResult solve_delta_with(ConstraintSystem& cs, Constraint c) {
 }
 
 static std::int64_t typed_mutation_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:typed-mutation-stats)");
+    auto r = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -78,7 +78,7 @@ static void test_cross_delta_conflict_unit() {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC2: typed-mutation-stats + dirty-impact ---");
     CHECK(load_workspace(cs), "load if workspace");
-    auto stats = cs.eval("(query:typed-mutation-stats)");
+    auto stats = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     auto impact = cs.eval("(query:dirty-impact)");
     CHECK(stats && is_int(*stats), "query:typed-mutation-stats returns int");
     CHECK(impact && is_int(*impact), "query:dirty-impact returns int");
@@ -148,7 +148,7 @@ static void run_matrix(CompilerService& cs) {
     for (int i = 0; i < 8; ++i) {
         (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                       std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
-        auto qs = cs.eval("(query:typed-mutation-stats)");
+        auto qs = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
         CHECK(qs && is_int(*qs), "typed-mutation-stats during stress");
         if (qs && is_int(*qs))
             stress_sum += as_int(*qs);

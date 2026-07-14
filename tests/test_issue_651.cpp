@@ -18,7 +18,7 @@
 //     panic-specific breakdown)
 //   - (query:panic-checkpoint-fiber-stats) (#648) — fiber
 //     resume panic transfer (no GC-deferral wire-up)
-//   - (query:panic-checkpoint-lifecycle-stats) — high-level
+//   - (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") — high-level
 //     panic lifecycle summary
 //   - block_gc_for_pending_checkpoint_trampoline +
 //     g_block_gc_for_pending_checkpoint exist but with

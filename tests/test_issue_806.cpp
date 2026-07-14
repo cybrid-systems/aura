@@ -286,17 +286,18 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "#633 (query:stdlib-compiler-demands-stats-hash) still returns a hash");
 
     // #797 (most recent sibling) regression: confirm that the
-    // (query:arena-auto-compact-defrag-fiber-stats) primitive is
+    // (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") primitive is
     // unaffected by the #806 work (cross-subsystem observability
     // layers are independent). Note #797 *enhanced* the existing
     // #767 primitive with a derived production-readiness field
     // rather than creating a new primitive — so the schema
     // sentinel is still 767.
-    auto r797 = cs.eval("(query:arena-auto-compact-defrag-fiber-stats)");
+    auto r797 = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
     CHECK(r797 && aura::compiler::types::is_hash(*r797),
-          "#797 (query:arena-auto-compact-defrag-fiber-stats) still returns a hash");
-    const auto schema_797 =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "schema");
+          "#797 (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") still returns a "
+          "hash");
+    const auto schema_797 = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(schema_797 == 767, std::format("#797 schema = {} (expected 767 — #797 "
                                          "enhances the existing #767 primitive, "
                                          "schema sentinel unchanged)",

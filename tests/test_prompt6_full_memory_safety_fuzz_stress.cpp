@@ -120,7 +120,7 @@ bool test_combined_prompt6_stats_bundle() {
     (void)cs.eval("(mutate:rebind \"base\" \"42\")");
     const char* stats[] = {
         "(query:prompt6-violation-count)",     "(query:prompt6-safety-score)",
-        "(query:closure-env-safety-stats)",    "(query:envframe-dualpath-stats)",
+        "(query:closure-env-safety-stats)",    "(engine:metrics \"query:envframe-dualpath-stats\")",
         "(query:gc-safepoint-stats)",          "(query:fiber-migration-stats)",
         "(query:mutation-coordination-stats)", "(query:self-evolution-stability-stats)",
     };
@@ -157,11 +157,11 @@ bool test_envframe_dualpath_under_mutate() {
     std::println("\n--- AC5: EnvFrame dualpath under mutate ---");
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for EnvFrame");
-    const auto d0 = eval_int(cs, "(query:envframe-dualpath-stats)");
+    const auto d0 = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
     for (int i = 0; i < 5; ++i) {
         (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(i) + "\")");
     }
-    const auto d1 = eval_int(cs, "(query:envframe-dualpath-stats)");
+    const auto d1 = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
     const auto desync = cs.evaluator().get_envframe_desync_detected();
     std::println("  envframe-dualpath-stats: {} -> {} desync: {}", d0, d1, desync);
     CHECK(desync == 0, "zero envframe desync under mutate load");
@@ -357,9 +357,9 @@ bool test_regression_related_primitives() {
     auto r1 = cs.eval("(query:closure-env-safety-stats)");
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
           "(query:closure-env-safety-stats) (regression for #531)");
-    auto r2 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:envframe-dualpath-stats) (regression for #543)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     auto r3 = cs.eval("(query:gc-safepoint-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:gc-safepoint-stats) (regression for #439)");

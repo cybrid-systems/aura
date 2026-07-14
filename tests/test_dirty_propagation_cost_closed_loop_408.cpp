@@ -85,7 +85,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query regression ---");
     auto drp = cs.eval("(query:dirty-reason-propagation-stats)");
-    auto tms = cs.eval("(query:typed-mutation-stats)");
+    auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(drp && is_int(*drp), "dirty-reason-propagation-stats regression");
     CHECK(tms && is_int(*tms), "typed-mutation-stats regression");
 }

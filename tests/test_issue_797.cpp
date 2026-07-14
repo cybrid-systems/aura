@@ -126,10 +126,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:arena-auto-compact-defrag-fiber-stats) hash shape ---");
-    auto r = cs.eval("(query:arena-auto-compact-defrag-fiber-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") hash "
+                 "shape ---");
+    auto r = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:arena-auto-compact-defrag-fiber-stats) returns a hash");
+          "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") returns a hash");
     // Verify all 6 body AC4 required fields + the #797-added derived
     // production-readiness + schema sentinel are present.
     const std::vector<std::string> keys = {"auto-compact-triggers", "frag-reduced-bp",
@@ -146,8 +147,9 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service state (reused arena stats may show setup-time "
                  "activity; NEW #767 atomics + derived ordinal follow split-zero rule) ---");
-    const auto auto_triggers = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                              "auto-compact-triggers");
+    const auto auto_triggers =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "auto-compact-triggers");
     // Split-zero rule from #767: reused arena stats can be > 0 on fresh
     // service from setup-time compact/defrag/policy-probe activity
     // (auto_alloc_trigger_count is bumped by the auto-policy probe at
@@ -160,22 +162,24 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "+ module-arena construction can both fire this on a fresh CompilerService "
                       "before any sustained mutate:rebind load; zero is the ideal lower bound)",
                       auto_triggers));
-    const auto frag =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "frag-reduced-bp");
+    const auto frag = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "frag-reduced-bp");
     CHECK(frag >= 0,
           std::format("frag-reduced-bp = {} (expected >= 0 — reused arena stats; basis points × "
                       "100 from stats_.frag_reduced_bp; tracks how much the auto-compact path "
                       "reduced fragmentation)",
                       frag));
     const auto savings =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "live-defrag-savings");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "live-defrag-savings");
     CHECK(savings >= 0,
           std::format("live-defrag-savings = {} (expected >= 0 — reused arena stats; bytes "
                       "recovered by live defrag; no live-object-moving defrag has run yet — "
                       "Phase 2+ follow-up — so production value is 0 until #300 Phase 3 ships)",
                       savings));
-    const auto fiber_yield = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                            "fiber-yield-during-compact");
+    const auto fiber_yield =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "fiber-yield-during-compact");
     // NEW atomic added by #767 — strict == 0 on fresh service (no
     // actual fiber yields inside compact/defrag yet since live defrag
     // + WorkerContext coordination is Phase 2+).
@@ -187,7 +191,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "defrag is Phase 2+)",
                       fiber_yield));
     const auto shape_inval =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "shape-inval-count");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "shape-inval-count");
     // Reused arena stats — >= 0 (compact hook may fire on module
     // arena construction in setup).
     CHECK(shape_inval >= 0,
@@ -196,8 +201,9 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "from the on_compact_hook_ when module arena is constructed or "
                       "auto-policy probe fires)",
                       shape_inval));
-    const auto defrag_blocked = hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)",
-                                               "defrag-blocked-fibers");
+    const auto defrag_blocked =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "defrag-blocked-fibers");
     // NEW atomic added by #767 — strict == 0 on fresh service (no
     // fiber/defrag interaction yet).
     CHECK(defrag_blocked == 0,
@@ -207,7 +213,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "defrag safepoint and waits; no fiber/defrag interaction yet — Phase 2+)",
                       defrag_blocked));
     const auto prod_ready =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "production-readiness");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "production-readiness");
     // Derived ordinal: 0=production-ready, 1=partial Phase 1, 2=early-stage.
     // On fresh service with setup-time auto-compact activity but no fiber-yield,
     // the derivation yields 1 — both preconditions (arena-stats activity AND
@@ -224,8 +231,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 767 (drift sentinel — #797 ENHANCES #767) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(schema == 767,
           std::format("schema = {} (expected == 767 — #797 enhances the existing #767 primitive "
                       "with a derived production-readiness field rather than creating a new "
@@ -240,12 +247,15 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
                  "production-readiness transition ---");
 
     // Snapshot before.
-    const auto fiber_yield_before = hash_int_field(
-        cs, "(query:arena-auto-compact-defrag-fiber-stats)", "fiber-yield-during-compact");
-    const auto defrag_blocked_before = hash_int_field(
-        cs, "(query:arena-auto-compact-defrag-fiber-stats)", "defrag-blocked-fibers");
+    const auto fiber_yield_before =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "fiber-yield-during-compact");
+    const auto defrag_blocked_before =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "defrag-blocked-fibers");
     const auto prod_ready_before =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "production-readiness");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "production-readiness");
 
     // Exercise the 2 NEW #767 per-Evaluator bump helpers via the
     // service's evaluator instance. Both bump CompilerMetrics
@@ -260,12 +270,15 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_arena_auto_compact_defrag_blocked_fibers();
     }
 
-    const auto fiber_yield_after = hash_int_field(
-        cs, "(query:arena-auto-compact-defrag-fiber-stats)", "fiber-yield-during-compact");
-    const auto defrag_blocked_after = hash_int_field(
-        cs, "(query:arena-auto-compact-defrag-fiber-stats)", "defrag-blocked-fibers");
+    const auto fiber_yield_after =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "fiber-yield-during-compact");
+    const auto defrag_blocked_after =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "defrag-blocked-fibers");
     const auto prod_ready_after =
-        hash_int_field(cs, "(query:arena-auto-compact-defrag-fiber-stats)", "production-readiness");
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                       "production-readiness");
 
     std::println("  counts after AC4 bumps: fiber-yield {} -> {}, defrag-blocked {} -> {}, "
                  "production-readiness {} -> {}",

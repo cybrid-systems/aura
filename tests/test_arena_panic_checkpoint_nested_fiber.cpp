@@ -304,9 +304,9 @@ bool test_regression_existing_primitives() {
     auto r2 = cs.eval("(panic-auto-rollback?)");
     CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2),
           "(panic-auto-rollback?) (regression for #546)");
-    auto r3 = cs.eval("(query:envframe-dualpath-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:envframe-dualpath-stats) (regression for #543)");
+          "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
     // Verify happy-path define + eval still works.
     if (!cs.eval("(define reg-546-a 10)")) {
         CHECK(false, "define (regression)");

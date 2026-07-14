@@ -142,7 +142,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC8: query regression ---");
     auto dep = cs.eval("(query:deployment-stats)");
-    auto panic = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto panic = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     auto chaos = cs.eval("(query:self-evolution-chaos-stats)");
     CHECK(dep && is_hash(*dep), "deployment-stats regression");
     CHECK(panic && is_int(*panic), "panic-checkpoint-lifecycle-stats regression");

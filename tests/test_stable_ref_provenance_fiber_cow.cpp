@@ -266,9 +266,9 @@ bool test_regression_existing_primitives() {
     auto r3 = cs.eval("(query:stale-ref-stats)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:stale-ref-stats) (regression for #391)");
-    auto r4 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
+    auto r4 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:panic-checkpoint-lifecycle-stats) (regression for #548)");
+          "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");
     if (!cs.eval("(define reg-549-a 10)")) {
         CHECK(false, "define (regression)");
         return false;
