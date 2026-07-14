@@ -8,7 +8,7 @@
 > **Goal**: 对外暴露尽可能少；其余用宏 / 标准库；C++ 只保留高性能 + AI-native 工作面 + 引擎/宿主红线。  
 >  
 > **Shipped**:  
-> - P0b: `scripts/check_primitive_surface.py` in `./build.py gate`  
+> - P0b/#1432: `scripts/check_primitive_surface.py` freezes stats **and** convenience (`string`/`json`/`math`/`vector`/`path`/`time`) + `ast:ref-*` vs baseline; gate + unit test  
 > - P1a: `(engine:metrics)` / name / `:all`  
 > - P1b: issue tests use `(hash-ref (engine:metrics "query:…") …)` (~195 files)  
 > - P2a: `AURA_PRIMITIVES=s0|full` / `AURA_FULL_PRIMITIVES=0` gates eda/security/verify/stdlib-review  
