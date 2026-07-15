@@ -9685,10 +9685,28 @@ public:
                         m->mutation_boundary_hold_histogram[bucket].fetch_add(
                             1, std::memory_order_relaxed);
                     }
-                    // Default policy: 500ms — metric-only (no force-yield yet).
-                    constexpr std::int64_t kMaxMutationDurationUs = 500'000;
-                    if (us > kMaxMutationDurationUs) {
+                    // Issue #1443: configurable threshold via atomic (default 500ms).
+                    // Read racy on purpose — best-effort policy, not safety critical.
+                    const auto max_us = static_cast<std::int64_t>(
+                        m->long_mutation_threshold_us.load(std::memory_order_relaxed));
+                    if (us > max_us) {
                         m->mutation_too_long_total.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #1443: bump starvation prevention counter + capture telemetry.
+                        m->starvation_prevented_count.fetch_add(1, std::memory_order_relaxed);
+                        m->last_long_mutation_fiber_id.store(
+                            static_cast<std::uint64_t>(
+                                reinterpret_cast<std::uintptr_t>(Evaluator::get_current_fiber())),
+                            std::memory_order_relaxed);
+                        m->last_long_mutation_duration_us.store(uus, std::memory_order_relaxed);
+                        // Strict mode: extreme hold triggers rollback path.
+                        const auto extreme_us = static_cast<std::int64_t>(
+                            m->max_extreme_mutation_us.load(std::memory_order_relaxed));
+                        if (m->long_mutation_strict_mode.load(std::memory_order_relaxed) != 0 &&
+                            us > extreme_us) {
+                            m->long_mutation_extreme_total.fetch_add(1, std::memory_order_relaxed);
+                            if (flag_)
+                                *flag_ = false; // force outer Guard to mark failure
+                        }
                         // Issue #1272: contention histogram sample (µs held).
                         m->mutation_boundary_contention_us_hist.fetch_add(
                             uus, std::memory_order_relaxed);

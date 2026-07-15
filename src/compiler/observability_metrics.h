@@ -5755,6 +5755,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_hold_samples{0};                  // #1253
     std::atomic<std::uint64_t> mutation_hold_duration_us_max{0};          // #1253
     std::atomic<std::uint64_t> mutation_too_long_total{0};                // #1253
+    // Issue #1443: long-mutation policy knobs + starvation prevention counter.
+    // Reads in dtor are racy by design (best-effort policy, not safety critical).
+    // Threshold default 500ms (500'000 µs); max_extreme default 30s (strict-mode ceiling).
+    std::atomic<std::uint64_t> long_mutation_threshold_us{500'000}; // #1443
+    std::atomic<std::uint64_t> max_extreme_mutation_us{30'000'000}; // #1443
+    std::atomic<std::uint64_t> starvation_prevented_count{0};       // #1443
+    std::atomic<std::uint64_t> long_mutation_strict_mode{0};        // #1443 (0/1)
+    std::atomic<std::uint64_t> long_mutation_extreme_total{0};      // #1443
+    std::atomic<std::uint64_t> last_long_mutation_fiber_id{0};      // #1443 (telemetry)
+    std::atomic<std::uint64_t> last_long_mutation_duration_us{0};   // #1443 (telemetry)
     // Issue #1373: cross-fiber yield + hold observability (Agent dashboard)
     //   - yield_same_thread: yield while boundary held, same OS thread
     //   - cross_thread_migration: yield checkpoint resume on different thread
