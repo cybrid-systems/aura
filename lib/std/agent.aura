@@ -1,21 +1,91 @@
-; agent.aura — Self-growing AI agent library
-; Implements the complete auto-fix loop within Aura.
-; (require std/agent) → auto-grow, llm-ask, safe-eval
+; agent.aura — Self-growing AI agent library (Issue #1460)
+;
+; Default path is a true EDSL closed-loop:
+;   set-code / workspace
+;     → query (root / find / def-use)
+;     → agent:decision-metrics (back-off / escalate / commit)
+;     → mutate:atomic-batch (or :rebind convenience)
+;     → eval-current
+;     → observe metrics → commit / restore / escalate
+;
+; Pure LLM prompt path is opt-in via :prompt-only (compat).
+;
+; Import: (require "std/agent" all:)
+;         (require std/agent)
 
-(export auto-grow safe-eval llm-ask extract-code)
+(export auto-grow edsl-fix safe-eval llm-ask extract-code
+        agent:decision-metrics agent:decide agent:loop-stats
+        agent:loop-stats-reset! agent:closed-loop-once)
+
 (require std/json)
 (require std/string)
+(require "std/mutate" all:)
 
 ; ── Configuration ──────────────────────────────────────────────
 (define api-key (getenv "LLM_API_KEY"))
 (define api-url (getenv "LLM_API_URL"))
 (define llm-model (getenv "LLM_MODEL"))
 
-; Defaults
 (if (void? api-url) (set! api-url "https://api.deepseek.com/chat/completions"))
 (if (void? llm-model) (set! llm-model "deepseek-chat"))
 
-; ── LLM API call ──────────────────────────────────────────────
+; Decision thresholds (Issue #1461 contract — tunable)
+; long-hold is cumulative process-wide (holds-over-1ms); use a noise
+; floor so a single healthy mutate does not permanently back-off.
+(define *agent-rollback-rate-max* 50)   ; percent; ≥ → back-off
+(define *agent-panic-max* 1)            ; absolute; ≥ → escalate
+(define *agent-long-hold-max* 50)       ; holds-over-1ms; > → back-off
+
+; Loop telemetry for tests / dashboards (does not depend on engine).
+; Note: Aura (hash ...) tables are capacity-8 — keep ≤8 keys.
+(define *agent-loop-stats*
+  (hash "query-calls" 0
+        "atomic-batch-calls" 0
+        "metrics-calls" 0
+        "decisions" 0
+        "commits" 0
+        "rollbacks" 0
+        "back-offs" 0
+        "escalations" 0))
+
+(define (agent:loop-stats)
+  *agent-loop-stats*)
+
+(define (agent:loop-stats-reset!)
+  (set! *agent-loop-stats*
+    (hash "query-calls" 0
+          "atomic-batch-calls" 0
+          "metrics-calls" 0
+          "decisions" 0
+          "commits" 0
+          "rollbacks" 0
+          "back-offs" 0
+          "escalations" 0))
+  *agent-loop-stats*)
+
+(define (agent-bump! key)
+  (hash-set! *agent-loop-stats* key
+             (+ 1 (hash-ref *agent-loop-stats* key 0))))
+
+; ── Safe number / alist helpers ────────────────────────────────
+(define (agent-num v default)
+  (if (number? v) v default))
+
+(define (agent-hash-num h key default)
+  (if (hash? h)
+    (agent-num (hash-ref h key default) default)
+    default))
+
+; assq/assoc are not always bound; local alist lookup.
+; Keys are strings (":ok", ":decision", …) — use equal? not eq?.
+(define (agent-alist-ref key lst default)
+  (if (null? lst)
+    default
+    (if (equal? (car (car lst)) key)
+      (cdr (car lst))
+      (agent-alist-ref key (cdr lst) default))))
+
+; ── LLM API call ───────────────────────────────────────────────
 (define (llm-ask prompt)
   (let* ((body (string-append
           "{\"model\":\"" llm-model "\",\"messages\":["
@@ -24,7 +94,7 @@
          (resp (http-post api-url body api-key)))
     resp))
 
-; ── Extract code from LLM response ────────────────────────────
+; ── Extract code from LLM response ─────────────────────────────
 (define (extract-code response)
   (let* ((data (json-parse response))
          (choices (hash-ref data "choices")))
@@ -34,7 +104,6 @@
              (content (hash-ref msg "content")))
         (if (string? content)
           (begin
-            ; Strip markdown code blocks
             (define parts (string-split content "```"))
             (if (> (length parts) 1)
               (let* ((after (list-ref parts 1))
@@ -46,52 +115,429 @@
           ""))
       "")))
 
-; ── Safe eval with error handling ────────────────────────────
+; ── Safe eval with error handling ─────────────────────────────
 (define (safe-eval code)
   (try
     (let ((result (eval code)))
-      (cons 1 result))       ; (1 . value) = success
+      (cons 1 result))
     (catch (e)
-      (cons 0 e))))          ; (0 . error) = failure
+      (cons 0 e))))
 
-; ── Auto-grow loop ────────────────────────────────────────────
-(define (auto-grow task . max-tries)
-  (let ((tries (if (null? max-tries) 5 (car max-tries))))
-    (display (string-append "\n=== Auto-grow: " task " ===\n"))
-    
-    (let loop ((n 1))
-      (if (> n tries)
-        (begin
-          (display "  ❌ Failed after ")(display tries)(display " attempts\n")
-          #f)
-        (begin
-          (display "  [")(display n)("/")(display tries)("] LLM generating...\n")
-          (define response (llm-ask task))
-          (define code (extract-code response))
-          (define result (safe-eval code))
-          
-          (if (= (car result) 1)
-            (begin
-              (display "  ✅ Success!\n")
-              (cdr result))   ; return the result value
-            (begin
-              (display "  ❌ Error: ")
-              (display (cdr result))
-              (newline)
-              (loop (+ n 1))))))))))
-
-; ── EDSL auto-fix ────────────────────────────────────────────
-(define (edsl-fix task source)
-  (display "  [EDSL] Setting code...\n")
-  (set-code source)
-  (display "  [EDSL] Asking LLM to fix...\n")
-  (define prompt (string-append task " Fix the code above using mutate:rebind"))
-  (define response (llm-ask prompt))
-  (display "  [EDSL] Applying fix...\n")
+; ═══════════════════════════════════════════════════════════════
+; Agent Decision Metrics (Issue #1460 AC2 + minimal #1461 contract)
+;
+; Stable entry point agents MUST call before every commit.
+; Wraps live engine observability — never invents counters.
+; ═══════════════════════════════════════════════════════════════
+(define (agent:decision-metrics)
+  (agent-bump! "metrics-calls")
   (try
-    (eval response)
+    (let* ((ml (try (mutation-log:summary)
+                    (catch (e) (hash "total" 0 "committed" 0 "rolled-back" 0))))
+           (ab (try (atomic-batch:stats)
+                    (catch (e) (hash "batch-count" 0 "rollback-count" 0))))
+           (hold (try (stats:get "query:mutation-boundary-hold-stats")
+                      (catch (e) (void))))
+           (fiber (try (stats:get "query:fiber-boundary-violation-stats")
+                       (catch (e) (void))))
+           (total (agent-hash-num ml "total" 0))
+           (rolled (agent-hash-num ml "rolled-back" 0))
+           (rb-rate (if (= total 0) 0
+                      (let ((pct (* 100 (/ rolled total))))
+                        (if (< pct 0) 0 (if (> pct 100) 100 pct)))))
+           (panic-n (agent-hash-num fiber "recovery-failures" 0))
+           (hold-us (agent-hash-num hold "hold-time-us-total" 0))
+           (long-hold (agent-hash-num hold "holds-over-1ms" 0))
+           (ab-ok (agent-hash-num ab "batch-count" 0))
+           (ab-rb (agent-hash-num ab "rollback-count" 0))
+           (rec
+             (cond
+               ((>= panic-n *agent-panic-max*) "escalate")
+               ((>= rb-rate *agent-rollback-rate-max*) "back-off")
+               ((> long-hold *agent-long-hold-max*) "back-off")
+               (else "commit"))))
+      ; Exactly 8 keys (Aura hash capacity). recommendation first so
+      ; it is never dropped if the table fills under collision pressure.
+      (hash "recommendation" rec
+            "schema" 1461
+            "panic-count" panic-n
+            "rollback-rate" rb-rate
+            "hold-time-us" hold-us
+            "long-hold-count" long-hold
+            "atomic-batch-commits" ab-ok
+            "atomic-batch-rollbacks" ab-rb))
     (catch (e)
-      (display "  [EDSL] Fix failed: ")
-      (display e)
-      (newline)))
-  (current-source))
+      (hash "recommendation" "commit"
+            "schema" 1461
+            "panic-count" 0
+            "rollback-rate" 0
+            "hold-time-us" 0
+            "long-hold-count" 0
+            "atomic-batch-commits" 0
+            "atomic-batch-rollbacks" 0))))
+
+; Map recommendation string → symbol for callers
+(define (agent:decide)
+  (agent-bump! "decisions")
+  (let ((rec (hash-ref (agent:decision-metrics) "recommendation" "commit")))
+    (cond
+      ((equal? rec "escalate") 'escalate)
+      ((equal? rec "back-off") 'back-off)
+      (else 'commit))))
+
+; ── Query phase (observability + workspace awareness) ─────────
+(define (agent-query-workspace target-name)
+  (agent-bump! "query-calls")
+  (try
+    (let* ((root (query :root))
+           (found (if (string? target-name)
+                    (try (query :find target-name) (catch (e) '()))
+                    '()))
+           (du (if (string? target-name)
+                 (try (query :def-use target-name) (catch (e) '()))
+                 '())))
+      (list (cons ":root" root)
+            (cons ":find" found)
+            (cons ":def-use" du)))
+    (catch (e)
+      (list (cons ":root" 0)
+            (cons ":find" '())
+            (cons ":def-use" '())))))
+
+; ── Apply atomic mutations ────────────────────────────────────
+; ops: list of (list "mutate:rebind" name body summary) etc.
+(define (agent-atomic-mutate! ops summary)
+  (agent-bump! "atomic-batch-calls")
+  (try
+    (if (null? ops)
+      #f
+      (mutate:atomic-batch ops summary))
+    (catch (e) #f)))
+
+; Build a single rebind op list for convenience
+(define (agent-rebind-ops name body summary)
+  (list (list "mutate:rebind" name body summary)))
+
+; Restore workspace from saved source string
+(define (agent-restore-source! src)
+  (if (string? src)
+    (begin
+      (set-code src)
+      (try (eval-current) (catch (e) #f))
+      #t)
+    #f))
+
+; ═══════════════════════════════════════════════════════════════
+; One closed-loop round — positional core (no apply / rest-args).
+; Aura's (apply f args) is unreliable for rest-arg procedures on
+; repeated calls, so auto-grow / edsl-fix call this directly.
+;
+; Returns alist:
+;   ((:ok . #t|#f) (:decision . commit|back-off|escalate|rollback)
+;    (:eval-ok . #t|#f) (:metrics . <hash>))
+; ═══════════════════════════════════════════════════════════════
+(define (agent-closed-loop-core source mutations rebind-name rebind-body
+                                summary skip-set-code?)
+  ; 1) load source
+  (if (and (string? source) (not skip-set-code?))
+    (begin (set-code source) (try (eval-current) (catch (e) #f)))
+    #f)
+
+  (let* ((pre-src (try (current-source) (catch (e) source)))
+         (_q (agent-query-workspace rebind-name))
+         (pre-metrics (agent:decision-metrics))
+         (pre-rec (hash-ref pre-metrics "recommendation" "commit")))
+    (cond
+      ((equal? pre-rec "escalate")
+       (agent-bump! "escalations")
+       (list (cons ":ok" #f)
+             (cons ":decision" 'escalate)
+             (cons ":eval-ok" #f)
+             (cons ":metrics" pre-metrics)))
+      ((equal? pre-rec "back-off")
+       (agent-bump! "back-offs")
+       (list (cons ":ok" #f)
+             (cons ":decision" 'back-off)
+             (cons ":eval-ok" #f)
+             (cons ":metrics" pre-metrics)))
+      (else
+       (let* ((snap (try (ast:snapshot summary) (catch (e) -1)))
+              (ops (if (pair? mutations)
+                     mutations
+                     (if (and (string? rebind-name) (string? rebind-body))
+                       (agent-rebind-ops rebind-name rebind-body summary)
+                       '())))
+              (mut-ok (agent-atomic-mutate! ops summary))
+              (eval-res (try (begin (eval-current) #t) (catch (e) #f)))
+              (post-metrics (agent:decision-metrics))
+              (post-rec (hash-ref post-metrics "recommendation" "commit")))
+         (cond
+           ((not mut-ok)
+            (agent-bump! "rollbacks")
+            (agent-restore-source! pre-src)
+            (list (cons ":ok" #f)
+                  (cons ":decision" 'rollback)
+                  (cons ":eval-ok" eval-res)
+                  (cons ":metrics" post-metrics)))
+           ((not eval-res)
+            (agent-bump! "rollbacks")
+            (if (and (number? snap) (>= snap 0))
+              (try (ast:restore snap) (catch (e) (agent-restore-source! pre-src)))
+              (agent-restore-source! pre-src))
+            (list (cons ":ok" #f)
+                  (cons ":decision" 'rollback)
+                  (cons ":eval-ok" #f)
+                  (cons ":metrics" post-metrics)))
+           ((equal? post-rec "escalate")
+            (agent-bump! "escalations")
+            (if (and (number? snap) (>= snap 0))
+              (try (ast:restore snap) (catch (e) (agent-restore-source! pre-src)))
+              (agent-restore-source! pre-src))
+            (list (cons ":ok" #f)
+                  (cons ":decision" 'escalate)
+                  (cons ":eval-ok" #t)
+                  (cons ":metrics" post-metrics)))
+           ((equal? post-rec "back-off")
+            (agent-bump! "back-offs")
+            (if (and (number? snap) (>= snap 0))
+              (try (ast:restore snap) (catch (e) (agent-restore-source! pre-src)))
+              (agent-restore-source! pre-src))
+            (list (cons ":ok" #f)
+                  (cons ":decision" 'back-off)
+                  (cons ":eval-ok" #t)
+                  (cons ":metrics" post-metrics)))
+           (else
+            (agent-bump! "commits")
+            (list (cons ":ok" #t)
+                  (cons ":decision" 'commit)
+                  (cons ":eval-ok" #t)
+                  (cons ":metrics" post-metrics)))))))))
+
+; Keyword wrapper for agents / tests (single-shot rest-args is OK).
+(define (agent:closed-loop-once . args)
+  (let ((source #f)
+        (mutations '())
+        (rebind-name #f)
+        (rebind-body #f)
+        (summary "closed-loop")
+        (skip-set-code? #f))
+    (let parse ((a args))
+      (cond
+        ((null? a) #f)
+        ((eq? (car a) :source)
+         (set! source (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :mutations)
+         (set! mutations (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :rebind)
+         (set! rebind-name (cadr a))
+         (set! rebind-body (if (pair? (cddr a)) (caddr a) #f))
+         (parse (if (pair? (cddr a)) (cdddr a) (cddr a))))
+        ((eq? (car a) :summary)
+         (set! summary (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :skip-set-code)
+         (set! skip-set-code? #t) (parse (cdr a)))
+        (else (parse (cdr a)))))
+    (agent-closed-loop-core source mutations rebind-name rebind-body
+                            summary skip-set-code?)))
+
+; ── Prompt-only loop (compat — not the default) ───────────────
+(define (auto-grow-prompt-only task tries)
+  (display (string-append "\n=== Auto-grow [prompt-only]: " task " ===\n"))
+  (let loop ((n 1))
+    (if (> n tries)
+      (begin
+        (display "  Failed after ")
+        (display tries)
+        (display " attempts\n")
+        #f)
+      (begin
+        (display "  [")
+        (display n)
+        (display "/")
+        (display tries)
+        (display "] LLM generating...\n")
+        (define response (llm-ask task))
+        (define code (extract-code response))
+        (define result (safe-eval code))
+        (if (= (car result) 1)
+          (begin
+            (display "  Success!\n")
+            (cdr result))
+          (begin
+            (display "  Error: ")
+            (display (cdr result))
+            (newline)
+            (loop (+ n 1))))))))
+
+; ═══════════════════════════════════════════════════════════════
+; auto-grow — default EDSL closed-loop (Issue #1460)
+;
+; (auto-grow task)
+; (auto-grow task max-tries)
+; (auto-grow task :prompt-only)
+; (auto-grow task 5 :prompt-only)
+; (auto-grow task
+;    :source "(define (f x) (+ x 1))"
+;    :rebind "f" "(lambda (x) (* x 2))"
+;    :max-tries 3)
+; (auto-grow task :source "..." :mutations ops-list)
+;
+; Returns:
+;   success value / #t on EDSL commit
+;   #f on failure / escalate
+;   'back-off / 'escalate symbols when safety gate fires
+; ═══════════════════════════════════════════════════════════════
+(define (auto-grow task . args)
+  (let ((tries 5)
+        (prompt-only? #f)
+        (source #f)
+        (mutations '())
+        (rebind-name #f)
+        (rebind-body #f)
+        (summary "auto-grow"))
+    ; first positional number → max-tries
+    (let parse ((a args))
+      (cond
+        ((null? a) #f)
+        ((number? (car a))
+         (set! tries (car a)) (parse (cdr a)))
+        ((or (eq? (car a) :prompt-only)
+             (eq? (car a) 'prompt-only))
+         (set! prompt-only? #t) (parse (cdr a)))
+        ((eq? (car a) :max-tries)
+         (set! tries (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :source)
+         (set! source (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :mutations)
+         (set! mutations (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :rebind)
+         (set! rebind-name (cadr a))
+         (set! rebind-body (if (pair? (cddr a)) (caddr a) #f))
+         (parse (if (pair? (cddr a)) (cdddr a) (cddr a))))
+        ((eq? (car a) :summary)
+         (set! summary (cadr a)) (parse (cddr a)))
+        (else (parse (cdr a)))))
+
+    (if prompt-only?
+      (auto-grow-prompt-only task tries)
+      (begin
+        (display (string-append "\n=== Auto-grow [EDSL]: " task " ===\n"))
+        (let loop ((n 1))
+          (if (> n tries)
+            (begin
+              (display "  Failed after ")
+              (display tries)
+              (display " EDSL rounds\n")
+              #f)
+            (let* ((gate (agent:decide))
+                   (_d1 (begin
+                          (display "  [")
+                          (display n)
+                          (display "/")
+                          (display tries)
+                          (display "] closed-loop round...\n")
+                          #f)))
+              (cond
+                ((eq? gate 'escalate)
+                 (display "  escalate: decision metrics require human\n")
+                 'escalate)
+                ((eq? gate 'back-off)
+                 (display "  back-off: high rollback / long-hold; stopping\n")
+                 'back-off)
+                (else
+                 (let* ((ops mutations)
+                        (rname rebind-name)
+                        (rbody rebind-body)
+                        ; Optional LLM assist when no structured ops given
+                        (_llm
+                         (if (and (null? ops)
+                                  (not (string? rbody))
+                                  (string? task)
+                                  (not (void? api-key)))
+                           (let* ((prompt
+                                   (string-append
+                                     "EDSL only. Task: " task
+                                     ". Return ONLY a single Aura lambda body "
+                                     "for mutate:rebind (no markdown)."))
+                                  (resp (try (llm-ask prompt) (catch (e) "")))
+                                  (code (try (extract-code resp) (catch (e) ""))))
+                             (if (and (string? code) (> (string-length code) 0))
+                               (begin
+                                 (if (not (string? rname)) (set! rname "main") #f)
+                                 (set! rbody code)
+                                 #t)
+                               #f))
+                           #f))
+                        (round
+                         (agent-closed-loop-core
+                           source ops rname rbody
+                           (string-append summary "-r" (number->string n))
+                           (> n 1)))
+                        (ok (agent-alist-ref ":ok" round #f))
+                        (dec (agent-alist-ref ":decision" round 'rollback)))
+                   (cond
+                     ((eq? dec 'escalate)
+                      (display "  escalate after metrics\n")
+                      'escalate)
+                     ((eq? dec 'back-off)
+                      (display "  back-off after metrics\n")
+                      'back-off)
+                     (ok
+                      (display "  commit ok\n")
+                      #t)
+                     (else
+                      (display "  round failed; retry\n")
+                      (loop (+ n 1))))))))))))))
+
+; ═══════════════════════════════════════════════════════════════
+; edsl-fix — upgraded to mutate:atomic-batch (Issue #1460 AC4)
+;
+; (edsl-fix task source)
+; (edsl-fix task source :mutations ops)
+; (edsl-fix task source :rebind "f" "(lambda (x) 0)")
+; ═══════════════════════════════════════════════════════════════
+(define (edsl-fix task source . args)
+  (let ((mutations '())
+        (rebind-name #f)
+        (rebind-body #f)
+        (summary "edsl-fix"))
+    (let parse ((a args))
+      (cond
+        ((null? a) #f)
+        ((eq? (car a) :mutations)
+         (set! mutations (cadr a)) (parse (cddr a)))
+        ((eq? (car a) :rebind)
+         (set! rebind-name (cadr a))
+         (set! rebind-body (if (pair? (cddr a)) (caddr a) #f))
+         (parse (if (pair? (cddr a)) (cdddr a) (cddr a))))
+        ((eq? (car a) :summary)
+         (set! summary (cadr a)) (parse (cddr a)))
+        (else (parse (cdr a)))))
+
+    (display "  [EDSL] closed-loop fix...\n")
+
+    ; If no structured ops, ask LLM for a rebind body (not free eval)
+    (if (and (null? mutations)
+             (not (and (string? rebind-name) (string? rebind-body))))
+      (begin
+        (display "  [EDSL] LLM proposing rebind body...\n")
+        (let* ((prompt
+                (string-append task
+                               " Current source is loaded. Return ONLY the new body "
+                               "expression for the primary define (no markdown)."))
+               (response (try (llm-ask prompt) (catch (e) "")))
+               (body (try (extract-code response) (catch (e) ""))))
+          (if (and (string? body) (> (string-length body) 0))
+            (begin
+              (set! rebind-name "main")
+              (set! rebind-body body))
+            #f)))
+      #f)
+
+    (let ((round
+           (agent-closed-loop-core source mutations rebind-name rebind-body
+                                   summary #f)))
+      (display "  [EDSL] decision=")
+      (display (agent-alist-ref ":decision" round "unknown"))
+      (newline)
+      (current-source))))

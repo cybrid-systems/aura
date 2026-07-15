@@ -4935,6 +4935,9 @@ aura_issue_test_link_llvm_jit(test_issue_1462)
 # code-presence checks for wrap_epoch_ + generation_wrap_count_ +
 # maybe_auto_restamp_on_wrap wire points.
 aura_add_issue_test(test_issue_1469)
+# Issue #1460: std/agent EDSL closed-loop + decision metrics
+aura_add_issue_test(test_issue_1460)
+aura_issue_test_link_llvm_jit(test_issue_1460)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash

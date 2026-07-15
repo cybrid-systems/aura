@@ -91,8 +91,8 @@ These four issues do **not** duplicate any current open engine/Guard/SlimSurface
 5. **Type incremental + post-mutation soundness**  
    Prioritize occurrence-narrowing propagation + affected_subtree locality.
 
-6. **Forced testing closed-loop** + start **#1460 / #1461**  
-   Land declarative edsl_self_test + CI gate. In parallel, rewrite std/agent to the true EDSL loop and lock down the Decision Metrics contract.
+6. **Forced testing closed-loop** + **#1460 done (stdlib)** / **#1461 Phase 1**  
+   Land declarative edsl_self_test + CI gate. `#1460` rewrites `std/agent` to the true EDSL loop; `#1461` Phase 1 freezes `(agent:decision-metrics)` schema 1461 in `docs/design/agent-decision-metrics.md` (engine liveness injection tests remain follow-up).
 
 ### Priority 2 (follow-on)
 

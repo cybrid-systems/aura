@@ -1,0 +1,54 @@
+; suite/agent_closed_loop.aura — Issue #1460
+; Assert auto-grow default path touches query + atomic-batch + decision metrics.
+
+(require "std/test" all:)
+(require "std/agent" all:)
+
+(test-suite "agent:decision-metrics-contract"
+  (define m (agent:decision-metrics))
+  (check (hash? m))
+  (check (= 1461 (hash-ref m "schema")))
+  (check (string? (hash-ref m "recommendation")))
+  (check (number? (hash-ref m "panic-count")))
+  (check (number? (hash-ref m "rollback-rate")))
+  (check (number? (hash-ref m "atomic-batch-commits"))))
+
+(test-suite "agent:closed-loop-once-rebind"
+  (agent:loop-stats-reset!)
+  (define r
+    (agent:closed-loop-once
+      :source "(define (f x) (+ x 1))"
+      :rebind "f" "(lambda (x) (* x 2))"
+      :summary "suite-r1"))
+  (check (pair? r))
+  (check (equal? (car (car r)) ":ok"))
+  (check (cdr (car r)))
+  (check (= (f 21) 42))
+  (define st (agent:loop-stats))
+  (check (> (hash-ref st "query-calls" 0) 0))
+  (check (> (hash-ref st "atomic-batch-calls" 0) 0))
+  (check (> (hash-ref st "metrics-calls" 0) 0))
+  (check (> (hash-ref st "commits" 0) 0)))
+
+(test-suite "agent:auto-grow-edsl-default"
+  (agent:loop-stats-reset!)
+  (define ag
+    (auto-grow "double"
+      :source "(define (g x) (+ x 1))"
+      :rebind "g" "(lambda (x) (* x 2))"
+      :max-tries 2))
+  (check (eq? ag #t))
+  (check (= (g 10) 20))
+  (define st (agent:loop-stats))
+  (check (> (hash-ref st "atomic-batch-calls" 0) 0))
+  (check (> (hash-ref st "metrics-calls" 0) 0)))
+
+(test-suite "agent:edsl-fix-atomic"
+  (edsl-fix "fix"
+             "(define (h x) (+ x 1))"
+             :rebind "h" "(lambda (x) (* x 5))")
+  (check (= (h 3) 15)))
+
+(test-suite "agent:decide-symbols"
+  (define d (agent:decide))
+  (check (or (eq? d 'commit) (eq? d 'back-off) (eq? d 'escalate))))

@@ -84,6 +84,31 @@ echo '(+ 1 2 3)' | ./build/aura    # → 6
 (engine-metrics:get)
 ```
 
+### Agent 闭环（Issue #1460 — 默认 EDSL，非纯 LLM）
+
+```scheme
+(require "std/agent" all:)
+
+;; 决策指标（#1461 最小契约）— 每次 commit 前必读
+(agent:decision-metrics)   ; → hash schema 1461 + recommendation
+(agent:decide)             ; → 'commit | 'back-off | 'escalate
+
+;; 默认路径：query → decide → mutate:atomic-batch → eval → 再 decide
+(auto-grow "double f"
+  :source "(define (f x) (+ x 1))"
+  :rebind "f" "(lambda (x) (* x 2))")
+
+;; 单轮可测入口
+(agent:closed-loop-once
+  :source "(define (f x) (+ x 1))"
+  :rebind "f" "(lambda (x) (* x 2))")
+
+;; 旧 LLM-only 路径（兼容，非默认）
+(auto-grow "write a fact function" :prompt-only)
+```
+
+详见 [design/agent-decision-metrics.md](design/agent-decision-metrics.md) · [agent-prompt-template.md](agent-prompt-template.md)。
+
 ### 快照与回滚
 
 ```scheme
