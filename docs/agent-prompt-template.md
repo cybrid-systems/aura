@@ -68,6 +68,12 @@ DEPRECATED (still work; do not use in new code)
   query:find, mutate:rebind, workspace:create, bare *-stats names, …
   See (api-reference) *deprecated* section.
 
+Issue #1462 compat shim (one release cycle): the demoted names
+query:siblings / query:find-by-name / query:nodes-with-marker /
+query:subtree still resolve via (import "std/compat"). Migrate
+to the new surface per docs/agent-migration-guide.md before the
+next release. New code should NOT use the shim.
+
 OUTPUT: valid Aura sexprs only for tool calls. Prefer stable refs
 after any mutate. Prefer (mutate :rebind name code summary) for
 function body changes by name.

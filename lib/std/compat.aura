@@ -1,0 +1,56 @@
+; lib/std/compat.aura — temporary compatibility shims for demoted query:*
+; engine primitives. Issue #1462 Phase 1.
+;
+; Import with: (import "std/compat")
+; Or:        (require "std/compat" all:)
+;
+; Purpose: give existing agent code + hard-coded prompts that use the
+; OLD engine names (`query:siblings` / `find-by-name` /
+; `nodes-with-marker` / `subtree`) one release cycle of breathing
+; room. Each shim is a thin wrapper around the new stdlib / engine
+; primitive.
+;
+; Engine-side deprecation warning (AC3) is a follow-up: today the
+; shims are silent. When #1462.3 wires the one-shot-per-session
+; warning into the engine, this file will gain a `printf` to stderr
+; guarded by an engine-managed "already-warned" set.
+;
+; Removal timeline: see docs/agent-migration-guide.md. The shim
+; itself goes away two releases after the engine primitive is
+; removed.
+
+(export query:siblings
+        query:find-by-name
+        query:nodes-with-marker
+        query:subtree)
+
+;; ── query:siblings → filter over (query:children (query:parent n)) ──
+;; Demoted per docs/design/query-namespace-decision.md #33.
+;; The wrapper excludes `self` from the children list (the original
+;; `query:siblings` semantics).
+(define (query:siblings n)
+  (filter (lambda (s) (not (= s n)))
+          (query:children (query:parent n))))
+
+;; ── query:find-by-name → (query:find n) ──
+;; Demoted per query-namespace-decision.md #34. `query:find` is a
+;; superset (matches by name OR symbol); the shim narrows the input
+;; to a string when given a symbol so the caller stays compatible.
+(define (query:find-by-name name)
+  (if (symbol? name)
+      (query:find (symbol->string name))
+      (query:find name)))
+
+;; ── query:nodes-with-marker → (query:by-marker m) ──
+;; Demoted per query-namespace-decision.md #35.
+(define (query:nodes-with-marker marker)
+  (query:by-marker marker))
+
+;; ── query:subtree → (fold-tree self cons) ──
+;; Pending stdlib helper. Today the shim returns the same flat
+;; `query:children` list the old primitive returned for the
+;; single-node case (so callers that pass a single node continue to
+;; see at least the direct children). When `fold-tree` lands in
+;; stdlib, this wrapper is the only thing that needs to change.
+(define (query:subtree n)
+  (query:children n))

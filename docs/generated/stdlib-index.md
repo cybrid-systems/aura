@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**63** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**64** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -17,6 +17,7 @@
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/capability` | `capability-stack` `capability?` `check-capability` | std/capability.aura — Capability 标准库 |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
+| `std/compat` | `query:siblings` `query:find-by-name` `query:nodes-with-marker` `query:subtree` | lib/std/compat.aura — temporary compatibility shims for demoted query:* |
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |

@@ -86,7 +86,7 @@ These four issues do **not** duplicate any current open engine/Guard/SlimSurface
 ### Priority 1 (this iteration)
 
 4. **Execute real Tier-1 demotion** + **#1462 Migration Guide & shims**  
-   Land the previously identified query:siblings / find-by-name / nodes-with-marker / subtree etc. engine deletions (deprecation cycle first, then hard remove). Ship the agent migration guide and temporary shims in the same window.
+   Land the previously identified query:siblings / find-by-name / nodes-with-marker / subtree etc. engine deletions (deprecation cycle first, then hard remove). Ship the agent migration guide and temporary shims in the same window. See `docs/agent-migration-guide.md` for the current demotion table and `lib/std/compat.aura` for the temporary shim module.
 
 5. **Type incremental + post-mutation soundness**  
    Prioritize occurrence-narrowing propagation + affected_subtree locality.
