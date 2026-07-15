@@ -9481,51 +9481,73 @@ public:
     void ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept;
 
 
-    // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
-    // Acquires the exclusive workspace write lock + bumps
-    // defuse_version_ on construction, pops the checkpoint on
-    // destruction. Replaces manual enter/exit pairs so callers
-    // can't forget to pair them on the panic / early-return path.
-    //
-    // Usage:
-    //   bool ok = true;
-    //   {
-    //       MutationBoundaryGuard guard(evaluator, &ok);
-    //       // ... mutation work ...
-    //       // Set ok = false before destruction to request rollback.
-    //   }  // guard exits here; lock released; checkpoint popped.
-    //
-    // The success_flag is a pointer to a bool that the caller
-    // controls. On construction it's set to true (default);
-    // caller can set it to false to signal rollback intent.
-    // The exit path reads the flag (today both branches commit;
-    // the rollback path is a follow-up that requires hooking
-    // into MutationRecord (#142) and the defuse_index_
-    // restoration).
-    //
-    // Move-only (the lock + state can't be safely copied); do
-    // not copy. Construction blocks until the exclusive lock
-    // is acquired.
-    //
-    // Issue #241 (panic-checkpoint integration): the Guard now
-    // owns the panic-checkpoint lifecycle for mutate:* primitives.
-    // Previously each primitive had to manually call
-    //   save_panic_checkpoint()  // at entry
-    //   ... body ...
-    //   commit_panic_checkpoint()   // on success
-    //   restore_panic_checkpoint()  // on failure (with auto_rollback)
-    // The Guard now does all three automatically:
-    //   - ctor: save_panic_checkpoint() — captures the current
-    //     `current-source` so a panic / typecheck-failure can be
-    //     recovered via restore.
-    //   - dtor (outermost only): based on `flag_`:
-    //       ok == true                       → commit (clear checkpoint)
-    //       ok == false + panic_auto_rollback_ → restore (source reverted)
-    //       ok == false + !panic_auto_rollback_ → leave alive (caller
-    //                                                may retry)
-    //   - nested guards (depth > 1) skip the panic-checkpoint
-    //     step — only the outermost owns the checkpoint, matching
-    //     the lock-ownership rule.
+// ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
+// Acquires the exclusive workspace write lock + bumps
+// defuse_version_ on construction, pops the checkpoint on
+// destruction. Replaces manual enter/exit pairs so callers
+// can't forget to pair them on the panic / early-return path.
+//
+// Usage:
+//   bool ok = true;
+//   {
+//       MutationBoundaryGuard guard(evaluator, &ok);
+//       // ... mutation work ...
+//       // Set ok = false before destruction to request rollback.
+//   }  // guard exits here; lock released; checkpoint popped.
+//
+// The success_flag is a pointer to a bool that the caller
+// controls. On construction it's set to true (default);
+// caller can set it to false to signal rollback intent.
+// The exit path reads the flag (today both branches commit;
+// the rollback path is a follow-up that requires hooking
+// into MutationRecord (#142) and the defuse_index_
+// restoration).
+//
+// Move-only (the lock + state can't be safely copied); do
+// not copy. Construction blocks until the exclusive lock
+// is acquired.
+//
+// Issue #241 (panic-checkpoint integration): the Guard now
+// owns the panic-checkpoint lifecycle for mutate:* primitives.
+// Previously each primitive had to manually call
+//   save_panic_checkpoint()  // at entry
+//   ... body ...
+//   commit_panic_checkpoint()   // on success
+//   restore_panic_checkpoint()  // on failure (with auto_rollback)
+// The Guard now does all three automatically:
+//   - ctor: save_panic_checkpoint() — captures the current
+//     `current-source` so a panic / typecheck-failure can be
+//     recovered via restore.
+//   - dtor (outermost only): based on `flag_`:
+//       ok == true                       → commit (clear checkpoint)
+//       ok == false + panic_auto_rollback_ → restore (source reverted)
+//       ok == false + !panic_auto_rollback_ → leave alive (caller
+//                                                may retry)
+//   - nested guards (depth > 1) skip the panic-checkpoint
+//     step — only the outermost owns the checkpoint, matching
+//     the lock-ownership rule.
+// Issue #1444: convenience macro for primitive authors to wrap
+// their body in a MutationBoundaryGuard without typing the
+// bool ok + ctor boilerplate. Usage:
+//   AURA_MUTATION_BOUNDARY_PROTECT(ev, [&]{
+//       // body — `ev` already Guard-wrapped, `ok` is local
+//   });
+// If the body (or any nested Guard) flips `ok` to false, the
+// Guard dtor rolls back (linear ownership + panic-checkpoint
+// restore + defuse_version_ bump suppression).
+#define AURA_MUTATION_BOUNDARY_PROTECT(EV, BODY)                                                   \
+    do {                                                                                           \
+        bool _aura_mbp_ok = true;                                                                  \
+        {                                                                                          \
+            ::aura::compiler::Evaluator::MutationBoundaryGuard _aura_mbp_guard((EV),               \
+                                                                               &_aura_mbp_ok);     \
+            BODY;                                                                                  \
+        }                                                                                          \
+        if (!_aura_mbp_ok) {                                                                       \
+            (void)0;                                                                               \
+        }                                                                                          \
+    } while (0)
+
     class MutationBoundaryGuard {
         // Issue #241: did we capture a panic checkpoint at ctor?
         // (save_panic_checkpoint returns false if no source is loaded
