@@ -8963,6 +8963,14 @@ public:
     // stack, stored on Fiber like mutation_stack_storage_).
     void checkpoint_yield_boundary(bool at_mutation_boundary_yield);
     bool restore_post_yield_or_rollback();
+    // Issue #1446 AC1: re-pin all pinned StableNodeRef / COW children
+    // in the current Guard stack. Called from restore_post_yield_or_rollback
+    // and from the arena compact hook.
+    bool re_pin_cow_children_from_snapshot();
+    // Issue #1446 AC2: arena compact hook entry — registered during
+    // Evaluator ctor via set_on_compact_hook().
+    void on_arena_compact_hook();
+
     [[nodiscard]] bool any_active_mutation_boundary() const noexcept;
     [[nodiscard]] std::uint64_t mutation_yield_count() const noexcept {
         return mutation_yield_count_.load(std::memory_order_relaxed);
