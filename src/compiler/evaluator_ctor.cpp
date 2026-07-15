@@ -238,76 +238,79 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
 // holds.
 void Evaluator::backfill_capability_tiers() {
     // 1. compile:mark-block-dirty! (compile_03.cpp:224)
+    // Issue #1416: PrimMeta designators must follow declaration order
+    // (arity, pure, safety_flags, perf_tier, security_level, deprecated,
+    // doc, category, schema).
     primitives_.set_meta_for_name(
         "compile:mark-block-dirty!",
         PrimMeta{.arity = 3,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc = "Mark a single (function, block) dirty in the named define's IR cache.",
                  .category = "compile",
-                 .schema = "(string int int) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(string int int) -> bool"});
     // 2. compile:clear-block-dirty! (compile_03.cpp:264)
     primitives_.set_meta_for_name(
         "compile:clear-block-dirty!",
         PrimMeta{.arity = 3,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc =
                      "Clear a single (function, block) dirty bit in the named define's IR cache.",
                  .category = "compile",
-                 .schema = "(string int int) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(string int int) -> bool"});
     // 3. compile:mark-dirty-upward-fast (compile_02.cpp:616)
     primitives_.set_meta_for_name(
         "compile:mark-dirty-upward-fast",
         PrimMeta{.arity = 1,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc = "Fast path: mark all callers of a name dirty in the dep_graph.",
                  .category = "compile",
-                 .schema = "(string) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(string) -> bool"});
     // 4. compile:mark-instruction-dirty! (compile_03.cpp:323)
     primitives_.set_meta_for_name(
         "compile:mark-instruction-dirty!",
         PrimMeta{.arity = 4,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc = "Mark a single instruction dirty in a function's IR cache.",
                  .category = "compile",
-                 .schema = "(string int int int) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(string int int int) -> bool"});
     // 5. compile:clear-instruction-dirty! (compile_03.cpp:354)
     primitives_.set_meta_for_name(
         "compile:clear-instruction-dirty!",
         PrimMeta{.arity = 4,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc = "Clear a single instruction dirty bit in a function's IR cache.",
                  .category = "compile",
-                 .schema = "(string int int int) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(string int int int) -> bool"});
     // 6. compile:clear-macro-dirty! (compile_04.cpp:78)
     primitives_.set_meta_for_name(
         "compile:clear-macro-dirty!",
         PrimMeta{.arity = 1,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc = "Clear macro dirty flag after macro re-expansion.",
                  .category = "compile",
-                 .schema = "(string) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(string) -> bool"});
     // 7. compile:mark-narrowing-dirty! (compile_04.cpp:745)
     primitives_.set_meta_for_name(
         "compile:mark-narrowing-dirty!",
         PrimMeta{.arity = 1,
                  .pure = false,
                  .safety_flags = kPrimSafetyMutates,
+                 .security_level = kPrimSecPrivileged,
                  .doc = "Mark narrowing-derived bindings dirty for re-analysis.",
                  .category = "compile",
-                 .schema = "(int) -> bool",
-                 .security_level = kPrimSecPrivileged});
+                 .schema = "(int) -> bool"});
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->primitive_capability_tier_backfill_total.fetch_add(7, std::memory_order_relaxed);
 }

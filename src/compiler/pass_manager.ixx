@@ -17,6 +17,7 @@ module;
 #include <vector>
 
 #include "core/cpp26_contract_stats.h"
+#include "compiler/observability_metrics.h" // Issue #1425: dead_coercion_eliminated_total
 
 export module aura.compiler.pass_manager;
 import std;
@@ -787,7 +788,16 @@ public:
         // second time.
         auto coercions = tc.take_coercions();
         if (!coercions.empty()) {
-            aura::compiler::apply_coercion_map(flat, coercions);
+            // Issue #1425: AST-level identity elision when applying
+            // the deferred CoercionMap (complements IR
+            // DeadCoercionEliminationPass wired in #1418).
+            aura::compiler::DeadCoercionAstStats dce_stats;
+            aura::compiler::apply_coercion_map(flat, coercions, &dce_stats, &coercions);
+            if (metrics && dce_stats.eliminated > 0) {
+                static_cast<struct CompilerMetrics*>(metrics)
+                    ->dead_coercion_eliminated_total.fetch_add(dce_stats.eliminated,
+                                                               std::memory_order_relaxed);
+            }
             flat.restamp_all_node_generations();
         }
         auto all = diag.diagnostics();

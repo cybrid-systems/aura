@@ -126,7 +126,14 @@ bool Evaluator::run_typecheck_no_lock_bool() {
     {
         auto cm = tc.take_coercions();
         if (!cm.empty()) {
-            aura::compiler::apply_coercion_map(*workspace_flat_, cm);
+            // Issue #1425: identity elision at CoercionMap apply.
+            aura::compiler::DeadCoercionAstStats dce_stats;
+            aura::compiler::apply_coercion_map(*workspace_flat_, cm, &dce_stats, &cm);
+            if (compiler_metrics_ && dce_stats.eliminated > 0) {
+                auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+                m->dead_coercion_eliminated_total.fetch_add(dce_stats.eliminated,
+                                                            std::memory_order_relaxed);
+            }
         }
     }
     workspace_flat_->clear_all_dirty();
@@ -192,13 +199,20 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     {
         auto cm = tc.take_coercions();
         if (!cm.empty()) {
-            aura::compiler::apply_coercion_map(*workspace_flat_, cm);
+            // Issue #1425: identity elision at CoercionMap apply
+            // (AST-level dead-coercion win before IR lowering).
+            aura::compiler::DeadCoercionAstStats dce_stats;
+            aura::compiler::apply_coercion_map(*workspace_flat_, cm, &dce_stats, &cm);
             // Issue #659: post-mutate CoercionMap application counts as an
             // incremental coercion win on the typed-mutation path.
             if (compiler_metrics_) {
                 auto* metrics = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-                metrics->coercion_zerooverhead_win_total.fetch_add(cm.size(),
+                metrics->coercion_zerooverhead_win_total.fetch_add(dce_stats.applied,
                                                                    std::memory_order_relaxed);
+                if (dce_stats.eliminated > 0) {
+                    metrics->dead_coercion_eliminated_total.fetch_add(dce_stats.eliminated,
+                                                                      std::memory_order_relaxed);
+                }
             }
         }
     }

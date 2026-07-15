@@ -18,6 +18,8 @@ module;
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+// Issue #1416: capability names for invoke_prim_with_telemetry gate
+#include "security_capabilities.h"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
 #include "runtime_shared.h"
 #include <algorithm>
@@ -3511,7 +3513,7 @@ public:
                         m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                         m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
                     }
-                    return make_primitive_error(
+                    return primitives_detail::make_primitive_error(
                         string_heap_, error_values_,
                         "capability denied: privileged primitive requires kCapWildcard",
                         primitive_error_counter_ptr());
@@ -3522,7 +3524,7 @@ public:
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                         m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
                     }
-                    return make_primitive_error(
+                    return primitives_detail::make_primitive_error(
                         string_heap_, error_values_,
                         "capability denied: sandboxed primitive requires kCapSandbox",
                         primitive_error_counter_ptr());
