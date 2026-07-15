@@ -1237,7 +1237,10 @@ export struct TypeChecker {
         auto tid = infer_flat(flat, pool, node, diag);
         auto cm = take_coercions();
         if (!cm.empty()) {
-            apply_coercion_map(flat, cm);
+            // Issue #1425: identity elision inside apply_coercion_map.
+            DeadCoercionAstStats dce_stats;
+            apply_coercion_map(flat, cm, &dce_stats, &cm);
+            (void)dce_stats;
         }
         return tid;
     }
@@ -1257,9 +1260,23 @@ export struct TypeChecker {
     bool is_strict() const { return strict_; }
 
     explicit TypeChecker(aura::core::TypeRegistry& reg)
-        : types(reg) {}
+        : types(reg)
+        , solve_delta_cs_(reg) {}
+
+    // Issue #1414: expose a persistent ConstraintSystem so
+    // CompilerService::solve_delta_cached can key its cache by
+    // dirty_set_hash / vars_hash across calls. Distinct from the
+    // short-lived InferenceEngine::cs_ used during infer_flat.
+    [[nodiscard]] ConstraintSystem& constraint_system() noexcept { return solve_delta_cs_; }
+    [[nodiscard]] const ConstraintSystem& constraint_system() const noexcept {
+        return solve_delta_cs_;
+    }
 
 private:
+    // Issue #1414: TypeChecker-owned ConstraintSystem for the
+    // solve_delta cache path (see constraint_system()).
+    ConstraintSystem solve_delta_cs_;
+
     // name → 模块源文件路径（来自 inject_type_sigs 的 module_src）
     std::unordered_map<std::string, std::string> type_module_src_;
 

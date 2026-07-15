@@ -4807,6 +4807,13 @@ aura_add_issue_test(test_issue_1418)
 # provenance + MutationLogEntry surface. 6 ACs: stamp, defaults,
 # shared composite, parent chain, create_record params, accessors.
 aura_add_issue_test(test_issue_1419)
+# Issue #1425: DeadCoercion AST-level identity elision at
+# apply_coercion_map (skip CoercionNode when child type_id already
+# matches target) + IR DCE pipeline contract (complements #1418).
+# Metrics: dead_coercion_eliminated_total bumped from TypeCheckWrap
+# and post-mutate typecheck paths. 4 ACs: 2-of-5 AST elision,
+# no false elision, IR 2-of-5, run_pipeline DCE.
+aura_add_issue_test(test_issue_1425)
 # Issue #1412: Compound provenance on MutationRecord (author_fingerprint
 # + parent_mutation_id + composite_transaction_id). Production struct
 # change in src/core/mutation.ixx adds 3 fields (default 0 = system for

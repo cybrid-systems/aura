@@ -107,7 +107,10 @@ public:
     std::size_t size() const { return entries_.size(); }
     bool empty() const { return entries_.empty(); }
 
-    void clear() { entries_.clear(); }
+    void clear() {
+        entries_.clear();
+        eliminated_count_ = 0;
+    }
 
     // Merge another map's entries into this one. Order is
     // preserved (other entries appended after this map's).
@@ -115,8 +118,26 @@ public:
         entries_.insert(entries_.end(), other.entries_.begin(), other.entries_.end());
     }
 
+    // Issue #1425: count of identity coercions elided by
+    // apply_coercion_map (not inserted as CoercionNodes).
+    // Reset on clear(); bumped by mark_eliminated().
+    [[nodiscard]] std::size_t eliminated_count() const noexcept { return eliminated_count_; }
+    void mark_eliminated(std::size_t n = 1) noexcept { eliminated_count_ += n; }
+
 private:
     std::vector<CoercionEntry> entries_;
+    std::size_t eliminated_count_ = 0;
+};
+
+// Issue #1425: stats from apply_coercion_map with identity elision.
+// `eliminated` maps to dead_coercion_eliminated metrics when the
+// caller integrates (AST-level pre-IR win, complementary to
+// DeadCoercionEliminationPass on IR CastOps).
+export struct DeadCoercionAstStats {
+    std::size_t applied = 0;       // CoercionNodes actually inserted
+    std::size_t eliminated = 0;    // identity coercions skipped
+    std::size_t kept = 0;          // alias of applied (non-identity)
+    std::size_t skipped_stale = 0; // parent slot already rewritten / missing
 };
 
 // ── apply_coercion_map — the one explicit AST-mutating pass ───
@@ -131,11 +152,33 @@ private:
 // another pass mutated the tree), the entry is skipped — this
 // keeps the pass idempotent and safe to call multiple times.
 //
+// Issue #1425: identity elision — when the original child
+// already carries `type_id == entry.type_id` (non-zero), the
+// CoercionNode would lower to a no-op CastOp. Skip insertion
+// entirely (defense-in-depth with IR DeadCoercionEliminationPass).
+//
 // Returns the number of entries actually applied (rest are
-// skipped, typically zero on a clean re-apply).
-export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map) {
-    std::size_t applied = 0;
+// skipped or elided). When `stats_out` is non-null, fills
+// applied / eliminated / skipped_stale. When `map_mut` is
+// non-null, bumps map_mut->mark_eliminated for identity skips.
+export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map,
+                                      DeadCoercionAstStats* stats_out = nullptr,
+                                      CoercionMap* map_mut = nullptr) {
+    DeadCoercionAstStats local_stats;
+    auto& s = stats_out ? *stats_out : local_stats;
+    s = {};
+
     for (const auto& e : map.entries()) {
+        // Issue #1425: identity coercion — child already has the
+        // target type stamped (post-infer). Do not insert a
+        // CoercionNode; the IR path would only produce a dead CastOp.
+        if (e.type_id != 0 && flat.type_id(e.original_child) == e.type_id) {
+            ++s.eliminated;
+            if (map_mut)
+                map_mut->mark_eliminated();
+            continue;
+        }
+
         // Locate the parent and confirm it still points at the
         // original child we recorded. If it doesn't (e.g. this
         // pass already ran, or another mutator touched the
@@ -157,17 +200,20 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             else if (e.source_mutation_id != 0)
                 flat.set_provenance(coercion_id,
                                     static_cast<std::uint32_t>(e.source_mutation_id & 0xFFFFFFFFu));
-            ++applied;
+            ++s.applied;
+            ++s.kept;
             continue;
         }
 
         auto parent_v = flat.get(e.parent_id);
         if (e.child_index >= parent_v.children.size()) {
             // Stale entry — slot no longer exists. Skip.
+            ++s.skipped_stale;
             continue;
         }
         if (parent_v.child(e.child_index) != e.original_child) {
             // Already applied, or another pass rewrote. Skip.
+            ++s.skipped_stale;
             continue;
         }
 
@@ -186,9 +232,10 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Rewrite the parent's child_index to point at the
         // new CoercionNode.
         flat.set_child(e.parent_id, e.child_index, coercion_id);
-        ++applied;
+        ++s.applied;
+        ++s.kept;
     }
-    return applied;
+    return s.applied;
 }
 
 } // namespace aura::compiler
