@@ -136,6 +136,14 @@ typedef void (*aura_jit_unhandled_invalidate_fn_t)(const char* fn_name);
 void aura_set_jit_unhandled_invalidate_fn(aura_jit_unhandled_invalidate_fn_t fn);
 void aura_notify_jit_unhandled_opcode(const char* fn_name);
 
+// Issue #1443 AC3 / #1445 AC6: long-mutation → scheduler priority hook.
+// Host may register a callback; default null is telemetry-only.
+typedef void (*aura_long_mutation_scheduler_hook_fn)(std::uint64_t fiber_id,
+                                                     std::uint64_t duration_us);
+void aura_set_long_mutation_scheduler_hook(aura_long_mutation_scheduler_hook_fn fn);
+void aura_invoke_long_mutation_scheduler_hook(std::uint64_t fiber_id, std::uint64_t duration_us);
+std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void);
+
 } // extern "C"
 
 #endif // AURA_COMPILER_AURA_JIT_BRIDGE_H

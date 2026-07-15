@@ -1183,6 +1183,19 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:production-safety-1097-1122-stats",
     // Issues #1123–#1140: final open-issue sweep
     "query:production-sweep-1123-1140-stats",
+    // Issue #1450 / #1449 Phase 1: residual public *-stats still on
+    // Primitives registry (not query:/compile: legacy-only). Catalogued
+    // so (stats:list)/(stats:get)/(engine:metrics) can discover them.
+    "arena:adaptive-stats",
+    "arena:defrag-stats",
+    "ast:generation-stats",
+    "ast:node-lifecycle-stats",
+    "ast:post-restore-stats",
+    "closure:free-stats",
+    "compile:bidirectional-stats",
+    "gc-arena-stats",
+    "gc-stats",
+    "type-registry-stats",
 };
 
 
@@ -1479,6 +1492,8 @@ void ObservabilityPrims::register_jit_all(PrimRegistrar add, Evaluator& ev) {
     register_jit_p113(add, ev);
     // Issue #1434: mark top-20 stats as deprecated after full registration.
     ObservabilityPrims::mark_p1b_top_stats_deprecated(ev);
+    // Issue #1450: residual public *-stats aliases (arena/gc/ast/…).
+    ObservabilityPrims::mark_residual_public_stats_deprecated(ev);
 }
 
 // Issue #1434 / P1b: top-20 query:*-stats → prefer (engine:metrics "…").
@@ -1525,6 +1540,35 @@ void ObservabilityPrims::mark_p1b_top_stats_deprecated(Evaluator& ev) {
     }
 }
 
+// Issue #1450 / #1449 Phase 1: residual public *-stats that stayed on
+// Primitives (arena/ast/gc/type-registry/…). Mark deprecated so dispatch
+// telemetry counts debt; bodies still run for test/compat.
+void ObservabilityPrims::mark_residual_public_stats_deprecated(Evaluator& ev) {
+    static constexpr const char* kResidual[] = {
+        "arena:adaptive-stats",        "arena:defrag-stats",     "ast:generation-stats",
+        "ast:node-lifecycle-stats",    "ast:post-restore-stats", "closure:free-stats",
+        "compile:bidirectional-stats", "gc-arena-stats",         "gc-stats",
+        "type-registry-stats",
+    };
+    static_assert(sizeof(kResidual) / sizeof(kResidual[0]) < 50,
+                  "AC2: residual public stats aliases must stay <50");
+    for (const char* name : kResidual) {
+        const auto slot = ev.primitives_.slot_for_name(name);
+        if (slot >= ev.primitives_.slot_count())
+            continue;
+        PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+        meta.deprecated = true;
+        meta.category = "deprecated";
+        const std::string hint = std::string("DEPRECATED (#1450): prefer (stats:get \"") + name +
+                                 "\") or (engine:metrics \"" + name + "\")";
+        if (meta.doc.empty())
+            meta.doc = hint;
+        else if (meta.doc.find("DEPRECATED") == std::string::npos)
+            meta.doc = hint + ". " + meta.doc;
+        ev.primitives_.set_meta_for_name(name, std::move(meta));
+    }
+}
+
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     // P2b: bulk eval-side stats only in full mode (s0 skips).
     if (full_primitives_enabled())
@@ -1539,6 +1583,7 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         ObservabilityPrims::register_metrics_facade(add, ev);
         // s0: top-20 names usually unregistered — mark is a no-op for missing.
         ObservabilityPrims::mark_p1b_top_stats_deprecated(ev);
+        ObservabilityPrims::mark_residual_public_stats_deprecated(ev);
     }
 }
 

@@ -727,6 +727,177 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         }
         return build_hash(kv);
     });
+
+    // ── Issue #1450 / #1449 Phase 1: engine-level stats:get / stats:prefix ──
+    // Mirrors lib/std/stats.aura so agents do not need (require std/stats)
+    // to route observability through the facade.
+    auto resolve_name = [&ev](const EvalValue& v) -> std::string {
+        if (is_string(v)) {
+            auto sidx = as_string_idx(v);
+            if (sidx < ev.string_heap_.size())
+                return ev.string_heap_[sidx];
+        }
+        return {};
+    };
+
+    // (stats:get name) → value | void
+    //   name = "all" → same shape as (engine:metrics :all) name→value hash
+    //   else lookup register_stats_impl then public Primitives (residual aliases)
+    add("stats:get", [&ev, resolve_name](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty())
+            return make_void();
+        const std::string name = resolve_name(a[0]);
+        if (name.empty())
+            return make_void();
+        if (name == "all") {
+            // Delegate: build (engine:metrics :all) by reusing lookup path.
+            const auto& stats = ObservabilityPrims::stats_primitives();
+            std::vector<std::pair<std::string, EvalValue>> kv;
+            kv.reserve(stats.size() + 2);
+            kv.push_back({"schema", make_int(2)});
+            kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
+            for (const auto& n : stats) {
+                std::optional<PrimFn> fn = ObservabilityPrims::lookup_stats_impl(n);
+                if (!fn)
+                    fn = ev.primitives_.lookup(n);
+                if (fn)
+                    kv.push_back({n, (*fn)({})});
+            }
+            // Minimal hash builder (same layout as engine:metrics).
+            std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
+            std::uint64_t cap = 16;
+            while (cap < need)
+                cap <<= 1;
+            auto* ht = FlatHashTable::create(cap);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
+                auto fp = ::aura::compiler::hash::fingerprint(h);
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        }
+        if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
+            return (*fn)({});
+        if (auto fn = ev.primitives_.lookup(name))
+            return (*fn)({});
+        return make_void();
+    });
+
+    // (stats:prefix "query:") → list of catalog names matching prefix
+    add("stats:prefix", [&ev, resolve_name](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty())
+            return make_void();
+        const std::string prefix = resolve_name(a[0]);
+        EvalValue result = make_void();
+        const auto& stats = ObservabilityPrims::stats_primitives();
+        // Build list in reverse so final order matches catalog order.
+        std::vector<std::string> matched;
+        for (const auto& n : stats) {
+            if (prefix.empty() ||
+                (n.size() >= prefix.size() && n.compare(0, prefix.size(), prefix) == 0))
+                matched.push_back(n);
+        }
+        for (auto it = matched.rbegin(); it != matched.rend(); ++it) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(*it);
+            auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    // (engine:surface) — SlimSurface inventory snapshot (#1448/#1449/#1450).
+    // Named without *-stats suffix so the freeze gate stays clean.
+    // AC mapping: issue text said query:primitive-surface-stats; governance
+    // forbids new *-stats public names → engine:surface is the canonical form.
+    add("engine:surface", [&ev](const auto&) -> EvalValue {
+        const auto& stats = ObservabilityPrims::stats_primitives();
+        const auto public_slots = static_cast<std::int64_t>(ev.primitives_.slot_count());
+        // Count residual public *-stats still on the registry (not private impl).
+        std::int64_t public_stats = 0;
+        for (const auto& n : stats) {
+            if (ev.primitives_.slot_for_name(n) < ev.primitives_.slot_count())
+                ++public_stats;
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"schema", make_int(1)},
+            {"public-count", make_int(public_slots)},
+            {"stats-catalog-count", make_int(static_cast<std::int64_t>(stats.size()))},
+            {"public-stats-remaining", make_int(public_stats)},
+            {"target-budget", make_int(420)},
+            {"interim-ceiling", make_int(700)},
+            {"deprecated-dispatch-total",
+             make_int(static_cast<std::int64_t>(ev.deprecated_prim_dispatch_total()))},
+        };
+        std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
+        std::uint64_t cap = 16;
+        while (cap < need)
+            cap <<= 1;
+        auto* ht = FlatHashTable::create(cap);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
+            auto fp = ::aura::compiler::hash::fingerprint(h);
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 // Issue #909 part 11 (orig lines 12726-12889) — bulk stats after facade
