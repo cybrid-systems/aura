@@ -621,67 +621,70 @@ void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
     // counts per category — agent calls this before
     // each major operation to confirm the audit log
     // is consistent.
-    add("query:seva-audit-log", [&ev](const auto&) -> EvalValue {
-        std::uint64_t mutations = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            mutations = m->atomic_batch_commits.load(std::memory_order_relaxed);
-        }
-        // Also include verify-dirty + mutation-rollbacks
-        // so the audit trail covers the full loop.
-        std::uint64_t verify_total = 0;
-        if (auto* ws = ev.workspace_flat()) {
-            verify_total = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total();
-        }
-        std::uint64_t auto_evolve_cycles = ev.auto_evolve_cycle_count_;
-        std::uint64_t auto_evolve_fixed = ev.auto_evolve_total_fixed_;
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:seva-audit-log", [&ev](const auto&) -> EvalValue {
+            std::uint64_t mutations = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                mutations = m->atomic_batch_commits.load(std::memory_order_relaxed);
+            }
+            // Also include verify-dirty + mutation-rollbacks
+            // so the audit trail covers the full loop.
+            std::uint64_t verify_total = 0;
+            if (auto* ws = ev.workspace_flat()) {
+                verify_total =
+                    ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total();
+            }
+            std::uint64_t auto_evolve_cycles = ev.auto_evolve_cycle_count_;
+            std::uint64_t auto_evolve_fixed = ev.auto_evolve_total_fixed_;
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"mutations-total", make_int(static_cast<std::int64_t>(mutations))},
-            {"verify-dirty-total", make_int(static_cast<std::int64_t>(verify_total))},
-            {"auto-evolve-cycles", make_int(static_cast<std::int64_t>(auto_evolve_cycles))},
-            {"auto-evolve-fixed", make_int(static_cast<std::int64_t>(auto_evolve_fixed))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"mutations-total", make_int(static_cast<std::int64_t>(mutations))},
+                {"verify-dirty-total", make_int(static_cast<std::int64_t>(verify_total))},
+                {"auto-evolve-cycles", make_int(static_cast<std::int64_t>(auto_evolve_cycles))},
+                {"auto-evolve-fixed", make_int(static_cast<std::int64_t>(auto_evolve_fixed))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 compile part 62 (orig 5222-5318)

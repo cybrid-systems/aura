@@ -16,7 +16,7 @@
 //   - Bad op args (e.g., non-existent function for rebind)
 //     (returns #f, rollback applied)
 //   - Multi-op batch with mix of success and failure
-//   - (atomic-batch:stats) observability primitive
+//   - (stats:get "atomic-batch:stats") observability primitive
 //   - Backward compat: existing primitives still work
 //
 // Deferred to separate follow-ups (documented in close comment):
@@ -167,18 +167,18 @@ bool test_atomic_batch_bad_op_args_rolls_back() {
 }
 
 // ═════════════════════════════════════════════════════════════
-// AC5: (atomic-batch:stats) observability
+// AC5: (stats:get "atomic-batch:stats") observability
 // ═════════════════════════════════════════════════════════════
 
 bool test_atomic_batch_stats_primitive() {
-    std::println("\n--- Test 5.1: (atomic-batch:stats) primitive ---");
+    std::println("\n--- Test 5.1: (stats:get \"atomic-batch:stats\") primitive ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(atomic-batch:stats)");
+    auto v = run_on(cs, "(stats:get \"atomic-batch:stats\")");
     if (v.val == 11) {
         std::println("    [expected hash, got void]");
         ++g_failed;
     } else {
-        std::println("  PASS: (atomic-batch:stats) returns a hash");
+        std::println("  PASS: (stats:get \"atomic-batch:stats\") returns a hash");
         ++g_passed;
     }
     return true;
@@ -251,7 +251,7 @@ bool test_fuzzer_many_batches() {
                         "(* x 2))\" \"4\")) \"batch4\") "
                         "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
                         "(* x 2))\" \"5\")) \"batch5\") "
-                        "  (atomic-batch:stats))");
+                        "  (stats:get \"atomic-batch:stats\"))");
     if (v.val == 11) {
         std::println("    [expected hash, got void]");
         ++g_failed;
@@ -281,7 +281,7 @@ int run_tests() {
     std::println("\nAC #4: bad op args → #f (rollback applied)");
     test_atomic_batch_bad_op_args_rolls_back();
 
-    std::println("\nAC #5: (atomic-batch:stats) observability");
+    std::println("\nAC #5: (stats:get \"atomic-batch:stats\") observability");
     test_atomic_batch_stats_primitive();
 
     std::println("\nAC #6: backward compat — existing primitives still work");

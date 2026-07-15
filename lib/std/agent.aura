@@ -134,7 +134,8 @@
   (try
     (let* ((ml (try (mutation-log:summary)
                     (catch (e) (hash "total" 0 "committed" 0 "rolled-back" 0))))
-           (ab (try (atomic-batch:stats)
+           ; #1449: atomic-batch:stats is facade-only — prefer stats:get
+           (ab (try (stats:get "atomic-batch:stats")
                     (catch (e) (hash "batch-count" 0 "rollback-count" 0))))
            (hold (try (stats:get "query:mutation-boundary-hold-stats")
                       (catch (e) (void))))

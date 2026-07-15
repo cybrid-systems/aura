@@ -2,7 +2,7 @@
 // @reason: uses CompilerService + Scheduler + concurrent atomic-batch safety
 //
 // test_issue_394.cpp — Issue #394 follow-up to #250:
-//   1. hash-ref regression for (atomic-batch:stats)
+//   1. hash-ref regression for (stats:get "atomic-batch:stats")
 //   2. Concurrent fiber/thread safety during atomic batch
 //   3. Documentation shipped in docs/design/core/mutate_api.md
 
@@ -44,7 +44,7 @@ static std::int64_t eval_int(CompilerService& cs, std::string_view src) {
 
 // ── AC1: hash-ref returns ints for all atomic-batch:stats keys ──
 bool test_atomic_batch_stats_hash_ref() {
-    std::println("\n--- AC1: hash-ref on (atomic-batch:stats) keys ---");
+    std::println("\n--- AC1: hash-ref on (stats:get \"atomic-batch:stats\") keys ---");
     CompilerService cs;
     if (!eval_ok(cs, "(set-code \"(define x 1)\")")) {
         CHECK(false, "set-code");
@@ -52,16 +52,17 @@ bool test_atomic_batch_stats_hash_ref() {
     }
     (void)cs.eval("(eval-current)");
 
-    auto h = cs.eval("(atomic-batch:stats)");
-    CHECK(h.has_value(), "(atomic-batch:stats) returns");
+    auto h = cs.eval("(stats:get \"atomic-batch:stats\")");
+    CHECK(h.has_value(), "(stats:get \"atomic-batch:stats\") returns");
     if (!h || h->val == 11) {
-        CHECK(false, "(atomic-batch:stats) is a hash (not void)");
+        CHECK(false, "(stats:get \"atomic-batch:stats\") is a hash (not void)");
         return false;
     }
 
     for (const char* key :
          {"batch-count", "ops-total", "rollback-count", "ops-per-batch", "bumps-saved-total"}) {
-        std::string q = std::string("(hash-ref (atomic-batch:stats) \"") + key + "\")";
+        std::string q =
+            std::string("(hash-ref (stats:get " atomic - batch : stats ") \"") + key + "\")";
         auto v = cs.eval(q);
         if (!v || !aura::compiler::types::is_int(*v)) {
             CHECK(false, std::string("hash-ref \"") + key + "\" returns int");
@@ -82,7 +83,8 @@ bool test_bumps_saved_after_batch() {
     }
     (void)cs.eval("(eval-current)");
 
-    const auto before = eval_int(cs, "(hash-ref (atomic-batch:stats) \"bumps-saved-total\")");
+    const auto before =
+        eval_int(cs, "(hash-ref (stats:get " atomic - batch : stats ") \"bumps-saved-total\")");
     CHECK(before >= 0, "bumps-saved-total readable before batch");
 
     std::string batch = "(mutate:atomic-batch (list "
@@ -95,7 +97,8 @@ bool test_bumps_saved_after_batch() {
               aura::compiler::types::as_bool(*br),
           "3-op atomic-batch returns #t");
 
-    const auto after = eval_int(cs, "(hash-ref (atomic-batch:stats) \"bumps-saved-total\")");
+    const auto after =
+        eval_int(cs, "(hash-ref (stats:get " atomic - batch : stats ") \"bumps-saved-total\")");
     CHECK(after > before, "bumps-saved-total increased after multi-op batch");
     std::println("  bumps-saved-total: {} -> {}", before, after);
     return true;

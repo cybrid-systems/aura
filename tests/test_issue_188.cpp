@@ -28,7 +28,7 @@
 //                  __match_tmp let, so nested matches are checked
 //                  independently.
 //   AC6 (new): Tests + fuzzer for the new dirty system.
-//   AC7 (new): Performance observability — (dirty:counts) gives
+//   AC7 (new): Performance observability — (stats:get "dirty:counts") gives
 //                  per-reason breakdown.
 //   AC8 (new): Docs updated.
 //
@@ -37,7 +37,7 @@
 //            (is_dirty_for, dirty_reasons, clear_dirty_for,
 //             mark_dirty_upward with reasons)
 //   Layer 2: CompilerService::eval() calling the new
-//            (dirty:reasons), (dirty:counts) primitives
+//            (stats:get "dirty:reasons"), (stats:get "dirty:counts") primitives
 
 
 // Unified test harness (Issue #226). Provides
@@ -269,16 +269,16 @@ bool test_dirty_reasons_primitive() {
 }
 
 bool test_dirty_counts_primitive() {
-    std::println("\n--- Test 6.2: (dirty:counts) primitive ---");
+    std::println("\n--- Test 6.2: (stats:get \"dirty:counts\") primitive ---");
     aura::compiler::CompilerService cs;
-    // (dirty:counts) returns a hash. We just verify it doesn't crash
+    // (stats:get "dirty:counts") returns a hash. We just verify it doesn't crash
     // and returns a non-void value.
-    auto v = run_on(cs, "(dirty:counts)");
+    auto v = run_on(cs, "(stats:get \"dirty:counts\")");
     if (v.val == 11) { // void sentinel
-        std::println("  PASS: (dirty:counts) returns hash (non-void)");
+        std::println("  PASS: (stats:get \"dirty:counts\") returns hash (non-void)");
         ++g_passed;
     } else {
-        std::println("  PASS: (dirty:counts) returns a value");
+        std::println("  PASS: (stats:get \"dirty:counts\") returns a value");
         ++g_passed;
     }
     return true;
@@ -314,7 +314,7 @@ bool test_dirty_after_rebind() {
 bool test_fuzzer_multi_mutation() {
     std::println("\n--- Test F.1: multi-mutation fuzzer (rebind x100) ---");
     // Verify that 100 rebinds in sequence don't corrupt the dirty
-    // bitmask state. We use (dirty:counts) to verify the bitmask
+    // bitmask state. We use (stats:get "dirty:counts") to verify the bitmask
     // is well-formed after many mutations. The actual IR
     // re-lowering for the rebinds is covered by test_issue_141.
     aura::compiler::CompilerService cs;
@@ -323,7 +323,7 @@ bool test_fuzzer_multi_mutation() {
                         "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") "
                         "  (mutate:rebind \"f\" \"(lambda (x) (* x 4))\") "
                         "  (mutate:rebind \"f\" \"(lambda (x) (* x 5))\") "
-                        "  (dirty:counts))");
+                        "  (stats:get \"dirty:counts\"))");
     if (r.val == 11) { // void sentinel
         std::println("  PASS: 100 mutations don't corrupt dirty bitmask state");
         ++g_passed;

@@ -57,12 +57,26 @@ ALLOWLIST: frozenset[str] = frozenset()
 
 # Issue #1448: SlimSurface target for public engine primitives (add() names).
 TARGET_BUDGET = 420
-# Interim hard ceiling until surface shrinks to TARGET_BUDGET.
-# Raised only with --update-baseline after explicit PR justification.
 # Interim hard ceiling ratchets down as demotion batches land (#1449).
-# After dashboard facade batch + Tier-1 query:siblings (~587 public).
-# Still above TARGET_BUDGET 420; fail only on *growth* past this.
-INTERIM_HARD_CEILING = 600
+# After dirty/render demotion (~573 total). Hard-fail only on growth past this.
+INTERIM_HARD_CEILING = 590
+
+# Domain / vertical packs — counted in total inventory; *core* budget
+# (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
+DOMAIN_PREFIXES: tuple[str, ...] = (
+    "eda:",
+    "seva:",
+    "verify:",
+    "tui:",
+    "terminal:",
+    "git-",
+    "tcp-",
+    "auto-evolve-",
+    "channel:",
+    "m4-",
+    "strategy:",
+    "synthesize:",
+)
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
 BLOCKED_PREFIXES: tuple[str, ...] = (
@@ -80,6 +94,14 @@ BLOCKED_PREFIXES: tuple[str, ...] = (
     "time:",
     "ast:ref-",
 )
+
+
+def is_domain_name(name: str) -> bool:
+    return any(name.startswith(p) for p in DOMAIN_PREFIXES)
+
+
+def core_public_names(all_names: list[str]) -> list[str]:
+    return [n for n in all_names if not is_domain_name(n)]
 
 
 def is_stats_like(name: str) -> bool:
@@ -192,20 +214,25 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
     """
     rc = 0
     public_count = len(all_names)
+    core_names = core_public_names(all_names)
+    core_count = len(core_names)
+    domain_count = public_count - core_count
     public_stats = public_stats_via_add(all_names)
     buckets = classify_public(all_names)
 
-    print("── SlimSurface --strict (Issue #1448) ──")
-    print(f"  public add() count : {public_count}")
-    print(f"  target budget      : {TARGET_BUDGET}")
-    print(f"  interim hard ceiling: {INTERIM_HARD_CEILING}")
+    print("── SlimSurface --strict (Issue #1448 / #1449) ──")
+    print(f"  public add() total : {public_count}")
+    print(f"  core public count  : {core_count}  (excludes domain verticals)")
+    print(f"  domain public count: {domain_count}  ({', '.join(DOMAIN_PREFIXES[:6])}…)")
+    print(f"  core target budget : {TARGET_BUDGET}")
+    print(f"  interim hard ceiling (total): {INTERIM_HARD_CEILING}")
     print(f"  internal stats catalog (register_stats_impl / list): {len(stats_names)}")
     print(f"  public add() *-stats remaining: {len(public_stats)}")
     print("  categories:")
     for k, v in buckets.items():
         print(f"    {k:12s} {len(v)}")
 
-    # Hard ceiling — no growth past interim limit.
+    # Hard ceiling — no growth past interim limit (total surface).
     if public_count > INTERIM_HARD_CEILING:
         print(
             f"FAIL: public primitive count {public_count} exceeds interim hard ceiling "
@@ -214,16 +241,14 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
         )
         rc = 1
 
-    # Progress toward target (informational; soft fail only if we grow
-    # above inventory snapshot — growth is already covered by freeze for
-    # blocked patterns; here we fail if over interim ceiling).
-    if public_count > TARGET_BUDGET:
+    # Progress toward target uses *core* count (domain packs tracked separately).
+    if core_count > TARGET_BUDGET:
         print(
-            f"NOTE: public count {public_count} still above SlimSurface target "
-            f"{TARGET_BUDGET} (shrink in progress; hard fail only if > {INTERIM_HARD_CEILING})"
+            f"NOTE: core public count {core_count} still above SlimSurface target "
+            f"{TARGET_BUDGET} (gap {core_count - TARGET_BUDGET}; domain {domain_count} excluded)"
         )
     else:
-        print(f"OK: public count {public_count} ≤ target budget {TARGET_BUDGET}")
+        print(f"OK: core public count {core_count} ≤ target budget {TARGET_BUDGET}")
 
     # Facade-only: public add() of new stats is already freeze-blocked.
     # Strict additionally flags any remaining public stats via add() as

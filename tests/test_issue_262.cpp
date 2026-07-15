@@ -63,18 +63,18 @@ bool test_mark_dirty_defuse_entries() {
 }
 
 bool test_dirty_counts_new_fields() {
-    std::println("\n--- AC4: (dirty:counts) exposes struct/defuse/ppa-hint ---");
+    std::println("\n--- AC4: (stats:get \"dirty:counts\") exposes struct/defuse/ppa-hint ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define x 1)\")")) {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(hash-ref (dirty:counts) \"defuse\")");
-    CHECK(r.has_value(), "(dirty:counts) defuse field readable");
-    auto r2 = cs.eval("(hash-ref (dirty:counts) \"struct\")");
-    CHECK(r2.has_value(), "(dirty:counts) struct field readable");
-    auto r3 = cs.eval("(hash-ref (dirty:counts) \"ppa-hint\")");
-    CHECK(r3.has_value(), "(dirty:counts) ppa-hint field readable");
+    auto r = cs.eval("(hash-ref (stats:get \"dirty:counts\") \"defuse\")");
+    CHECK(r.has_value(), "(stats:get \"dirty:counts\") defuse field readable");
+    auto r2 = cs.eval("(hash-ref (stats:get \"dirty:counts\") \"struct\")");
+    CHECK(r2.has_value(), "(stats:get \"dirty:counts\") struct field readable");
+    auto r3 = cs.eval("(hash-ref (stats:get \"dirty:counts\") \"ppa-hint\")");
+    CHECK(r3.has_value(), "(stats:get \"dirty:counts\") ppa-hint field readable");
     return true;
 }
 

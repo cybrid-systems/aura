@@ -18,7 +18,7 @@
 //        check). Implicit — the rest of the suite covers
 //        this; we just confirm mutate:rebind + tweak-literal
 //        still work via the atomic-batch path.
-//   AC4: (atomic-batch:stats) hash now includes the new
+//   AC4: (stats:get "atomic-batch:stats") hash now includes the new
 //        "executed-under-concurrent-fiber" key (Issue #396
 //        Phase 3 heuristic). The other keys
 //        (batch-count, ops-total, rollback-count,
@@ -203,7 +203,7 @@ bool test_ac3_regression_rebind_still_works() {
     return true;
 }
 
-// AC4: (atomic-batch:stats) hash now includes
+// AC4: (stats:get "atomic-batch:stats") hash now includes
 // "executed-under-concurrent-fiber" key (the new heuristic
 // from Phase 3). Also: the other 5 existing keys still
 // work (regression).
@@ -225,7 +225,8 @@ bool test_ac4_new_stats_key() {
     }
     // Hash-ref on each expected key.
     auto check_key = [&](const char* key, const char* desc) {
-        auto r = cs.try_run(std::string("(hash-ref (atomic-batch:stats) \"") + key + "\")");
+        auto r = cs.try_run(std::string("(hash-ref (stats:get " atomic - batch : stats ") \"") +
+                            key + "\")");
         if (!r.ok || !aura::compiler::types::is_int(r.v)) {
             ++g_failed;
             std::println("  FAIL: key {} ({}) missing or not int", key, desc);

@@ -82,16 +82,16 @@ bool test_replace_value_ppa_hint() {
         return false;
     }
     CHECK(hook_calls.load() == 1, "hardware hook fired for timing hint");
-    auto timing = run_int(cs, "(hash-ref (dirty:counts) \"timing\")");
-    CHECK(timing >= 1, "(dirty:counts) timing >= 1 after replace-value");
-    auto ppa_hint = run_int(cs, "(hash-ref (dirty:counts) \"ppa-hint\")");
-    CHECK(ppa_hint >= 1, "(dirty:counts) ppa-hint >= 1");
+    auto timing = run_int(cs, "(hash-ref (stats:get \"dirty:counts\") \"timing\")");
+    CHECK(timing >= 1, "(stats:get \"dirty:counts\") timing >= 1 after replace-value");
+    auto ppa_hint = run_int(cs, "(hash-ref (stats:get \"dirty:counts\") \"ppa-hint\")");
+    CHECK(ppa_hint >= 1, "(stats:get \"dirty:counts\") ppa-hint >= 1");
     aura::compiler::hardware::clear_structural_mutation_hook();
     return true;
 }
 
 bool test_dirty_ppa_reasons_primitive() {
-    std::println("\n--- AC5: (dirty:ppa-reasons) primitive ---");
+    std::println("\n--- AC5: (stats:get \"dirty:ppa-reasons\") primitive ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (g x) (+ x 2))\")") ||
         !cs.eval("(mutate:replace-value 2 99 \"t\" 5)")) {
@@ -104,16 +104,20 @@ bool test_dirty_ppa_reasons_primitive() {
 }
 
 bool test_dirty_counts_ppa_fields() {
-    std::println("\n--- AC6: (dirty:counts) exposes timing/power/area/backend-hint ---");
+    std::println(
+        "\n--- AC6: (stats:get \"dirty:counts\") exposes timing/power/area/backend-hint ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (h x) (+ x 3))\")")) {
         ++g_failed;
         return false;
     }
-    CHECK(cs.eval("(hash-ref (dirty:counts) \"timing\")").has_value(), "timing field readable");
-    CHECK(cs.eval("(hash-ref (dirty:counts) \"power\")").has_value(), "power field readable");
-    CHECK(cs.eval("(hash-ref (dirty:counts) \"area\")").has_value(), "area field readable");
-    CHECK(cs.eval("(hash-ref (dirty:counts) \"backend-hint\")").has_value(),
+    CHECK(cs.eval("(hash-ref (stats:get \"dirty:counts\") \"timing\")").has_value(),
+          "timing field readable");
+    CHECK(cs.eval("(hash-ref (stats:get \"dirty:counts\") \"power\")").has_value(),
+          "power field readable");
+    CHECK(cs.eval("(hash-ref (stats:get \"dirty:counts\") \"area\")").has_value(),
+          "area field readable");
+    CHECK(cs.eval("(hash-ref (stats:get \"dirty:counts\") \"backend-hint\")").has_value(),
           "backend-hint field readable");
     return true;
 }
