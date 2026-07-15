@@ -1062,7 +1062,17 @@ public:
     // Without this, arena-allocated Envs leak at process exit (the
     // arena's bump-allocator doesn't run destructors).
     ~Evaluator();
-    void set_arena(ast::ASTArena* a) { arena_ = a; }
+    void set_arena(ast::ASTArena* a) {
+        arena_ = a;
+        // Issue #1446 follow-up: register compact hook so GC-driven
+        // compaction re-pins pinned StableNodeRef / COW children in
+        // the active Guard stack. The hook captures `this` and calls
+        // on_arena_compact_hook() which delegates to
+        // re_pin_cow_children_from_snapshot().
+        if (arena_) {
+            arena_->set_on_compact_hook([this]() { this->on_arena_compact_hook(); });
+        }
+    }
     void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
     // Hot-swap callback (Issue #97 Action 1). Set by CompilerService
     // to enable the (hot-swap:fn "name" "new-source") primitive.
