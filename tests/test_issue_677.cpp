@@ -124,7 +124,7 @@ int aura_issue_677_run() {
     const auto n = r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
     CHECK(n >= 55, std::format("stats:count >= 55 (got {})", n));
 
-    auto dep = cs.eval("(query:deployment-stats)");
+    auto dep = cs.eval("(engine:metrics \"query:deployment-stats\")");
     CHECK(aura::compiler::types::is_hash(*dep), "query:deployment-stats returns hash");
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

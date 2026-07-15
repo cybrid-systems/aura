@@ -55,7 +55,7 @@ int main() {
     // AC1: query:primitives-registry-core-stats returns hash
     {
         std::println("\n--- AC1: query:primitives-registry-core-stats ---");
-        auto stats = cs.eval("(query:primitives-registry-core-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-registry-core-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-registry-core-stats returns hash");
         CHECK(hash_int(cs, "registry-slots") > 0, "registry-slots > 0");
@@ -106,10 +106,10 @@ int main() {
     // AC4: related primitives primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto prim = cs.eval("(query:primitives-stats)");
-        auto gov = cs.eval("(query:primitives-governance-stats)");
-        auto reg = cs.eval("(query:primitives-registry-stats)");
-        auto err = cs.eval("(query:primitive-error-stats)");
+        auto prim = cs.eval("(engine:metrics \"query:primitives-stats\")");
+        auto gov = cs.eval("(engine:metrics \"query:primitives-governance-stats\")");
+        auto reg = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
+        auto err = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
         CHECK(prim && aura::compiler::types::is_int(*prim),
               "query:primitives-stats int regression (#583)");
         CHECK(gov && aura::compiler::types::is_hash(*gov),

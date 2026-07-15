@@ -40,7 +40,7 @@ int main() {
 
     // Baseline hooks
     {
-        auto s = cs.eval("(query:mutation-lightweight-stats)");
+        auto s = cs.eval("(engine:metrics \"query:mutation-lightweight-stats\")");
         CHECK(s && is_string(*s), "lightweight stats string");
         auto hp = cs.eval("(render-hotpath-enter)");
         CHECK(hp && is_bool(*hp) && as_bool(*hp), "render-hotpath-enter");
@@ -99,7 +99,7 @@ int main() {
     {
         auto fr = cs.eval("(arena-render-frame-reset)");
         CHECK(fr && is_int(*fr), "arena-render-frame-reset");
-        auto s = cs.eval("(query:mutation-lightweight-stats)");
+        auto s = cs.eval("(engine:metrics \"query:mutation-lightweight-stats\")");
         CHECK(s && is_string(*s), "stats after frame reset");
     }
 

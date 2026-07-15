@@ -33,7 +33,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:compiler-root-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:compiler-root-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -59,7 +59,7 @@ static bool setup_closure_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:compiler-root-stats (schema 599) ---");
     CHECK(setup_closure_workspace(cs), "closure workspace setup");
-    auto h = cs.eval("(query:compiler-root-stats)");
+    auto h = cs.eval("(engine:metrics \"query:compiler-root-stats\")");
     CHECK(h && is_hash(*h), "compiler-root-stats returns hash");
     CHECK(hash_int(cs, "schema") == 599, "schema == 599");
     const auto s0 = stats_sum(cs);
@@ -104,8 +104,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "compiler-root stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
-    auto los = cs.eval("(query:linear-ownership-runtime-stats)");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
+    auto los = cs.eval("(engine:metrics \"query:linear-ownership-runtime-stats\")");
     auto gc = cs.eval("(gc-heap)");
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
     CHECK(los && is_int(*los), "linear-ownership-runtime-stats regression");

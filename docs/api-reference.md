@@ -17,7 +17,7 @@ Agent 一页提示：[agent-prompt-template.md](agent-prompt-template.md) · 教
 | 变异 | **`(mutate :op …)`** | #1436 · 见下表 |
 | 工作区 | **`(workspace :op …)`** | #1437 · 见下表 |
 | 版本 | `ast:snapshot` `ast:restore` `rollback` | 快照 / 回滚 |
-| 观测 | **`(engine:metrics …)`** | #1433 · 勿新增 `*-stats` 名 |
+| 观测 | **`(engine:metrics …)`** | #1433 / **#1439** · `query:*-stats` 已非 public；见 [migration-stats-to-metrics.md](migration-stats-to-metrics.md) |
 | 产品 convenience | `(require "std/surface" all:)` | string/json/math |
 
 > **Stable refs (#393)**：跨 `mutate` 保存的节点引用请用  
@@ -50,6 +50,18 @@ Agent 一页提示：[agent-prompt-template.md](agent-prompt-template.md) · 教
 (mutate :extract node-id "name")
 (mutate :validate code-string schema)
 (mutate :atomic (list …))            ; atomic-batch
+```
+
+**#1441 / #1408:** `(mutate :rebind …)` / `mutate:rebind` is fully transactional — rollback restores the Define body (`try_rollback_rebind_op` uses the pre-rebind value stored on the `MutationRecord`). Atomic multi-mutate undoes rebind variable state, not only the audit log.
+
+**#1442 / #1408:** EDSL atomic multi-mutate (C++ `CompilerService::typed_mutate_atomic`):
+
+```scheme
+;; Each element is a full mutation sexpr string (same as --serve typed-mutate).
+(typed-mutate-atomic
+  (list "(mutate:rebind \"x\" \"10\")"
+        "(mutate:rebind \"y\" \"20\")"))   ; → #t all applied
+;; Mid-failure or empty list → #f (0 applied; RAII rollback)
 ```
 
 ### `(workspace :op …)`

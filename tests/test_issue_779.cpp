@@ -88,10 +88,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:dirty-region-rendering-stats) hash shape ---");
-    auto r = cs.eval("(query:dirty-region-rendering-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:dirty-region-rendering-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:dirty-region-rendering-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:dirty-region-rendering-stats) returns a hash");
+          "(engine:metrics \"query:dirty-region-rendering-stats\") returns a hash");
     const std::vector<std::string> keys = {"dirty-region-count", "present-delta-supported",
                                            "terminal-dirty-region-supported", "recommendation",
                                            "schema"};
@@ -104,25 +105,27 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-zero (all 3 fields == 0, recommendation == 3) ---");
-    const auto dirty_count =
-        hash_int_field(cs, "(query:dirty-region-rendering-stats)", "dirty-region-count");
+    const auto dirty_count = hash_int_field(
+        cs, "(engine:metrics \"query:dirty-region-rendering-stats\")", "dirty-region-count");
     CHECK(dirty_count == 0,
           std::format("dirty-region-count = {} (expected 0 on fresh service — no existing "
                       "counter on main)",
                       dirty_count));
-    const auto present_delta =
-        hash_int_field(cs, "(query:dirty-region-rendering-stats)", "present-delta-supported");
+    const auto present_delta = hash_int_field(
+        cs, "(engine:metrics \"query:dirty-region-rendering-stats\")", "present-delta-supported");
     CHECK(present_delta == 0,
           std::format("present-delta-supported = {} (expected 0 — (present-delta) primitive "
                       "is Phase 2+ deferred)",
                       present_delta));
-    const auto terminal_dirty = hash_int_field(cs, "(query:dirty-region-rendering-stats)",
-                                               "terminal-dirty-region-supported");
+    const auto terminal_dirty =
+        hash_int_field(cs, "(engine:metrics \"query:dirty-region-rendering-stats\")",
+                       "terminal-dirty-region-supported");
     CHECK(terminal_dirty == 0,
           std::format("terminal-dirty-region-supported = {} (expected 0 — "
                       "(terminal-dirty-region) primitive is Phase 2+ deferred)",
                       terminal_dirty));
-    const auto rec = hash_int_field(cs, "(query:dirty-region-rendering-stats)", "recommendation");
+    const auto rec = hash_int_field(cs, "(engine:metrics \"query:dirty-region-rendering-stats\")",
+                                    "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when both supported flags "
                       "== 0 AND dirty-region-count == 0)",
@@ -131,7 +134,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 779 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:dirty-region-rendering-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:dirty-region-rendering-stats\")", "schema");
     CHECK(schema == 779, std::format("schema = {} (expected 779)", schema));
 }
 
@@ -180,8 +184,8 @@ static void run_ac4_vector_primitive_benchmark(aura::compiler::CompilerService& 
     // still reachable after the benchmark and the recommendation
     // remains 3 (no dirty region activity since the
     // (terminal-dirty-region) primitive isn't shipped).
-    const auto rec_after =
-        hash_int_field(cs, "(query:dirty-region-rendering-stats)", "recommendation");
+    const auto rec_after = hash_int_field(
+        cs, "(engine:metrics \"query:dirty-region-rendering-stats\")", "recommendation");
     CHECK(rec_after == 3,
           std::format("after vector benchmark: recommendation = {} (expected 3 because no "
                       "dirty region activity; the vector primitives don't bump "
@@ -190,14 +194,15 @@ static void run_ac4_vector_primitive_benchmark(aura::compiler::CompilerService& 
 
     // Verify the 2 hardcoded flags are still 0 (sanity check
     // that nothing accidentally flipped them).
-    const auto present_delta_after =
-        hash_int_field(cs, "(query:dirty-region-rendering-stats)", "present-delta-supported");
+    const auto present_delta_after = hash_int_field(
+        cs, "(engine:metrics \"query:dirty-region-rendering-stats\")", "present-delta-supported");
     CHECK(present_delta_after == 0,
           std::format("present-delta-supported after benchmark: {} (expected 0; the flags "
                       "should not flip during EDSL eval)",
                       present_delta_after));
-    const auto terminal_dirty_after = hash_int_field(cs, "(query:dirty-region-rendering-stats)",
-                                                     "terminal-dirty-region-supported");
+    const auto terminal_dirty_after =
+        hash_int_field(cs, "(engine:metrics \"query:dirty-region-rendering-stats\")",
+                       "terminal-dirty-region-supported");
     CHECK(terminal_dirty_after == 0,
           std::format("terminal-dirty-region-supported after benchmark: {} (expected 0; the "
                       "flags should not flip during EDSL eval)",
@@ -207,7 +212,7 @@ static void run_ac4_vector_primitive_benchmark(aura::compiler::CompilerService& 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #777 + #778 sibling primitives unaffected ---");
     auto eda_readiness = cs.eval("(query:eda-production-readiness)");
-    auto ffi_overhead = cs.eval("(query:ffi-call-overhead-stats)");
+    auto ffi_overhead = cs.eval("(engine:metrics \"query:ffi-call-overhead-stats\")");
     CHECK(eda_readiness && aura::compiler::types::is_hash(*eda_readiness),
           "query:eda-production-readiness hash regression (#777)");
     CHECK(ffi_overhead && aura::compiler::types::is_hash(*ffi_overhead),
@@ -215,7 +220,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     const auto a777_schema = hash_int_field(cs, "(query:eda-production-readiness)", "schema");
     CHECK(a777_schema == 777,
           std::format("#777 schema = {} (expected 777, no drift)", a777_schema));
-    const auto a778_schema = hash_int_field(cs, "(query:ffi-call-overhead-stats)", "schema");
+    const auto a778_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "schema");
     CHECK(a778_schema == 778,
           std::format("#778 schema = {} (expected 778, no drift)", a778_schema));
 }

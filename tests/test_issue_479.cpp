@@ -271,7 +271,7 @@ int aura_issue_479_run() {
     // AC11: aggregate counter primitive_fastpath_hits_total still bumps
     // (backward compat — observed via query:primitives-registry-stats 'fastpath-hits').
     std::println("\n--- AC11: aggregate counter still bumps ---");
-    constexpr auto reg_src = "(query:primitives-registry-stats)";
+    constexpr auto reg_src = "(engine:metrics \"query:primitives-registry-stats\")";
     const auto reg_total = hash_int(cs, reg_src, "fastpath-hits");
     CHECK(reg_total > 0, std::format("aggregate 'fastpath-hits' > 0 (got {})", reg_total));
     CHECK(

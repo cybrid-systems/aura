@@ -53,7 +53,7 @@ int aura_issue_519_observability_run() {
     // AC1: query:edsl-eda-sv-closedloop-stats returns hash
     {
         std::println("\n--- AC1: query:edsl-eda-sv-closedloop-stats ---");
-        auto stats = cs.eval("(query:edsl-eda-sv-closedloop-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:edsl-eda-sv-closedloop-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:edsl-eda-sv-closedloop-stats returns hash");
         CHECK(hash_int(cs, "sv-node-total") >= 0, "sv-node-total present");
@@ -112,12 +112,12 @@ int aura_issue_519_observability_run() {
         CHECK(total_after >= total_before,
               std::format("edsl-eda-sv-closedloop-total monotonic ({} -> {})", total_before,
                           total_after));
-        auto evs = cs.eval("(query:eda-verification-stats)");
+        auto evs = cs.eval("(engine:metrics \"query:eda-verification-stats\")");
         CHECK(evs && aura::compiler::types::is_hash(*evs),
               "query:eda-verification-stats hash regression");
-        auto sns = cs.eval("(query:sv-node-stats)");
+        auto sns = cs.eval("(engine:metrics \"query:sv-node-stats\")");
         CHECK(sns && aura::compiler::types::is_hash(*sns), "query:sv-node-stats hash regression");
-        auto efs = cs.eval("(query:eda-foundation-stats)");
+        auto efs = cs.eval("(engine:metrics \"query:eda-foundation-stats\")");
         CHECK(efs && aura::compiler::types::is_hash(*efs),
               "query:eda-foundation-stats hash regression");
     }

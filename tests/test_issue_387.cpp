@@ -20,7 +20,7 @@
 //   AC5: hit_rate_bp correctly derived (lookups with 0 hits
 //        leave rate at 0, lookups with all hits at 10000)
 //
-// All tests use (compile:type-dep-graph-stats) where possible
+// All tests use (engine:metrics \"compile:type-dep-graph-stats\") where possible
 // to also exercise the Aura primitive surface.
 
 
@@ -88,7 +88,7 @@ bool test_snapshot_has_new_fields() {
 // ── AC3: primitive returns a hash with 4 keys
 //        (just verify it doesn't crash + returns a hash type)
 bool test_primitive_returns_hash() {
-    std::println("\n--- AC3: (compile:type-dep-graph-stats) primitive ---");
+    std::println("\n--- AC3: (engine:metrics \"compile:type-dep-graph-stats\") primitive ---");
     aura::compiler::CompilerService cs;
     // The primitive is invoked via Aura. Since we don't have
     // the EDSL runner here, we verify the CompilerMetrics +

@@ -7,7 +7,7 @@
 //              NodeIds
 //            - tag_arity_index_hits counter bumps
 //            - tag_arity_index_misses counter bumps
-//            - (query:query-stats) returns the sum of
+//            - (engine:metrics \"query:query-stats\") returns the sum of
 //              3 counters
 //            - (query:tag-arity-count tag arity) works
 //            - COW path (set-code) invalidates the
@@ -33,7 +33,7 @@ namespace aura_issue_447_detail {
 bool test_query_query_stats() {
     std::println("\n--- AC1: query:query-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:query-stats)");
+    auto r = cs.eval("(engine:metrics \"query:query-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -181,13 +181,13 @@ bool test_cow_invalidates_index() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC7: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:stable-ref-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:stable-ref-stats (regression for #457)");
     auto r2 = cs.eval("(query:mutation-impact)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:mutation-impact (regression for #456)");
-    auto r3 = cs.eval("(query:hygiene-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:hygiene-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:hygiene-stats (regression for #458)");
     return true;

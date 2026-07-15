@@ -114,82 +114,68 @@ void ObservabilityPrims::register_eval_p40(PrimRegistrar add, Evaluator& ev) {
     // Issue #716: routes through ev.primitives_.add (3-arg form) so
     // we can attach PrimMeta with schema=716 + category=general +
     // arity=0 + pure=true (same pattern as #712/#713/#714/#715).
-    ev.primitives_.add(
-        "query:pattern-stats",
-        [&ev](const auto&) -> EvalValue {
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == 0xFF) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+    ObservabilityPrims::register_stats_impl("query:pattern-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto slot = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[slot] == 0xFF) {
+                        meta[slot] = fp;
+                        keys[slot] = key_ev.val;
+                        vals[slot] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
-            CompilerMetrics* m = ev.compiler_metrics()
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
-                                     : nullptr;
-            const std::int64_t matcher_calls =
-                m ? static_cast<std::int64_t>(
-                        m->pattern_matcher_calls_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t macro_intro_filtered =
-                m ? static_cast<std::int64_t>(
-                        m->pattern_macro_intro_filtered_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t fast_path_hits =
-                m ? static_cast<std::int64_t>(
-                        m->pattern_fast_path_hits_total.load(std::memory_order_relaxed))
-                  : 0;
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"matcher-calls", make_int(matcher_calls)},
-                {"macro-intro-filtered", make_int(macro_intro_filtered)},
-                {"fast-path-hits", make_int(fast_path_hits)},
-                {"schema", make_int(716)},
-            };
-            return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Pattern matcher observability counters: matcher calls, "
-                        "macro-introduced hygiene filter skips, and fast-path "
-                        "promotions. Pairs with the existing query:pattern-index-"
-                        "stats (#547/#490/#621/#654) which track the tag_arity_index "
-                        "itself — #716 tracks the matcher call path as a separate "
-                        "signal.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        CompilerMetrics* m =
+            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+        const std::int64_t matcher_calls =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_matcher_calls_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t macro_intro_filtered =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_macro_intro_filtered_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t fast_path_hits =
+            m ? static_cast<std::int64_t>(
+                    m->pattern_fast_path_hits_total.load(std::memory_order_relaxed))
+              : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"matcher-calls", make_int(matcher_calls)},
+            {"macro-intro-filtered", make_int(macro_intro_filtered)},
+            {"fast-path-hits", make_int(fast_path_hits)},
+            {"schema", make_int(716)},
+        };
+        return build_hash(kv);
+    });
 }
 
 // Issue #909 part 41 (orig lines 5423-5535)
@@ -231,9 +217,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
     // Issue #717: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=717 + category=general
     // + arity=0 + pure=true (same pattern as #712-#716).
-    ev.primitives_.add(
-        "query:fiber-boundary-violation-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:fiber-boundary-violation-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -296,25 +281,14 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(717)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Fiber-safe MutationBoundaryGuard recovery counters: rollbacks, "
-                        "yield-resumes, and recovery-failures. Pairs with the existing "
-                        "query:fiber-migration-stats (#438) which tracks the SCHEDULER "
-                        "side (steal-attempts, boundary-violations, defers) — #717 tracks "
-                        "the GUARD side (rollback, resume, recovery failure) as a separate "
-                        "signal.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #1373 / #1375: (query:mutation-boundary-hold-stats) —
     // hold-time + yield/migration + 9-bucket histogram for
     // MutationBoundaryGuard. Complements #717 fiber-boundary-
     // violation-stats and #1253 mutation_hold_* (long-mutation SLO).
-    ev.primitives_.add(
-        "query:mutation-boundary-hold-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-hold-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // 16 base fields + 9 histogram buckets → need room
@@ -407,14 +381,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(1375)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "MutationBoundaryGuard hold-time + yield/migration + 9-bucket "
-                        "histogram (#1373/#1375). Fields: holds-total, total-us/avg-us, "
-                        "over-1ms, hist-0-100us … hist-gt-1s, hist-sum, schema=1375.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 42 (orig lines 5536-5657)
@@ -458,9 +425,8 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
     // Issue #718: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=718 + category=general
     // + arity=0 + pure=true (same pattern as #712-#717).
-    ev.primitives_.add(
-        "query:incremental-relower-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -528,19 +494,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(718)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Fine-grained per-block re-lower observability counters: "
-                        "impact_scope hits, partial re-lower decisions, full "
-                        "fallbacks, and cumulative time saved. Pairs with the "
-                        "ir_cache_pure::should_partial_relower() helper (Phase 1 "
-                        "ships the pure decision function + these counters); the "
-                        "actual service.ixx::invalidate_function + lowering_impl."
-                        "cpp::lower_to_ir_with_cache + pass_manager.ixx::run_"
-                        "incremental_pipeline wiring is follow-up work.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 43 (orig lines 5658-5790)
@@ -597,9 +551,8 @@ void ObservabilityPrims::register_eval_p43(PrimRegistrar add, Evaluator& ev) {
     // Issue #719: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=719 + category=general
     // + arity=0 + pure=true (same pattern as #712-#718).
-    ev.primitives_.add(
-        "query:closure-env-epoch-safety-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:closure-env-epoch-safety-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -666,18 +619,7 @@ void ObservabilityPrims::register_eval_p43(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(719)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Prompt 6 closure/EnvFrame epoch + linear ownership + GC root "
-                        "sync runtime safety counters: epoch mismatches caught in "
-                        "apply_closure, linear ownership violations post-mutate, "
-                        "GC root syncs on invalidate, and dangling situations prevented. "
-                        "Pairs with the existing #672 linear_stats (compile-time) and "
-                        "#681 epoch enforcement (IR-level metadata); #719 tracks the "
-                        "runtime outcomes as separate signals.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 44 (orig lines 5791-5919)
@@ -728,9 +670,8 @@ void ObservabilityPrims::register_eval_p44(PrimRegistrar add, Evaluator& ev) {
     // Issue #720: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=720 + category=general
     // + arity=0 + pure=true (same pattern as #712-#719).
-    ev.primitives_.add(
-        "query:jit-interpreter-parity-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:jit-interpreter-parity-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -798,19 +739,7 @@ void ObservabilityPrims::register_eval_p44(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(720)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "JIT/Interpreter parity counters: unhandled opcode spikes "
-                        "(post-mutation threshold crossings), metadata mismatches "
-                        "(linear_ownership_state / shape_id / narrow_evidence / "
-                        "source_marker drift between IRSoA/AoS and FlatInstruction), "
-                        "deopts on mutate, and explicit Interpreter fallbacks. Pairs "
-                        "with the aggregate unhandled_opcode_count / fallback_count "
-                        "metrics in aura_jit.cpp; #720 splits by cause and adds the "
-                        "post-mutation spike + metadata drift signals.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 45 (orig lines 5920-6034)
@@ -852,9 +781,8 @@ void ObservabilityPrims::register_eval_p45(PrimRegistrar add, Evaluator& ev) {
     // Issue #721: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=721 + category=general
     // + arity=0 + pure=true (same pattern as #712-#720).
-    ev.primitives_.add(
-        "query:ir-soa-completeness-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:ir-soa-completeness-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -917,19 +845,7 @@ void ObservabilityPrims::register_eval_p45(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(721)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "IRFunctionSoA column migration + dirty cascade counters: "
-                        "SoA view hits, dirty cascades to ShapeProfiler, and "
-                        "cumulative bytes saved by PCV-style PersistentChildVector / "
-                        "gap_buffer wiring on operand / shape / metadata columns. "
-                        "Pairs with the existing IRFunctionSoA scaffold (10 columns + "
-                        "mark_block_dirty cascade); #721 tracks the SoA column "
-                        "migration progress + dirty cascade shape/arena propagation "
-                        "as separate signals.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 46 (orig lines 6035-6158)
@@ -974,9 +890,8 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
     // Issue #722: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=722 + category=general
     // + arity=0 + pure=true (same pattern as #712-#721).
-    ev.primitives_.add(
-        "query:arena-integration-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-integration-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1044,20 +959,7 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(722)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Arena tier/dtor/compact integration counters: tier "
-                        "fallbacks (SmallObjectPool tier exhaustion), dtor-triggered "
-                        "dirty hooks, auto-compact triggers (fragmentation + "
-                        "yield_check driven), and fragmentation-post-mutate ratio "
-                        "(scaled 0..1e6). Pairs with the existing ArenaStats in "
-                        "arena.ixx (internal aggregate metrics); #722 exposes "
-                        "Arena <-> dirty/shape integration signals as separate "
-                        "counters the Agent can consume to decide whether to force "
-                        "defrag or trust the auto-compact policy.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 47 (orig lines 6159-6284)
@@ -1105,9 +1007,8 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
     // Issue #723: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=723 + category=general
     // + arity=0 + pure=true (same pattern as #712-#722).
-    ev.primitives_.add(
-        "query:value-dispatch-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:value-dispatch-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1175,19 +1076,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(723)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Pass pipeline DirtyAware + Value v2 + Shape history integration "
-                        "counters: dispatch calls, unknown tags (contract violations), "
-                        "v2 string collisions (heap saturation), and shape history "
-                        "shifts (classification churn). Pairs with the existing "
-                        "pass_manager.ixx Wraps / value.ixx v2 / shape_profiler.cpp "
-                        "history infrastructure; #723 exposes the integration outcomes "
-                        "as separate counters the Agent can consume to decide whether "
-                        "to enable Pass short-circuit or trigger deopt.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

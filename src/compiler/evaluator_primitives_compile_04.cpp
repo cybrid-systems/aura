@@ -100,13 +100,14 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
     // totals). P0 ship mirrors (query:verify-dirty-stats).
     // Follow-up: return a pair so callers can distinguish
     // the two reasons without separate primitives.
-    add("compile:macro-dirty-stats", [&ev](const auto&) -> EvalValue {
-        auto* ws = CompilePrims::pick_macro_flat(ev);
-        if (!ws)
-            return make_bool(false);
-        auto sum = ws->macro_expansion_dirty_total() + ws->macro_self_modify_dirty_total();
-        return make_int(static_cast<std::int64_t>(sum));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:macro-dirty-stats", [&ev](const auto&) -> EvalValue {
+            auto* ws = CompilePrims::pick_macro_flat(ev);
+            if (!ws)
+                return make_bool(false);
+            auto sum = ws->macro_expansion_dirty_total() + ws->macro_self_modify_dirty_total();
+            return make_int(static_cast<std::int64_t>(sum));
+        });
 
     // Issue #469: (verify:parse-coverage-feedback text-string)
     // — parse a text blob describing coverage holes from an
@@ -879,68 +880,69 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
     // paths, hardware_backend hook on verification-related dirty)
     // is invasive C++ + hot-path EDA work that needs benchmarking
     // alongside the #579/#499 EDA scaffold — separate follow-up.
-    add("query:sv-verification-closedloop-stats-hash", [&ev](const auto&) -> EvalValue {
-        const std::uint64_t feedback_cycles =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->feedback_mutate_hits_total.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t stable_ref = ev.get_verify_tool_stable_ref_hits_total();
-        const std::uint64_t dirty_props = ev.get_verify_tool_dirty_propagations_total();
-        const std::uint64_t reverify =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->verification_loop_success_total.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t rollback =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->sv_emit_parse_fail_total.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t ppa_savings =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->ppa_savings_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto& string_heap = ev.string_heap_mut();
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:sv-verification-closedloop-stats-hash", [&ev](const auto&) -> EvalValue {
+            const std::uint64_t feedback_cycles =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->feedback_mutate_hits_total.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t stable_ref = ev.get_verify_tool_stable_ref_hits_total();
+            const std::uint64_t dirty_props = ev.get_verify_tool_dirty_propagations_total();
+            const std::uint64_t reverify =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->verification_loop_success_total.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t rollback =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->sv_emit_parse_fail_total.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t ppa_savings =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->ppa_savings_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto& string_heap = ev.string_heap_mut();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("feedback-to-mutate-cycles", static_cast<std::int64_t>(feedback_cycles));
-        insert_kv("stable-ref-captures-in-sv", static_cast<std::int64_t>(stable_ref));
-        insert_kv("verification-dirty-propagations", static_cast<std::int64_t>(dirty_props));
-        insert_kv("reverify-success", static_cast<std::int64_t>(reverify));
-        insert_kv("rollback-on-partial", static_cast<std::int64_t>(rollback));
-        insert_kv("ppa-savings-total", static_cast<std::int64_t>(ppa_savings));
-        insert_kv("schema", 630);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("feedback-to-mutate-cycles", static_cast<std::int64_t>(feedback_cycles));
+            insert_kv("stable-ref-captures-in-sv", static_cast<std::int64_t>(stable_ref));
+            insert_kv("verification-dirty-propagations", static_cast<std::int64_t>(dirty_props));
+            insert_kv("reverify-success", static_cast<std::int64_t>(reverify));
+            insert_kv("rollback-on-partial", static_cast<std::int64_t>(rollback));
+            insert_kv("ppa-savings-total", static_cast<std::int64_t>(ppa_savings));
+            insert_kv("schema", 630);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 compile part 39 (orig 3216-3279)
@@ -955,28 +957,29 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
     // right shape; a follow-up wires the actual
     // stats. The narrowing_refresh_count itself
     // is also returned for context.
-    add("compile:occ-cache-stats", [&ev](const auto&) -> EvalValue {
-        // The 3-tuple: (predicate_memo_hits .
-        // predicate_memo_misses .
-        // predicate_memo_evictions). All 0 until
-        // a follow-up wires the stats into the
-        // hook.
-        const std::uint64_t hits = 0;
-        const std::uint64_t misses = 0;
-        const std::uint64_t evictions = 0;
-        // Build (hits . (misses . evictions)) — a
-        // pair-of-pairs (the simplest 3-tuple in
-        // flat-eval).
-        auto inner_idx = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(misses)),
-                             make_int(static_cast<std::int64_t>(evictions))});
-        auto outer_idx = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(hits)), make_pair(inner_idx)});
-        (void)hits;
-        (void)misses;
-        (void)evictions;
-        return make_pair(outer_idx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:occ-cache-stats", [&ev](const auto&) -> EvalValue {
+            // The 3-tuple: (predicate_memo_hits .
+            // predicate_memo_misses .
+            // predicate_memo_evictions). All 0 until
+            // a follow-up wires the stats into the
+            // hook.
+            const std::uint64_t hits = 0;
+            const std::uint64_t misses = 0;
+            const std::uint64_t evictions = 0;
+            // Build (hits . (misses . evictions)) — a
+            // pair-of-pairs (the simplest 3-tuple in
+            // flat-eval).
+            auto inner_idx = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(misses)),
+                                 make_int(static_cast<std::int64_t>(evictions))});
+            auto outer_idx = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(hits)), make_pair(inner_idx)});
+            (void)hits;
+            (void)misses;
+            (void)evictions;
+            return make_pair(outer_idx);
+        });
 
     // (compile:inline-pass-stats) — Issue #197: returns
     // a hash with the inliner's lifetime counters:

@@ -242,15 +242,14 @@
     "compile:type-cache-stats"
     "compile:dirty-impact-stats"))
 
-; ── (stats:get name) → invoke the named stats primitive ──────
+; ── (stats:get name) → via (engine:metrics …)  [Issue #1439] ──────
+; Public query:*-stats prims were removed; facade is the only entry.
 (define (stats:get name)
   (cond
     ((equal? name "all")
-      ; Bundle every registered stats primitive into a
-      ; structured list of (name . value) pairs.
-      (map (lambda (n) (cons n (eval n))) stats-registry))
+      (engine:metrics :all))
     ((member? name stats-registry)
-      (eval name))
+      (engine:metrics name))
     (else
       ; Unknown name — surface a structured diagnostic.
       (list 'unknown-stats-name name))))

@@ -1235,49 +1235,50 @@ void register_workspace_query_primitives(
     //   (user macro-introduced bool-literal total)
     //
     // If no workspace is set, returns '().
-    add("query:marker-stats", [ws, mev](const auto&) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
+    ObservabilityPrims::register_stats_impl(
+        "query:marker-stats", [ws, mev](const auto&) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
 
-        std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
-        const auto& markers = ws.workspace_flat->marker_column();
-        for (auto m : markers) {
-            ++total;
-            auto val = static_cast<int>(m);
-            if (val == 0)
-                ++user;
-            else if (val == 1)
-                ++macro;
-            else if (val == 2)
-                ++bool_lit;
-        }
-        // Build a proper 4-element list: (user macro bool total).
-        // Use make_pair chaining (cdr-then-prepend pattern).
-        // The list reads (total . (bool . (macro . (user . ())))) — i.e.
-        // car=total, cdr=(bool ...). But we want (user macro bool total).
-        // So build in reverse and then return as-is (the result is
-        // a list whose first element is total). The Aura code can
-        // destructure via pattern match.
-        //
-        // Actually, building the list in REVERSE order (push each
-        // onto the head) would give (total . (bool . (macro . (user))))
-        // which when iterated left-to-right yields total, bool, macro,
-        // user. That's the wrong order. Build FORWARD: prepend each
-        // new element to the previous list.
-        EvalValue result = make_void();
-        auto append = [&](std::int64_t v) {
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(v), result});
-            result = make_pair(pid);
-        };
-        append(static_cast<std::int64_t>(user));
-        append(static_cast<std::int64_t>(macro));
-        append(static_cast<std::int64_t>(bool_lit));
-        append(static_cast<std::int64_t>(total));
-        // Now result is (user (macro (bool (total . ()))))
-        return result;
-    });
+            std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
+            const auto& markers = ws.workspace_flat->marker_column();
+            for (auto m : markers) {
+                ++total;
+                auto val = static_cast<int>(m);
+                if (val == 0)
+                    ++user;
+                else if (val == 1)
+                    ++macro;
+                else if (val == 2)
+                    ++bool_lit;
+            }
+            // Build a proper 4-element list: (user macro bool total).
+            // Use make_pair chaining (cdr-then-prepend pattern).
+            // The list reads (total . (bool . (macro . (user . ())))) — i.e.
+            // car=total, cdr=(bool ...). But we want (user macro bool total).
+            // So build in reverse and then return as-is (the result is
+            // a list whose first element is total). The Aura code can
+            // destructure via pattern match.
+            //
+            // Actually, building the list in REVERSE order (push each
+            // onto the head) would give (total . (bool . (macro . (user))))
+            // which when iterated left-to-right yields total, bool, macro,
+            // user. That's the wrong order. Build FORWARD: prepend each
+            // new element to the previous list.
+            EvalValue result = make_void();
+            auto append = [&](std::int64_t v) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(v), result});
+                result = make_pair(pid);
+            };
+            append(static_cast<std::int64_t>(user));
+            append(static_cast<std::int64_t>(macro));
+            append(static_cast<std::int64_t>(bool_lit));
+            append(static_cast<std::int64_t>(total));
+            // Now result is (user (macro (bool (total . ()))))
+            return result;
+        });
 
     // (query:schema-of-marker marker-name) — Issue #248:
     // return (NodeId . type-name) pairs for nodes with the given
@@ -2197,12 +2198,17 @@ void register_workspace_query_primitives(
         if (op == "mutation-log" || op == "mutation_log")
             return call_named("query:mutation-log", rest);
 
+        // (query :mutation-provenance [mutation-id]) — Issue #1419
+        if (op == "mutation-provenance" || op == "mutation_provenance")
+            return call_named("query:mutation-provenance", rest);
+
         // (query :root) — handy extra (not in the 6, but zero-cost)
         if (op == "root")
             return call_named("query:root", rest);
 
         return mev("bad-arg", "unknown query op ':" + op +
-                                  "' — use :node :children :parent :find :def-use :mutation-log");
+                                  "' — use :node :children :parent :find :def-use :mutation-log "
+                                  ":mutation-provenance");
     });
 
     // Issue #1435: mark core query:* names deprecated in favor of (query :op).

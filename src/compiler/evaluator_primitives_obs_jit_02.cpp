@@ -140,9 +140,8 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
     // Issue #756: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=756 + category=general
     // + arity=0 + pure=true (same pattern as #712-#735).
-    ev.primitives_.add(
-        "query:envframe-dualpath-policy-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-dualpath-policy-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -211,24 +210,7 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(756)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "EnvFrame dual-path consistency enforcement + desync panic "
-                        "policy + GCEnvWalkFn stale handling observability: "
-                        "desync-panic-count (strict-panic firings), "
-                        "gc-stale-desync-hits (GCEnvWalkFn detected stale under "
-                        "concurrent steal/mutate), dualpath-repair + "
-                        "version-mismatch (cross-reference from #647 atomics). "
-                        "Pairs with the existing #647 query:envframe-dualpath-"
-                        "stale-stats-hash 3-field hash but tracks the *desync "
-                        "panic policy + GCEnvWalkFn stale handling* specifically "
-                        "as separate per-decision-point counters. #756 exposes "
-                        "the strict-panic vs log-and-sync mode adoption rate the "
-                        "Agent consumes to decide whether to enable strict-panic "
-                        "policy or trigger re-ensure on concurrent steal.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 17 (orig lines 13676-13846)
@@ -312,9 +294,8 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
     // Issue #757: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=757 + category=general
     // + arity=0 + pure=true (same pattern as #712-#756).
-    ev.primitives_.add(
-        "query:macro-hygiene-provenance-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:macro-hygiene-provenance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -383,27 +364,7 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(757)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Fine-grained MacroIntroduced provenance tracking + dynamic "
-                        "inliner policy + AI-queryable hygiene violation correlation "
-                        "observability: provenance-captured (per-node provenance at "
-                        "clone_macro_body), inliner-policy-violations (dynamic inliner "
-                        "policy + static respect_macro_hygiene_ disagreements), "
-                        "provenance-violations + hygiene-dirty-impact (cross-reference "
-                        "from #654 atomics). Pairs with the existing #654 "
-                        "query:macro-hygiene-fiber-panic-stats 5-field hash + #458 "
-                        "query:pattern-hygiene-stats basic count + #373 mutate hygiene "
-                        "guard but tracks the *fine-grained provenance + dynamic "
-                        "inliner policy + per-macro correlation* specifically as "
-                        "separate per-decision-point counters. #757 exposes the "
-                        "provenance + inliner-policy + per-macro correlation adoption "
-                        "rate the Agent consumes to decide whether to enable "
-                        "fine-grained provenance tracking or trigger inliner-policy "
-                        "tuning under Guard.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 18 (orig lines 13847-14012)
@@ -483,9 +444,8 @@ void ObservabilityPrims::register_jit_p18(PrimRegistrar add, Evaluator& ev) {
     // Issue #758: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=758 + category=general
     // + arity=0 + pure=true (same pattern as #712-#757).
-    ev.primitives_.add(
-        "query:edsl-reflection-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:edsl-reflection-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -554,26 +514,7 @@ void ObservabilityPrims::register_jit_p18(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(758)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Runtime auto_validate bridge for user-defined EDSL structs "
-                        "(DEFINE_STRUCT / custom nodes) under MutationBoundaryGuard "
-                        "with macro hygiene invariant correlation observability: "
-                        "validated-edsl (per-type EDSL struct pass), "
-                        "hygiene-invariants-held (MacroIntroduced descendants "
-                        "verified for valid provenance), schema-fail-by-type (per-type "
-                        "EDSL struct fail), macro-correlated-violations (hygiene "
-                        "violations correlated to macro_def_id). Pairs with the "
-                        "existing #750 query:reflection-schema-stats 4-field hash "
-                        "but tracks the *user-defined EDSL struct + macro hygiene "
-                        "invariant correlation* specifically as separate "
-                        "per-decision-point counters. #758 exposes the EDSL "
-                        "extension adoption rate the Agent consumes to decide "
-                        "whether to define new DEFINE_STRUCT types or trigger "
-                        "hygiene invariant checks under Guard commit.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 19 (orig lines 14013-14186)
@@ -656,9 +597,8 @@ void ObservabilityPrims::register_jit_p19(PrimRegistrar add, Evaluator& ev) {
     // Issue #759: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=759 + category=general
     // + arity=0 + pure=true (same pattern as #712-#758).
-    ev.primitives_.add(
-        "query:code-as-data-maturity-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:code-as-data-maturity-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -727,31 +667,7 @@ void ObservabilityPrims::register_jit_p19(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(759)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Unified 'code-as-data' closed-loop maturity observability "
-                        "composite (production readiness dashboard for Task6): "
-                        "fidelity-samples (total marker propagation fidelity check "
-                        "samples — denominator for fidelity_pct derivation), "
-                        "fidelity-drift (samples where marker propagation drift "
-                        "detected — drift / samples = 1 - fidelity_rate), "
-                        "guard-rollback-hygiene-safe (Guard rollback events that "
-                        "preserved hygiene invariants + StableRef validity — safe / "
-                        "attempts = guard_rollback_hygiene_safe_pct), "
-                        "reflect-schema-macro-edsl (reflect schema validation calls "
-                        "on macro-generated or EDSL-mutated subtrees — covered / "
-                        "total = reflection schema coverage on macro/EDSL ratio). "
-                        "Pairs with the existing #757 query:macro-hygiene-"
-                        "provenance-stats 4-field hash + #758 query:edsl-reflection-"
-                        "stats 4-field hash but tracks the *code-as-data closed-loop "
-                        "maturity composite* specifically as separate per-decision-"
-                        "point counters. #759 exposes the integrated macro + reflect "
-                        "+ EDSL self-evo loop production health the Agent consumes "
-                        "to decide whether to trigger self-heal, alert on SLO "
-                        "breach, or roll out additional task6 themes.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 20 (orig lines 14187-14357)
@@ -833,9 +749,8 @@ void ObservabilityPrims::register_jit_p20(PrimRegistrar add, Evaluator& ev) {
     // Issue #760: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=760 + category=general
     // + arity=0 + pure=true (same pattern as #712-#759).
-    ev.primitives_.add(
-        "query:pattern-performance-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:pattern-performance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -904,29 +819,7 @@ void ObservabilityPrims::register_jit_p20(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(760)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "query:pattern performance + hygiene fidelity observability "
-                        "for large macro-heavy concurrent AI pattern-mutate loops: "
-                        "linear-scans (linear O(N) pattern scans — high value = perf "
-                        "cliff on tag_arity_index_ fast-path miss), index-hits "
-                        "(tag_arity_index_ fast-path O(1) candidate set retrievals via "
-                        "(tag, child_count, marker) hash — high value = perf win), "
-                        "wildcard-cost (... wildcard match firings — early-exit / "
-                        "DFA cost on rest-param handling), hygiene-filtered (macro "
-                        "nodes filtered / skipped by deep hygiene predicate — :marker "
-                        "MacroIntroduced :from-macro sym in QueryExpr). Pairs with "
-                        "the existing #757 query:macro-hygiene-provenance-stats + "
-                        "#758 query:edsl-reflection-stats + #759 query:code-as-data-"
-                        "maturity-stats 4-field hashes but tracks the *query:pattern "
-                        "performance + hygiene fidelity* specifically as separate "
-                        "per-decision-point counters. #760 exposes the pattern-match "
-                        "perf cliff + hygiene predicate activity the Agent consumes "
-                        "to decide whether to rebuild the index, tune the matcher, "
-                        "or trigger deep hygiene filter under Guard commit.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 21 (orig lines 14358-14517)
@@ -996,9 +889,8 @@ void ObservabilityPrims::register_jit_p21(PrimRegistrar add, Evaluator& ev) {
     // Issue #761: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=761 + category=general
     // + arity=0 + pure=true (same pattern as #712-#760).
-    ev.primitives_.add(
-        "query:mutate-batch-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:mutate-batch-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1067,30 +959,7 @@ void ObservabilityPrims::register_jit_p21(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(761)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "End-to-end atomic batch mutate + suppressed generation bump + "
-                        "cross-fiber safety observability composite for reliable "
-                        "multi-step AI iterative edits: batches-started (# of "
-                        "(mutate:batch [body]) or begin/commit batch lifecycles "
-                        "entered — proxy for atomic compound AI edit volume), "
-                        "suppressed-bumps (# of generation bumps suppressed by the "
-                        "batch guard — the whole point of suppressed bumps; high "
-                        "value = churn saved), cross-fiber-steals-during-batch (# of "
-                        "fiber steals occurring while a batch is active — triggers "
-                        "version re-stamp + StableRef refresh), hygiene-violations-"
-                        "in-batch (# of hygiene guard violations caught within a "
-                        "batch boundary — batch rollback prevented partial apply). "
-                        "Pairs with the existing #757 + #758 + #759 + #760 4-field "
-                        "observability hashes but tracks the *end-to-end atomic batch "
-                        "mutate + suppressed generation bump + cross-fiber safety "
-                        "composite* specifically as separate per-decision-point "
-                        "counters. #761 exposes the atomic compound EDSL edit health "
-                        "the Agent consumes to decide whether to batch, suppress "
-                        "bumps, or trigger cross-fiber re-stamp under Guard commit.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 22 (orig lines 14518-14683)
@@ -1164,9 +1033,8 @@ void ObservabilityPrims::register_jit_p22(PrimRegistrar add, Evaluator& ev) {
     // Issue #762: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=762 + category=general
     // + arity=0 + pure=true (same pattern as #712-#761).
-    ev.primitives_.add(
-        "query:workspace-closedloop-orchestration-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:workspace-closedloop-orchestration-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1238,29 +1106,7 @@ void ObservabilityPrims::register_jit_p22(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(762)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Workspace '锁定-导航-修改-执行' closed-loop orchestration "
-                        "observability under concurrent fiber + multi-Agent parallel "
-                        "edits: concurrent-query-mutate (# of concurrent query+mutate "
-                        "success events on shared / COW workspaces under fiber steal — "
-                        "proxy for concurrent orchestration health), cross-cow-ref-valid "
-                        "(# of cross-COW StableRef accesses that remained valid after "
-                        "auto-propagation — valid / total = cross_cow_ref_validity_pct "
-                        "derivation), yield-points-hit (# of explicit yield point hits "
-                        "in matcher / children iteration / mark_dirty paths — low value "
-                        "= starvation risk), shared-mutex-contention (# of shared_mutex "
-                        "contention events on workspace primitives under heavy AI load — "
-                        "high value = bottleneck signal). Pairs with the existing #757 "
-                        "+ #758 + #759 + #760 + #761 4-field observability hashes but "
-                        "tracks the *Workspace closed-loop orchestration* specifically "
-                        "as separate per-decision-point counters. #762 exposes the "
-                        "Workspace closed-loop production health the Agent consumes to "
-                        "decide whether to spawn more agents, add yield points, or "
-                        "trigger multi-Agent SLO breach under Guard commit.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 23 (orig lines 14684-14859)
@@ -1340,9 +1186,8 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
     // Issue #763: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=763 + category=general
     // + arity=0 + pure=true (same pattern as #712-#762).
-    ev.primitives_.add(
-        "query:linear-ownership-gc-compiler-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:linear-ownership-gc-compiler-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1412,35 +1257,7 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(763)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Runtime linear_ownership_state enforcement + GC root "
-                        "registration observability for IRClosure/EnvFrame in "
-                        "invalidate_function and live-closure paths: "
-                        "root-registrations (# of compiler IRClosure / EnvFrame "
-                        "root registrations called from invalidate + fiber "
-                        "mutation boundary — proxy for invalidate + boundary "
-                        "GC-safety coverage), root-stale-hits (# of stale GC root "
-                        "hits during GC walk from previously invalidated functions "
-                        "— high value = UAF risk signal), violations-prevented "
-                        "(# of runtime linear violations caught by the runtime "
-                        "check in Apply / MakeClosure paths — high value = safety "
-                        "net firings), env-version-resync (# of Env version "
-                        "re-syncs on invalidate — proxy for invalidate path "
-                        "correctly bumping version_ on bridged EnvFrames to keep "
-                        "GC walk safe). Pairs with the existing #757 + #758 + #759 "
-                        "+ #760 + #761 + #762 4-field observability hashes and "
-                        "the existing query:linear-ownership-gc-stats GC layer "
-                        "observability, but tracks the *compiler IRClosure + "
-                        "EnvFrame + invalidate runtime linear enforcement "
-                        "composite* specifically as separate per-decision-point "
-                        "counters. #763 exposes the linear ownership + GC + "
-                        "compiler maturation production health the Agent consumes "
-                        "to decide whether to force re-emit, register GC roots, "
-                        "or trigger linear runtime check under invalidate path.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

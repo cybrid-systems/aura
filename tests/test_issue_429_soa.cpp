@@ -9,10 +9,10 @@
 // FlatAST child migration + strengthen dirty tracking). This
 // scope-limited close ships the OBSERVABILITY + TEST side:
 //
-//   1. (query:soa-dirty-stats) — new 8-field hash primitive
+//   1. (engine:metrics \"query:soa-dirty-stats\") — new 8-field hash primitive
 //      that returns the LIVE per-block / per-instruction
 //      dirty state of ir_cache_v2_ in one pass. Complements
-//      (query:ir-soa-incremental-stats) (which reports
+//      (engine:metrics \"query:ir-soa-incremental-stats\") (which reports
 //      lifetime mutation-event counters) by exposing the
 //      current cache state. The 8 fields:
 //        - cached-fns
@@ -40,9 +40,9 @@
 //   AC3:  many defines → cached-fns grows monotonically
 //   AC4:  hash field consistency: 8 fields all present and
 //         each is a non-negative integer
-//   AC5:  empty workspace + (query:soa-dirty-stats) doesn't
+//   AC5:  empty workspace + (engine:metrics \"query:soa-dirty-stats\") doesn't
 //         crash (returns hash with zeros)
-//   AC6:  repeated (query:soa-dirty-stats) calls return
+//   AC6:  repeated (engine:metrics \"query:soa-dirty-stats\") calls return
 //         consistent hashes (idempotent observable)
 //   AC7:  total-blocks and total-instructions are >= 0
 //   AC8:  dirty-block-pct is between 0 and 100
@@ -187,7 +187,8 @@ bool test_idempotent_observable() {
     run_on(cs, "(eval-current)");
     auto a = hash_int(cs, "cached-fns");
     auto b = hash_int(cs, "cached-fns");
-    CHECK(a == b, "two consecutive (query:soa-dirty-stats) calls return the same cached-fns");
+    CHECK(a == b, "two consecutive (engine:metrics \"query:soa-dirty-stats\") calls return the "
+                  "same cached-fns");
     return true;
 }
 

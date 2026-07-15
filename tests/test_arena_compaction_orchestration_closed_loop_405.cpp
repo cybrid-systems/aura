@@ -33,7 +33,7 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 
 static std::int64_t compaction_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:arena-compaction-stats)");
+    auto r = cs.eval("(engine:metrics \"query:arena-compaction-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);

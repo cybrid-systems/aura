@@ -56,9 +56,9 @@
 //     observability surface
 //   - #373 (mutate hygiene guard) — flat.is_macro_introduced internal
 //     check at mutate time; no StableRef provenance capture
-//   - #733 (query:ir-marker-hygiene-stats) — IR-level marker
+//   - #733 (engine:metrics \"query:ir-marker-hygiene-stats\") — IR-level marker
 //     propagation; different scope (no StableNodeRef provenance)
-//   - #750 (query:reflection-schema-stats) — runtime reflection
+//   - #750 (engine:metrics \"query:reflection-schema-stats\") — runtime reflection
 //     validate; different scope (no StableNodeRef provenance)
 //   - #735 is the FIRST observability surface that tracks the
 //     *MacroIntroduced provenance + targeted macro-subtree handling*
@@ -215,14 +215,14 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     auto incremental = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     auto closure_env = cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")");
     auto jit_parity = cs.eval("(engine:metrics \"query:jit-interpreter-parity-stats\")");
-    auto ir_soa = cs.eval("(query:ir-soa-completeness-stats)");
+    auto ir_soa = cs.eval("(engine:metrics \"query:ir-soa-completeness-stats\")");
     auto arena = cs.eval("(engine:metrics \"query:arena-integration-stats\")");
     auto value_dispatch = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
-    auto closed_loop = cs.eval("(query:closed-loop-reliability-stats)");
-    auto unified_error = cs.eval("(query:unified-error-stats)");
-    auto arena_concurrent = cs.eval("(query:arena-concurrent-compact-stats)");
-    auto aot_safe = cs.eval("(query:aot-safe-swap-boundary-stats)");
-    auto ir_marker = cs.eval("(query:ir-marker-hygiene-stats)");
+    auto closed_loop = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
+    auto unified_error = cs.eval("(engine:metrics \"query:unified-error-stats\")");
+    auto arena_concurrent = cs.eval("(engine:metrics \"query:arena-concurrent-compact-stats\")");
+    auto aot_safe = cs.eval("(engine:metrics \"query:aot-safe-swap-boundary-stats\")");
+    auto ir_marker = cs.eval("(engine:metrics \"query:ir-marker-hygiene-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     CHECK(jit && aura::compiler::types::is_hash(*jit),
@@ -296,7 +296,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         hash_int_field(cs, "(engine:metrics \"query:jit-interpreter-parity-stats\")", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema =
@@ -309,22 +310,24 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         value_dispatch_schema == 723,
         std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
-    const auto unified_error_schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto unified_error_schema =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "schema");
     CHECK(unified_error_schema == 728,
           std::format("unified-error schema = {} (expected 728, no drift)", unified_error_schema));
     const auto arena_concurrent_schema =
-        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")", "schema");
     CHECK(arena_concurrent_schema == 731,
           std::format("arena-concurrent schema = {} (expected 731, no drift)",
                       arena_concurrent_schema));
     const auto aot_safe_schema =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:aot-safe-swap-boundary-stats\")", "schema");
     CHECK(aot_safe_schema == 732,
           std::format("aot-safe-swap schema = {} (expected 732, no drift)", aot_safe_schema));
-    const auto ir_marker_schema = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "schema");
+    const auto ir_marker_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-marker-hygiene-stats\")", "schema");
     CHECK(ir_marker_schema == 733,
           std::format("ir-marker-hygiene schema = {} (expected 733, no drift)", ir_marker_schema));
 }

@@ -31,7 +31,7 @@ bool test_primitive_error_stats_zero_on_fresh() {
 bool test_query_primitive_error_stats() {
     std::println("\n--- AC2: query:primitive-error-stats returns a pair ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:primitive-error-stats)");
+    auto r = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
     if (!r) {
         ++g_failed;
         return false;

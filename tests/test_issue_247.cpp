@@ -6,7 +6,7 @@
 // Issue #247 (scope-limited close) ships:
 //   1. CompilerSnapshot gains 4 marker count fields (user, macro,
 //      bool-literal, total) populated by snapshot().
-//   2. New Aura primitive (query:marker-stats) that returns a
+//   2. New Aura primitive (engine:metrics \"query:marker-stats\") that returns a
 //      4-element list (user macro bool-literal total).
 //   3. Tests verifying both C++ snapshot and Aura primitive.
 //
@@ -102,7 +102,7 @@ bool test_marker_stats_returns_list() {
         return false;
     }
     // (pair? ...) returns #t or #f. Test via (if ... 1 0) to get int.
-    auto r = try_run(cs, "(if (pair? (query:marker-stats)) 1 0)");
+    auto r = try_run(cs, "(if (pair? (engine:metrics \"query:marker-stats\")) 1 0)");
     if (!r.ok || !aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
         ++g_failed;
@@ -123,7 +123,7 @@ bool test_marker_stats_fresh_workspace() {
     // The 4-element list: (user macro bool total)
     // Use car/cdr destructuring via Aura code
     auto r = try_run(cs,
-                     "(let ((s (query:marker-stats)))"
+                     "(let ((s (engine:metrics \"query:marker-stats\")))"
                      "  (car (cdr (cdr (cdr s)))))"); // 4th element = total
     if (!r.ok || !aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
@@ -144,7 +144,8 @@ bool test_marker_stats_user_positive() {
         ++g_failed;
         return false;
     }
-    auto r = try_run(cs, "(car (query:marker-stats))"); // user is the first element
+    auto r =
+        try_run(cs, "(car (engine:metrics \"query:marker-stats\"))"); // user is the first element
     if (!r.ok || !aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
         ++g_failed;
@@ -162,7 +163,7 @@ bool test_no_workspace_error() {
     aura::compiler::CompilerService cs;
     // Don't call set-code; the default workspace may or may not
     // be set. We just verify the primitive doesn't crash.
-    auto r = try_run(cs, "(if (pair? (query:marker-stats)) 1 0)");
+    auto r = try_run(cs, "(if (pair? (engine:metrics \"query:marker-stats\")) 1 0)");
     if (!r.ok) {
         std::println("  FAIL: eval failed");
         ++g_failed;

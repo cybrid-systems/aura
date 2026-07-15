@@ -59,7 +59,7 @@ int aura_issue_492_run() {
     // AC1: query:shape-profiler-stats fields
     {
         std::println("\n--- AC1: query:shape-profiler-stats ---");
-        auto stats = cs.eval("(query:shape-profiler-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:shape-profiler-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:shape-profiler-stats returns hash");
         CHECK(snap_stat(cs, "stability-hits") >= 0, "stability-hits present");
@@ -105,7 +105,7 @@ int aura_issue_492_run() {
     // AC4: query:shape-stability-stats regression
     {
         std::println("\n--- AC4: query:shape-stability-stats regression ---");
-        auto stable = cs.eval("(query:shape-stability-stats)");
+        auto stable = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
         CHECK(stable && aura::compiler::types::is_int(*stable),
               "query:shape-stability-stats regression");
     }

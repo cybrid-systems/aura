@@ -30,7 +30,7 @@
 //   AC2: snapshot has 4 new narrowing fields
 //   AC3: typing let + if with predicate → narrowing applied
 //        (env_.bind(occ->var_name, occ->refined_type) fires)
-//   AC4: (compile:occurrence-typing-stats) returns 4-key
+//   AC4: (engine:metrics \"compile:occurrence-typing-stats\") returns 4-key
 //        hash (applied-total, skipped-total,
 //        reanalyzed-total, applied-ratio-bp)
 //   AC5: repeated typing of the same expression →
@@ -118,9 +118,10 @@ bool test_typing_with_predicate_bumps_narrowing_applied() {
 }
 
 bool test_occurrence_typing_stats_primitive() {
-    std::println("\n--- AC4: (compile:occurrence-typing-stats) returns 4-key hash ---");
+    std::println(
+        "\n--- AC4: (engine:metrics \"compile:occurrence-typing-stats\") returns 4-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define ots (compile:occurrence-typing-stats))\")");
+    cs.eval("(set-code \"(define ots (engine:metrics \"compile:occurrence-typing-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key :
          {"applied-total", "skipped-total", "reanalyzed-total", "applied-ratio-bp"}) {

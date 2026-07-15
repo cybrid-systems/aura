@@ -33,8 +33,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r =
-        cs.eval(std::format("(hash-ref (query:sv-verification-self-evolution-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:sv-verification-self-evolution-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -113,7 +113,7 @@ static void run_matrix(CompilerService& cs) {
     SvWorkspace ws{};
     std::println("\n--- AC1: query:sv-verification-self-evolution-stats (schema 802) ---");
     CHECK(seed_workspace(cs, ws), "SV verification workspace seeded");
-    auto h = cs.eval("(query:sv-verification-self-evolution-stats)");
+    auto h = cs.eval("(engine:metrics \"query:sv-verification-self-evolution-stats\")");
     CHECK(h && is_hash(*h), "sv-verification-self-evolution-stats returns hash");
     CHECK(stat_int(cs, "schema") == 802, "schema == 802");
     CHECK(feedback_parse(cs) >= 0, "feedback-parse-hits non-negative");
@@ -155,8 +155,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(agg7b >= agg7a + 4, "aggregate self-evolution counters monotonic");
 
     std::println("\n--- AC8: query regression ---");
-    auto closed726 = cs.eval("(query:closed-loop-reliability-stats)");
-    auto structure748 = cs.eval("(query:sv-verification-structure-stats)");
+    auto closed726 = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
+    auto structure748 = cs.eval("(engine:metrics \"query:sv-verification-structure-stats\")");
     CHECK(closed726 && is_hash(*closed726), "closed-loop-reliability-stats regression (#726)");
     CHECK(structure748 && is_hash(*structure748),
           "sv-verification-structure-stats regression (#748)");

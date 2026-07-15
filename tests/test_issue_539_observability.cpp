@@ -64,7 +64,7 @@ int aura_issue_539_observability_run() {
     // AC1: query:sv-production-verification-stats returns hash
     {
         std::println("\n--- AC1: query:sv-production-verification-stats ---");
-        auto stats = cs.eval("(query:sv-production-verification-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:sv-production-verification-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:sv-production-verification-stats returns hash");
         CHECK(hash_int(cs, "feedback-mapped-count") >= 0, "feedback-mapped-count present");
@@ -146,9 +146,9 @@ int aura_issue_539_observability_run() {
     // AC4: related SV verification primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto closedloop = cs.eval("(query:edsl-eda-sv-closedloop-stats)");
-        auto sv_hash = cs.eval("(query:sv-verification-closedloop-stats-hash)");
-        auto eda_ver = cs.eval("(query:eda-verification-stats)");
+        auto closedloop = cs.eval("(engine:metrics \"query:edsl-eda-sv-closedloop-stats\")");
+        auto sv_hash = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
+        auto eda_ver = cs.eval("(engine:metrics \"query:eda-verification-stats\")");
         CHECK(closedloop && aura::compiler::types::is_hash(*closedloop),
               "query:edsl-eda-sv-closedloop-stats hash regression");
         CHECK(sv_hash && aura::compiler::types::is_hash(*sv_hash),

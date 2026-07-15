@@ -28,7 +28,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → narrowing_dirty_recovery_total = 0
 //   AC2: snapshot has narrowing_dirty_recovery_total field
-//   AC3: (compile:occurrence-dirty-stats) returns 1-key hash
+//   AC3: (engine:metrics \"compile:occurrence-dirty-stats\") returns 1-key hash
 //   AC4: mutate:rebind on a narrowed var →
 //        dirty-recovery bumps (post-mutation re-infer
 //        triggered the re-analysis). The If is in the
@@ -91,9 +91,10 @@ bool test_snapshot_has_new_field() {
 }
 
 bool test_occurrence_dirty_stats_primitive() {
-    std::println("\n--- AC3: (compile:occurrence-dirty-stats) returns 1-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:occurrence-dirty-stats\") returns 1-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define ods (compile:occurrence-dirty-stats))\")");
+    cs.eval("(set-code \"(define ods (engine:metrics \"compile:occurrence-dirty-stats\"))\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(hash-ref ods \"dirty-recovery-total\")");
     CHECK(r && aura::compiler::types::is_int(*r),

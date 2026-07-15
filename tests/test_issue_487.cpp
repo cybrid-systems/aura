@@ -23,7 +23,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → all 3 fields == 0
 //   AC2: snapshot has 3 new dirty-impact fields
-//   AC3: (compile:dirty-impact-stats) returns 3-key hash
+//   AC3: (engine:metrics \"compile:dirty-impact-stats\") returns 3-key hash
 //   AC4: mutation + re-eval → affected-subtree-total
 //        may bump (depending on path)
 //   AC5: existing eval still works (regression)
@@ -87,11 +87,12 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (compile:dirty-impact-stats) returns 3-key hash
+// ── AC3: (engine:metrics \"compile:dirty-impact-stats\") returns 3-key hash
 bool test_dirty_impact_stats_primitive() {
-    std::println("\n--- AC3: (compile:dirty-impact-stats) returns 3-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:dirty-impact-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define dis (compile:dirty-impact-stats))\")");
+    cs.eval("(set-code \"(define dis (engine:metrics \"compile:dirty-impact-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"should-relower-total", "affected-subtree-total", "trigger-rate-bp"}) {
         std::string check = std::string("(hash-ref dis \"") + key + "\")";

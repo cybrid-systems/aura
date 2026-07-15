@@ -1602,6 +1602,10 @@ public:
     // source-being-evaluated.
     void set_workspace_flat(ast::FlatAST* f) {
         workspace_flat_ = f;
+        // Issue #1419: re-stamp agent fingerprint onto the new
+        // workspace so subsequent mutations inherit the author.
+        if (f && current_agent_fingerprint_ != 0)
+            f->set_mutation_author_fingerprint(current_agent_fingerprint_);
         // Issue #211: invalidate the (tag, arity) index
         // when the workspace changes. The index is keyed
         // by node positions in the OLD workspace, which
@@ -1618,6 +1622,19 @@ public:
     void set_workspace_pool(ast::StringPool* p) { workspace_pool_ = p; }
     ast::FlatAST* workspace_flat() const { return workspace_flat_; }
     ast::StringPool* workspace_pool() const { return workspace_pool_; }
+
+    // Issue #1419: AI agent identity for MutationRecord.author_fingerprint.
+    // 0 = system (default). Non-zero = hash(agent_id). Propagated to the
+    // workspace FlatAST provenance context so every add_mutation stamps
+    // the author. Used by TypedTransactionGuard + (mutate:set-agent-fingerprint).
+    void set_current_agent_fingerprint(std::uint64_t fp) noexcept {
+        current_agent_fingerprint_ = fp;
+        if (workspace_flat_)
+            workspace_flat_->set_mutation_author_fingerprint(fp);
+    }
+    [[nodiscard]] std::uint64_t current_agent_fingerprint() const noexcept {
+        return current_agent_fingerprint_;
+    }
 
     // Set the AST/pool that source-reading primitives (current-source) read
     // by default. The "per-eval current source" pointer. Set by
@@ -2182,14 +2199,28 @@ private:
     void register_adt_ctor(const std::string& ctor_name, types::EvalValue tag_str, int field_count);
     [[nodiscard]] types::EvalValue make_adt_zero_arg_ctor(types::EvalValue tag_str);
     // Callback passed to primitives_detail::register_* helpers.
+    // Issue #1439: *-stats names go to ObservabilityPrims internal table only
+    // (not public Primitives / api-reference). Call sites should use
+    // ObservabilityPrims::register_stats_impl; this intercept is a safety net.
     [[nodiscard]] std::function<void(std::string, PrimFn)> prim_registrar() {
         return [this](std::string name, PrimFn fn) {
+            if (primitives_detail::ObservabilityPrims::is_legacy_stats_name(name)) {
+                primitives_detail::ObservabilityPrims::register_stats_impl(std::move(name),
+                                                                           std::move(fn));
+                return;
+            }
             primitives_.add(std::move(name), std::move(fn));
         };
     }
     // Issue #709: meta-aware registrar for EDA/SV primitives with DEFINE_PRIMITIVE_META.
     [[nodiscard]] std::function<void(std::string, PrimFn, PrimMeta)> prim_registrar_with_meta() {
         return [this](std::string name, PrimFn fn, PrimMeta meta) {
+            if (primitives_detail::ObservabilityPrims::is_legacy_stats_name(name)) {
+                (void)meta; // stats are internal; PrimMeta not published
+                primitives_detail::ObservabilityPrims::register_stats_impl(std::move(name),
+                                                                           std::move(fn));
+                return;
+            }
             primitives_.add(std::move(name), std::move(fn), std::move(meta));
         };
     }
@@ -2222,6 +2253,8 @@ private:
         nullptr; // for mutate:* primitives (set via set_flat_pool or eval_flat)
     ast::StringPool* mutate_target_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr; // EDSL persistent workspace (set via (set-code ...))
+    // Issue #1419: current AI agent fingerprint (0 = system).
+    std::uint64_t current_agent_fingerprint_ = 0;
     ast::StringPool* workspace_pool_ = nullptr;
     ast::FlatAST* current_flat_ =
         nullptr; // per-eval source-being-evaluated (set by CompilerService eval paths)
@@ -2627,6 +2660,10 @@ private:
     // are set (which happens on any mutation). This lets eval-current skip
     // full re-evaluation when nothing has changed.
     std::optional<types::EvalValue> last_eval_current_result_;
+    // Issue #1441: invalidate eval-current cache when FlatAST generation
+    // advances (e.g. try_rollback_rebind_op / structural rollback bumps
+    // generation even if a subsequent clear_all_dirty left last_form clean).
+    std::uint16_t last_eval_current_generation_ = 0;
 
     // ── Incremental typecheck cache (Issue #159 Phase 5) ──────
     // Caches the last typecheck-current result string. Used to skip the

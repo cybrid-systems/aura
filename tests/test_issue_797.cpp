@@ -19,7 +19,7 @@
 // (shape_inval_on_compact) + cascade dirty_ in affected
 // IR/FlatAST blocks; wire to mutation_epoch_ bump + #741
 // impact, (4) metrics/primitive: enhance
-// (query:arena-auto-compact-defrag-stats) returning
+// (engine:metrics \"query:arena-auto-compact-defrag-stats\") returning
 // (auto_compact_triggers, frag_reduced_bp,
 // live_defrag_savings, fiber_yield_during_compact,
 // shape_inval_count, defrag_blocked_fibers); SLO frag
@@ -86,9 +86,9 @@
 //        → 1 (activity observed, no fiber-yield yet) and
 //        then 1 → 0 (production-ready once yield seen)
 //   AC5: sibling observability regression — #685
-//        (query:arena-auto-compact-stats), #642
-//        (query:arena-auto-compaction-stats), #569
-//        (query:arena-auto-compact-defrag-stats)
+//        (engine:metrics \"query:arena-auto-compact-stats\"), #642
+//        (engine:metrics \"query:arena-auto-compaction-stats\"), #569
+//        (engine:metrics \"query:arena-auto-compact-defrag-stats\")
 //        primitives still reachable with their schema
 //        sentinels intact
 
@@ -332,12 +332,12 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println(
         "\n--- AC5: sibling observability regression (#685 / #642 / #569 primitives intact) ---");
 
-    // #685: (query:arena-auto-compact-stats) — original auto-policy
+    // #685: (engine:metrics \"query:arena-auto-compact-stats\") — original auto-policy
     // primitive. 5 fields, no schema sentinel (pre-schema-primitive-
     // convention).
-    auto r685 = cs.eval("(query:arena-auto-compact-stats)");
+    auto r685 = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
     CHECK(r685 && aura::compiler::types::is_hash(*r685),
-          "#685 (query:arena-auto-compact-stats) still returns a hash");
+          "#685 (engine:metrics \"query:arena-auto-compact-stats\") still returns a hash");
     for (const auto& k : {"auto-triggers", "frag-reduced", "shape-inval-on-compact",
                           "defrag-savings", "yield-checks-hit"}) {
         auto f = cs.eval(
@@ -345,12 +345,13 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         CHECK(f, std::format("#685 field '{}' still present", k));
     }
 
-    // #642: (query:arena-auto-compaction-stats) — AC1 wire-up
+    // #642: (engine:metrics \"query:arena-auto-compaction-stats\") — AC1 wire-up
     // foundation primitive. 3 fields + schema sentinel == 642.
-    auto r642 = cs.eval("(query:arena-auto-compaction-stats)");
+    auto r642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
     CHECK(r642 && aura::compiler::types::is_hash(*r642),
-          "#642 (query:arena-auto-compaction-stats) still returns a hash");
-    const auto schema_642 = hash_int_field(cs, "(query:arena-auto-compaction-stats)", "schema");
+          "#642 (engine:metrics \"query:arena-auto-compaction-stats\") still returns a hash");
+    const auto schema_642 =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compaction-stats\")", "schema");
     CHECK(schema_642 == 642, std::format("#642 schema = {} (expected 642)", schema_642));
     for (const auto& k : {"auto-trigger", "live-move-yield", "guard-defrag"}) {
         auto f = cs.eval(std::format(
@@ -358,22 +359,23 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         CHECK(f, std::format("#642 field '{}' still present", k));
     }
 
-    // #569: (query:arena-auto-compact-defrag-stats) — Task4-review
+    // #569: (engine:metrics \"query:arena-auto-compact-defrag-stats\") — Task4-review
     // closing hash for tiered SmallObjectPool + dtor tracking +
     // auto-compaction + live defrag + fiber safepoint coordination.
     // Originally a 32-slot hash (no schema sentinel).
-    auto r569 = cs.eval("(query:arena-auto-compact-defrag-stats)");
+    auto r569 = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
     CHECK(r569 && aura::compiler::types::is_hash(*r569),
-          "#569 (query:arena-auto-compact-defrag-stats) still returns a hash");
+          "#569 (engine:metrics \"query:arena-auto-compact-defrag-stats\") still returns a hash");
 
     // #796 (most recent sibling) regression: confirm that the
-    // (query:ir-soa-full-migration-stats) primitive is unaffected
+    // (engine:metrics \"query:ir-soa-full-migration-stats\") primitive is unaffected
     // by the #797 enhancement (cross-subsystem observability
     // layers are independent).
-    auto r796 = cs.eval("(query:ir-soa-full-migration-stats)");
+    auto r796 = cs.eval("(engine:metrics \"query:ir-soa-full-migration-stats\")");
     CHECK(r796 && aura::compiler::types::is_hash(*r796),
-          "#796 (query:ir-soa-full-migration-stats) still returns a hash");
-    const auto schema_796 = hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "schema");
+          "#796 (engine:metrics \"query:ir-soa-full-migration-stats\") still returns a hash");
+    const auto schema_796 =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "schema");
     CHECK(schema_796 == 796, std::format("#796 schema = {} (expected 796)", schema_796));
 }
 

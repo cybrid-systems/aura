@@ -61,7 +61,7 @@ bool test_atomic_batch_metrics_bump() {
 bool test_query_atomic_batch_stats() {
     std::println("\n--- AC3: query:atomic-batch-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:atomic-batch-stats)");
+    auto r = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -78,7 +78,7 @@ bool test_query_atomic_batch_stats_after_bump() {
     auto before = ev.get_atomic_batch_steal_violation();
     ev.bump_atomic_batch_steal_violation();
     auto after = ev.get_atomic_batch_steal_violation();
-    auto r = cs.eval("(query:atomic-batch-stats)");
+    auto r = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
         return false;
@@ -139,7 +139,7 @@ bool test_define_eval_regression() {
 bool test_compiler_incremental_stats_regression() {
     std::println("\n--- AC7: query:compiler-incremental-stats still works (regression) ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:compiler-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     if (!r) {
         ++g_failed;
         return false;

@@ -36,7 +36,7 @@ WORKSPACE  (workspace :op …)  — #1437
   (workspace :merge id)
   (workspace :lock id) / (workspace :unlock id)
 
-METRICS  (engine:metrics …)  — #1433; never add *-stats names
+METRICS  (engine:metrics …)  — #1433/#1439; query:*-stats are NOT public (use facade)
   (engine:metrics)                 ; nested groups
   (engine:metrics :group "jit")
   (engine:metrics "query:foo-stats")  ; legacy read by name only

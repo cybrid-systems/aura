@@ -31,7 +31,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t loc_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:reflection-schema-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:reflection-schema-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -90,7 +91,7 @@ static aura::ast::NodeId first_macro_introduced_node(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:reflection-schema-stats (schema 750) ---");
     CHECK(setup_macro_workspace(cs), "macro workspace setup");
-    auto h = cs.eval("(query:reflection-schema-stats)");
+    auto h = cs.eval("(engine:metrics \"query:reflection-schema-stats\")");
     CHECK(h && is_hash(*h), "reflection-schema-stats returns hash");
     CHECK(loc_hash(cs, "schema") == 750, "schema == 750");
     CHECK(loc_hash(cs, "validated") >= 0, "validated present");
@@ -148,9 +149,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "stats monotonic over mutate matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto rpm = cs.eval("(query:reflect-postmutate-stats)");
-    auto mhf = cs.eval("(query:macro-hygiene-fiber-panic-stats)");
-    auto reb = cs.eval("(query:reflect-edsl-bridge-stats)");
+    auto rpm = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
+    auto mhf = cs.eval("(engine:metrics \"query:macro-hygiene-fiber-panic-stats\")");
+    auto reb = cs.eval("(engine:metrics \"query:reflect-edsl-bridge-stats\")");
     CHECK(rpm && is_hash(*rpm), "reflect-postmutate-stats regression");
     CHECK(mhf && is_hash(*mhf), "macro-hygiene-fiber-panic-stats regression");
     CHECK(reb && is_int(*reb), "reflect-edsl-bridge-stats regression");

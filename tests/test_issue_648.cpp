@@ -88,8 +88,9 @@ int aura_issue_648_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:panic-checkpoint-fiber-stats) shape ---");
-        auto h = cs.eval("(query:panic-checkpoint-fiber-stats)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:panic-checkpoint-fiber-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "panic-checkpoint-fiber-stats returns a hash");
         const auto xfer = hash_int(cs, "transfer-on-resume");
@@ -110,20 +111,24 @@ int aura_issue_648_run() {
         CHECK(s_life.has_value(),
               "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") reachable (existing "
               "high-level panic lifecycle primitive back-compat)");
-        auto s_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
-        CHECK(s_647.has_value(),
-              "(query:envframe-dualpath-stale-stats-hash) reachable (#647 back-compat)");
-        auto s_646 = cs.eval("(query:gc-safepoint-deferral-stats)");
-        CHECK(s_646.has_value(),
-              "(query:gc-safepoint-deferral-stats) reachable (#646 back-compat)");
-        auto s_645 = cs.eval("(query:scheduler-steal-bias-stats)");
-        CHECK(s_645.has_value(), "(query:scheduler-steal-bias-stats) reachable (#645 back-compat)");
-        auto s_644 = cs.eval("(query:aot-reload-func-table-stats)");
-        CHECK(s_644.has_value(),
-              "(query:aot-reload-func-table-stats) reachable (#644 back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
+        auto s_647 = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
+        CHECK(s_647.has_value(), "(engine:metrics \"query:envframe-dualpath-stale-stats-hash\") "
+                                 "reachable (#647 back-compat)");
+        auto s_646 = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
+        CHECK(
+            s_646.has_value(),
+            "(engine:metrics \"query:gc-safepoint-deferral-stats\") reachable (#646 back-compat)");
+        auto s_645 = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
+        CHECK(s_645.has_value(),
+              "(engine:metrics \"query:scheduler-steal-bias-stats\") reachable (#645 back-compat)");
+        auto s_644 = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
+        CHECK(
+            s_644.has_value(),
+            "(engine:metrics \"query:aot-reload-func-table-stats\") reachable (#644 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -157,10 +162,11 @@ int aura_issue_648_run() {
     // `query:panic-checkpoint-lifecycle-stats`.
     {
         std::println("\n--- AC5: naming distinction from panic-checkpoint-lifecycle-stats ---");
-        auto new_p = cs.eval("(query:panic-checkpoint-fiber-stats)");
+        auto new_p = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
         auto old_p = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
         CHECK(new_p.has_value(),
-              "new primitive (query:panic-checkpoint-fiber-stats) reachable (-fiber- midfix)");
+              "new primitive (engine:metrics \"query:panic-checkpoint-fiber-stats\") reachable "
+              "(-fiber- midfix)");
         CHECK(old_p.has_value(),
               "existing (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") still "
               "reachable (high-level lifecycle)");
@@ -192,7 +198,7 @@ int aura_issue_648_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:panic-checkpoint-fiber-stats)");
+                auto r = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

@@ -48,7 +48,8 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:aot-checkpoint-version-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:aot-checkpoint-version-stats\") \"" + key +
+                     "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -66,7 +67,7 @@ static std::int64_t stats_sum(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:aot-checkpoint-version-stats (schema 653) ---");
-    auto h = cs.eval("(query:aot-checkpoint-version-stats)");
+    auto h = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
     CHECK(h && is_hash(*h), "aot-checkpoint-version-stats returns hash");
     CHECK(hash_int(cs, "schema") == 653, "schema == 653");
     CHECK(hash_int(cs, "checkpoint-version-drifts") >= 0, "checkpoint-version-drifts present");
@@ -147,8 +148,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "aot-checkpoint stats monotonic over stress");
 
     std::println("\n--- AC7: query regression ---");
-    auto reload = cs.eval("(query:aot-reload-stats)");
-    auto panic = cs.eval("(query:panic-checkpoint-fiber-stats)");
+    auto reload = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
+    auto panic = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
     CHECK(reload && is_hash(*reload), "aot-reload-stats regression");
     CHECK(panic && is_hash(*panic), "panic-checkpoint-fiber-stats regression");
 }

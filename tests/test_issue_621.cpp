@@ -21,9 +21,9 @@
 //     get_pattern_index_eager_mutate_rebuilds() /
 //     get_pattern_index_eager_cow_rebuilds()
 //   - (engine:metrics \"query:pattern-index-stats\") returns int (sum of 6) for back-compat
-//   - (query:pattern-index-rebuild-stats) returns 5-field hash
+//   - (engine:metrics \"query:pattern-index-rebuild-stats\") returns 5-field hash
 //   - (engine:metrics \"query:pattern-hygiene-stats\") / (query:pattern-marker-stats) /
-//     (query:pattern-macro-filter-stats) for hygiene/marker/filter layers
+//     (engine:metrics \"query:pattern-macro-filter-stats\") for hygiene/marker/filter layers
 
 #include <atomic>
 #include <cstdint>
@@ -68,13 +68,13 @@ int aura_issue_621_run() {
 
     aura::compiler::CompilerService cs;
 
-    // AC1: (query:pattern-index-stats-hash) returns a hash with
+    // AC1: (engine:metrics \"query:pattern-index-stats-hash\") returns a hash with
     // 11 documented fields.
     {
-        std::println("\n--- AC1: (query:pattern-index-stats-hash) shape ---");
-        auto h = cs.eval("(query:pattern-index-stats-hash)");
+        std::println("\n--- AC1: (engine:metrics \"query:pattern-index-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:pattern-index-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h), "pattern-index-stats-hash returns a hash");
-        const std::string eval_str = "(query:pattern-index-stats-hash)";
+        const std::string eval_str = "(engine:metrics \"query:pattern-index-stats-hash\")";
         const auto hits = hash_int(cs, eval_str, "hits");
         const auto misses = hash_int(cs, eval_str, "misses");
         const auto rebuilds = hash_int(cs, eval_str, "rebuilds");
@@ -112,11 +112,11 @@ int aura_issue_621_run() {
         auto legacy = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
         CHECK(legacy && aura::compiler::types::is_int(*legacy),
               "(engine:metrics \"query:pattern-index-stats\") returns an int (#547 back-compat)");
-        // (query:pattern-index-stats-hash) returns a hash, not the
+        // (engine:metrics \"query:pattern-index-stats-hash\") returns a hash, not the
         // legacy int — the new primitive's contract is hash-shaped.
-        auto newer = cs.eval("(query:pattern-index-stats-hash)");
+        auto newer = cs.eval("(engine:metrics \"query:pattern-index-stats-hash\")");
         CHECK(newer && aura::compiler::types::is_hash(*newer),
-              "(query:pattern-index-stats-hash) returns a hash (new contract)");
+              "(engine:metrics \"query:pattern-index-stats-hash\") returns a hash (new contract)");
     }
 
     // AC3: derived-metric invariants on the hash. With no workload
@@ -125,33 +125,37 @@ int aura_issue_621_run() {
     {
         std::println("\n--- AC3: derived-metric invariants ---");
         // Fresh service: no index activity yet.
-        const auto hits = hash_int(cs, "(query:pattern-index-stats-hash)", "hits");
-        const auto misses = hash_int(cs, "(query:pattern-index-stats-hash)", "misses");
+        const auto hits =
+            hash_int(cs, "(engine:metrics \"query:pattern-index-stats-hash\")", "hits");
+        const auto misses =
+            hash_int(cs, "(engine:metrics \"query:pattern-index-stats-hash\")", "misses");
         const auto arity_accuracy =
-            hash_int(cs, "(query:pattern-index-stats-hash)", "arity-accuracy");
+            hash_int(cs, "(engine:metrics \"query:pattern-index-stats-hash\")", "arity-accuracy");
         if (hits == 0 && misses == 0) {
             // No workload: accuracy should be 0 (denominator 0 -> 0).
             CHECK(arity_accuracy == 0,
                   std::format("fresh-service arity-accuracy == 0 (got {})", arity_accuracy));
             // recommendation = 0 since the high-miss-rate branch
             // requires total > 0.
-            const auto rec = hash_int(cs, "(query:pattern-index-stats-hash)", "recommendation");
+            const auto rec = hash_int(cs, "(engine:metrics \"query:pattern-index-stats-hash\")",
+                                      "recommendation");
             CHECK(rec == 0, std::format("fresh-service recommendation == 0 (got {})", rec));
         } else {
             std::println("  (workload present, skipping zero-state invariant)");
         }
     }
 
-    // AC4: (query:pattern-index-rebuild-stats) (#490) is unchanged
+    // AC4: (engine:metrics \"query:pattern-index-rebuild-stats\") (#490) is unchanged
     // and still returns a hash. Two related primitives side-by-side
     // — one for the 6-counter aggregate (#547 + #554), one for the
     // rebuild-dispatch sub-counters (#490), now joined by
     // structured form (#621).
     {
-        std::println("\n--- AC4: (query:pattern-index-rebuild-stats) reachability ---");
-        auto rs = cs.eval("(query:pattern-index-rebuild-stats)");
+        std::println(
+            "\n--- AC4: (engine:metrics \"query:pattern-index-rebuild-stats\") reachability ---");
+        auto rs = cs.eval("(engine:metrics \"query:pattern-index-rebuild-stats\")");
         CHECK(rs && aura::compiler::types::is_hash(*rs),
-              "(query:pattern-index-rebuild-stats) reachable (#490)");
+              "(engine:metrics \"query:pattern-index-rebuild-stats\") reachable (#490)");
     }
 
     // AC5: concurrent reads under 2 threads × 4 iters. The
@@ -169,7 +173,7 @@ int aura_issue_621_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:pattern-index-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:pattern-index-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

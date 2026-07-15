@@ -18,9 +18,9 @@
 //   - aura_fiber_current_id() (C-linkage shim) for cross-fiber
 //     provenance
 //   - is_valid_in() full-condition check
-//   - Existing (query:stable-ref-stats) / (query:stable-ref-stats-
-//     hash) / (query:stable-ref-lifecycle-stats) /
-//     (query:stable-ref-cow-fiber-stats) / (query:stable-ref-
+//   - Existing (engine:metrics \"query:stable-ref-stats\") / (query:stable-ref-stats-
+//     hash) / (engine:metrics \"query:stable-ref-lifecycle-stats\") /
+//     (engine:metrics \"query:stable-ref-cow-fiber-stats\") / (query:stable-ref-
 //     workspace-tree-stats) for aggregate observability
 //     (count-level counters, not per-ref fields)
 
@@ -175,19 +175,21 @@ int aura_issue_620_run() {
         CHECK(before && after, "primitives-meta-catalog stable under repeated calls");
     }
 
-    // AC5: legacy (query:stable-ref-stats) still returns an int
+    // AC5: legacy (engine:metrics \"query:stable-ref-stats\") still returns an int
     // (back-compat — Issue #457 + #470). And the new primitive
     // exists alongside the existing primitives without
     // interference.
     {
         std::println("\n--- AC5: back-compat with stable-ref-stats / stats-hash ---");
-        auto s0 = cs.eval("(query:stable-ref-stats)");
+        auto s0 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
         CHECK(s0 && aura::compiler::types::is_int(*s0),
-              "(query:stable-ref-stats) returns an int (#457 back-compat)");
-        auto s1 = cs.eval("(query:stable-ref-stats-hash)");
-        CHECK(s1.has_value(), "(query:stable-ref-stats-hash) reachable (#470 back-compat)");
-        auto lc = cs.eval("(query:stable-ref-lifecycle-stats)");
-        CHECK(lc.has_value(), "(query:stable-ref-lifecycle-stats) reachable (#497 back-compat)");
+              "(engine:metrics \"query:stable-ref-stats\") returns an int (#457 back-compat)");
+        auto s1 = cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")");
+        CHECK(s1.has_value(),
+              "(engine:metrics \"query:stable-ref-stats-hash\") reachable (#470 back-compat)");
+        auto lc = cs.eval("(engine:metrics \"query:stable-ref-lifecycle-stats\")");
+        CHECK(lc.has_value(),
+              "(engine:metrics \"query:stable-ref-lifecycle-stats\") reachable (#497 back-compat)");
     }
 
     // AC6: concurrent provenance calls under 2 threads × 4 iters.

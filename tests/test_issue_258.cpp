@@ -22,7 +22,7 @@
 //      infer_flat_partial so this stays 0)
 // 2. CompilerSnapshot mirrors the 4 counters plus the derived
 //    multi_mutation_recompute_ratio_bp (basis points: 0-10000).
-// 3. (compile:multi-mutation-stats) Aura primitive returns a
+// 3. (engine:metrics \"compile:multi-mutation-stats\") Aura primitive returns a
 //    hash with all 5 fields.
 // 4. ConstraintSystem::solve_delta() wrapped in a timer that
 //    accumulates into delta_solve_time_us via the metrics_
@@ -33,7 +33,7 @@
 //
 // Test cases:
 //   AC1: snapshot fields start at 0 on a fresh CompilerService
-//   AC2: (compile:multi-mutation-stats) primitive returns a
+//   AC2: (engine:metrics \"compile:multi-mutation-stats\") primitive returns a
 //        hash (counters are queryable via Aura API)
 //   AC3: typecheck() bumps cache_hits or cache_misses
 //   AC4: multi_mutation_recompute_ratio_bp computes from
@@ -90,9 +90,11 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:multi-mutation-stats) primitive returns a hash ---");
+    std::println("\n--- AC2: (engine:metrics \"compile:multi-mutation-stats\") primitive returns a "
+                 "hash ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:multi-mutation-stats))\")");
+    auto r1 =
+        cs.eval("(set-code \"(define h (engine:metrics \"compile:multi-mutation-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -110,14 +112,14 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:multi-mutation-stats) returns a hash (hash? is #t)");
+    CHECK(true, "(engine:metrics \"compile:multi-mutation-stats\") returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
     if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:multi-mutation-stats) is not a pair (pair? is #f)");
+    CHECK(true, "(engine:metrics \"compile:multi-mutation-stats\") is not a pair (pair? is #f)");
     // Verify the 5 keys exist with int values. Note: stale-cache-total
     // can be > 0 after (eval-current) because the evaluator's internal
     // typecheck may hit TypeVars during the eval-current path. So
@@ -153,8 +155,10 @@ bool test_typecheck_bumps_cache() {
         return false;
     }
     // Capture baseline.
-    auto rg = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-hits-total\")");
-    auto rm = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-misses-total\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"cache-hits-total\")");
+    auto rm = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"cache-misses-total\")");
     if (!rg || !aura::compiler::types::is_int(*rg) || !rm || !aura::compiler::types::is_int(*rm)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -166,8 +170,10 @@ bool test_typecheck_bumps_cache() {
     auto rt = cs.typecheck("(+ x 1)");
     (void)rt; // result may be "type: Int" or similar; we only care about side-effects
     // Read counters again.
-    auto rg2 = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-hits-total\")");
-    auto rm2 = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-misses-total\")");
+    auto rg2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"cache-hits-total\")");
+    auto rm2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"cache-misses-total\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2) || !rm2 ||
         !aura::compiler::types::is_int(*rm2)) {
         std::println("  FAIL: hash-ref after typecheck failed");
@@ -205,11 +211,14 @@ bool test_multi_mutation_recompute_ratio() {
         std::string src = std::string("(+ x ") + std::to_string(i) + ")";
         (void)cs.typecheck(src);
     }
-    auto rh = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-hits-total\")");
-    auto rm = cs.eval("(hash-ref (compile:multi-mutation-stats) \"cache-misses-total\")");
-    auto rs = cs.eval("(hash-ref (compile:multi-mutation-stats) \"stale-cache-total\")");
-    auto rr =
-        cs.eval("(hash-ref (compile:multi-mutation-stats) \"multi-mutation-recompute-ratio-bp\")");
+    auto rh = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"cache-hits-total\")");
+    auto rm = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"cache-misses-total\")");
+    auto rs = cs.eval(
+        "(hash-ref (engine:metrics \"compile:multi-mutation-stats\") \"stale-cache-total\")");
+    auto rr = cs.eval("(hash-ref (engine:metrics \"compile:multi-mutation-stats\") "
+                      "\"multi-mutation-recompute-ratio-bp\")");
     if (!rh || !aura::compiler::types::is_int(*rh) || !rm || !aura::compiler::types::is_int(*rm) ||
         !rs || !aura::compiler::types::is_int(*rs) || !rr || !aura::compiler::types::is_int(*rr)) {
         std::println("  FAIL: hash-ref failed");

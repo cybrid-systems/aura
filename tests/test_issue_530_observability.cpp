@@ -53,7 +53,7 @@ int aura_issue_530_observability_run() {
     // AC1: query:incremental-production-relower-stats returns hash
     {
         std::println("\n--- AC1: query:incremental-production-relower-stats ---");
-        auto stats = cs.eval("(query:incremental-production-relower-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:incremental-production-relower-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:incremental-production-relower-stats returns hash");
         CHECK(hash_int(cs, "should-relower-triggers") >= 0, "should-relower-triggers present");
@@ -108,9 +108,9 @@ int aura_issue_530_observability_run() {
     // AC4: related incremental primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto cis = cs.eval("(query:compiler-incremental-stats)");
-        auto iis = cs.eval("(query:ir-soa-incremental-stats)");
-        auto cache = cs.eval("(query:compiler-cache-stats)");
+        auto cis = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+        auto iis = cs.eval("(engine:metrics \"query:ir-soa-incremental-stats\")");
+        auto cache = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
         CHECK(cis && aura::compiler::types::is_int(*cis),
               "compiler-incremental-stats int regression");
         CHECK(iis && aura::compiler::types::is_int(*iis),

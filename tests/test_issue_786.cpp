@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // test_issue_786.cpp — Issue #786: P0 unified
 // 'code-as-data' closed-loop production health
 // composite dashboard + composite SLO gates (Consolidate
@@ -74,6 +75,8 @@ namespace aura_issue_786_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -204,7 +207,7 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
     std::size_t edsl_reachable_count = 0;
     for (const auto& name : expected_sub_primitives) {
         try {
-            auto r = cs.eval(std::format("({})", name));
+            auto r = cs.eval(aura::test::aura_call_expr(name));
             if (r) {
                 ++edsl_reachable_count;
                 std::println("  [info] sub-primitive '{}' IS reachable via EDSL", name);
@@ -230,16 +233,18 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #785 + #759 sibling primitives unaffected ---");
-    auto a785 = cs.eval("(query:aot-concurrent-hotupdate-stats)");
-    auto a759 = cs.eval("(query:code-as-data-maturity-stats)");
+    auto a785 = cs.eval("(engine:metrics \"query:aot-concurrent-hotupdate-stats\")");
+    auto a759 = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
     CHECK(a785 && aura::compiler::types::is_hash(*a785),
           "query:aot-concurrent-hotupdate-stats hash regression (#785)");
     CHECK(a759 && aura::compiler::types::is_hash(*a759),
           "query:code-as-data-maturity-stats hash regression (#759)");
-    const auto a785_schema = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "schema");
+    const auto a785_schema =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "schema");
     CHECK(a785_schema == 785,
           std::format("#785 schema = {} (expected 785, no drift)", a785_schema));
-    const auto a759_schema = hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+    const auto a759_schema =
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(a759_schema == 759,
           std::format("#759 schema = {} (expected 759, no drift)", a759_schema));
 }

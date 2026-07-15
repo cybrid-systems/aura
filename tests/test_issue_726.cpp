@@ -98,10 +98,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:closed-loop-reliability-stats) hash shape ---");
-    auto r = cs.eval("(query:closed-loop-reliability-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:closed-loop-reliability-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:closed-loop-reliability-stats) returns a hash");
+          "(engine:metrics \"query:closed-loop-reliability-stats\") returns a hash");
     const std::vector<std::string> keys = {"ref-drift-prevented", "rollback-success",
                                            "feedback-mutate-rounds", "schema"};
     for (const auto& k : keys) {
@@ -113,20 +114,21 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto rdp =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "ref-drift-prevented");
+    const auto rdp = hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                                    "ref-drift-prevented");
     CHECK(rdp == 0, std::format("ref-drift-prevented = {} (expected 0 on fresh service)", rdp));
-    const auto rbs =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "rollback-success");
+    const auto rbs = hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                                    "rollback-success");
     CHECK(rbs == 0, std::format("rollback-success = {} (expected 0 on fresh service)", rbs));
-    const auto fmr =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "feedback-mutate-rounds");
+    const auto fmr = hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                                    "feedback-mutate-rounds");
     CHECK(fmr == 0, std::format("feedback-mutate-rounds = {} (expected 0 on fresh service)", fmr));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 726 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")", "schema");
     CHECK(schema == 726, std::format("schema = {} (expected 726)", schema));
 }
 
@@ -149,12 +151,12 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_closed_loop_feedback_mutate_round();
     ev.bump_closed_loop_feedback_mutate_round();
     ev.bump_closed_loop_feedback_mutate_round();
-    const auto rdp =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "ref-drift-prevented");
-    const auto rbs =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "rollback-success");
-    const auto fmr =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "feedback-mutate-rounds");
+    const auto rdp = hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                                    "ref-drift-prevented");
+    const auto rbs = hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                                    "rollback-success");
+    const auto fmr = hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                                    "feedback-mutate-rounds");
     CHECK(rdp == 3,
           std::format("after 3 ref-drift-prevented bumps: ref-drift-prevented = {} (expected 3)",
                       rdp));
@@ -177,7 +179,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     auto incremental = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     auto closure_env = cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")");
     auto jit_parity = cs.eval("(engine:metrics \"query:jit-interpreter-parity-stats\")");
-    auto ir_soa = cs.eval("(query:ir-soa-completeness-stats)");
+    auto ir_soa = cs.eval("(engine:metrics \"query:ir-soa-completeness-stats\")");
     auto arena = cs.eval("(engine:metrics \"query:arena-integration-stats\")");
     auto value_dispatch = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
@@ -243,7 +245,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         hash_int_field(cs, "(engine:metrics \"query:jit-interpreter-parity-stats\")", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema =

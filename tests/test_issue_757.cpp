@@ -49,7 +49,7 @@
 //     policy-violations specifically)
 //   - #458 (engine:metrics \"query:pattern-hygiene-stats\") — different scope (basic count)
 //   - #373 (mutate hygiene guard) — flat.is_macro_introduced internal check
-//   - #750 (query:reflection-schema-stats) — runtime reflection validate
+//   - #750 (engine:metrics \"query:reflection-schema-stats\") — runtime reflection validate
 //   - #757 is the FIRST observability surface that tracks the *fine-
 //     grained provenance + dynamic inliner policy + per-macro
 //     correlation* specifically as separate per-decision-point counters
@@ -109,10 +109,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:macro-hygiene-provenance-stats) hash shape ---");
-    auto r = cs.eval("(query:macro-hygiene-provenance-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:macro-hygiene-provenance-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:macro-hygiene-provenance-stats) returns a hash");
+          "(engine:metrics \"query:macro-hygiene-provenance-stats\") returns a hash");
     const std::vector<std::string> keys = {"provenance-captured", "inliner-policy-violations",
                                            "provenance-violations", "hygiene-dirty-impact",
                                            "schema"};
@@ -125,27 +126,29 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto captured =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "provenance-captured");
+    const auto captured = hash_int_field(
+        cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "provenance-captured");
     CHECK(captured == 0,
           std::format("provenance-captured = {} (expected 0 on fresh service)", captured));
     const auto inliner =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "inliner-policy-violations");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")",
+                       "inliner-policy-violations");
     CHECK(inliner == 0,
           std::format("inliner-policy-violations = {} (expected 0 on fresh service)", inliner));
-    const auto prov_v =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "provenance-violations");
+    const auto prov_v = hash_int_field(
+        cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "provenance-violations");
     CHECK(prov_v == 0,
           std::format("provenance-violations = {} (expected 0 on fresh service)", prov_v));
-    const auto dirty =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "hygiene-dirty-impact");
+    const auto dirty = hash_int_field(
+        cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "hygiene-dirty-impact");
     CHECK(dirty == 0,
           std::format("hygiene-dirty-impact = {} (expected 0 on fresh service)", dirty));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 757 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(schema == 757, std::format("schema = {} (expected 757)", schema));
 }
 
@@ -160,14 +163,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_macro_hygiene_inliner_policy_violation();
     ev.bump_macro_hygiene_inliner_policy_violation();
     ev.bump_macro_hygiene_inliner_policy_violation();
-    const auto captured =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "provenance-captured");
+    const auto captured = hash_int_field(
+        cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "provenance-captured");
     const auto inliner =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "inliner-policy-violations");
-    const auto prov_v =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "provenance-violations");
-    const auto dirty =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "hygiene-dirty-impact");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")",
+                       "inliner-policy-violations");
+    const auto prov_v = hash_int_field(
+        cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "provenance-violations");
+    const auto dirty = hash_int_field(
+        cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "hygiene-dirty-impact");
     CHECK(captured == 5,
           std::format("after 5 provenance-captured bumps: provenance-captured = {} (expected 5)",
                       captured));
@@ -193,14 +197,14 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     auto incremental = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     auto closure_env = cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")");
     auto jit_parity = cs.eval("(engine:metrics \"query:jit-interpreter-parity-stats\")");
-    auto ir_soa = cs.eval("(query:ir-soa-completeness-stats)");
+    auto ir_soa = cs.eval("(engine:metrics \"query:ir-soa-completeness-stats\")");
     auto arena = cs.eval("(engine:metrics \"query:arena-integration-stats\")");
     auto value_dispatch = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
-    auto closed_loop = cs.eval("(query:closed-loop-reliability-stats)");
-    auto unified_error = cs.eval("(query:unified-error-stats)");
-    auto arena_concurrent = cs.eval("(query:arena-concurrent-compact-stats)");
-    auto aot_safe = cs.eval("(query:aot-safe-swap-boundary-stats)");
-    auto ir_marker = cs.eval("(query:ir-marker-hygiene-stats)");
+    auto closed_loop = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
+    auto unified_error = cs.eval("(engine:metrics \"query:unified-error-stats\")");
+    auto arena_concurrent = cs.eval("(engine:metrics \"query:arena-concurrent-compact-stats\")");
+    auto aot_safe = cs.eval("(engine:metrics \"query:aot-safe-swap-boundary-stats\")");
+    auto ir_marker = cs.eval("(engine:metrics \"query:ir-marker-hygiene-stats\")");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
@@ -280,7 +284,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         hash_int_field(cs, "(engine:metrics \"query:jit-interpreter-parity-stats\")", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema =
@@ -293,22 +298,24 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         value_dispatch_schema == 723,
         std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
-    const auto unified_error_schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto unified_error_schema =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "schema");
     CHECK(unified_error_schema == 728,
           std::format("unified-error schema = {} (expected 728, no drift)", unified_error_schema));
     const auto arena_concurrent_schema =
-        hash_int_field(cs, "(query:arena-concurrent-compact-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")", "schema");
     CHECK(arena_concurrent_schema == 731,
           std::format("arena-concurrent schema = {} (expected 731, no drift)",
                       arena_concurrent_schema));
     const auto aot_safe_schema =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:aot-safe-swap-boundary-stats\")", "schema");
     CHECK(aot_safe_schema == 732,
           std::format("aot-safe-swap schema = {} (expected 732, no drift)", aot_safe_schema));
-    const auto ir_marker_schema = hash_int_field(cs, "(query:ir-marker-hygiene-stats)", "schema");
+    const auto ir_marker_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-marker-hygiene-stats\")", "schema");
     CHECK(ir_marker_schema == 733,
           std::format("ir-marker-hygiene schema = {} (expected 733, no drift)", ir_marker_schema));
     const auto macro_provenance_schema =

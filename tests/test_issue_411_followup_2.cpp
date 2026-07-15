@@ -10,7 +10,7 @@
 // through the tracker for O(uses) instead of the current
 // O(n) per_symbol walk. This scope-limited slice ships the
 // WIRING (tracker in service.ixx + 3 primitives + 3
-// metrics + 4 new keys in (compile:per-symbol-reinfer-stats))
+// metrics + 4 new keys in (engine:metrics \"compile:per-symbol-reinfer-stats\"))
 // so the optimization can be measured when it's wired in
 // the next commit.
 //
@@ -22,9 +22,9 @@
 //        the registered callers as a hash
 //   AC4: per-DefUseIndex isolation (Aura surface): adding
 //        to one index doesn't affect another
-//   AC5: (compile:per-defuse-index-stats) returns
+//   AC5: (engine:metrics \"compile:per-defuse-index-stats\") returns
 //        total-size + index-count + service ptr
-//   AC6: (compile:per-symbol-reinfer-stats) has 4 new
+//   AC6: (engine:metrics \"compile:per-symbol-reinfer-stats\") has 4 new
 //        per-DefUseIndex keys
 //   AC7: snapshot has 4 new per-DefUseIndex fields
 //   AC8: regression — existing eval still works
@@ -88,7 +88,8 @@ bool test_add_caller_primitive() {
     cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" 101))\")");
     cs.eval("(eval-current)");
     // Now read back via the stats primitive — total-size should be 1.
-    auto r = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"total-size\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"compile:per-defuse-index-stats\") \"total-size\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         std::println("  FAIL: hash-ref total-size did not return int (val={})", r ? r->val : -1);
         ++g_failed;
@@ -171,14 +172,14 @@ bool test_per_index_isolation_via_auras() {
 }
 
 bool test_stats_primitive() {
-    std::println("\n--- AC5: (compile:per-defuse-index-stats) returns hash ---");
+    std::println("\n--- AC5: (engine:metrics \"compile:per-defuse-index-stats\") returns hash ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin "
             "  (compile:per-defuse-index-add \\\"s1\\\" 11) "
             "  (compile:per-defuse-index-add \\\"s1\\\" 12) "
             "  (compile:per-defuse-index-add \\\"s2\\\" 13))\")");
     cs.eval("(eval-current)");
-    auto r = cs.eval("(define st (compile:per-defuse-index-stats))");
+    auto r = cs.eval("(define st (engine:metrics \"compile:per-defuse-index-stats\"))");
     if (!r) {
         std::println("  FAIL: define st failed");
         ++g_failed;
@@ -191,7 +192,7 @@ bool test_stats_primitive() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:per-defuse-index-stats) returns a hash");
+    CHECK(true, "(engine:metrics \"compile:per-defuse-index-stats\") returns a hash");
     // Verify the 3 keys.
     for (const char* key : {"total-size", "index-count", "defuse-service-ptr"}) {
         std::string check = std::string("(hash-ref st \"") + key + "\")";
@@ -217,10 +218,10 @@ bool test_stats_primitive() {
 }
 
 bool test_per_symbol_reinfer_stats_has_new_keys() {
-    std::println(
-        "\n--- AC6: (compile:per-symbol-reinfer-stats) has 4 new per-DefUseIndex keys ---");
+    std::println("\n--- AC6: (engine:metrics \"compile:per-symbol-reinfer-stats\") has 4 new "
+                 "per-DefUseIndex keys ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
+    cs.eval("(set-code \"(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key :
          {"per-defuse-index-used-total", "per-defuse-index-visited-total",

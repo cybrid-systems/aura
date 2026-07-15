@@ -32,7 +32,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-sweep-1144-1148-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-sweep-1144-1148-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, "query:production-sweep-1144-1148-stats", "schema") == 1144, "schema");
         CHECK(href(cs, "query:production-sweep-1144-1148-stats", "active") == 1, "active");
@@ -54,7 +54,7 @@ int main() {
     {
         auto r = cs.eval("(orch:metrics)");
         CHECK(r, "orch:metrics returns");
-        auto s = cs.eval("(query:orchestration-telemetry-pipeline-stats)");
+        auto s = cs.eval("(engine:metrics \"query:orchestration-telemetry-pipeline-stats\")");
         CHECK(s && is_hash(*s), "orch telemetry stats hash");
         CHECK(href(cs, "query:orchestration-telemetry-pipeline-stats", "total") >= 1,
               "orch total bumped");
@@ -62,7 +62,7 @@ int main() {
 
     // #1144 helper path still builds hashes
     {
-        auto s = cs.eval("(query:per-fiber-exception-state-stats)");
+        auto s = cs.eval("(engine:metrics \"query:per-fiber-exception-state-stats\")");
         CHECK(s && is_hash(*s), "per-fiber stats hash");
     }
 

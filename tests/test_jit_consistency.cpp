@@ -11,7 +11,7 @@
 //      cached_fns, inlined_prims, slow_prims, verify_fail,
 //      add_mod_fail, unhandled_opcode, intrinsics, fallback_count,
 //      prim_calls, prim_avg_ns) — the public surface for the
-//      (query:jit-stats) primitive.
+//      (engine:metrics \"query:jit-stats\") primitive.
 //   2. unhandled_opcode_count starts at 0, increments cleanly,
 //      and survives concurrent bumps (no atomic loss).
 //   3. intrinsic_count + fallback_count are independent.
@@ -67,7 +67,7 @@ static int g_failed = 0;
 
 // ── Test 1: format() includes all 12 documented fields ───────
 //
-// The (query:jit-stats) primitive in #427 reads this string
+// The (engine:metrics \"query:jit-stats\") primitive in #427 reads this string
 // verbatim. Pin the surface so future fields either appear in
 // format() or are explicitly documented as query:*-specific.
 bool test_format_includes_all_fields() {
@@ -95,7 +95,7 @@ bool test_format_includes_all_fields() {
     // The format() output uses lower_snake_case keys separated
     // by spaces, with = between key and value. Check that the
     // 12 documented keys are present (any value would do — the
-    // key surface is what (query:jit-stats) parses).
+    // key surface is what (engine:metrics \"query:jit-stats\") parses).
     static const char* kKeys[] = {
         "compiles",      "avg_us",       "hot_swaps",        "cached_fns",
         "inlined_prims", "slow_prims",   "prim_calls",       "prim_avg_ns",
@@ -187,7 +187,7 @@ bool test_unhandled_per_function_default() {
 
 // ── Test 5: format() survives concurrent bumps (no torn read) ──
 //
-// (query:jit-stats) can be called from a worker while
+// (engine:metrics \"query:jit-stats\") can be called from a worker while
 // compile_count / intrinsics are being bumped. format()
 // uses relaxed loads on every counter, so a torn read would
 // manifest as a buffer containing a partial value (e.g.

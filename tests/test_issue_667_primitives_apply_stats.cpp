@@ -73,7 +73,7 @@ static std::int64_t events_total(aura::compiler::CompilerService& cs) {
 
 static void run_ac1_schema(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:primitives-apply-stats (schema 667) ---");
-    auto h = cs.eval("(query:primitives-apply-stats)");
+    auto h = cs.eval("(engine:metrics \"query:primitives-apply-stats\")");
     CHECK(h && aura::compiler::types::is_hash(*h), "primitives-apply-stats returns hash");
     CHECK(stat_int(cs, "schema") == 667, "schema == 667");
     const auto l = lookup_hits(cs);
@@ -184,9 +184,10 @@ static void run_ac6_real_hot_path(aura::compiler::CompilerService& cs) {
 
 static void run_ac7_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: regression — adjacent list/primitive primitives reachable ---");
-    auto runtime_corr = cs.eval("(query:runtime-observability-correlated-stats)");
-    auto sv_defuse = cs.eval("(query:sv-defuse-stats)");
-    auto sv_iface = cs.eval("(query:sv-interface-structure-stats)");
+    auto runtime_corr =
+        cs.eval("(engine:metrics \"query:runtime-observability-correlated-stats\")");
+    auto sv_defuse = cs.eval("(engine:metrics \"query:sv-defuse-stats\")");
+    auto sv_iface = cs.eval("(engine:metrics \"query:sv-interface-structure-stats\")");
     CHECK(runtime_corr && aura::compiler::types::is_hash(*runtime_corr),
           "query:runtime-observability-correlated-stats (schema 673) regression [hash]");
     CHECK(sv_defuse && aura::compiler::types::is_hash(*sv_defuse),

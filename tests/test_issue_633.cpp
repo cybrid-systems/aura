@@ -12,8 +12,8 @@
 //   - (query:schema-of-primitive) (#617) — per-primitive schema
 //   - (query:primitives-meta-catalog) (#617) — 5-field catalog
 //   - (query:primitives-extensions-list) (#618) — extensions
-//   - (query:primitives-stats) (#479) — 8-field hot-path hash
-//   - (query:primitives-meta-stats) (#617) — primitive-meta
+//   - (engine:metrics \"query:primitives-stats\") (#479) — 8-field hot-path hash
+//   - (engine:metrics \"query:primitives-meta-stats\") (#617) — primitive-meta
 //   - (query:primitives-fastpath-per-prim) (#709) — per-prim
 //   - hotpath counters on CompilerMetrics + value_contract_
 //     violation_count + value_dispatch_hit_count
@@ -81,8 +81,9 @@ int aura_issue_633_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:stdlib-compiler-demands-stats-hash) shape ---");
-        auto h = cs.eval("(query:stdlib-compiler-demands-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:stdlib-compiler-demands-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:stdlib-compiler-demands-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "stdlib-compiler-demands-stats-hash returns a hash");
         const auto hotpath = hash_int(cs, "hotpath-calls");
@@ -107,14 +108,15 @@ int aura_issue_633_run() {
         CHECK(s_schema.has_value(), "(query:schema-of-primitive) reachable (#617 back-compat)");
         auto s_cat = cs.eval("(query:primitives-meta-catalog)");
         CHECK(s_cat.has_value(), "(query:primitives-meta-catalog) reachable (#617 back-compat)");
-        auto s_ext = cs.eval("(query:primitives-extension-stats)");
-        CHECK(s_ext.has_value(),
-              "(query:primitives-extension-stats) reachable (#618/#625 back-compat)");
-        auto s_stats = cs.eval("(query:primitives-stats)");
-        CHECK(s_stats.has_value(), "(query:primitives-stats) reachable (#479 back-compat)");
-        auto s_hp = cs.eval("(query:primitives-hotpath-stats)");
-        CHECK(s_hp.has_value(),
-              "(query:primitives-hotpath-stats) reachable (#625/#479 back-compat)");
+        auto s_ext = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
+        CHECK(s_ext.has_value(), "(engine:metrics \"query:primitives-extension-stats\") reachable "
+                                 "(#618/#625 back-compat)");
+        auto s_stats = cs.eval("(engine:metrics \"query:primitives-stats\")");
+        CHECK(s_stats.has_value(),
+              "(engine:metrics \"query:primitives-stats\") reachable (#479 back-compat)");
+        auto s_hp = cs.eval("(engine:metrics \"query:primitives-hotpath-stats\")");
+        CHECK(s_hp.has_value(), "(engine:metrics \"query:primitives-hotpath-stats\") reachable "
+                                "(#625/#479 back-compat)");
         auto s_by_cat = cs.eval("(query:primitives-by-category)");
         CHECK(s_by_cat.has_value(), "(query:primitives-by-category) reachable (#617 back-compat)");
     }
@@ -160,7 +162,7 @@ int aura_issue_633_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:stdlib-compiler-demands-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:stdlib-compiler-demands-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

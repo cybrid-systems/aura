@@ -57,7 +57,7 @@ static int count_kind(const std::vector<aura::compiler::OwnershipNote>& notes,
 }
 
 static std::int64_t linear_incremental_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:linear-ownership-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-incremental-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -172,8 +172,8 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(visited <= reinferred + ws->size(), "per_defuse visited bounded vs full AST size proxy");
 
     std::println("\n--- AC7: query regression ---");
-    auto lms = cs.eval("(query:linear-ownership-mutation-stats)");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
+    auto lms = cs.eval("(engine:metrics \"query:linear-ownership-mutation-stats\")");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(lms && is_int(*lms), "query:linear-ownership-mutation-stats returns int");
     CHECK(ces && is_hash(*ces), "query:closure-env-safety-stats returns hash");
 

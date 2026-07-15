@@ -58,7 +58,7 @@ int aura_issue_493_run() {
     // AC1: query:hotpath-bottleneck-stats fields
     {
         std::println("\n--- AC1: query:hotpath-bottleneck-stats ---");
-        auto stats = cs.eval("(query:hotpath-bottleneck-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:hotpath-bottleneck-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:hotpath-bottleneck-stats returns hash");
         CHECK(snap_stat(cs, "eval-flat-calls") >= 0, "eval-flat-calls present");
@@ -95,14 +95,14 @@ int aura_issue_493_run() {
     // AC3: query:soa-hotpath-adoption-stats regression
     {
         std::println("\n--- AC3: soa-hotpath-adoption-stats regression ---");
-        auto soa = cs.eval("(query:soa-hotpath-adoption-stats)");
+        auto soa = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
         CHECK(soa && aura::compiler::types::is_int(*soa), "soa-hotpath-adoption-stats regression");
     }
 
     // AC4: query:dirty-propagation-cost-stats regression
     {
         std::println("\n--- AC4: dirty-propagation-cost-stats regression ---");
-        auto dirty = cs.eval("(query:dirty-propagation-cost-stats)");
+        auto dirty = cs.eval("(engine:metrics \"query:dirty-propagation-cost-stats\")");
         CHECK(dirty && aura::compiler::types::is_int(*dirty),
               "dirty-propagation-cost-stats regression");
     }

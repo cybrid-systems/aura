@@ -56,7 +56,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-sweep-1276-1280-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-sweep-1276-1280-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, "query:production-sweep-1276-1280-stats", "schema") == 1276, "schema");
         CHECK(href(cs, "query:production-sweep-1276-1280-stats", "active") == 1, "active");
@@ -79,7 +79,7 @@ int main() {
 
     // #1276: reflect-schema-stats primitive
     {
-        auto r = cs.eval("(query:reflect-schema-stats)");
+        auto r = cs.eval("(engine:metrics \"query:reflect-schema-stats\")");
         CHECK(r && is_int(*r) && as_int(*r) == 1276, "query:reflect-schema-stats == 1276");
     }
 
@@ -93,7 +93,7 @@ int main() {
 
     // #1277: existing hygiene-violation-stats / dirty-impact stay reachable
     {
-        auto h = cs.eval("(query:hygiene-violation-stats)");
+        auto h = cs.eval("(engine:metrics \"query:hygiene-violation-stats\")");
         CHECK(h.has_value(), "query:hygiene-violation-stats callable");
         auto d = cs.eval("(query:dirty-impact)");
         CHECK(d.has_value(), "query:dirty-impact callable");

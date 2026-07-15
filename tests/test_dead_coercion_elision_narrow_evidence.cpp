@@ -38,7 +38,8 @@ using aura::ir::IRModule;
 using aura::ir::IROpcode;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:dead-coercion-elision-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:dead-coercion-elision-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -88,7 +89,7 @@ static IRModule make_narrow_cast_module() {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:dead-coercion-elision-stats (schema 799) ---");
-    auto h = cs.eval("(query:dead-coercion-elision-stats)");
+    auto h = cs.eval("(engine:metrics \"query:dead-coercion-elision-stats\")");
     CHECK(h && is_hash(*h), "dead-coercion-elision-stats returns hash");
     CHECK(stat_int(cs, "schema") == 799, "schema == 799");
     CHECK(elided_casts(cs) >= 0, "elided-casts non-negative");
@@ -134,8 +135,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(ev7b >= ev7a + 3, "aggregate elision counters monotonic");
 
     std::println("\n--- AC8: query regression ---");
-    auto elim687 = cs.eval("(query:dead-coercion-elim-stats)");
-    auto z629 = cs.eval("(query:dead-coercion-zerooverhead-stats)");
+    auto elim687 = cs.eval("(engine:metrics \"query:dead-coercion-elim-stats\")");
+    auto z629 = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
     CHECK(elim687 && is_hash(*elim687), "dead-coercion-elim-stats regression (#687)");
     CHECK(z629 && is_hash(*z629), "dead-coercion-zerooverhead-stats regression (#629)");
 }

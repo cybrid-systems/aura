@@ -28,7 +28,7 @@ namespace aura_issue_443_detail {
 bool test_query_verify_tool_stats() {
     std::println("\n--- AC1: query:verify-tool-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:verify-tool-stats)");
+    auto r = cs.eval("(engine:metrics \"query:verify-tool-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -69,7 +69,7 @@ bool test_cache_hit() {
         return false;
     }
     // Capture cache-hits baseline.
-    auto r_stats_before = cs.eval("(query:verify-tool-stats)");
+    auto r_stats_before = cs.eval("(engine:metrics \"query:verify-tool-stats\")");
     if (!r_stats_before) {
         ++g_failed;
         return false;
@@ -81,7 +81,7 @@ bool test_cache_hit() {
         ++g_failed;
         return false;
     }
-    auto r_stats_after = cs.eval("(query:verify-tool-stats)");
+    auto r_stats_after = cs.eval("(engine:metrics \"query:verify-tool-stats\")");
     if (!r_stats_after) {
         ++g_failed;
         return false;
@@ -135,7 +135,7 @@ bool test_parse_error() {
         ++g_failed;
         return false;
     }
-    auto r0 = cs.eval("(query:verify-tool-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:verify-tool-stats\")");
     if (!r0) {
         ++g_failed;
         return false;
@@ -148,7 +148,7 @@ bool test_parse_error() {
         ++g_failed;
         return false;
     }
-    auto r1 = cs.eval("(query:verify-tool-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:verify-tool-stats\")");
     if (!r1) {
         ++g_failed;
         return false;
@@ -163,13 +163,13 @@ bool test_parse_error() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC7: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:gc-safepoint-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:gc-safepoint-stats (regression for #439)");
-    auto r2 = cs.eval("(query:query-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:query-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:query-stats (regression for #447)");
-    auto r3 = cs.eval("(query:mutation-coordination-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:mutation-coordination-stats (regression for #448)");
     return true;

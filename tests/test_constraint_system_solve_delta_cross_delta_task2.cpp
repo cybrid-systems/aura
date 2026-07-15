@@ -52,7 +52,7 @@ static SolveResult solve_delta_with(ConstraintSystem& cs, Constraint c) {
 }
 
 static std::int64_t typed_incremental_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:typed-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:typed-incremental-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -171,7 +171,7 @@ static void run_integration_matrix(CompilerService& cs) {
 
     std::println("\n--- AC8: query regression ---");
     auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
-    auto cstats = cs.eval("(query:constraint-stats)");
+    auto cstats = cs.eval("(engine:metrics \"query:constraint-stats\")");
     CHECK(tms && is_int(*tms), "query:typed-mutation-stats returns int");
     CHECK(cstats && is_int(*cstats), "query:constraint-stats returns int");
 

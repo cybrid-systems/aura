@@ -159,9 +159,8 @@ void ObservabilityPrims::register_jit_p24(PrimRegistrar add, Evaluator& ev) {
     // Issue #764: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=764 + category=general
     // + arity=0 + pure=true (same pattern as #712-#763).
-    ev.primitives_.add(
-        "query:compiler-arena-closure-lifetime-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:compiler-arena-closure-lifetime-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -234,35 +233,7 @@ void ObservabilityPrims::register_jit_p24(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(764)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Compiler Arena AST / shared_ptr<FlatAST> lifetime safety vs "
-                        "GC-managed Env/Closure in closure_bridge_ under incremental "
-                        "re-lower + mutation: root-hits (# of arena AST root hits "
-                        "during GC walk via closure_bridge_ / live-closure list — "
-                        "proxy for \"how many live AST roots are correctly registered "
-                        "against the GC\"), bridge-sharedptr-pinned (# of bridge "
-                        "shared_ptr<FlatAST> pinned before Arena reset — proxy for "
-                        "invalidate path correctly retaining the old AST snapshot "
-                        "to keep live closures valid), cross-violations-prevented "
-                        "(# of cross-lifetime violations prevented at apply-time via "
-                        "AST validity check (marker / size) or safe fallback — proxy "
-                        "for \"how many use-after-Arena-reset violations did the "
-                        "runtime guard prevent in bridge closure apply\"), "
-                        "invalidate-ast-refresh (# of invalidate AST refresh "
-                        "snapshots taken before Arena reset — paired with "
-                        "sharedptr_pinned above). Pairs with the existing #757 + "
-                        "#758 + #759 + #760 + #761 + #762 + #763 4-field "
-                        "observability hashes but tracks the *compiler Arena AST / "
-                        "shared_ptr<FlatAST> lifetime vs GC-managed Env/Closure in "
-                        "closure_bridge_* composite specifically as separate "
-                        "per-decision-point counters. #764 exposes the cross-"
-                        "lifetime production health the Agent consumes to decide "
-                        "whether to refresh the bridge AST, pin shared_ptr, or "
-                        "trigger apply-time validity check under Guard commit.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 25 (orig lines 15043-15221)
@@ -337,9 +308,8 @@ void ObservabilityPrims::register_jit_p25(PrimRegistrar add, Evaluator& ev) {
     // Issue #765: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=765 + category=general
     // + arity=0 + pure=true (same pattern as #712-#764).
-    ev.primitives_.add(
-        "query:incremental-quote-lambda-linear-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:incremental-quote-lambda-linear-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -411,41 +381,7 @@ void ObservabilityPrims::register_jit_p25(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(765)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Full DepEntry quote/lambda tracking + impact_scope "
-                        "propagation to bridge_epoch bump, EnvFrame version "
-                        "re-stamp and linear state refresh in LoweringState/"
-                        "invalidate (refine/extend #741, non-duplicative): "
-                        "dep-quote-lambda-hits (# of DepEntry quote/lambda-"
-                        "introduced node hits during impact_scope — proxy "
-                        "for \"how often the incremental compiler identifies "
-                        "a quote/lambda node as affected\"), bridge-epoch-"
-                        "bump-on-impact (# of bridge_epoch bumps on impact "
-                        "re-lower of quote/lambda blocks — proxy for "
-                        "invalidate path correctly bumping bridge epoch to "
-                        "keep live closures fresh), env-version-refresh (# "
-                        "of EnvFrame version refreshes on impact re-lower — "
-                        "proxy for invalidate path correctly re-stamping "
-                        "captured EnvFrame version_ to keep GC walk safe), "
-                        "linear-state-refreshed (# of linear_ownership_state "
-                        "re-emits via emit_with_metadata for affected "
-                        "Linear* ops on impact — proxy for invalidate path "
-                        "correctly refreshing linear_ownership_state "
-                        "metadata to keep AI self-mod safe). Pairs with the "
-                        "existing #757 + #758 + #759 + #760 + #761 + #762 + "
-                        "#763 + #764 4-field observability hashes but tracks "
-                        "the *incremental compilation safety for quote/"
-                        "lambda/closure-heavy defines composite* specifically "
-                        "as separate per-decision-point counters. #765 "
-                        "exposes the incremental compilation + ownership "
-                        "safety production health the Agent consumes to "
-                        "decide whether to trigger quote/lambda re-lower, "
-                        "bridge_epoch bump, or linear state refresh under "
-                        "Guard commit.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 26 (orig lines 15222-15387)
@@ -532,90 +468,92 @@ void ObservabilityPrims::register_jit_p26(PrimRegistrar add, Evaluator& ev) {
     //                                 flags + activity
     //                                 signal
     //   - schema == 784
-    add("query:envframe-dualpath-mandatory-enforce-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t mandatory_enforce_total =
-            m ? static_cast<std::int64_t>(
-                    m->envframe_mandatory_enforce_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t mandatory_enforce_desync_total =
-            m ? static_cast<std::int64_t>(
-                    m->envframe_mandatory_enforce_desync_total.load(std::memory_order_relaxed))
-              : 0;
-        // gc-walk-resync-total + concurrent-steal-resync-total:
-        // concurrent-steal-resync-total is a NEW atomic,
-        // gc-walk-resync-total is planned as a NEW atomic
-        // but not added in Phase 1 (it overlaps with the
-        // existing #756 envframe_gc_stale_desync_hits_total
-        // which already counts GC stale detected under
-        // concurrency). For Phase 1 we expose the NEW
-        // concurrent-steal-resync-total atomic and hardcode
-        // gc-walk-resync-total to 0 (since the dedicated
-        // gc-walk-resync counter is deferred; #756 already
-        // surfaces the GC stale detection signal).
-        const std::int64_t gc_walk_resync_total = 0;
-        const std::int64_t concurrent_steal_resync_total =
-            m ? static_cast<std::int64_t>(
-                    m->envframe_concurrent_steal_resync_total.load(std::memory_order_relaxed))
-              : 0;
-        // 2 hardcoded "not yet" flags for Phase 2+
-        // deferred work.
-        const std::int64_t policy_mode = 0;
-        const std::int64_t mandatory_call_sites_enabled = 0;
-        // Recommendation: derived from the 2 deferred
-        // flags + activity signal. Phase 1 only (all
-        // deferred flags == 0) but with activity signals
-        // from the new atomics.
-        std::int64_t recommendation = 3;
-        if (policy_mode == 2 && mandatory_call_sites_enabled == 1)
-            recommendation = 0; // production-ready strict-panic + wired
-        else if (policy_mode == 2 || mandatory_call_sites_enabled == 1)
-            recommendation = 1; // partial
-        else if (mandatory_enforce_total > 0 || concurrent_steal_resync_total > 0 ||
-                 mandatory_enforce_desync_total > 0)
-            recommendation = 2; // Phase 1 (atomics wired, call sites + policy deferred)
-        else
-            recommendation = 3; // early-stage (no mandatory enforcement activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-dualpath-mandatory-enforce-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t mandatory_enforce_total =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_mandatory_enforce_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t mandatory_enforce_desync_total =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_mandatory_enforce_desync_total.load(std::memory_order_relaxed))
+                  : 0;
+            // gc-walk-resync-total + concurrent-steal-resync-total:
+            // concurrent-steal-resync-total is a NEW atomic,
+            // gc-walk-resync-total is planned as a NEW atomic
+            // but not added in Phase 1 (it overlaps with the
+            // existing #756 envframe_gc_stale_desync_hits_total
+            // which already counts GC stale detected under
+            // concurrency). For Phase 1 we expose the NEW
+            // concurrent-steal-resync-total atomic and hardcode
+            // gc-walk-resync-total to 0 (since the dedicated
+            // gc-walk-resync counter is deferred; #756 already
+            // surfaces the GC stale detection signal).
+            const std::int64_t gc_walk_resync_total = 0;
+            const std::int64_t concurrent_steal_resync_total =
+                m ? static_cast<std::int64_t>(
+                        m->envframe_concurrent_steal_resync_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 2 hardcoded "not yet" flags for Phase 2+
+            // deferred work.
+            const std::int64_t policy_mode = 0;
+            const std::int64_t mandatory_call_sites_enabled = 0;
+            // Recommendation: derived from the 2 deferred
+            // flags + activity signal. Phase 1 only (all
+            // deferred flags == 0) but with activity signals
+            // from the new atomics.
+            std::int64_t recommendation = 3;
+            if (policy_mode == 2 && mandatory_call_sites_enabled == 1)
+                recommendation = 0; // production-ready strict-panic + wired
+            else if (policy_mode == 2 || mandatory_call_sites_enabled == 1)
+                recommendation = 1; // partial
+            else if (mandatory_enforce_total > 0 || concurrent_steal_resync_total > 0 ||
+                     mandatory_enforce_desync_total > 0)
+                recommendation = 2; // Phase 1 (atomics wired, call sites + policy deferred)
+            else
+                recommendation = 3; // early-stage (no mandatory enforcement activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("mandatory-enforce-total", mandatory_enforce_total);
-        insert_kv("mandatory-enforce-desync-total", mandatory_enforce_desync_total);
-        insert_kv("gc-walk-resync-total", gc_walk_resync_total);
-        insert_kv("concurrent-steal-resync-total", concurrent_steal_resync_total);
-        insert_kv("policy-mode", policy_mode);
-        insert_kv("mandatory-call-sites-enabled", mandatory_call_sites_enabled);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 784);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("mandatory-enforce-total", mandatory_enforce_total);
+            insert_kv("mandatory-enforce-desync-total", mandatory_enforce_desync_total);
+            insert_kv("gc-walk-resync-total", gc_walk_resync_total);
+            insert_kv("concurrent-steal-resync-total", concurrent_steal_resync_total);
+            insert_kv("policy-mode", policy_mode);
+            insert_kv("mandatory-call-sites-enabled", mandatory_call_sites_enabled);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 784);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 27 (orig lines 15388-15524)
@@ -684,79 +622,82 @@ void ObservabilityPrims::register_jit_p27(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 3 deferred flags +
     //       activity signal
     //   - schema == 785
-    add("query:aot-concurrent-hotupdate-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t concurrent_steal =
-            m ? static_cast<std::int64_t>(
-                    m->aot_concurrent_steal_during_reload_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t grace_hits =
-            m ? static_cast<std::int64_t>(
-                    m->aot_grace_period_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t env_sync =
-            m ? static_cast<std::int64_t>(
-                    m->aot_env_version_sync_on_reload_total.load(std::memory_order_relaxed))
-              : 0;
-        // 3 hardcoded "not yet" flags for Phase 2+
-        // deferred work.
-        const std::int64_t region_mask_enforced = 0;
-        const std::int64_t grace_period_implemented = 0;
-        const std::int64_t steal_defer_active = 0;
-        // Recommendation: derived from the 3 deferred
-        // flags + activity signal. Phase 1 only (all
-        // deferred flags == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (region_mask_enforced == 1 && grace_period_implemented == 1 && steal_defer_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (region_mask_enforced == 1 || grace_period_implemented == 1 ||
-                 steal_defer_active == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (concurrent_steal > 0 || grace_hits > 0 || env_sync > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, call sites deferred)
-        else
-            recommendation = 3; // early-stage (no concurrent hot-update activity)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-concurrent-hotupdate-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t concurrent_steal =
+                m ? static_cast<std::int64_t>(
+                        m->aot_concurrent_steal_during_reload_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t grace_hits =
+                m ? static_cast<std::int64_t>(
+                        m->aot_grace_period_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t env_sync =
+                m ? static_cast<std::int64_t>(
+                        m->aot_env_version_sync_on_reload_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 3 hardcoded "not yet" flags for Phase 2+
+            // deferred work.
+            const std::int64_t region_mask_enforced = 0;
+            const std::int64_t grace_period_implemented = 0;
+            const std::int64_t steal_defer_active = 0;
+            // Recommendation: derived from the 3 deferred
+            // flags + activity signal. Phase 1 only (all
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (region_mask_enforced == 1 && grace_period_implemented == 1 &&
+                steal_defer_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (region_mask_enforced == 1 || grace_period_implemented == 1 ||
+                     steal_defer_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (concurrent_steal > 0 || grace_hits > 0 || env_sync > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, call sites deferred)
+            else
+                recommendation = 3; // early-stage (no concurrent hot-update activity)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("concurrent-steal-during-reload", concurrent_steal);
-        insert_kv("grace-period-hits", grace_hits);
-        insert_kv("env-version-sync-on-reload", env_sync);
-        insert_kv("region-mask-enforced", region_mask_enforced);
-        insert_kv("grace-period-implemented", grace_period_implemented);
-        insert_kv("steal-defer-active", steal_defer_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 785);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("concurrent-steal-during-reload", concurrent_steal);
+            insert_kv("grace-period-hits", grace_hits);
+            insert_kv("env-version-sync-on-reload", env_sync);
+            insert_kv("region-mask-enforced", region_mask_enforced);
+            insert_kv("grace-period-implemented", grace_period_implemented);
+            insert_kv("steal-defer-active", steal_defer_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 785);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 28 (orig lines 15525-15687)
@@ -838,7 +779,8 @@ void ObservabilityPrims::register_jit_p28(PrimRegistrar add, Evaluator& ev) {
         };
         std::size_t found_count = 0;
         for (const char* name : expected_sub_primitives) {
-            if (ev.primitives_.lookup(name).has_value())
+            if (ObservabilityPrims::stats_impl_registered(name) ||
+                ev.primitives_.lookup(name).has_value())
                 ++found_count;
         }
         const std::int64_t found = static_cast<std::int64_t>(found_count);
@@ -1034,7 +976,8 @@ void ObservabilityPrims::register_jit_p29(PrimRegistrar add, Evaluator& ev) {
         };
         std::size_t found_count = 0;
         for (const char* name : expected_sub_primitives) {
-            if (ev.primitives_.lookup(name).has_value())
+            if (ObservabilityPrims::stats_impl_registered(name) ||
+                ev.primitives_.lookup(name).has_value())
                 ++found_count;
         }
         const std::int64_t found = static_cast<std::int64_t>(found_count);
@@ -1194,94 +1137,96 @@ void ObservabilityPrims::register_jit_p30(PrimRegistrar add, Evaluator& ev) {
     //       2 = early-stage (coverage > 0 < 5000)
     //       3 = not-started (coverage == 0)
     //   - schema == 788
-    add("query:ai-native-extension-stats", [&ev](const auto&) -> EvalValue {
-        // Live primitive lookup: 5 expected
-        // sub-primitives (the component P0s the
-        // body explicitly cites for consolidation).
-        const std::vector<const char*> expected_sub_primitives = {
-            "query:macro-hygiene-provenance-stats", // #757
-            "query:edsl-reflection-stats",          // #758
-            "query:reflection-schema-stats",        // #750
-            "query:extension-kit-stats",            // #775
-            "query:primitives-contract-stats",      // #751
-        };
-        std::size_t found_count = 0;
-        for (const char* name : expected_sub_primitives) {
-            if (ev.primitives_.lookup(name).has_value())
-                ++found_count;
-        }
-        const std::int64_t found = static_cast<std::int64_t>(found_count);
-        const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
-        // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
-        // / total.
-        const std::int64_t sub_primitive_coverage =
-            total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
-        // 4 hardcoded "not yet" AI-extension fidelity
-        // signals (Phase 2+ to wire to actual
-        // define-struct / set-policy! / extend-kit
-        // validation hooks). Phase 1 ships the
-        // composite structure; the per-signal bumps
-        // come in dedicated follow-up sessions.
-        const std::int64_t validation_pass_rate = 10000;
-        const std::int64_t policy_tuning_success_rate = 10000;
-        const std::int64_t define_struct_success_rate = 10000;
-        const std::int64_t contract_compliance_rate = 10000;
-        // Composite AI extension status derived from
-        // coverage + fidelity signals. The body
-        // explicitly mentions SLO gates
-        // "validation_pass >98%, hygiene_held 100%,
-        // contract_compliance 100%".
-        std::int64_t composite_ai_extension_status = 3; // default not-started
-        if (sub_primitive_coverage == 10000 && validation_pass_rate == 10000 &&
-            policy_tuning_success_rate == 10000 && define_struct_success_rate == 10000 &&
-            contract_compliance_rate == 10000)
-            composite_ai_extension_status =
-                0; // production-ready (vacuously — no failures detected)
-        else if (sub_primitive_coverage >= 5000)
-            composite_ai_extension_status = 1; // partial (>= half registered)
-        else if (sub_primitive_coverage > 0)
-            composite_ai_extension_status = 2; // early-stage
-        else
-            composite_ai_extension_status = 3; // not-started
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:ai-native-extension-stats", [&ev](const auto&) -> EvalValue {
+            // Live primitive lookup: 5 expected
+            // sub-primitives (the component P0s the
+            // body explicitly cites for consolidation).
+            const std::vector<const char*> expected_sub_primitives = {
+                "query:macro-hygiene-provenance-stats", // #757
+                "query:edsl-reflection-stats",          // #758
+                "query:reflection-schema-stats",        // #750
+                "query:extension-kit-stats",            // #775
+                "query:primitives-contract-stats",      // #751
+            };
+            std::size_t found_count = 0;
+            for (const char* name : expected_sub_primitives) {
+                if (ObservabilityPrims::stats_impl_registered(name) ||
+                    ev.primitives_.lookup(name).has_value())
+                    ++found_count;
             }
-        };
-        insert_kv("sub-primitive-coverage", sub_primitive_coverage);
-        insert_kv("found-sub-primitive-count", found);
-        insert_kv("validation-pass-rate", validation_pass_rate);
-        insert_kv("policy-tuning-success-rate", policy_tuning_success_rate);
-        insert_kv("define-struct-success-rate", define_struct_success_rate);
-        insert_kv("contract-compliance-rate", contract_compliance_rate);
-        insert_kv("composite-ai-extension-status", composite_ai_extension_status);
-        insert_kv("schema", 788);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            const std::int64_t found = static_cast<std::int64_t>(found_count);
+            const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
+            // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
+            // / total.
+            const std::int64_t sub_primitive_coverage =
+                total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
+            // 4 hardcoded "not yet" AI-extension fidelity
+            // signals (Phase 2+ to wire to actual
+            // define-struct / set-policy! / extend-kit
+            // validation hooks). Phase 1 ships the
+            // composite structure; the per-signal bumps
+            // come in dedicated follow-up sessions.
+            const std::int64_t validation_pass_rate = 10000;
+            const std::int64_t policy_tuning_success_rate = 10000;
+            const std::int64_t define_struct_success_rate = 10000;
+            const std::int64_t contract_compliance_rate = 10000;
+            // Composite AI extension status derived from
+            // coverage + fidelity signals. The body
+            // explicitly mentions SLO gates
+            // "validation_pass >98%, hygiene_held 100%,
+            // contract_compliance 100%".
+            std::int64_t composite_ai_extension_status = 3; // default not-started
+            if (sub_primitive_coverage == 10000 && validation_pass_rate == 10000 &&
+                policy_tuning_success_rate == 10000 && define_struct_success_rate == 10000 &&
+                contract_compliance_rate == 10000)
+                composite_ai_extension_status =
+                    0; // production-ready (vacuously — no failures detected)
+            else if (sub_primitive_coverage >= 5000)
+                composite_ai_extension_status = 1; // partial (>= half registered)
+            else if (sub_primitive_coverage > 0)
+                composite_ai_extension_status = 2; // early-stage
+            else
+                composite_ai_extension_status = 3; // not-started
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("sub-primitive-coverage", sub_primitive_coverage);
+            insert_kv("found-sub-primitive-count", found);
+            insert_kv("validation-pass-rate", validation_pass_rate);
+            insert_kv("policy-tuning-success-rate", policy_tuning_success_rate);
+            insert_kv("define-struct-success-rate", define_struct_success_rate);
+            insert_kv("contract-compliance-rate", contract_compliance_rate);
+            insert_kv("composite-ai-extension-status", composite_ai_extension_status);
+            insert_kv("schema", 788);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 31 (orig lines 16038-16184)
@@ -1361,78 +1306,80 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 3 deferred
     //       flags + activity signal
     //   - schema == 789
-    add("query:pattern-index-safe-span-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t safe_span_uses =
-            m ? static_cast<std::int64_t>(
-                    m->pattern_safe_span_uses_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t dangling_prevented =
-            m ? static_cast<std::int64_t>(
-                    m->pattern_dangling_prevented_total.load(std::memory_order_relaxed))
-              : 0;
-        // 3 hardcoded "not yet" flags + 1 hardcoded
-        // "not yet" derived field for Phase 2+
-        // deferred work.
-        const std::int64_t index_hit_rate = 0;
-        const std::int64_t safe_span_mandate_active = 0;
-        const std::int64_t tag_arity_index_population_active = 0;
-        const std::int64_t deep_hygiene_predicate_active = 0;
-        // Recommendation: derived from the 3 deferred
-        // flags + activity signal. Phase 1 only (all
-        // deferred flags == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (safe_span_mandate_active == 1 && tag_arity_index_population_active == 1 &&
-            deep_hygiene_predicate_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (safe_span_mandate_active == 1 || tag_arity_index_population_active == 1 ||
-                 deep_hygiene_predicate_active == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (safe_span_uses > 0 || dangling_prevented > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, mandate deferred)
-        else
-            recommendation = 3; // early-stage (no pattern matcher activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:pattern-index-safe-span-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t safe_span_uses =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_safe_span_uses_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dangling_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->pattern_dangling_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 3 hardcoded "not yet" flags + 1 hardcoded
+            // "not yet" derived field for Phase 2+
+            // deferred work.
+            const std::int64_t index_hit_rate = 0;
+            const std::int64_t safe_span_mandate_active = 0;
+            const std::int64_t tag_arity_index_population_active = 0;
+            const std::int64_t deep_hygiene_predicate_active = 0;
+            // Recommendation: derived from the 3 deferred
+            // flags + activity signal. Phase 1 only (all
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (safe_span_mandate_active == 1 && tag_arity_index_population_active == 1 &&
+                deep_hygiene_predicate_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (safe_span_mandate_active == 1 || tag_arity_index_population_active == 1 ||
+                     deep_hygiene_predicate_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (safe_span_uses > 0 || dangling_prevented > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, mandate deferred)
+            else
+                recommendation = 3; // early-stage (no pattern matcher activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("safe-span-uses", safe_span_uses);
-        insert_kv("dangling-prevented", dangling_prevented);
-        insert_kv("index-hit-rate", index_hit_rate);
-        insert_kv("safe-span-mandate-active", safe_span_mandate_active);
-        insert_kv("tag-arity-index-population-active", tag_arity_index_population_active);
-        insert_kv("deep-hygiene-predicate-active", deep_hygiene_predicate_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 789);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("safe-span-uses", safe_span_uses);
+            insert_kv("dangling-prevented", dangling_prevented);
+            insert_kv("index-hit-rate", index_hit_rate);
+            insert_kv("safe-span-mandate-active", safe_span_mandate_active);
+            insert_kv("tag-arity-index-population-active", tag_arity_index_population_active);
+            insert_kv("deep-hygiene-predicate-active", deep_hygiene_predicate_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 789);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // ── Issue #1366: Aura wrappers for AOT hot-reload C API ──
     // (aot:reload path [version]) → bool
@@ -1490,59 +1437,61 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (query:aot-reload-primitive-stats) → hash
-    add("query:aot-reload-primitive-stats", [&ev](const auto&) -> EvalValue {
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto put = [&](const char* k, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-reload-primitive-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto put = [&](const char* k, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        put("attempts-via-primitive",
-            m ? static_cast<std::int64_t>(
-                    m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed))
-              : 0);
-        put("success-via-primitive",
-            m ? static_cast<std::int64_t>(
-                    m->aot_reload_success_via_primitive.load(std::memory_order_relaxed))
-              : 0);
-        put("reload-attempts-c-api",
-            m ? static_cast<std::int64_t>(m->aot_reload_attempts_.load(std::memory_order_relaxed))
-              : 0);
-        put("stale-rejects", m ? static_cast<std::int64_t>(
-                                     m->aot_stale_reject_count_.load(std::memory_order_relaxed))
-                               : 0);
-        put("region-mask", static_cast<std::int64_t>(aura_get_aot_region_mask_for_eval(&ev)));
-        put("module-version", static_cast<std::int64_t>(aura_get_module_version_for_eval(&ev)));
-        put("per-eval-state-map-size", static_cast<std::int64_t>(aura_aot_state_map_size()));
-        put("per-eval-region-sets", m ? static_cast<std::int64_t>(m->aot_per_eval_region_sets.load(
-                                            std::memory_order_relaxed))
-                                      : 0);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            put("attempts-via-primitive",
+                m ? static_cast<std::int64_t>(
+                        m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed))
+                  : 0);
+            put("success-via-primitive",
+                m ? static_cast<std::int64_t>(
+                        m->aot_reload_success_via_primitive.load(std::memory_order_relaxed))
+                  : 0);
+            put("reload-attempts-c-api", m ? static_cast<std::int64_t>(m->aot_reload_attempts_.load(
+                                                 std::memory_order_relaxed))
+                                           : 0);
+            put("stale-rejects", m ? static_cast<std::int64_t>(
+                                         m->aot_stale_reject_count_.load(std::memory_order_relaxed))
+                                   : 0);
+            put("region-mask", static_cast<std::int64_t>(aura_get_aot_region_mask_for_eval(&ev)));
+            put("module-version", static_cast<std::int64_t>(aura_get_module_version_for_eval(&ev)));
+            put("per-eval-state-map-size", static_cast<std::int64_t>(aura_aot_state_map_size()));
+            put("per-eval-region-sets",
+                m ? static_cast<std::int64_t>(
+                        m->aot_per_eval_region_sets.load(std::memory_order_relaxed))
+                  : 0);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

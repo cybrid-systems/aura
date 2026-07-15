@@ -11,12 +11,12 @@
 // Discovery before this PR: the EnvFrame dual-path observability
 // surface already covers the high-level dual-path summary via
 // existing primitives + counters:
-//   - (query:envframe-dualpath-stale-stats) (#418) — existing
+//   - (engine:metrics \"query:envframe-dualpath-stale-stats\") (#418) — existing
 //     flat-int primitive (returns a single sum of 7 counters
 //     — no field breakdown)
 //   - (engine:metrics \"query:envframe-dualpath-stats\") — base dualpath primitive
-//   - (query:envframe-stale-stats) — stale refresh stats
-//   - (query:envframe-bump-stats) — bump stats
+//   - (engine:metrics \"query:envframe-stale-stats\") — stale refresh stats
+//   - (engine:metrics \"query:envframe-bump-stats\") — bump stats
 //   - env_frames_ EnvFrame arena (walk + lookup_by_symid_chain)
 //     with version_ + INVALID_VERSION sentinel #356
 //   - #637 IRClosure + EnvFrame versioning + bridge invalidate
@@ -99,8 +99,9 @@ int aura_issue_647_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:envframe-dualpath-stale-stats-hash) shape ---");
-        auto h = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:envframe-dualpath-stale-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "envframe-dualpath-stale-stats-hash returns a hash");
         const auto cross_fiber = hash_int(cs, "cross-fiber-stale");
@@ -117,23 +118,28 @@ int aura_issue_647_run() {
     // (back-compat — #647 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_418 = cs.eval("(query:envframe-dualpath-stale-stats)");
-        CHECK(s_418.has_value(), "(query:envframe-dualpath-stale-stats) reachable (#418 "
-                                 "back-compat — flat-int summary)");
+        auto s_418 = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats\")");
+        CHECK(s_418.has_value(),
+              "(engine:metrics \"query:envframe-dualpath-stale-stats\") reachable (#418 "
+              "back-compat — flat-int summary)");
         auto s_dp = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
         CHECK(s_dp.has_value(), "(engine:metrics \"query:envframe-dualpath-stats\") reachable "
                                 "(existing base dualpath primitive)");
-        auto s_646 = cs.eval("(query:gc-safepoint-deferral-stats)");
-        CHECK(s_646.has_value(),
-              "(query:gc-safepoint-deferral-stats) reachable (#646 back-compat)");
-        auto s_645 = cs.eval("(query:scheduler-steal-bias-stats)");
-        CHECK(s_645.has_value(), "(query:scheduler-steal-bias-stats) reachable (#645 back-compat)");
-        auto s_644 = cs.eval("(query:aot-reload-func-table-stats)");
-        CHECK(s_644.has_value(),
-              "(query:aot-reload-func-table-stats) reachable (#644 back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
+        auto s_646 = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
+        CHECK(
+            s_646.has_value(),
+            "(engine:metrics \"query:gc-safepoint-deferral-stats\") reachable (#646 back-compat)");
+        auto s_645 = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
+        CHECK(s_645.has_value(),
+              "(engine:metrics \"query:scheduler-steal-bias-stats\") reachable (#645 back-compat)");
+        auto s_644 = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
+        CHECK(
+            s_644.has_value(),
+            "(engine:metrics \"query:aot-reload-func-table-stats\") reachable (#644 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -169,12 +175,14 @@ int aura_issue_647_run() {
     // flat-int `query:envframe-dualpath-stale-stats` (#418).
     {
         std::println("\n--- AC5: naming distinction from #418 ---");
-        auto new_p = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
-        auto old_p = cs.eval("(query:envframe-dualpath-stale-stats)");
+        auto new_p = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
+        auto old_p = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats\")");
         CHECK(new_p.has_value(),
-              "new primitive (query:envframe-dualpath-stale-stats-hash) reachable (-hash suffix)");
-        CHECK(old_p.has_value(), "existing (query:envframe-dualpath-stale-stats) still reachable "
-                                 "(#418, no -hash suffix)");
+              "new primitive (engine:metrics \"query:envframe-dualpath-stale-stats-hash\") "
+              "reachable (-hash suffix)");
+        CHECK(old_p.has_value(),
+              "existing (engine:metrics \"query:envframe-dualpath-stale-stats\") still reachable "
+              "(#418, no -hash suffix)");
         // The new primitive returns a hash; the existing one
         // returns an int. Verify type distinction.
         CHECK(aura::compiler::types::is_hash(*new_p), "new primitive returns a hash (not int)");
@@ -193,7 +201,7 @@ int aura_issue_647_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

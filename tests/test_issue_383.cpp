@@ -27,7 +27,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → all 3 counters == 0
 //   AC2: snapshot has 3 new constraint fields
-//   AC3: (compile:constraint-solver-stats) returns 3-key hash
+//   AC3: (engine:metrics \"compile:constraint-solver-stats\") returns 3-key hash
 //   AC4: typecheck on a poly + gradual expression
 //        bumps consistent_unify_total > 0
 //   AC5: existing eval still works (regression)
@@ -91,11 +91,12 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (compile:constraint-solver-stats) returns 3-key hash
+// ── AC3: (engine:metrics \"compile:constraint-solver-stats\") returns 3-key hash
 bool test_constraint_solver_stats_primitive() {
-    std::println("\n--- AC3: (compile:constraint-solver-stats) returns 3-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:constraint-solver-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define css (compile:constraint-solver-stats))\")");
+    cs.eval("(set-code \"(define css (engine:metrics \"compile:constraint-solver-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"unify-total", "subtype-total", "restart-total"}) {
         std::string check = std::string("(hash-ref css \"") + key + "\")";

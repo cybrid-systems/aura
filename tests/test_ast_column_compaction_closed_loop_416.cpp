@@ -34,7 +34,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t column_compaction_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:ast-column-compaction-stats)");
+    auto r = cs.eval("(engine:metrics \"query:ast-column-compaction-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -101,8 +101,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(vpr.has_value(), "validate-post-restore after compaction matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto acs = cs.eval("(query:arena-compaction-stats)");
-    auto ges = cs.eval("(query:generation-epoch-stats)");
+    auto acs = cs.eval("(engine:metrics \"query:arena-compaction-stats\")");
+    auto ges = cs.eval("(engine:metrics \"query:generation-epoch-stats\")");
     CHECK(acs && is_int(*acs), "arena-compaction-stats regression");
     CHECK(ges && is_int(*ges), "generation-epoch-stats regression");
 }

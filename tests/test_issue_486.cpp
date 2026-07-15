@@ -62,7 +62,7 @@ int aura_issue_486_run() {
     // AC1: query:macro-hygiene-stats hash fields
     {
         std::println("\n--- AC1: query:macro-hygiene-stats ---");
-        auto stats = cs.eval("(query:macro-hygiene-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:macro-hygiene-stats returns hash");
         CHECK(stat_int(cs, "root-skips") >= 0, "root-skips present");
@@ -121,7 +121,7 @@ int aura_issue_486_run() {
         auto macro_n = cs.eval("(length (query:macro-introduced))");
         auto by_marker = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-        auto hys = cs.eval("(query:hygiene-stats)");
+        auto hys = cs.eval("(engine:metrics \"query:hygiene-stats\")");
         CHECK(macro_n && aura::compiler::types::is_int(*macro_n), "macro-introduced reachable");
         CHECK(by_marker && aura::compiler::types::is_int(*by_marker), "by-marker reachable");
         CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");

@@ -88,10 +88,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:envframe-dualpath-mandatory-enforce-stats) hash shape ---");
-    auto r = cs.eval("(query:envframe-dualpath-mandatory-enforce-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\") "
+                 "hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:envframe-dualpath-mandatory-enforce-stats) returns a hash");
+          "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\") returns a hash");
     const std::vector<std::string> keys = {"mandatory-enforce-total",
                                            "mandatory-enforce-desync-total",
                                            "gc-walk-resync-total",
@@ -110,48 +111,54 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no mandatory enforcement activity) ---");
-    const auto enforce_total = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "mandatory-enforce-total");
+    const auto enforce_total =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-enforce-total");
     CHECK(enforce_total == 0,
           std::format("mandatory-enforce-total = {} (expected 0 on fresh service — Phase 2+ "
                       "deferred to wire ensure_ at critical paths per body \"Make ensure_ "
                       "mandatory (call at start of critical paths)\")",
                       enforce_total));
-    const auto desync_total = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "mandatory-enforce-desync-total");
+    const auto desync_total =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-enforce-desync-total");
     CHECK(desync_total == 0,
           std::format("mandatory-enforce-desync-total = {} (expected 0 on fresh service)",
                       desync_total));
-    const auto gc_walk = hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)",
-                                        "gc-walk-resync-total");
+    const auto gc_walk =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "gc-walk-resync-total");
     CHECK(gc_walk == 0,
           std::format("gc-walk-resync-total = {} (expected 0 — Phase 2+ deferred; #756 "
                       "envframe_gc_stale_desync_hits_total already exposes the GC stale "
                       "detection signal)",
                       gc_walk));
-    const auto steal_resync = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "concurrent-steal-resync-total");
+    const auto steal_resync =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "concurrent-steal-resync-total");
     CHECK(steal_resync == 0,
           std::format("concurrent-steal-resync-total = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire at Fiber::resume() entry)",
                       steal_resync));
-    const auto policy_mode =
-        hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "policy-mode");
+    const auto policy_mode = hash_int_field(
+        cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")", "policy-mode");
     CHECK(policy_mode == 0,
           std::format("policy-mode = {} (expected 0 = log-and-sync default — #756 already "
                       "exposes desync_panic_count via envframe_desync_panic_count_total; Phase "
                       "2+ to make policy mode configurable per body \"policy flag (strict_panic "
                       "vs log_and_sync)\")",
                       policy_mode));
-    const auto call_sites = hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)",
-                                           "mandatory-call-sites-enabled");
+    const auto call_sites =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-call-sites-enabled");
     CHECK(call_sites == 0,
           std::format("mandatory-call-sites-enabled = {} (expected 0 — Phase 2+ deferred to "
                       "wire ensure_ at walk_env_frames / GCEnvWalkFn / materialize_call_env / "
                       "post-rollback paths)",
                       call_sites));
     const auto rec =
-        hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "recommendation");
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when both deferred flags "
                       "== 0 AND no activity)",
@@ -160,8 +167,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 784 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")", "schema");
     CHECK(schema == 784, std::format("schema = {} (expected 784)", schema));
 }
 
@@ -169,12 +176,15 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto enforce_before = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "mandatory-enforce-total");
-    const auto desync_before = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "mandatory-enforce-desync-total");
-    const auto steal_resync_before = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "concurrent-steal-resync-total");
+    const auto enforce_before =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-enforce-total");
+    const auto desync_before =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-enforce-desync-total");
+    const auto steal_resync_before =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "concurrent-steal-resync-total");
 
     // Exercise the 3 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
@@ -188,12 +198,15 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_envframe_concurrent_steal_resync();
     }
 
-    const auto enforce_after = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "mandatory-enforce-total");
-    const auto desync_after = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "mandatory-enforce-desync-total");
-    const auto steal_resync_after = hash_int_field(
-        cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "concurrent-steal-resync-total");
+    const auto enforce_after =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-enforce-total");
+    const auto desync_after =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "mandatory-enforce-desync-total");
+    const auto steal_resync_after =
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "concurrent-steal-resync-total");
 
     std::println("  counts after AC4 bumps: enforce {} -> {}, desync {} -> {}, steal-resync {} "
                  "-> {}",
@@ -218,7 +231,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     // Recommendation should now be 2 (Phase 1 only —
     // both deferred flags == 0 BUT activity > 0).
     const auto rec_after =
-        hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "recommendation");
+        hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")",
+                       "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with both deferred flags == 0)",
@@ -228,7 +242,7 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #756 + #783 sibling primitives unaffected ---");
     auto a756 = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto a783 = cs.eval("(query:orchestration-steal-outermost-stats)");
+    auto a783 = cs.eval("(engine:metrics \"query:orchestration-steal-outermost-stats\")");
     CHECK(a756 && aura::compiler::types::is_hash(*a756),
           "query:envframe-dualpath-policy-stats hash regression (#756)");
     CHECK(a783 && aura::compiler::types::is_hash(*a783),
@@ -237,8 +251,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-policy-stats\")", "schema");
     CHECK(a756_schema == 756,
           std::format("#756 schema = {} (expected 756, no drift)", a756_schema));
-    const auto a783_schema =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "schema");
+    const auto a783_schema = hash_int_field(
+        cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")", "schema");
     CHECK(a783_schema == 783,
           std::format("#783 schema = {} (expected 783, no drift)", a783_schema));
 }

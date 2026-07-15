@@ -90,10 +90,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:aot-concurrent-hotupdate-stats) hash shape ---");
-    auto r = cs.eval("(query:aot-concurrent-hotupdate-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:aot-concurrent-hotupdate-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:aot-concurrent-hotupdate-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:aot-concurrent-hotupdate-stats) returns a hash");
+          "(engine:metrics \"query:aot-concurrent-hotupdate-stats\") returns a hash");
     const std::vector<std::string> keys = {"concurrent-steal-during-reload",
                                            "grace-period-hits",
                                            "env-version-sync-on-reload",
@@ -111,45 +112,49 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no concurrent hot-update activity) ---");
-    const auto steal = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)",
-                                      "concurrent-steal-during-reload");
+    const auto steal =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "concurrent-steal-during-reload");
     CHECK(steal == 0,
           std::format("concurrent-steal-during-reload = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire steal defer in WorkerThread::steal() per body "
                       "\"multi-fiber steal safety during reload\")",
                       steal));
-    const auto grace =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "grace-period-hits");
+    const auto grace = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "grace-period-hits");
     CHECK(grace == 0,
           std::format("grace-period-hits = {} (expected 0 on fresh service — Phase 2+ deferred "
                       "to add grace period before/after swap)",
                       grace));
     const auto sync =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "env-version-sync-on-reload");
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "env-version-sync-on-reload");
     CHECK(sync == 0,
           std::format("env-version-sync-on-reload = {} (expected 0 on fresh service — Phase 2+ "
                       "deferred to wire EnvFrame::version_ bump on reload)",
                       sync));
-    const auto region =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "region-mask-enforced");
+    const auto region = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "region-mask-enforced");
     CHECK(region == 0,
           std::format("region-mask-enforced = {} (expected 0 — Phase 2+ deferred to wire "
                       "region_mask check in reload decision per body \"reload only if "
                       "(region_mask & host_mask) != 0\")",
                       region));
     const auto grace_impl =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "grace-period-implemented");
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "grace-period-implemented");
     CHECK(grace_impl == 0,
           std::format("grace-period-implemented = {} (expected 0 — Phase 2+ deferred per body "
                       "\"grace period for refcount swap during concurrent steal/resume\")",
                       grace_impl));
-    const auto defer_active =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "steal-defer-active");
+    const auto defer_active = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "steal-defer-active");
     CHECK(defer_active == 0,
           std::format("steal-defer-active = {} (expected 0 — Phase 2+ deferred per body "
                       "\"multi-fiber steal safety during reload\")",
                       defer_active));
-    const auto rec = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "recommendation");
+    const auto rec = hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                                    "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when all 3 deferred flags "
                       "== 0 AND no activity)",
@@ -158,7 +163,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 785 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "schema");
     CHECK(schema == 785, std::format("schema = {} (expected 785)", schema));
 }
 
@@ -166,12 +172,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto steal_before = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)",
-                                             "concurrent-steal-during-reload");
-    const auto grace_before =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "grace-period-hits");
+    const auto steal_before =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "concurrent-steal-during-reload");
+    const auto grace_before = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "grace-period-hits");
     const auto sync_before =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "env-version-sync-on-reload");
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "env-version-sync-on-reload");
 
     // Issue #1396: bump helpers + this AC4 exercise gated
     // behind AOT_RELOAD_PHASE_2_PLUS. Phase 1 ships the
@@ -197,12 +205,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_aot_env_version_sync_on_reload();
     }
 
-    const auto steal_after = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)",
-                                            "concurrent-steal-during-reload");
-    const auto grace_after =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "grace-period-hits");
+    const auto steal_after =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "concurrent-steal-during-reload");
+    const auto grace_after = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "grace-period-hits");
     const auto sync_after =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "env-version-sync-on-reload");
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "env-version-sync-on-reload");
 
     std::println("  counts after AC4 bumps: steal {} -> {}, grace {} -> {}, sync {} -> {}",
                  steal_before, steal_after, grace_before, grace_after, sync_before, sync_after);
@@ -223,8 +233,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Recommendation should now be 2 (Phase 1 only —
     // all 3 deferred flags == 0 BUT activity > 0).
-    const auto rec_after =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "recommendation");
+    const auto rec_after = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with all 3 deferred flags == 0)",
@@ -236,13 +246,13 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #708 + #784 sibling primitives unaffected ---");
-    auto a708 = cs.eval("(query:aot-reload-stats)");
-    auto a784 = cs.eval("(query:envframe-dualpath-mandatory-enforce-stats)");
+    auto a708 = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
+    auto a784 = cs.eval("(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")");
     CHECK(a708 && aura::compiler::types::is_hash(*a708),
           "query:aot-reload-stats hash regression (#708)");
     CHECK(a784 && aura::compiler::types::is_hash(*a784),
           "query:envframe-dualpath-mandatory-enforce-stats hash regression (#784)");
-    // #708 (query:aot-reload-stats) does NOT have a
+    // #708 (engine:metrics \"query:aot-reload-stats\") does NOT have a
     // `schema` field (its fields are reload-attempts /
     // reload-success / stale-rejected / refcount-swaps /
     // region-violations / deopt-on-steal /
@@ -250,11 +260,12 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     // presence of one of its known fields instead of
     // schema. The schema sentinel check is reserved
     // for primitives that actually have one.
-    const auto a708_attempts = hash_int_field(cs, "(query:aot-reload-stats)", "reload-attempts");
+    const auto a708_attempts =
+        hash_int_field(cs, "(engine:metrics \"query:aot-reload-stats\")", "reload-attempts");
     CHECK(a708_attempts >= 0,
           std::format("#708 reload-attempts = {} (expected >= 0, no drift)", a708_attempts));
-    const auto a784_schema =
-        hash_int_field(cs, "(query:envframe-dualpath-mandatory-enforce-stats)", "schema");
+    const auto a784_schema = hash_int_field(
+        cs, "(engine:metrics \"query:envframe-dualpath-mandatory-enforce-stats\")", "schema");
     CHECK(a784_schema == 784,
           std::format("#784 schema = {} (expected 784, no drift)", a784_schema));
 }

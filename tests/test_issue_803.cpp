@@ -86,7 +86,7 @@
 //        ref-drift bumps keep recommendation at 2 if
 //        convergence seen)
 //   AC5: sibling observability regression — #802
-//        (query:sv-verification-self-evolution-stats) +
+//        (engine:metrics \"query:sv-verification-self-evolution-stats\") +
 //        #802 schema sentinel 802 + #759 reachable + #806
 //        (query:registry-extension-stats, schema 806) +
 //        #794 (query:full-closedloop-compiler-edsl-
@@ -301,14 +301,15 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: sibling observability regression (#802 + #759 + #806 "
                  "+ #794 + #783) ---");
 
-    // #802: (query:sv-verification-self-evolution-stats) — the
+    // #802: (engine:metrics \"query:sv-verification-self-evolution-stats\") — the
     // primary source-of-truth for #803's convergence_rate + avg_
     // rounds_to_target derivations. 4 reused fields + schema 802.
-    auto r802 = cs.eval("(query:sv-verification-self-evolution-stats)");
+    auto r802 = cs.eval("(engine:metrics \"query:sv-verification-self-evolution-stats\")");
     CHECK(r802 && aura::compiler::types::is_hash(*r802),
-          "#802 (query:sv-verification-self-evolution-stats) still returns a hash");
-    const auto schema_802 =
-        hash_int_field(cs, "(query:sv-verification-self-evolution-stats)", "schema");
+          "#802 (engine:metrics \"query:sv-verification-self-evolution-stats\") still returns a "
+          "hash");
+    const auto schema_802 = hash_int_field(
+        cs, "(engine:metrics \"query:sv-verification-self-evolution-stats\")", "schema");
     CHECK(schema_802 == 802, std::format("#802 schema = {} (expected 802)", schema_802));
     for (const auto& k : {"feedback-parse-hits", "structured-mutate-hits", "closed-loop-rounds",
                           "convergence-hits"}) {
@@ -317,37 +318,41 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         CHECK(f, std::format("#802 field '{}' still present", k));
     }
 
-    // #759: (query:code-as-data-maturity-stats) reachable — the
+    // #759: (engine:metrics \"query:code-as-data-maturity-stats\") reachable — the
     // canonical 4-field macro/EDSL hygiene maturity primitive.
-    auto r759 = cs.eval("(query:code-as-data-maturity-stats)");
+    auto r759 = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
     CHECK(r759 && aura::compiler::types::is_hash(*r759),
-          "#759 (query:code-as-data-maturity-stats) still returns a hash");
-    const auto schema_759 = hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+          "#759 (engine:metrics \"query:code-as-data-maturity-stats\") still returns a hash");
+    const auto schema_759 =
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(schema_759 == 759, std::format("#759 schema = {} (expected 759)", schema_759));
 
     // #806: most recent sibling — registries-extend primitives still
     // reachable with schema 806.
-    auto r806 = cs.eval("(query:registry-extension-stats)");
+    auto r806 = cs.eval("(engine:metrics \"query:registry-extension-stats\")");
     CHECK(r806 && aura::compiler::types::is_hash(*r806),
-          "#806 (query:registry-extension-stats) still returns a hash");
-    const auto schema_806 = hash_int_field(cs, "(query:registry-extension-stats)", "schema");
+          "#806 (engine:metrics \"query:registry-extension-stats\") still returns a hash");
+    const auto schema_806 =
+        hash_int_field(cs, "(engine:metrics \"query:registry-extension-stats\")", "schema");
     CHECK(schema_806 == 806, std::format("#806 schema = {} (expected 806)", schema_806));
 
     // #794: full closedloop compiler+EDSL fidelity primitive.
-    auto r794 = cs.eval("(query:full-closedloop-compiler-edsl-fidelity-stats)");
+    auto r794 = cs.eval("(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")");
     CHECK(r794 && aura::compiler::types::is_hash(*r794),
-          "#794 (query:full-closedloop-compiler-edsl-fidelity-stats) still returns a hash");
-    const auto schema_794 =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)", "schema");
+          "#794 (engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\") still "
+          "returns a hash");
+    const auto schema_794 = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")", "schema");
     CHECK(schema_794 == 794, std::format("#794 schema = {} (expected 794)", schema_794));
 
     // #783: hybrid 3 NEW Fiber atomics primitive — the canonical
     // sibling for the steal-during-verification-mutate signal.
-    auto r783 = cs.eval("(query:orchestration-steal-outermost-stats)");
-    CHECK(r783 && aura::compiler::types::is_hash(*r783),
-          "#783 (query:orchestration-steal-outermost-stats) still returns a hash");
-    const auto schema_783 =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "schema");
+    auto r783 = cs.eval("(engine:metrics \"query:orchestration-steal-outermost-stats\")");
+    CHECK(
+        r783 && aura::compiler::types::is_hash(*r783),
+        "#783 (engine:metrics \"query:orchestration-steal-outermost-stats\") still returns a hash");
+    const auto schema_783 = hash_int_field(
+        cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")", "schema");
     CHECK(schema_783 == 783, std::format("#783 schema = {} (expected 783)", schema_783));
 }
 

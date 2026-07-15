@@ -28,7 +28,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t loc_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:linear-occurrence-mutate-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:linear-occurrence-mutate-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -59,7 +60,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:linear-occurrence-mutate-stats (schema 747) ---");
     CHECK(setup_workspace(cs), "linear+occurrence predicate workspace setup");
-    auto h = cs.eval("(query:linear-occurrence-mutate-stats)");
+    auto h = cs.eval("(engine:metrics \"query:linear-occurrence-mutate-stats\")");
     CHECK(h && is_hash(*h), "linear-occurrence-mutate-stats returns hash");
     CHECK(loc_hash(cs, "schema") == 747, "schema == 747");
     CHECK(loc_hash(cs, "revalidate-hits") >= 0, "revalidate-hits present");
@@ -119,9 +120,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats4b >= stats4a, "stats monotonic over mutate matrix");
 
     std::println("\n--- AC5: query regression ---");
-    auto lot = cs.eval("(query:linear-ownership-typed-mutate-stats)");
-    auto otm = cs.eval("(query:occurrence-typing-mutate-stats)");
-    auto jtm = cs.eval("(query:jit-typed-mutation-stats)");
+    auto lot = cs.eval("(engine:metrics \"query:linear-ownership-typed-mutate-stats\")");
+    auto otm = cs.eval("(engine:metrics \"query:occurrence-typing-mutate-stats\")");
+    auto jtm = cs.eval("(engine:metrics \"query:jit-typed-mutation-stats\")");
     CHECK(lot && is_hash(*lot), "linear-ownership-typed-mutate-stats regression");
     CHECK(otm && is_hash(*otm), "occurrence-typing-mutate-stats regression");
     CHECK(jtm && is_hash(*jtm), "jit-typed-mutation-stats regression");

@@ -8,7 +8,7 @@
 // worker.cpp:170), (2) refine the coarse
 // steal_deferred_mutation_boundary_count_ metric into separate
 // "outermost" vs "inner" + cross-fiber-safe-steal counters, (3)
-// surface via a new (query:orchestration-steal-outermost-stats)
+// surface via a new (engine:metrics \"query:orchestration-steal-outermost-stats\")
 // primitive, (4) force StableRef / EnvFrame version refresh on
 // resume + bump cross_fiber_mutation_safe_steal. The actual
 // StableRef refresh + EnvFrame version refresh is Phase 2+ deferred
@@ -81,10 +81,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:orchestration-steal-outermost-stats) hash shape ---");
-    auto r = cs.eval("(query:orchestration-steal-outermost-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:orchestration-steal-outermost-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:orchestration-steal-outermost-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:orchestration-steal-outermost-stats) returns a hash");
+          "(engine:metrics \"query:orchestration-steal-outermost-stats\") returns a hash");
     const std::vector<std::string> keys = {"outermost-steal-total",
                                            "inner-deferred-total",
                                            "cross-fiber-safe-steal-total",
@@ -103,40 +104,46 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no steal activity) ---");
     const auto outermost =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "outermost-steal-total");
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "outermost-steal-total");
     CHECK(outermost == 0,
           std::format("outermost-steal-total = {} (expected 0 on fresh service — no steal "
                       "activity before AC4 bumps)",
                       outermost));
     const auto inner_deferred =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "inner-deferred-total");
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "inner-deferred-total");
     CHECK(inner_deferred == 0,
           std::format("inner-deferred-total = {} (expected 0 on fresh service)", inner_deferred));
-    const auto cross_fiber = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)",
-                                            "cross-fiber-safe-steal-total");
+    const auto cross_fiber =
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "cross-fiber-safe-steal-total");
     CHECK(cross_fiber == 0,
           std::format("cross-fiber-safe-steal-total = {} (expected 0 on fresh service)",
                       cross_fiber));
-    const auto stable_ref = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)",
-                                           "strict-stable-ref-refresh");
+    const auto stable_ref =
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "strict-stable-ref-refresh");
     CHECK(stable_ref == 0,
           std::format("strict-stable-ref-refresh = {} (expected 0 — Phase 2+ deferred per body "
                       "\"force StableRef / EnvFrame version refresh on resume\")",
                       stable_ref));
-    const auto envframe = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)",
-                                         "envframe-version-refresh");
+    const auto envframe =
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "envframe-version-refresh");
     CHECK(envframe == 0,
           std::format("envframe-version-refresh = {} (expected 0 — Phase 2+ deferred per body "
                       "\"force StableRef / EnvFrame version refresh on resume\")",
                       envframe));
-    const auto bias = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)",
-                                     "bias-deferred-outermost-total");
+    const auto bias =
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "bias-deferred-outermost-total");
     CHECK(bias == 0,
           std::format("bias-deferred-outermost-total = {} (expected 0 — #754 bias feature not "
                       "shipped)",
                       bias));
-    const auto rec =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "recommendation");
+    const auto rec = hash_int_field(
+        cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")", "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when all 3 deferred flags "
                       "== 0 AND no steal activity)",
@@ -145,7 +152,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 783 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")", "schema");
     CHECK(schema == 783, std::format("schema = {} (expected 783)", schema));
 }
 
@@ -156,11 +164,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Snapshot before.
     const auto outermost_before =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "outermost-steal-total");
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "outermost-steal-total");
     const auto inner_before =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "inner-deferred-total");
-    const auto cross_before = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)",
-                                             "cross-fiber-safe-steal-total");
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "inner-deferred-total");
+    const auto cross_before =
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "cross-fiber-safe-steal-total");
 
     // The refined bump helpers are per-Fiber instance
     // methods that ALSO bump the process-wide static
@@ -185,11 +196,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     }
 
     const auto outermost_after =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "outermost-steal-total");
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "outermost-steal-total");
     const auto inner_after =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "inner-deferred-total");
-    const auto cross_after = hash_int_field(cs, "(query:orchestration-steal-outermost-stats)",
-                                            "cross-fiber-safe-steal-total");
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "inner-deferred-total");
+    const auto cross_after =
+        hash_int_field(cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")",
+                       "cross-fiber-safe-steal-total");
 
     std::println(
         "  counts after AC4 bumps: outermost {} -> {}, inner {} -> {}, cross-fiber {} -> {}",
@@ -213,8 +227,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Recommendation should now be 2 (Phase 1 only —
     // all 3 deferred flags == 0 BUT activity > 0).
-    const auto rec_after =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "recommendation");
+    const auto rec_after = hash_int_field(
+        cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")", "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with all 3 deferred flags == 0)",
@@ -223,17 +237,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #781 + #782 sibling primitives unaffected ---");
-    auto zero_copy = cs.eval("(query:zero-copy-framebuffer-stats)");
-    auto terminal = cs.eval("(query:terminal-rendering-module-stats)");
+    auto zero_copy = cs.eval("(engine:metrics \"query:zero-copy-framebuffer-stats\")");
+    auto terminal = cs.eval("(engine:metrics \"query:terminal-rendering-module-stats\")");
     CHECK(zero_copy && aura::compiler::types::is_hash(*zero_copy),
           "query:zero-copy-framebuffer-stats hash regression (#781)");
     CHECK(terminal && aura::compiler::types::is_hash(*terminal),
           "query:terminal-rendering-module-stats hash regression (#782)");
-    const auto a781_schema = hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "schema");
+    const auto a781_schema =
+        hash_int_field(cs, "(engine:metrics \"query:zero-copy-framebuffer-stats\")", "schema");
     CHECK(a781_schema == 781,
           std::format("#781 schema = {} (expected 781, no drift)", a781_schema));
     const auto a782_schema =
-        hash_int_field(cs, "(query:terminal-rendering-module-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:terminal-rendering-module-stats\")", "schema");
     CHECK(a782_schema == 782,
           std::format("#782 schema = {} (expected 782, no drift)", a782_schema));
 }

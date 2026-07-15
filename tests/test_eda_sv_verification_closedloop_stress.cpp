@@ -30,7 +30,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:eda-sv-closedloop-stress-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:eda-sv-closedloop-stress-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -131,10 +132,11 @@ int aura_issue_eda_sv_verification_closedloop_stress_run() {
     // AC3: query:sv-sva-structure-stats during stress
     {
         std::println("\n--- AC3: query:sv-sva-structure-stats ---");
-        auto stats = cs.eval("(query:sv-sva-structure-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:sv-sva-structure-stats returns hash");
-        auto prop_r = cs.eval("(hash-ref (query:sv-sva-structure-stats) 'property-count)");
+        auto prop_r =
+            cs.eval("(hash-ref (engine:metrics \"query:sv-sva-structure-stats\") 'property-count)");
         CHECK(prop_r && aura::compiler::types::is_int(*prop_r) &&
                   aura::compiler::types::as_int(*prop_r) >= 100,
               "property-count >= 100 after SoC build");

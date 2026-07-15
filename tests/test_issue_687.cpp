@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // @category: integration
 // @reason: Issue #687 — DeadCoercionEliminationPass +
 //  IR-interpreter identity fast-path + zero-overhead
@@ -31,7 +32,7 @@
 //   - AC4:  hot-path-rate is 100 on a fresh CS (no
 //           residual, no elims — vacuously zero overhead)
 //   - AC5:  schema sentinel is 687
-//   - AC6:  regression — (compile:dead-coercion-stats) (#433)
+//   - AC6:  regression — (engine:metrics \"compile:dead-coercion-stats\") (#433)
 //           and (compile:dead-coercion-elapsed) (#508) still
 //           reachable (the single-int primitives are kept
 //           alongside the hash dashboard)
@@ -49,6 +50,8 @@ namespace aura_issue_687_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -62,7 +65,7 @@ static int g_failed = 0;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::string& prim,
                              const std::string& key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", prim, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(prim), key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -73,7 +76,7 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::str
 // names were superseded; ACs below track the live surface.
 static void run_ac1_reachable(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:dead-coercion-elim-stats reachable (schema 832) ---");
-    auto r = cs.eval("(query:dead-coercion-elim-stats)");
+    auto r = cs.eval("(engine:metrics \"query:dead-coercion-elim-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r), "query:dead-coercion-elim-stats returns a hash");
     auto schema = hash_int(cs, "query:dead-coercion-elim-stats", "schema");
     CHECK(schema == 832, std::format("schema field == 832 (got {})", schema));
@@ -115,7 +118,7 @@ static void run_ac5_schema_sentinel(aura::compiler::CompilerService& cs) {
 
 static void run_ac6_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — single-int primitives still reachable ---");
-    auto stats = cs.eval("(compile:dead-coercion-stats)");
+    auto stats = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
     auto elapsed = cs.eval("(compile:dead-coercion-elapsed)");
     auto kept = cs.eval("(compile:dead-coercion-kept-for-debug)");
     CHECK(stats && aura::compiler::types::is_int(*stats),

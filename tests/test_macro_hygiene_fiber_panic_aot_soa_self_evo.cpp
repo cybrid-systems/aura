@@ -45,7 +45,8 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:macro-hygiene-fiber-panic-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:macro-hygiene-fiber-panic-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -75,7 +76,7 @@ static bool setup_macro_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:macro-hygiene-fiber-panic-stats (schema 654) ---");
     CHECK(setup_macro_workspace(cs), "macro workspace setup");
-    auto h = cs.eval("(query:macro-hygiene-fiber-panic-stats)");
+    auto h = cs.eval("(engine:metrics \"query:macro-hygiene-fiber-panic-stats\")");
     CHECK(h && is_hash(*h), "macro-hygiene-fiber-panic-stats returns hash");
     CHECK(hash_int(cs, "schema") == 654, "schema == 654");
     const auto s0 = stats_sum(cs);
@@ -137,9 +138,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(done.load() == 8, "fiber yield completed under macro workspace");
 
     std::println("\n--- AC7: query regression ---");
-    auto pir = cs.eval("(query:pattern-ir-hygiene-closed-loop-stats)");
-    auto gpr = cs.eval("(query:guard-panic-reflect-stats)");
-    auto aot = cs.eval("(query:aot-checkpoint-version-stats)");
+    auto pir = cs.eval("(engine:metrics \"query:pattern-ir-hygiene-closed-loop-stats\")");
+    auto gpr = cs.eval("(engine:metrics \"query:guard-panic-reflect-stats\")");
+    auto aot = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
     CHECK(pir && is_hash(*pir), "pattern-ir-hygiene-closed-loop-stats regression");
     CHECK(gpr && is_hash(*gpr), "guard-panic-reflect-stats regression");
     CHECK(aot && is_hash(*aot), "aot-checkpoint-version-stats regression");

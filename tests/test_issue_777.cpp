@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // test_issue_777.cpp — Issue #777: Consolidated EDA
 // Infrastructure Primitives Production Readiness Roadmap +
 // Milestone Tracker with Measurable Fidelity/SLO Gates
@@ -86,6 +87,8 @@ namespace aura_issue_777_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -176,7 +179,7 @@ static void run_ac4_derived_completeness_correctness(aura::compiler::CompilerSer
         "mutate:from-verification-feedback"};
     std::size_t m1_found = 0;
     for (const auto& name : m1_expected) {
-        auto r = cs.eval(std::format("({})", name));
+        auto r = cs.eval(aura::test::aura_call_expr(name));
         // The "query" primitives return hashes; the "primitive:" and
         // "verify:" and "mutate:" primitives may return various
         // types. A non-void result indicates the primitive is
@@ -198,7 +201,7 @@ static void run_ac4_derived_completeness_correctness(aura::compiler::CompilerSer
         "query:sv-verification-self-evolution-stats", "query:sv-closedloop-slo"};
     std::size_t m2_found = 0;
     for (const auto& name : m2_expected) {
-        auto r = cs.eval(std::format("({})", name));
+        auto r = cs.eval(aura::test::aura_call_expr(name));
         if (r && aura::compiler::types::is_hash(*r)) {
             ++m2_found;
             std::println("  [info] M2 primitive '{}' reachable + returns hash", name);
@@ -216,7 +219,7 @@ static void run_ac4_derived_completeness_correctness(aura::compiler::CompilerSer
                                                   "compile:dead-coercion-stats"};
     std::size_t m3_found = 0;
     for (const auto& name : m3_expected) {
-        auto r = cs.eval(std::format("({})", name));
+        auto r = cs.eval(aura::test::aura_call_expr(name));
         if (r) {
             ++m3_found;
             std::println("  [info] M3 primitive '{}' reachable", name);
@@ -233,7 +236,7 @@ static void run_ac4_derived_completeness_correctness(aura::compiler::CompilerSer
                                                   "query:workspace-closedloop-fiber-eda-stats"};
     std::size_t m4_found = 0;
     for (const auto& name : m4_expected) {
-        auto r = cs.eval(std::format("({})", name));
+        auto r = cs.eval(aura::test::aura_call_expr(name));
         if (r && aura::compiler::types::is_hash(*r)) {
             ++m4_found;
             std::println("  [info] M4 primitive '{}' reachable + returns hash", name);
@@ -268,11 +271,11 @@ static void run_ac4_derived_completeness_correctness(aura::compiler::CompilerSer
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #748 + #772 + #774 + #775 + #776 sibling "
                  "primitives unaffected ---");
-    auto sv_structure = cs.eval("(query:sv-verification-structure-stats)");
+    auto sv_structure = cs.eval("(engine:metrics \"query:sv-verification-structure-stats\")");
     auto sv_slo = cs.eval("(query:sv-closedloop-slo)");
-    auto conv = cs.eval("(query:closed-loop-convergence-stats)");
-    auto ext = cs.eval("(query:extension-kit-stats)");
-    auto hotpath_slo = cs.eval("(query:primitives-hotpath-slo-stats)");
+    auto conv = cs.eval("(engine:metrics \"query:closed-loop-convergence-stats\")");
+    auto ext = cs.eval("(engine:metrics \"query:extension-kit-stats\")");
+    auto hotpath_slo = cs.eval("(engine:metrics \"query:primitives-hotpath-slo-stats\")");
     CHECK(sv_structure && aura::compiler::types::is_hash(*sv_structure),
           "query:sv-verification-structure-stats hash regression (#748)");
     CHECK(sv_slo && aura::compiler::types::is_hash(*sv_slo),
@@ -286,13 +289,16 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     const auto a772_schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
     CHECK(a772_schema == 772,
           std::format("#772 schema = {} (expected 772, no drift)", a772_schema));
-    const auto a774_schema = hash_int_field(cs, "(query:closed-loop-convergence-stats)", "schema");
+    const auto a774_schema =
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "schema");
     CHECK(a774_schema == 774,
           std::format("#774 schema = {} (expected 774, no drift)", a774_schema));
-    const auto a775_schema = hash_int_field(cs, "(query:extension-kit-stats)", "schema");
+    const auto a775_schema =
+        hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")", "schema");
     CHECK(a775_schema == 775,
           std::format("#775 schema = {} (expected 775, no drift)", a775_schema));
-    const auto a776_schema = hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "schema");
+    const auto a776_schema =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "schema");
     CHECK(a776_schema == 776,
           std::format("#776 schema = {} (expected 776, no drift)", a776_schema));
 }

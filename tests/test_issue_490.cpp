@@ -106,7 +106,7 @@ int aura_issue_490_run() {
     // AC4: query:pattern-index-rebuild-stats hash fields
     {
         std::println("\n--- AC4: query:pattern-index-rebuild-stats ---");
-        auto stats = cs.eval("(query:pattern-index-rebuild-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pattern-index-rebuild-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pattern-index-rebuild-stats returns hash");
         CHECK(snap_stat(cs, "lazy-rebuilds") >= 0, "lazy-rebuilds present");

@@ -23,6 +23,7 @@ import aura.core.mutators; // Phase 4 follow-up #3: migrate mutate:* primitives 
 import aura.diag;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
+import aura.compiler.service; // Issue #1442: typed_mutate_atomic
 
 namespace aura::compiler::primitives_detail {
 
@@ -356,6 +357,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         });
     };
 
+    // Issue #1419: (mutate:set-agent-fingerprint <int>)
+    // Declares the current AI agent identity for MutationRecord
+    // author_fingerprint stamping. 0 = system. Does not require a
+    // MutationBoundaryGuard (metadata only — not an AST mutate).
+    add("mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (mutate:set-agent-fingerprint <int>)");
+        const auto fp = static_cast<std::uint64_t>(as_int(a[0]));
+        ev.set_current_agent_fingerprint(fp);
+        return make_int(static_cast<std::int64_t>(fp));
+    });
 
     // Issue #489: unified StableNodeRef / raw NodeId resolution for mutate hot paths.
     // Defined inside register_mutate_primitives (Evaluator friend) for private access.
@@ -1234,11 +1246,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // return a 2-tuple (blocked warned) so the AI Agent
     // can distinguish Strict-mode blocks from
     // Warn-mode observations.
-    add("query:stale-ref-stats", [&ev, safe_str](const auto& a) -> EvalValue {
-        (void)a;
-        return make_int(static_cast<std::int64_t>(ev.get_stale_ref_blocked_count() +
-                                                  ev.get_stale_ref_warned_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:stale-ref-stats", [&ev, safe_str](const auto& a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(ev.get_stale_ref_blocked_count() +
+                                                      ev.get_stale_ref_warned_count()));
+        });
 
     // Issue #490: (mutate:set-pattern-index-policy "lazy"|"eager-after-mutate"|"eager-after-cow")
     add_mutate("mutate:set-pattern-index-policy", [&ev, safe_str](const auto& a) -> EvalValue {
@@ -1546,12 +1559,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             new_value = root_v.child(0);
         }
 
-        // Record mutation on the old define node
+        // Issue #1441: capture old body NodeId before swap so
+        // FlatAST::try_rollback_rebind_op can restore it. field_offset=0
+        // is the Define value child index (same slot set_child mutates).
         std::string summary = (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "rebind " + name;
-        flat.add_mutation(old_define, "rebind", name, summary, summary);
+        aura::ast::NodeId old_value_node = aura::ast::NULL_NODE;
+        {
+            auto old_def_v = flat.get(old_define);
+            if (!old_def_v.children.empty())
+                old_value_node = old_def_v.child(0);
+        }
+        flat.add_mutation_with_rollback(
+            old_define, "rebind", name, summary, summary, aura::ast::MutationStatus::Committed,
+            /*field_offset=*/0, static_cast<std::uint64_t>(old_value_node),
+            static_cast<std::uint64_t>(new_value), /*has_rollback=*/true);
 
         // Redirect old Define's value child to the new nodes
-        // This is a valid NodeId in ev.workspace_flat_ since we parsed into it
+        // This is a valid NodeId in ev.workspace_flat_ since we parsed into it.
+        // set_child also logs structural-set-child (redundant with rebind
+        // rollback data but keeps children_ mutation audit complete).
         flat.set_child(old_define, 0, new_value);
 
         // Issue #348: auto-wire kOccurrenceDirty on
@@ -3097,6 +3123,72 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         return make_bool(true);
     });
+
+    // Issue #1442 / #1408 follow-up: (typed-mutate-atomic mutations-list)
+    // Aura EDSL surface for CompilerService::typed_mutate_atomic.
+    // Each list element is a mutation sexpr string (same form as
+    // typed_mutate / --serve typed-mutate), e.g.:
+    //   (typed-mutate-atomic
+    //     (list "(mutate:rebind \"x\" \"10\")"
+    //           "(mutate:rebind \"y\" \"20\")"))
+    // Returns #t if every sub-mutation succeeds (all applied);
+    // #f on empty list or atomic abort (0 applied — RAII rollback).
+    add("typed-mutate-atomic", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+        auto* svc_void = ev.compiler_service();
+        if (!svc_void)
+            return mev("no-service", "typed-mutate-atomic requires CompilerService");
+        auto* svc = static_cast<CompilerService*>(svc_void);
+
+        // Collect mutation sexpr strings from either:
+        //   (typed-mutate-atomic (list s1 s2 …))
+        //   (typed-mutate-atomic s1 s2 …)
+        std::vector<std::string> owned;
+        auto push_str = [&](const EvalValue& v) -> bool {
+            if (!is_string(v))
+                return false;
+            auto idx = as_string_idx(v);
+            if (idx >= ev.string_heap_.size())
+                return false;
+            owned.push_back(ev.string_heap_[idx]);
+            return true;
+        };
+
+        if (a.empty())
+            return make_bool(false); // empty → #f (matches C++ empty mutations)
+
+        if (a.size() == 1 && (is_pair(a[0]) || is_void(a[0]))) {
+            // Single list argument (void = empty list)
+            EvalValue cur = a[0];
+            while (is_pair(cur)) {
+                auto p = as_pair_idx(cur);
+                if (p >= ev.pairs_.size())
+                    return mev("bad-arg", "typed-mutate-atomic: malformed mutations list");
+                if (!push_str(ev.pairs_[p].car))
+                    return mev("bad-arg",
+                               "typed-mutate-atomic: each mutation must be a string sexpr");
+                cur = ev.pairs_[p].cdr;
+            }
+        } else {
+            for (const auto& v : a) {
+                if (!push_str(v))
+                    return mev("bad-arg",
+                               "usage: (typed-mutate-atomic (list \"(mutate:rebind …)\" …)) "
+                               "or (typed-mutate-atomic \"…\" \"…\")");
+            }
+        }
+
+        if (owned.empty())
+            return make_bool(false);
+
+        std::vector<std::string_view> views;
+        views.reserve(owned.size());
+        for (const auto& s : owned)
+            views.push_back(s);
+
+        auto result = svc->typed_mutate_atomic(views);
+        return make_bool(result.success);
+    });
+
     // (mutate:splice parent-id position code-strings... "summary")
     //   → list of inserted node IDs
     //   Parses and inserts multiple child expressions at the given position.

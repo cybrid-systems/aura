@@ -36,8 +36,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r =
-        cs.eval(std::format("(hash-ref (query:concurrent-safety-full-cycle-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:concurrent-safety-full-cycle-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +61,7 @@ static std::int64_t events_total(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:concurrent-safety-full-cycle-stats (schema 755) ---");
-    auto h = cs.eval("(query:concurrent-safety-full-cycle-stats)");
+    auto h = cs.eval("(engine:metrics \"query:concurrent-safety-full-cycle-stats\")");
     CHECK(h && is_hash(*h), "concurrent-safety-full-cycle-stats returns hash");
     CHECK(stat_int(cs, "schema") == 755, "schema == 755");
     CHECK(steal_boundary_success(cs) >= 0, "steal-boundary-success non-negative");
@@ -131,8 +131,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(events_total(cs) > ev7a, "safety-events-total monotonic over full-cycle matrix");
 
     std::println("\n--- AC8: query regression ---");
-    auto chaos = cs.eval("(query:self-evolution-chaos-stats)");
-    auto orch = cs.eval("(query:orchestration-llm-bottleneck-stats)");
+    auto chaos = cs.eval("(engine:metrics \"query:self-evolution-chaos-stats\")");
+    auto orch = cs.eval("(engine:metrics \"query:orchestration-llm-bottleneck-stats\")");
     CHECK(chaos && is_hash(*chaos), "self-evolution-chaos-stats regression (#674)");
     CHECK(orch && is_hash(*orch), "orchestration-llm-bottleneck-stats regression (#754)");
 }

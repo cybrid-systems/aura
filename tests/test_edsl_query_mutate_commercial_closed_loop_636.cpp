@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t edsl_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:edsl-query-mutate-commercial-stats)");
+    auto r = cs.eval("(engine:metrics \"query:edsl-query-mutate-commercial-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -89,10 +89,10 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "edsl commercial stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto srs = cs.eval("(query:stable-ref-stats)");
-    auto ess = cs.eval("(query:edsl-stability-stats)");
-    auto mls = cs.eval("(query:mutation-log-stats)");
-    auto cpr = cs.eval("(query:commercial-production-readiness-stats)");
+    auto srs = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+    auto ess = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
+    auto mls = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
+    auto cpr = cs.eval("(engine:metrics \"query:commercial-production-readiness-stats\")");
     CHECK(srs && is_int(*srs), "stable-ref-stats regression");
     CHECK(ess && is_int(*ess), "edsl-stability-stats regression");
     CHECK(mls && is_int(*mls), "mutation-log-stats regression");

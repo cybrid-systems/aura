@@ -23,7 +23,7 @@ using aura::compiler::types::is_int;
 namespace {
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", q, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -36,7 +36,7 @@ int main() {
 
     // #941–#954: self-evo pipeline dashboard
     {
-        auto r = cs.eval("(query:self-evo-pipeline-stats)");
+        auto r = cs.eval("(engine:metrics \"query:self-evo-pipeline-stats\")");
         CHECK(r && is_hash(*r), "query:self-evo-pipeline-stats is hash");
         CHECK(href(cs, "query:self-evo-pipeline-stats", "schema") == 941, "schema 941");
         CHECK(href(cs, "query:self-evo-pipeline-stats", "issue-954") == 954, "issue-954 field");
@@ -52,7 +52,7 @@ int main() {
 
     // #955–#967: bugfix dashboard flags
     {
-        auto r = cs.eval("(query:bugfix-941-967-stats)");
+        auto r = cs.eval("(engine:metrics \"query:bugfix-941-967-stats\")");
         CHECK(r && is_hash(*r), "query:bugfix-941-967-stats is hash");
         CHECK(href(cs, "query:bugfix-941-967-stats", "schema") == 955, "schema 955");
         CHECK(href(cs, "query:bugfix-941-967-stats", "session-unregister-wired") == 1,

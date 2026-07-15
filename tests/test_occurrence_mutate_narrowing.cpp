@@ -177,7 +177,7 @@ bool test_query_occurrence_narrowing_stats() {
         CHECK(false, "load if workspace");
         return false;
     }
-    auto stats0 = cs.eval("(query:occurrence-narrowing-stats)");
+    auto stats0 = cs.eval("(engine:metrics \"query:occurrence-narrowing-stats\")");
     const auto v0 = stats0 && aura::compiler::types::is_int(*stats0)
                         ? aura::compiler::types::as_int(*stats0)
                         : 0;
@@ -189,7 +189,7 @@ bool test_query_occurrence_narrowing_stats() {
         return false;
     }
     (void)cs.incremental_infer(ws->all_mutations().back());
-    auto stats1 = cs.eval("(query:occurrence-narrowing-stats)");
+    auto stats1 = cs.eval("(engine:metrics \"query:occurrence-narrowing-stats\")");
     const auto v1 = stats1 && aura::compiler::types::is_int(*stats1)
                         ? aura::compiler::types::as_int(*stats1)
                         : v0;

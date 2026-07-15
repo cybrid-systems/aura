@@ -114,12 +114,12 @@ int aura_issue_488_run() {
     // AC4: mutate-then-query self-evolution cycle
     {
         std::println("\n--- AC4: mutate-then-query closed loop ---");
-        const auto selfmod_before = cs.eval("(query:reflection-selfmod-stats)");
+        const auto selfmod_before = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
         (void)cs.eval("(query:pattern \"base\")");
         (void)cs.eval("(mutate:rebind \"base\" \"100\")");
         (void)cs.eval("(query:mutation-impact-snapshot)");
-        (void)cs.eval("(query:reflect-postmutate-stats)");
-        const auto selfmod_after = cs.eval("(query:reflection-selfmod-stats)");
+        (void)cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
+        const auto selfmod_after = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
         CHECK(selfmod_before && aura::compiler::types::is_int(*selfmod_before),
               "reflection-selfmod-stats before cycle");
         CHECK(selfmod_after && aura::compiler::types::is_int(*selfmod_after),
@@ -135,9 +135,9 @@ int aura_issue_488_run() {
     // AC5: regression — existing reflect/Guard primitives
     {
         std::println("\n--- AC5: reflect/Guard regression ---");
-        auto rps = cs.eval("(query:reflect-postmutate-stats)");
+        auto rps = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         auto mi = cs.eval("(query:mutation-impact)");
-        auto mrs = cs.eval("(query:macro-reflect-self-evo-stats)");
+        auto mrs = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
         CHECK(rps && aura::compiler::types::is_hash(*rps), "reflect-postmutate-stats regression");
         CHECK(mi && aura::compiler::types::is_int(*mi), "mutation-impact regression");
         CHECK(mrs && aura::compiler::types::is_int(*mrs),

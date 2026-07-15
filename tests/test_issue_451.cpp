@@ -93,13 +93,13 @@ bool test_metrics_reachable_after_mutate() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC5: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:verify-tool-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:verify-tool-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:verify-tool-stats (regression for #443)");
-    auto r2 = cs.eval("(query:gc-safepoint-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:gc-safepoint-stats (regression for #439)");
-    auto r3 = cs.eval("(query:mutation-coordination-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:mutation-coordination-stats (regression for #448)");
     return true;

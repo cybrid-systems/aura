@@ -7,7 +7,7 @@
 //   AC #2: (*allow-macro-inline* #t/#f) Aura primitive
 //          toggles InlinePass::respect_macro_hygiene_ at
 //          runtime
-//   AC #3: (compile:inline-pass-stats) hash includes
+//   AC #3: (engine:metrics \"compile:inline-pass-stats\") hash includes
 //          "macro-hygiene-skipped" key
 //   AC #4: end-to-end path via CompilerService::eval works
 //          (define-hygienic-macro + eval-current + stats)
@@ -34,7 +34,7 @@ using aura::compiler::CompilerService;
 // import std migration, 8d3e42b7).
 
 // Helper: extract int value from inline-pass-stats hash. The
-// hash comes back via (compile:inline-pass-stats); we re-eval
+// hash comes back via (engine:metrics \"compile:inline-pass-stats\"); we re-eval
 // the hash field by key.
 static std::int64_t get_stat_int(CompilerService& cs, const std::string& key) {
     // Re-eval the whole stats hash and walk it via Aura code
@@ -71,12 +71,13 @@ bool test_allow_macro_inline_primitive() {
     return true;
 }
 
-// ── AC #3: (compile:inline-pass-stats) hash shape ──
+// ── AC #3: (engine:metrics \"compile:inline-pass-stats\") hash shape ──
 bool test_inline_pass_stats_shape() {
-    std::println("\n--- AC #3: (compile:inline-pass-stats) includes macro-hygiene-skipped ---");
+    std::println("\n--- AC #3: (engine:metrics \"compile:inline-pass-stats\") includes "
+                 "macro-hygiene-skipped ---");
     CompilerService cs;
-    auto r = cs.eval("(compile:inline-pass-stats)");
-    CHECK(r.has_value(), "(compile:inline-pass-stats) callable");
+    auto r = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"compile:inline-pass-stats\") callable");
     CHECK(r && aura::compiler::types::is_hash(*r), "inline-pass-stats returns a hash");
     // Walk the hash to confirm 4 keys (inlined, branch-aware,
     // macro-hygiene-skipped, total). Without a hash-ref
@@ -98,7 +99,7 @@ bool test_e2e_macro_define_and_eval() {
     CHECK(r1.has_value(), "macro-defined code eval succeeds");
     // The inliner's macro-hygiene skipped counter should be
     // observable in the stats hash.
-    auto stats = cs.eval("(compile:inline-pass-stats)");
+    auto stats = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
     CHECK(stats.has_value(), "inline-pass-stats observable after macro + eval");
     return true;
 }
@@ -125,14 +126,14 @@ bool test_macro_hygiene_skipped_observable() {
     std::println("\n--- Bonus: macro-hygiene-skipped key observable in stats hash ---");
     CompilerService cs;
     // First, get baseline.
-    auto stats0 = cs.eval("(compile:inline-pass-stats)");
+    auto stats0 = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
     CHECK(stats0.has_value(), "baseline stats callable");
     // Define + eval a macro-defined function.
     (void)cs.eval("(set-code \""
                   "(define-hygienic-macro (mk x) (define z (+ x 1))) "
                   "(mk 100))");
     (void)cs.eval("(eval-current)");
-    auto stats1 = cs.eval("(compile:inline-pass-stats)");
+    auto stats1 = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
     CHECK(stats1.has_value(), "post-eval stats callable");
     return true;
 }

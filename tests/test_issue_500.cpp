@@ -59,7 +59,7 @@ int aura_issue_500_run() {
     // AC1: query:work-steal-stats fields
     {
         std::println("\n--- AC1: query:work-steal-stats ---");
-        auto stats = cs.eval("(query:work-steal-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:work-steal-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:work-steal-stats returns hash");
         CHECK(snap_stat(cs, "steal-attempts") >= 0, "steal-attempts present");
@@ -157,10 +157,11 @@ int aura_issue_500_run() {
     // AC5: scheduler-stealbudget + fiber-migration regression
     {
         std::println("\n--- AC5: related stats regression ---");
-        auto stealbudget = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
+        auto stealbudget =
+            cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
         CHECK(stealbudget && aura::compiler::types::is_hash(*stealbudget),
               "scheduler-stealbudget-adaptive-stats regression");
-        auto fms = cs.eval("(query:fiber-migration-stats)");
+        auto fms = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
         CHECK(fms && aura::compiler::types::is_int(*fms), "fiber-migration-stats regression");
     }
 

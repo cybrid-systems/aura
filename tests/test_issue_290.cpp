@@ -158,8 +158,8 @@ bool test_stats_cumulative() {
     // be > 0 (kMacroExpansion was newly set on at least one
     // node). Repeat in a second eval — fresh flat, fresh
     // counters, but again > 0 after expansion.
-    auto stats1 = run_int(cs, "(begin (m) (compile:macro-dirty-stats))");
-    auto stats2 = run_int(cs, "(begin (m) (compile:macro-dirty-stats))");
+    auto stats1 = run_int(cs, "(begin (m) (engine:metrics \"compile:macro-dirty-stats\"))");
+    auto stats2 = run_int(cs, "(begin (m) (engine:metrics \"compile:macro-dirty-stats\"))");
     std::println(std::cerr, "stats after 1st expand: {}, after 2nd expand: {}\n", stats1, stats2);
     CHECK(stats1 > 0, "stats > 0 after 1st expansion (got " + std::to_string(stats1) + ")");
     CHECK(stats2 > 0, "stats > 0 after 2nd expansion (got " + std::to_string(stats2) + ")");

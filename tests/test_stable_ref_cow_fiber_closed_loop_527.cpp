@@ -36,7 +36,7 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 
 static std::int64_t cow_fiber_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:stable-ref-cow-fiber-stats)");
+    auto r = cs.eval("(engine:metrics \"query:stable-ref-cow-fiber-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -103,8 +103,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "cow-fiber stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto srs = cs.eval("(query:stable-ref-stats)");
-    auto eds = cs.eval("(query:edsl-stability-stats)");
+    auto srs = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+    auto eds = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
     CHECK(srs && is_int(*srs), "stable-ref-stats regression");
     CHECK(eds && is_int(*eds), "edsl-stability-stats regression");
 }

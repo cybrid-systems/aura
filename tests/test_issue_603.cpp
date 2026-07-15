@@ -3,7 +3,7 @@
 // consumer adoption + per-block dirty_ driven minimal re-lower observability
 // (#603). Scope-limited foundation: 3 new counters on observability_metrics.h
 // wired in service.ixx + lower-level dual-emit path; enhanced
-// (compile:ir-soa-stats) Aura primitive exposes the 3 new fields alongside
+// (engine:metrics \"compile:ir-soa-stats\") Aura primitive exposes the 3 new fields alongside
 // the existing instructions/functions counts. Full consumer adoption
 // (executor + JIT + pass_manager hot paths) is a follow-up.
 
@@ -46,7 +46,7 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t snap_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (compile:ir-soa-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"compile:ir-soa-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -67,8 +67,9 @@ int aura_issue_603_run() {
     // AC1: primitive returns hash with 5 fields (existing 2 + new 3).
     {
         std::println("\n--- AC1: compile:ir-soa-stats has 5 fields ---");
-        auto h = cs.eval("(compile:ir-soa-stats)");
-        CHECK(h && aura::compiler::types::is_hash(*h), "(compile:ir-soa-stats) returns hash");
+        auto h = cs.eval("(engine:metrics \"compile:ir-soa-stats\")");
+        CHECK(h && aura::compiler::types::is_hash(*h),
+              "(engine:metrics \"compile:ir-soa-stats\") returns hash");
         // Existing fields (back-compat with #254)
         CHECK(snap_stat(cs, "instructions-emitted") >= 0, "instructions-emitted present");
         CHECK(snap_stat(cs, "functions-emitted") >= 0, "functions-emitted present");
@@ -150,9 +151,9 @@ int aura_issue_603_run() {
     // fields from #684 + #689 — must not have regressed).
     {
         std::println("\n--- AC6: query:irsoa-incremental-stats back-compat ---");
-        auto h = cs.eval("(query:irsoa-incremental-stats)");
+        auto h = cs.eval("(engine:metrics \"query:irsoa-incremental-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
-              "(query:irsoa-incremental-stats) still returns hash");
+              "(engine:metrics \"query:irsoa-incremental-stats\") still returns hash");
         auto wired = cs.eval(std::format(
             "(hash-ref (engine:metrics \"query:irsoa-incremental-stats\") 'soa-wired-hits')"));
         CHECK(wired && aura::compiler::types::is_int(*wired) &&
@@ -160,11 +161,11 @@ int aura_issue_603_run() {
               "soa-wired-hits >= 1 after eval-current");
     }
 
-    // AC7: hash returned by (compile:ir-soa-stats) has exactly 5 keys.
+    // AC7: hash returned by (engine:metrics \"compile:ir-soa-stats\") has exactly 5 keys.
     // Counts the keys via hash-iteration. Loose check: hash-size ≥ 5.
     {
         std::println("\n--- AC7: hash size >= 5 ---");
-        auto sz = cs.eval("(hash-size (compile:ir-soa-stats))");
+        auto sz = cs.eval("(hash-size (engine:metrics \"compile:ir-soa-stats\"))");
         // Some runtimes may not have hash-size — fall back to >= 0.
         if (sz && aura::compiler::types::is_int(*sz)) {
             CHECK(aura::compiler::types::as_int(*sz) >= 5,

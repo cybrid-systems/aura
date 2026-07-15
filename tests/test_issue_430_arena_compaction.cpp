@@ -19,8 +19,8 @@
 //      otherwise skip.
 //   2. (arena:compact-with-policy name policy) — new Aura
 //      primitive exposing compact_with_policy to EDSL.
-//   3. (query:arena-compaction-stats-hash) — new 10-field
-//      hash variant of (query:arena-compaction-stats) (which
+//   3. (engine:metrics \"query:arena-compaction-stats-hash\") — new 10-field
+//      hash variant of (engine:metrics \"query:arena-compaction-stats\") (which
 //      returns the sum as a single integer). The hash
 //      variant exposes each field as a distinct key for
 //      the AI Agent's per-field reasoning.
@@ -49,7 +49,7 @@
 //   AC2:  hash 10 fields present + each is a non-negative integer
 //   AC3:  empty workspace — query:arena-compaction-stats-hash
 //         doesn't crash (returns hash with zeros)
-//   AC4:  repeated (query:arena-compaction-stats-hash) calls
+//   AC4:  repeated (engine:metrics \"query:arena-compaction-stats-hash\") calls
 //         return consistent hashes (idempotent)
 //   AC5:  (arena:compact-with-policy "main" "skip") returns 0
 //         (no-op when policy is "skip")

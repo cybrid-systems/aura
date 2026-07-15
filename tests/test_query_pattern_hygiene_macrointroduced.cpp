@@ -43,8 +43,8 @@ static int k_stress_iters() {
 }
 
 static std::int64_t hash_int(CompilerService& cs, std::string_view key) {
-    auto r =
-        cs.eval(std::format("(hash-ref (query:pattern-ir-hygiene-closed-loop-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:pattern-ir-hygiene-closed-loop-stats\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -58,7 +58,8 @@ static std::int64_t result_count(CompilerService& cs, const std::string& expr) {
 }
 
 static std::int64_t inline_skipped(CompilerService& cs) {
-    auto r = cs.eval("(hash-ref (compile:inline-pass-stats) 'macro-hygiene-skipped')");
+    auto r = cs.eval(
+        "(hash-ref (engine:metrics \"compile:inline-pass-stats\") 'macro-hygiene-skipped')");
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -142,12 +143,13 @@ bool test_mutate_safe_on_user_nodes(CompilerService& cs) {
 // ── AC5: IR InlinePass respects MacroIntroduced ────────────
 bool test_ir_inlinepass_respects_macrointroduced(CompilerService& cs) {
     std::println("\n--- AC5: IR InlinePass respects MacroIntroduced ---");
-    auto ihs = cs.eval("(query:ir-hygiene-stats)");
+    auto ihs = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(ihs.has_value() && aura::compiler::types::is_hash(*ihs),
-          "(query:ir-hygiene-stats) returns hash");
+          "(engine:metrics \"query:ir-hygiene-stats\") returns hash");
     const auto skipped = inline_skipped(cs);
     CHECK(skipped >= 0, "inline macro-hygiene-skipped observable");
-    auto r = cs.eval("(hash-ref (query:ir-hygiene-stats) 'respect-macro-hygiene')");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:ir-hygiene-stats\") 'respect-macro-hygiene')");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r) &&
               aura::compiler::types::as_int(*r) == 1,
           "respect-macro-hygiene == 1 (default on)");
@@ -177,7 +179,7 @@ bool test_tag_arity_dirty_hook_under_query(CompilerService& cs) {
 // ── AC7: query:pattern-ir-hygiene-closed-loop-stats ────────
 bool test_pattern_ir_hygiene_closed_loop_stats(CompilerService& cs) {
     std::println("\n--- AC7: query:pattern-ir-hygiene-closed-loop-stats ---");
-    auto h = cs.eval("(query:pattern-ir-hygiene-closed-loop-stats)");
+    auto h = cs.eval("(engine:metrics \"query:pattern-ir-hygiene-closed-loop-stats\")");
     CHECK(h.has_value() && aura::compiler::types::is_hash(*h),
           "pattern-ir-hygiene-closed-loop-stats returns hash");
     const auto capture = hash_int(cs, "capture-prevented");
@@ -196,15 +198,17 @@ bool test_combined_metrics_monotonic(CompilerService& cs) {
     std::println("\n--- AC8: combined metrics monotonic ---");
     const auto capture0 = hash_int(cs, "capture-prevented");
     const auto phs0 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    const auto prod0 = cs.eval("(hash-ref (query:macro-production-hygiene-stats) "
-                               "'macro-production-hygiene-total')");
+    const auto prod0 =
+        cs.eval("(hash-ref (engine:metrics \"query:macro-production-hygiene-stats\") "
+                "'macro-production-hygiene-total')");
     (void)cs.eval("(query:pattern \"*\")");
     (void)cs.eval("(query:pattern \"base\" :respect-hygiene #t)");
     cs.evaluator().ensure_macro_hygiene_contract();
     const auto capture1 = hash_int(cs, "capture-prevented");
     const auto phs1 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    const auto prod1 = cs.eval("(hash-ref (query:macro-production-hygiene-stats) "
-                               "'macro-production-hygiene-total')");
+    const auto prod1 =
+        cs.eval("(hash-ref (engine:metrics \"query:macro-production-hygiene-stats\") "
+                "'macro-production-hygiene-total')");
     CHECK(capture1 >= capture0,
           std::format("capture-prevented monotonic ({} -> {})", capture0, capture1));
     if (phs0 && phs1 && aura::compiler::types::is_int(*phs0) &&
@@ -256,21 +260,21 @@ bool test_fuzz_mutate_query_stress(CompilerService& cs) {
 // ── AC10: regression — existing hygiene primitives ─────────
 bool test_regression_hygiene_primitives(CompilerService& cs) {
     std::println("\n--- AC10: regression — existing hygiene primitives ---");
-    auto r1 = cs.eval("(query:macro-hygiene-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
-          "(query:macro-hygiene-stats) regression");
+          "(engine:metrics \"query:macro-hygiene-stats\") regression");
     auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:pattern-hygiene-stats\") regression");
-    auto r3 = cs.eval("(query:ir-hygiene-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_hash(*r3),
-          "(query:ir-hygiene-stats) regression");
-    auto r4 = cs.eval("(query:macro-production-hygiene-stats)");
+          "(engine:metrics \"query:ir-hygiene-stats\") regression");
+    auto r4 = cs.eval("(engine:metrics \"query:macro-production-hygiene-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_hash(*r4),
-          "(query:macro-production-hygiene-stats) regression");
-    auto r5 = cs.eval("(query:macro-hygiene-contract-stats)");
+          "(engine:metrics \"query:macro-production-hygiene-stats\") regression");
+    auto r5 = cs.eval("(engine:metrics \"query:macro-hygiene-contract-stats\")");
     CHECK(r5.has_value() && aura::compiler::types::is_int(*r5),
-          "(query:macro-hygiene-contract-stats) regression");
+          "(engine:metrics \"query:macro-hygiene-contract-stats\") regression");
     return true;
 }
 

@@ -19,8 +19,8 @@
 //   - (arena:should-auto-compact? name) — cheap O(1) probe (#335)
 //   - (arena:adaptive-stats) — trigger/skip counters (#335)
 //   - (arena:stats-json) — JSON snapshot (#187)
-//   - (query:arena-auto-stats) — group-level guard/skip (#464)
-//   - (query:arena-auto-compact-stats) — alloc-path policy (#685)
+//   - (engine:metrics \"query:arena-auto-stats\") — group-level guard/skip (#464)
+//   - (engine:metrics \"query:arena-auto-compact-stats\") — alloc-path policy (#685)
 //   - (query:arena-fragmentation-snapshot) — live point-in-time
 //     hash (#604)
 //
@@ -159,11 +159,12 @@ int aura_issue_623_run() {
         CHECK(s_pol.has_value(), "(arena:compact-with-policy) reachable (#430 back-compat)");
         auto s_probe = cs.eval("(arena:should-auto-compact?)");
         CHECK(s_probe.has_value(), "(arena:should-auto-compact?) reachable (#335 back-compat)");
-        auto s_auto = cs.eval("(query:arena-auto-stats)");
-        CHECK(s_auto.has_value(), "(query:arena-auto-stats) reachable (#464 back-compat)");
-        auto s_compact = cs.eval("(query:arena-auto-compact-stats)");
+        auto s_auto = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
+        CHECK(s_auto.has_value(),
+              "(engine:metrics \"query:arena-auto-stats\") reachable (#464 back-compat)");
+        auto s_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
         CHECK(s_compact.has_value(),
-              "(query:arena-auto-compact-stats) reachable (#685 back-compat)");
+              "(engine:metrics \"query:arena-auto-compact-stats\") reachable (#685 back-compat)");
         auto s_snap = cs.eval("(query:arena-fragmentation-snapshot)");
         CHECK(s_snap.has_value(),
               "(query:arena-fragmentation-snapshot) reachable (#604 back-compat)");

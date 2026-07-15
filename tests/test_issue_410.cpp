@@ -29,7 +29,7 @@
 //
 // Test cases:
 //   AC1: fresh CompilerService → snapshot fields start at 0
-//   AC2: (compile:per-symbol-dirty-stats) primitive returns a hash
+//   AC2: (engine:metrics \"compile:per-symbol-dirty-stats\") primitive returns a hash
 //        with 4 keys (per-symbol-affected-count,
 //        ancestor-affected-count, reduction-ratio-bp, lookup-count)
 //   AC3: lookup-count increments after a primitive call
@@ -89,7 +89,8 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:per-symbol-dirty-stats) returns hash with 4 keys ---");
+    std::println("\n--- AC2: (engine:metrics \"compile:per-symbol-dirty-stats\") returns hash with "
+                 "4 keys ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:per-symbol-dirty-stats \\\"x\\\"))\")");
     if (!r1) {
@@ -109,7 +110,7 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:per-symbol-dirty-stats) returns a hash");
+    CHECK(true, "(engine:metrics \"compile:per-symbol-dirty-stats\") returns a hash");
     // Verify the 4 keys exist with int values.
     for (const char* key : {"per-symbol-affected-count", "ancestor-affected-count",
                             "reduction-ratio-bp", "lookup-count"}) {

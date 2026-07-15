@@ -106,7 +106,7 @@ bool test_regression_primitives() {
     std::println("\n--- AC8: related primitive regression ---");
     CompilerService cs;
     auto cxx = cs.eval("(query:cxx26-hotpath-invariants)");
-    auto pcs = cs.eval("(query:pass-contracts-stats)");
+    auto pcs = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
     CHECK(cxx && is_hash(*cxx), "cxx26-hotpath-invariants regression");
     CHECK(pcs && is_int(*pcs), "pass-contracts-stats regression");
     return true;

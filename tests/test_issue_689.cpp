@@ -56,7 +56,7 @@ int aura_issue_689_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:occurrence-typing-mutate-stats ---");
-        auto stats = cs.eval("(query:occurrence-typing-mutate-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:occurrence-typing-mutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:occurrence-typing-mutate-stats returns hash");
         CHECK(stat_int(cs, "deep-narrow-refreshes") >= 0, "deep-narrow-refreshes present");

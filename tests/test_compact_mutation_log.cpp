@@ -162,7 +162,7 @@ int main() {
 
         // #553 owns query:mutation-log-stats (int sum). Compaction
         // metrics ship under a distinct name so int regression stays.
-        auto s = cs.eval("(query:mutation-log-compact-stats)");
+        auto s = cs.eval("(engine:metrics \"query:mutation-log-compact-stats\")");
         CHECK(s && is_hash(*s), "query:mutation-log-compact-stats is hash");
         auto ls = href(cs, "query:mutation-log-compact-stats", "log-size");
         CHECK(ls >= 0, "log-size key");
@@ -173,7 +173,7 @@ int main() {
         auto th = href(cs, "query:mutation-log-compact-stats", "auto-threshold");
         CHECK(th == static_cast<std::int64_t>(FlatAST::kMutationLogAutoCompactThreshold),
               "auto-threshold key == 10000");
-        auto legacy = cs.eval("(query:mutation-log-stats)");
+        auto legacy = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
         CHECK(legacy && is_int(*legacy), "query:mutation-log-stats remains int (#553)");
     }
 

@@ -47,7 +47,7 @@ int aura_issue_497_run() {
     // AC1: query:stable-ref-lifecycle-stats fields
     {
         std::println("\n--- AC1: query:stable-ref-lifecycle-stats ---");
-        auto stats = cs.eval("(query:stable-ref-lifecycle-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:stable-ref-lifecycle-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:stable-ref-lifecycle-stats returns hash");
         CHECK(snap_stat(cs, "generation-wrap-count") >= 0, "generation-wrap-count present");
@@ -112,7 +112,7 @@ int aura_issue_497_run() {
     // AC4: query:stable-ref-stats regression
     {
         std::println("\n--- AC4: stable-ref-stats regression ---");
-        auto legacy = cs.eval("(query:stable-ref-stats)");
+        auto legacy = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
         CHECK(legacy && aura::compiler::types::is_int(*legacy), "stable-ref-stats regression");
     }
 

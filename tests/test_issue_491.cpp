@@ -52,7 +52,7 @@ int aura_issue_491_run() {
     // AC1: query:jit-stats-hash fields
     {
         std::println("\n--- AC1: query:jit-stats-hash ---");
-        auto stats = cs.eval("(query:jit-stats-hash)");
+        auto stats = cs.eval("(engine:metrics \"query:jit-stats-hash\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats), "query:jit-stats-hash returns hash");
         CHECK(snap_stat(cs, "compiles") >= 0, "compiles present");
         CHECK(snap_stat(cs, "fallback-count") >= 0, "fallback-count present");
@@ -69,7 +69,7 @@ int aura_issue_491_run() {
     // AC2: query:jit-stats string includes new metrics keys
     {
         std::println("\n--- AC2: query:jit-stats extended format ---");
-        auto line = cs.eval("(query:jit-stats)");
+        auto line = cs.eval("(engine:metrics \"query:jit-stats\")");
         CHECK(line && aura::compiler::types::is_string(*line), "query:jit-stats returns string");
         if (line && aura::compiler::types::is_string(*line)) {
             const auto idx = aura::compiler::types::as_string_idx(*line);
@@ -100,8 +100,8 @@ int aura_issue_491_run() {
     // AC4: JIT fallback stats regression
     {
         std::println("\n--- AC4: query:jit-fallback-stats regression ---");
-        auto fb = cs.eval("(query:jit-fallback-stats)");
-        auto jit = cs.eval("(query:jit-stats)");
+        auto fb = cs.eval("(engine:metrics \"query:jit-fallback-stats\")");
+        auto jit = cs.eval("(engine:metrics \"query:jit-stats\")");
         CHECK(fb && aura::compiler::types::is_int(*fb), "query:jit-fallback-stats regression");
         CHECK(jit && aura::compiler::types::is_string(*jit), "query:jit-stats regression");
     }
@@ -118,7 +118,7 @@ int aura_issue_491_run() {
         std::println("\n--- AC6: stats:count ---");
         auto count = cs.eval("(stats:count)");
         // Loose assertion: count >= 89 baseline. #601 added
-        // (query:jit-hotswap-closure-stats) and brought it to 90+;
+        // (engine:metrics \"query:jit-hotswap-closure-stats\") and brought it to 90+;
         // future issues will continue to bump it. Don't pin to a
         // brittle exact value here.
         CHECK(count && aura::compiler::types::is_int(*count) &&

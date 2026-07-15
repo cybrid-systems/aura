@@ -64,7 +64,7 @@ int aura_issue_694_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:sv-sva-structure-stats ---");
-        auto stats = cs.eval("(query:sv-sva-structure-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:sv-sva-structure-stats returns hash");
         CHECK(stat_int(cs, "property-count") >= 0, "property-count present");

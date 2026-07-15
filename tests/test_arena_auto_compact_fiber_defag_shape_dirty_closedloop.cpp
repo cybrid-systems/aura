@@ -44,7 +44,8 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static std::int64_t policy_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:arena-auto-policy-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:arena-auto-policy-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -71,7 +72,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:arena-auto-policy-stats (schema 743) ---");
     CHECK(setup_workspace(cs), "recursive workspace setup");
-    auto h = cs.eval("(query:arena-auto-policy-stats)");
+    auto h = cs.eval("(engine:metrics \"query:arena-auto-policy-stats\")");
     CHECK(h && is_hash(*h), "arena-auto-policy-stats returns hash");
     CHECK(policy_hash(cs, "schema") == 743, "schema == 743");
     CHECK(policy_hash(cs, "auto-compact-triggers") >= 0, "auto-compact-triggers present");
@@ -156,9 +157,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats4b >= stats4a, "arena-auto-policy stats monotonic");
 
     std::println("\n--- AC6: query regression ---");
-    auto ac = cs.eval("(query:arena-auto-compact-stats)");
-    auto acd = cs.eval("(query:arena-auto-compaction-stats)");
-    auto acdf = cs.eval("(query:arena-auto-compact-defrag-stats)");
+    auto ac = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+    auto acd = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+    auto acdf = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
     CHECK(ac && is_hash(*ac), "arena-auto-compact-stats regression");
     CHECK(acd && is_hash(*acd), "arena-auto-compaction-stats regression");
     CHECK(acdf && is_hash(*acdf), "arena-auto-compact-defrag-stats regression");

@@ -203,6 +203,7 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
     // each expected sub-primitive IS reachable via
     // EDSL eval as an independent sanity check.
     // The 6 expected sub-primitives per the body.
+    // Issue #1439: sub-stats are internal; reach via (engine:metrics "…").
     const std::vector<std::string> expected_sub_primitives = {
         "query:macro-hygiene-provenance-stats",      // #757
         "query:edsl-reflection-stats",               // #758
@@ -214,15 +215,15 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
     std::size_t edsl_reachable_count = 0;
     for (const auto& name : expected_sub_primitives) {
         try {
-            auto r = cs.eval(std::format("({})", name));
-            if (r) {
+            auto r = cs.eval(std::format("(engine:metrics \"{}\")", name));
+            if (r && !aura::compiler::types::is_void(*r)) {
                 ++edsl_reachable_count;
-                std::println("  [info] sub-primitive '{}' IS reachable via EDSL", name);
+                std::println("  [info] sub-stats '{}' IS reachable via engine:metrics", name);
             } else {
-                std::println("  [info] sub-primitive '{}' NOT reachable via EDSL", name);
+                std::println("  [info] sub-stats '{}' NOT reachable via engine:metrics", name);
             }
         } catch (...) {
-            std::println("  [info] sub-primitive '{}' threw (not registered)", name);
+            std::println("  [info] sub-stats '{}' threw (not registered)", name);
         }
     }
     const auto primitive_count =
@@ -236,7 +237,7 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #786 + #785 sibling primitives unaffected ---");
     auto a786 = cs.eval("(query:code-as-data-production-health)");
-    auto a785 = cs.eval("(query:aot-concurrent-hotupdate-stats)");
+    auto a785 = cs.eval("(engine:metrics \"query:aot-concurrent-hotupdate-stats\")");
     CHECK(a786 && aura::compiler::types::is_hash(*a786),
           "query:code-as-data-production-health hash regression (#786)");
     CHECK(a785 && aura::compiler::types::is_hash(*a785),
@@ -244,7 +245,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     const auto a786_schema = hash_int_field(cs, "(query:code-as-data-production-health)", "schema");
     CHECK(a786_schema == 786,
           std::format("#786 schema = {} (expected 786, no drift)", a786_schema));
-    const auto a785_schema = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "schema");
+    const auto a785_schema =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "schema");
     CHECK(a785_schema == 785,
           std::format("#785 schema = {} (expected 785, no drift)", a785_schema));
 }

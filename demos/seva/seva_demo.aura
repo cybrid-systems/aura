@@ -76,7 +76,7 @@
 
 ;; Step 4: query the verify-dirty stats (cumulative
 ;; observability).
-(define verify-stats (query:verify-dirty-stats))
+(define verify-stats (engine:metrics "query:verify-dirty-stats"))
 (display "Step 4: query:verify-dirty-stats → ")
 (display verify-stats)
 (display " total dirty nodes")
@@ -149,7 +149,7 @@
 (newline)
 
 ;; Step 9: query the strategy evolution stats.
-(define strategy-stats (query:strategy-evolution-stats))
+(define strategy-stats (engine:metrics "query:strategy-evolution-stats"))
 (display "Step 9: query:strategy-evolution-stats →")
 (newline)
 (display "  active-strategy     = ")

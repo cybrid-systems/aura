@@ -10,7 +10,7 @@
 //
 //   - AC1: 4 new reflect/snapshot counters reachable +
 //          start at 0
-//   - AC2: (query:reflect-postmutate-stats) returns
+//   - AC2: (engine:metrics \"query:reflect-postmutate-stats\") returns
 //          integer sum of 4 counters
 //   - AC3: impact_snapshot_count_ bumps on Guard dtor
 //          success path (via mutate:replace-value)
@@ -73,13 +73,14 @@ bool test_reflect_snapshot_counters_reachable() {
 
 // ── AC2: query:reflect-postmutate-stats returns hash
 bool test_query_reflect_postmutate_stats() {
-    std::println("\n--- AC2: (query:reflect-postmutate-stats) returns hash ---");
+    std::println("\n--- AC2: (engine:metrics \"query:reflect-postmutate-stats\") returns hash ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:reflect-postmutate-stats)");
-    CHECK(r.has_value(), "(query:reflect-postmutate-stats) returns");
-    CHECK(aura::compiler::types::is_hash(*r), "(query:reflect-postmutate-stats) is hash");
+    auto r = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:reflect-postmutate-stats\") returns");
+    CHECK(aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:reflect-postmutate-stats\") is hash");
     return true;
 }
 
@@ -218,18 +219,18 @@ bool test_gc_heap_with_reflect_snapshot() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:reflect-postmutate-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
-          "(query:reflect-postmutate-stats) (hash for #502)");
+          "(engine:metrics \"query:reflect-postmutate-stats\") (hash for #502)");
     auto r2 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
     auto r3 = cs.eval("(query:dirty-impact)");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(query:dirty-impact) (regression for #550)");
-    auto r4 = cs.eval("(query:self-evolution-stability-stats)");
+    auto r4 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:self-evolution-stability-stats) (regression for #549)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
     auto r5 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r5.has_value() && aura::compiler::types::is_int(*r5),
           "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");

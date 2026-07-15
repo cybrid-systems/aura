@@ -92,60 +92,61 @@ void ObservabilityPrims::register_eval_p80(PrimRegistrar add, Evaluator& ev) {
     //   - schema-violations          reflection_schema_violations_total
     //   - stale-validation-prevented reflection_stale_validation_prevented_total
     //   - schema == 750
-    add("query:reflection-schema-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-        const std::int64_t validated =
-            m ? static_cast<std::int64_t>(
-                    m->reflection_schema_validated_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t hygiene_held =
-            m ? static_cast<std::int64_t>(
-                    m->reflection_macro_provenance_held_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t violations =
-            m ? static_cast<std::int64_t>(
-                    m->reflection_schema_violations_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t stale_prev =
-            m ? static_cast<std::int64_t>(
-                    m->reflection_stale_validation_prevented_total.load(std::memory_order_relaxed))
-              : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:reflection-schema-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::int64_t validated =
+                m ? static_cast<std::int64_t>(
+                        m->reflection_schema_validated_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_held =
+                m ? static_cast<std::int64_t>(
+                        m->reflection_macro_provenance_held_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t violations =
+                m ? static_cast<std::int64_t>(
+                        m->reflection_schema_violations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t stale_prev =
+                m ? static_cast<std::int64_t>(m->reflection_stale_validation_prevented_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("validated", validated);
-        insert_kv("hygiene-invariants-held", hygiene_held);
-        insert_kv("schema-violations", violations);
-        insert_kv("stale-validation-prevented", stale_prev);
-        insert_kv("schema", 750);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("validated", validated);
+            insert_kv("hygiene-invariants-held", hygiene_held);
+            insert_kv("schema-violations", violations);
+            insert_kv("stale-validation-prevented", stale_prev);
+            insert_kv("schema", 750);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 81 (orig lines 9618-9691)
@@ -164,66 +165,68 @@ void ObservabilityPrims::register_eval_p81(PrimRegistrar add, Evaluator& ev) {
     //   - narrowing-provenance-refresh   narrowing_provenance_total
     //   - coercion-incremental-wins      coercion_zerooverhead_win_total
     //   - schema == 659
-    add("query:typesystem-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t reverify =
-            m ? static_cast<std::int64_t>(
-                    m->delta_conflict_reverify_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t dce =
-            m ? static_cast<std::int64_t>(
-                    m->dead_coercion_eliminated_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t linear =
-            m ? static_cast<std::int64_t>(
-                    m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t provenance =
-            m ? static_cast<std::int64_t>(
-                    m->narrowing_provenance_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t coercion =
-            m ? static_cast<std::int64_t>(
-                    m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed))
-              : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:typesystem-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t reverify =
+                m ? static_cast<std::int64_t>(
+                        m->delta_conflict_reverify_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dce =
+                m ? static_cast<std::int64_t>(
+                        m->dead_coercion_eliminated_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t linear =
+                m ? static_cast<std::int64_t>(
+                        m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t provenance =
+                m ? static_cast<std::int64_t>(
+                        m->narrowing_provenance_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t coercion =
+                m ? static_cast<std::int64_t>(
+                        m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("delta-reverify-scans", reverify);
-        insert_kv("dead-coercion-eliminated", dce);
-        insert_kv("linear-post-mutate-revalidations", linear);
-        insert_kv("narrowing-provenance-refresh", provenance);
-        insert_kv("coercion-incremental-wins", coercion);
-        insert_kv("schema", 659);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("delta-reverify-scans", reverify);
+            insert_kv("dead-coercion-eliminated", dce);
+            insert_kv("linear-post-mutate-revalidations", linear);
+            insert_kv("narrowing-provenance-refresh", provenance);
+            insert_kv("coercion-incremental-wins", coercion);
+            insert_kv("schema", 659);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 82 (orig lines 9692-9770)
@@ -263,50 +266,52 @@ void ObservabilityPrims::register_eval_p82(PrimRegistrar add, Evaluator& ev) {
     // #599 compiler-root-stats, #592 panic-checkpoint-fiber-stats,
     // #596 guard-panic-reflect-stats — each of those exposes its own
     // module-local view; this primitive is the FIRST unified view.
-    add("query:runtime-observability-correlated-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t steal_attempts =
-            static_cast<std::int64_t>(ev.get_runtime_observability_steal_attempt_correlated());
-        const std::int64_t steal_deferred =
-            static_cast<std::int64_t>(ev.get_runtime_observability_steal_deferred_correlated());
-        const std::int64_t ownership_violation = static_cast<std::int64_t>(
-            ev.get_runtime_observability_steal_ownership_violation_correlated());
-        const std::int64_t correlated_total = steal_attempts + steal_deferred + ownership_violation;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:runtime-observability-correlated-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t steal_attempts =
+                static_cast<std::int64_t>(ev.get_runtime_observability_steal_attempt_correlated());
+            const std::int64_t steal_deferred =
+                static_cast<std::int64_t>(ev.get_runtime_observability_steal_deferred_correlated());
+            const std::int64_t ownership_violation = static_cast<std::int64_t>(
+                ev.get_runtime_observability_steal_ownership_violation_correlated());
+            const std::int64_t correlated_total =
+                steal_attempts + steal_deferred + ownership_violation;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("steal-attempts-correlated", steal_attempts);
-        insert_kv("steal-deferred-correlated", steal_deferred);
-        insert_kv("steal-ownership-violation-correlated", ownership_violation);
-        insert_kv("correlated-events-total", correlated_total);
-        insert_kv("schema", 673);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("steal-attempts-correlated", steal_attempts);
+            insert_kv("steal-deferred-correlated", steal_deferred);
+            insert_kv("steal-ownership-violation-correlated", ownership_violation);
+            insert_kv("correlated-events-total", correlated_total);
+            insert_kv("schema", 673);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 83 (orig lines 9771-9848)
@@ -346,49 +351,51 @@ void ObservabilityPrims::register_eval_p83(PrimRegistrar add, Evaluator& ev) {
     // atomic-batch-rollback. Those cover the production
     // counter set; #674 covers the chaos/stress-test
     // outcome classifier.
-    add("query:self-evolution-chaos-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t cycles = static_cast<std::int64_t>(ev.get_self_evolution_chaos_cycles());
-        const std::int64_t failures =
-            static_cast<std::int64_t>(ev.get_self_evolution_chaos_failures());
-        const std::int64_t corruptions =
-            static_cast<std::int64_t>(ev.get_self_evolution_chaos_corruptions());
-        const std::int64_t events_total = cycles + failures + corruptions;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:self-evolution-chaos-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t cycles =
+                static_cast<std::int64_t>(ev.get_self_evolution_chaos_cycles());
+            const std::int64_t failures =
+                static_cast<std::int64_t>(ev.get_self_evolution_chaos_failures());
+            const std::int64_t corruptions =
+                static_cast<std::int64_t>(ev.get_self_evolution_chaos_corruptions());
+            const std::int64_t events_total = cycles + failures + corruptions;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("chaos-cycles", cycles);
-        insert_kv("chaos-failures", failures);
-        insert_kv("chaos-corruptions", corruptions);
-        insert_kv("chaos-events-total", events_total);
-        insert_kv("schema", 674);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("chaos-cycles", cycles);
+            insert_kv("chaos-failures", failures);
+            insert_kv("chaos-corruptions", corruptions);
+            insert_kv("chaos-events-total", events_total);
+            insert_kv("schema", 674);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 84 (orig lines 9849-9934)
@@ -486,79 +493,81 @@ void ObservabilityPrims::register_eval_p85(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #499: query:eda-foundation-stats — EDA primitives module
     // parse/query/mutate/waveform/feedback observability for Agent loops.
-    add("query:eda-foundation-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:eda-foundation-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t parse =
-            m ? m->eda_foundation_parse_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t query =
-            m ? m->eda_foundation_query_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t mutate =
-            m ? m->eda_foundation_mutate_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t waveform =
-            m ? m->eda_foundation_waveform_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t feedback =
-            m ? m->eda_foundation_feedback_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t hooks =
-            m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t foundation_total = parse + query + mutate + waveform + feedback;
-        std::int64_t recommendation = 0;
-        if (parse == 0)
-            recommendation = 1;
-        else if (mutate == 0)
-            recommendation = 2;
-        else if (feedback == 0)
-            recommendation = 3;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"parse-total", make_int(static_cast<std::int64_t>(parse))},
-            {"query-total", make_int(static_cast<std::int64_t>(query))},
-            {"mutate-total", make_int(static_cast<std::int64_t>(mutate))},
-            {"waveform-total", make_int(static_cast<std::int64_t>(waveform))},
-            {"feedback-total", make_int(static_cast<std::int64_t>(feedback))},
-            {"hardware-hook-calls", make_int(static_cast<std::int64_t>(hooks))},
-            {"foundation-total", make_int(static_cast<std::int64_t>(foundation_total))},
-            {"foundation-recommendation", make_int(recommendation)},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t parse =
+                m ? m->eda_foundation_parse_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t query =
+                m ? m->eda_foundation_query_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t mutate =
+                m ? m->eda_foundation_mutate_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t waveform =
+                m ? m->eda_foundation_waveform_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t feedback =
+                m ? m->eda_foundation_feedback_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hooks =
+                m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t foundation_total = parse + query + mutate + waveform + feedback;
+            std::int64_t recommendation = 0;
+            if (parse == 0)
+                recommendation = 1;
+            else if (mutate == 0)
+                recommendation = 2;
+            else if (feedback == 0)
+                recommendation = 3;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"parse-total", make_int(static_cast<std::int64_t>(parse))},
+                {"query-total", make_int(static_cast<std::int64_t>(query))},
+                {"mutate-total", make_int(static_cast<std::int64_t>(mutate))},
+                {"waveform-total", make_int(static_cast<std::int64_t>(waveform))},
+                {"feedback-total", make_int(static_cast<std::int64_t>(feedback))},
+                {"hardware-hook-calls", make_int(static_cast<std::int64_t>(hooks))},
+                {"foundation-total", make_int(static_cast<std::int64_t>(foundation_total))},
+                {"foundation-recommendation", make_int(recommendation)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 86 (orig lines 10011-10096)
@@ -583,7 +592,7 @@ void ObservabilityPrims::register_eval_p86(PrimRegistrar add, Evaluator& ev) {
     // doesn't have to do the division itself; the per-call counters
     // are also exposed so a custom Agent can compute its own
     // moving-window rate.
-    add("query:eda-hw-stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("query:eda-hw-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
             if (!ht)
@@ -664,72 +673,74 @@ void ObservabilityPrims::register_eval_p87(PrimRegistrar add, Evaluator& ev) {
     //   - feedback-ingest-hits     eda_infra_feedback_ingest_total
     //   - cosim-invoke-hits        eda_infra_cosim_invoke_total
     //   - schema == 841
-    add("query:eda-infra-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:eda-infra-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-        const std::int64_t parse_success =
-            m ? static_cast<std::int64_t>(
-                    m->eda_infra_parse_success_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t structured_mutate =
-            m ? static_cast<std::int64_t>(
-                    m->eda_infra_structured_mutate_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t feedback_ingest =
-            m ? static_cast<std::int64_t>(
-                    m->eda_infra_feedback_ingest_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t cosim_invoke =
-            m ? static_cast<std::int64_t>(
-                    m->eda_infra_cosim_invoke_total.load(std::memory_order_relaxed))
-              : 0;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"parse-success-hits", make_int(parse_success)},
-            {"structured-mutate-hits", make_int(structured_mutate)},
-            {"feedback-ingest-hits", make_int(feedback_ingest)},
-            {"cosim-invoke-hits", make_int(cosim_invoke)},
-            {"schema", make_int(841)},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::int64_t parse_success =
+                m ? static_cast<std::int64_t>(
+                        m->eda_infra_parse_success_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t structured_mutate =
+                m ? static_cast<std::int64_t>(
+                        m->eda_infra_structured_mutate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t feedback_ingest =
+                m ? static_cast<std::int64_t>(
+                        m->eda_infra_feedback_ingest_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cosim_invoke =
+                m ? static_cast<std::int64_t>(
+                        m->eda_infra_cosim_invoke_total.load(std::memory_order_relaxed))
+                  : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"parse-success-hits", make_int(parse_success)},
+                {"structured-mutate-hits", make_int(structured_mutate)},
+                {"feedback-ingest-hits", make_int(feedback_ingest)},
+                {"cosim-invoke-hits", make_int(cosim_invoke)},
+                {"schema", make_int(841)},
+            };
+            return build_hash(kv);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

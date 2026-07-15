@@ -505,32 +505,35 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // Issue #1355: Agent/test query for lightweight checkpoint stats.
-    add("query:mutation-lightweight-stats", [&ev](const auto&) -> EvalValue {
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        auto load = [](const std::atomic<std::uint64_t>& a) {
-            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
-        };
-        std::int64_t total = 0, commit = 0, rollback = 0, records = 0, depth = 0, active = 0;
-        if (ev.workspace_flat_) {
-            total = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total());
-            commit = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_commit_total());
-            rollback = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total());
-            records = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_records_total());
-            depth = static_cast<std::int64_t>(ev.workspace_flat_->render_lightweight_depth());
-            active = ev.workspace_flat_->render_lightweight_active() ? 1 : 0;
-        } else if (m) {
-            total = load(m->mutation_lightweight_total);
-            commit = load(m->mutation_lightweight_commit_total);
-            rollback = load(m->mutation_lightweight_rollback_total);
-        }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::format(
-            "total={} commit={} rollback={} records={} depth={} active={} frame_commit={} "
-            "schema=1355",
-            total, commit, rollback, records, depth, active,
-            m ? load(m->mutation_lightweight_frame_commit_total) : 0));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-lightweight-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            std::int64_t total = 0, commit = 0, rollback = 0, records = 0, depth = 0, active = 0;
+            if (ev.workspace_flat_) {
+                total = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total());
+                commit = static_cast<std::int64_t>(ev.workspace_flat_->lightweight_commit_total());
+                rollback =
+                    static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total());
+                records =
+                    static_cast<std::int64_t>(ev.workspace_flat_->lightweight_records_total());
+                depth = static_cast<std::int64_t>(ev.workspace_flat_->render_lightweight_depth());
+                active = ev.workspace_flat_->render_lightweight_active() ? 1 : 0;
+            } else if (m) {
+                total = load(m->mutation_lightweight_total);
+                commit = load(m->mutation_lightweight_commit_total);
+                rollback = load(m->mutation_lightweight_rollback_total);
+            }
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::format(
+                "total={} commit={} rollback={} records={} depth={} active={} frame_commit={} "
+                "schema=1355",
+                total, commit, rollback, records, depth, active,
+                m ? load(m->mutation_lightweight_frame_commit_total) : 0));
+            return types::make_string(sidx);
+        });
 
     // Issue #1355: test hooks for render hot path enter/exit (thin wrappers).
     add("render-hotpath-enter", [&ev](const auto&) -> EvalValue {
@@ -574,30 +577,31 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // ── Issue #1356: HotTierTable dispatch stats ──
-    add("query:prim-dispatch-stats", [&ev](const auto&) -> EvalValue {
-        auto& p = ev.primitives();
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        const auto hot_sz = static_cast<std::int64_t>(p.hot_table_size());
-        const auto hits = static_cast<std::int64_t>(p.hot_dispatch_hits());
-        const auto hits_r = static_cast<std::int64_t>(p.hot_dispatch_hits_render());
-        const auto cold = static_cast<std::int64_t>(p.cold_dispatch_fallback());
-        if (m) {
-            m->prim_hot_table_size.store(static_cast<std::uint64_t>(hot_sz),
-                                         std::memory_order_relaxed);
-            m->prim_hot_dispatch_hits.store(static_cast<std::uint64_t>(hits),
-                                            std::memory_order_relaxed);
-            m->prim_hot_dispatch_hits_render.store(static_cast<std::uint64_t>(hits_r),
-                                                   std::memory_order_relaxed);
-            m->prim_cold_dispatch_fallback.store(static_cast<std::uint64_t>(cold),
-                                                 std::memory_order_relaxed);
-        }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(
-            std::format("hot_table_size={} hot_dispatch_hits={} hot_dispatch_hits_render={} "
-                        "cold_dispatch_fallback={} hot_meta_count={} schema=1356",
-                        hot_sz, hits, hits_r, cold, static_cast<std::int64_t>(p.hot_meta_count())));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:prim-dispatch-stats", [&ev](const auto&) -> EvalValue {
+            auto& p = ev.primitives();
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto hot_sz = static_cast<std::int64_t>(p.hot_table_size());
+            const auto hits = static_cast<std::int64_t>(p.hot_dispatch_hits());
+            const auto hits_r = static_cast<std::int64_t>(p.hot_dispatch_hits_render());
+            const auto cold = static_cast<std::int64_t>(p.cold_dispatch_fallback());
+            if (m) {
+                m->prim_hot_table_size.store(static_cast<std::uint64_t>(hot_sz),
+                                             std::memory_order_relaxed);
+                m->prim_hot_dispatch_hits.store(static_cast<std::uint64_t>(hits),
+                                                std::memory_order_relaxed);
+                m->prim_hot_dispatch_hits_render.store(static_cast<std::uint64_t>(hits_r),
+                                                       std::memory_order_relaxed);
+                m->prim_cold_dispatch_fallback.store(static_cast<std::uint64_t>(cold),
+                                                     std::memory_order_relaxed);
+            }
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::format(
+                "hot_table_size={} hot_dispatch_hits={} hot_dispatch_hits_render={} "
+                "cold_dispatch_fallback={} hot_meta_count={} schema=1356",
+                hot_sz, hits, hits_r, cold, static_cast<std::int64_t>(p.hot_meta_count())));
+            return types::make_string(sidx);
+        });
     add("prim-hot-table-size", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.primitives().hot_table_size()));
     });
@@ -609,41 +613,42 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // ── Issue #1357: render prim latency + frame time histogram ──
-    add("query:render-prim-call-stats", [&ev](const auto&) -> EvalValue {
-        namespace rt = aura::compiler::render_telemetry;
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        if (m)
-            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
-        // Compact string of tracked hot prims with calls/mean/min/max.
-        std::string out = "schema=1357 active=1 ";
-        std::uint64_t tracked_calls = 0;
-        for (std::size_t i = 0; i < rt::kTrackedRenderPrimCount; ++i) {
-            const auto& s = rt::tracked_prim_stats(i);
-            const auto c = s.call_count.load(std::memory_order_relaxed);
-            if (c == 0)
-                continue;
-            tracked_calls += c;
-            const auto tot = s.total_ns.load(std::memory_order_relaxed);
-            const auto mean = tot / c;
-            auto mn = s.min_ns.load(std::memory_order_relaxed);
-            if (mn == std::numeric_limits<std::uint64_t>::max())
-                mn = 0;
-            const auto mx = s.max_ns.load(std::memory_order_relaxed);
-            out += std::format("{}:calls={} mean_ns={} min_ns={} max_ns={} ",
-                               rt::kTrackedRenderPrims[i], c, mean, mn, mx);
-        }
-        // Also surface slot-table hits for this Evaluator.
-        std::uint64_t slot_calls = 0;
-        for (const auto& s : ev.prim_latency_table()) {
-            if (s)
-                slot_calls += s->call_count.load(std::memory_order_relaxed);
-        }
-        out += std::format("tracked_calls={} slot_table_calls={} samples={}", tracked_calls,
-                           slot_calls, m ? m->render_prim_latency_samples.load() : 0);
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(out));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:render-prim-call-stats", [&ev](const auto&) -> EvalValue {
+            namespace rt = aura::compiler::render_telemetry;
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            if (m)
+                m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+            // Compact string of tracked hot prims with calls/mean/min/max.
+            std::string out = "schema=1357 active=1 ";
+            std::uint64_t tracked_calls = 0;
+            for (std::size_t i = 0; i < rt::kTrackedRenderPrimCount; ++i) {
+                const auto& s = rt::tracked_prim_stats(i);
+                const auto c = s.call_count.load(std::memory_order_relaxed);
+                if (c == 0)
+                    continue;
+                tracked_calls += c;
+                const auto tot = s.total_ns.load(std::memory_order_relaxed);
+                const auto mean = tot / c;
+                auto mn = s.min_ns.load(std::memory_order_relaxed);
+                if (mn == std::numeric_limits<std::uint64_t>::max())
+                    mn = 0;
+                const auto mx = s.max_ns.load(std::memory_order_relaxed);
+                out += std::format("{}:calls={} mean_ns={} min_ns={} max_ns={} ",
+                                   rt::kTrackedRenderPrims[i], c, mean, mn, mx);
+            }
+            // Also surface slot-table hits for this Evaluator.
+            std::uint64_t slot_calls = 0;
+            for (const auto& s : ev.prim_latency_table()) {
+                if (s)
+                    slot_calls += s->call_count.load(std::memory_order_relaxed);
+            }
+            out += std::format("tracked_calls={} slot_table_calls={} samples={}", tracked_calls,
+                               slot_calls, m ? m->render_prim_latency_samples.load() : 0);
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(out));
+            return types::make_string(sidx);
+        });
 
     add("query:render-frame-time-histogram", [&ev](const auto&) -> EvalValue {
         namespace rt = aura::compiler::render_telemetry;
@@ -692,22 +697,23 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(ft.total_frames.load(std::memory_order_relaxed)));
     });
 
-    add("query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        auto load = [](const std::atomic<std::uint64_t>& a) {
-            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
-        };
-        // Minimal hash: reuse string_heap + FlatHashTable via pair list of ints
-        // through existing pattern — return a 3-tuple pair chain as simple ints
-        // via string report for Phase 1 simplicity.
-        auto resets = m ? load(m->render_frame_reset_total) : 0;
-        auto deferred = m ? load(m->render_frame_reset_deferred) : 0;
-        auto reclaimed = m ? load(m->render_frame_reset_reclaimed) : 0;
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::format("resets={} deferred={} reclaimed={} schema=1315",
-                                              resets, deferred, reclaimed));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            // Minimal hash: reuse string_heap + FlatHashTable via pair list of ints
+            // through existing pattern — return a 3-tuple pair chain as simple ints
+            // via string report for Phase 1 simplicity.
+            auto resets = m ? load(m->render_frame_reset_total) : 0;
+            auto deferred = m ? load(m->render_frame_reset_deferred) : 0;
+            auto reclaimed = m ? load(m->render_frame_reset_reclaimed) : 0;
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::format("resets={} deferred={} reclaimed={} schema=1315",
+                                                  resets, deferred, reclaimed));
+            return types::make_string(sidx);
+        });
     // (arena:defrag-requested?) — query the defrag request flag.
     // Returns #t if a defrag was requested and not yet acted on,
     // #f otherwise. Foundation for fiber-coordinated defrag —

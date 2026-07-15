@@ -55,7 +55,7 @@ int aura_issue_691_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:coercion-narrowing-stats ---");
-        auto stats = cs.eval("(query:coercion-narrowing-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:coercion-narrowing-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:coercion-narrowing-stats returns hash");
         CHECK(stat_int(cs, "post-narrow-elim-opportunities") >= 0,
@@ -107,7 +107,7 @@ int aura_issue_691_run() {
     // AC3: query:coercion-stats regression
     {
         std::println("\n--- AC3: query:coercion-elim-stats ---");
-        auto elim = cs.eval("(query:coercion-elim-stats)");
+        auto elim = cs.eval("(engine:metrics \"query:coercion-elim-stats\")");
         CHECK(elim && aura::compiler::types::is_int(*elim),
               "query:coercion-elim-stats returns int");
         CHECK(aura::compiler::types::as_int(*elim) >= 0, "coercion-elim-stats non-negative");

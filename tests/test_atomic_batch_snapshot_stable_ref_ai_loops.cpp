@@ -40,7 +40,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t snap_hash(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:atomic-batch-snapshot-stats-hash) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:atomic-batch-snapshot-stats-hash\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -119,7 +120,7 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
     // AC4: pinning + snapshot metrics
     {
         std::println("\n--- AC4: pinning + snapshot metrics ---");
-        auto h = cs.eval("(query:atomic-batch-snapshot-stats-hash)");
+        auto h = cs.eval("(engine:metrics \"query:atomic-batch-snapshot-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "query:atomic-batch-snapshot-stats-hash returns hash");
         CHECK(snap_hash(cs, "schema") == 737, "schema sentinel == 737");
@@ -162,12 +163,13 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
     {
         std::println("\n--- AC6: atomic-batch primitive regression ---");
         auto s192 = cs.eval("(atomic-batch:stats)");
-        auto s622 = cs.eval("(query:atomic-batch-stats-hash)");
-        auto s529 = cs.eval("(query:atomic-batch-rollback-stats)");
+        auto s622 = cs.eval("(engine:metrics \"query:atomic-batch-stats-hash\")");
+        auto s529 = cs.eval("(engine:metrics \"query:atomic-batch-rollback-stats\")");
         CHECK(s192.has_value(), "(atomic-batch:stats) regression");
         CHECK(s622 && aura::compiler::types::is_hash(*s622),
-              "(query:atomic-batch-stats-hash) regression");
-        CHECK(s529.has_value(), "(query:atomic-batch-rollback-stats) regression");
+              "(engine:metrics \"query:atomic-batch-stats-hash\") regression");
+        CHECK(s529.has_value(),
+              "(engine:metrics \"query:atomic-batch-rollback-stats\") regression");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

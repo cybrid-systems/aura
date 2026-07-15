@@ -10,7 +10,7 @@
 //            - 3 new Evaluator accessors (steal violations,
 //              gc blocks, safepoint wait ns) are callable
 //            - 3 new bump helpers are callable
-//            - (query:mutation-coordination-stats) returns
+//            - (engine:metrics \"query:mutation-coordination-stats\") returns
 //              the sum of the 3 counters
 //            - (regression) prior #456/#457/#469 primitives
 //              still work
@@ -33,7 +33,7 @@ namespace aura_issue_448_detail {
 bool test_query_mutation_coordination_stats() {
     std::println("\n--- AC1: query:mutation-coordination-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:mutation-coordination-stats)");
+    auto r = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -47,7 +47,7 @@ bool test_query_mutation_coordination_stats() {
 bool test_evaluator_accessors() {
     std::println("\n--- AC2: Evaluator mutation-coordination accessors reachable ---");
     aura::compiler::CompilerService cs;
-    auto r0 = cs.eval("(query:mutation-coordination-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     if (!r0) {
         ++g_failed;
         return false;
@@ -58,7 +58,7 @@ bool test_evaluator_accessors() {
     // Evaluator; we can also bump via the API exposed through
     // a primitive. For the P0 ship we just exercise the
     // accessor path and verify monotonicity.
-    auto r1 = cs.eval("(query:mutation-coordination-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     if (!r1) {
         ++g_failed;
         return false;
@@ -76,7 +76,7 @@ bool test_bump_helpers() {
     // We can't call C++ bump helpers directly from the
     // test, but we can verify the primitive is wired and
     // returns a non-negative integer.
-    auto r = cs.eval("(query:mutation-coordination-stats)");
+    auto r = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
         return false;
@@ -95,7 +95,7 @@ bool test_steal_violation_accessor() {
     // service's Evaluator exposes the 3 accessors.
     // (The follow-up will expose them through the
     //  service-public API for the scheduler.)
-    auto r = cs.eval("(query:mutation-coordination-stats)");
+    auto r = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -123,10 +123,10 @@ bool test_fiber_accessors_header() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC6: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:verification-loop-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:verification-loop-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:verification-loop-stats (regression for #469)");
-    auto r2 = cs.eval("(query:stable-ref-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:stable-ref-stats (regression for #457)");
     auto r3 = cs.eval("(query:mutation-impact)");

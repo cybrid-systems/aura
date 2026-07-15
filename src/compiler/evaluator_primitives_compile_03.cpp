@@ -380,10 +380,11 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
     // P0 ship: returns the partial_relower_count as an int.
     // Follow-up: returns a 3-tuple
     // (partial-relower impact-scope-calls total-affected-blocks).
-    add("query:compiler-incremental-stats", [&ev](const auto& a) -> EvalValue {
-        (void)a;
-        return make_int(static_cast<std::int64_t>(ev.get_partial_relower_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:compiler-incremental-stats", [&ev](const auto& a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(ev.get_partial_relower_count()));
+        });
 }
 
 // Issue #909 compile part 28 (orig 2132-2233)
@@ -402,23 +403,25 @@ void CompilePrims::register_compile_p28(PrimRegistrar add, Evaluator& ev) {
     // AI Agents can use the 3-tuple to decide whether the
     // next (compile:relower) should be incremental
     // (incremental-candidates > 0) or full (otherwise).
-    add("query:compiler-cache-stats", [&ev](const auto& a) -> EvalValue {
-        (void)a;
-        auto* svc_void = ev.compiler_service();
-        if (!svc_void)
-            return make_int(0);
-        auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
-        // Build 3-tuple as nested pair-of-pairs:
-        // ((dirty-blocks . dirty-functions) . incremental-candidates)
-        std::int64_t dirty_blocks = static_cast<std::int64_t>(svc->total_dirty_block_count());
-        std::int64_t dirty_funcs = static_cast<std::int64_t>(svc->total_dirty_func_count());
-        std::int64_t incr_cands = static_cast<std::int64_t>(svc->total_incremental_candidates());
-        auto p1 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(dirty_blocks), make_int(dirty_funcs)});
-        auto outer = ev.pairs_.size();
-        ev.pairs_.push_back({make_pair(p1), make_int(incr_cands)});
-        return make_pair(outer);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:compiler-cache-stats", [&ev](const auto& a) -> EvalValue {
+            (void)a;
+            auto* svc_void = ev.compiler_service();
+            if (!svc_void)
+                return make_int(0);
+            auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
+            // Build 3-tuple as nested pair-of-pairs:
+            // ((dirty-blocks . dirty-functions) . incremental-candidates)
+            std::int64_t dirty_blocks = static_cast<std::int64_t>(svc->total_dirty_block_count());
+            std::int64_t dirty_funcs = static_cast<std::int64_t>(svc->total_dirty_func_count());
+            std::int64_t incr_cands =
+                static_cast<std::int64_t>(svc->total_incremental_candidates());
+            auto p1 = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(dirty_blocks), make_int(dirty_funcs)});
+            auto outer = ev.pairs_.size();
+            ev.pairs_.push_back({make_pair(p1), make_int(incr_cands)});
+            return make_pair(outer);
+        });
 
     // Issue #298: (query:incremental-effectiveness) — return a
     // 4-tuple aggregating compiler-pipeline observability
@@ -548,10 +551,11 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
     // P0 ship: returns the atomic_batch_steal_violation_
     // count as an int. Follow-up: returns a 2-tuple
     // (steal-violations gc-bumps-lost).
-    add("query:atomic-batch-stats", [&ev](const auto& a) -> EvalValue {
-        (void)a;
-        return make_int(static_cast<std::int64_t>(ev.get_atomic_batch_steal_violation()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:atomic-batch-stats", [&ev](const auto& a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(ev.get_atomic_batch_steal_violation()));
+        });
 }
 
 // Issue #909 compile part 30 (orig 2292-2346)
@@ -602,15 +606,16 @@ void CompilePrims::register_compile_p30(PrimRegistrar add, Evaluator& ev) {
     // a 4-tuple (assertion coverage sva formal-cex).
     // P0 ship: returns an integer = sum of all four
     // counters. Follow-up: returns the 4-tuple.
-    add("query:verify-dirty-stats", [&ev](const auto& a) -> EvalValue {
-        (void)a;
-        auto* ws = ev.workspace_flat();
-        if (!ws)
-            return make_int(0);
-        auto sum = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
-                   ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total();
-        return make_int(static_cast<std::int64_t>(sum));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:verify-dirty-stats", [&ev](const auto& a) -> EvalValue {
+            (void)a;
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_int(0);
+            auto sum = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
+                       ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total();
+            return make_int(static_cast<std::int64_t>(sum));
+        });
 }
 
 // Issue #909 compile part 31 (orig 2347-2403)

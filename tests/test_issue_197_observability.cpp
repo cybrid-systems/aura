@@ -1,10 +1,10 @@
 // @category: integration
 // @reason: uses CompilerService to eval Aura source
 // test_issue_197_observability.cpp — Issue #197 Aura
-// observability for the inliner (compile:inline-pass-stats).
+// observability for the inliner (engine:metrics \"compile:inline-pass-stats\").
 //
 // The inliner's per-run + lifetime counters are exposed to
-// Aura code via the (compile:inline-pass-stats) primitive.
+// Aura code via the (engine:metrics \"compile:inline-pass-stats\") primitive.
 // This test verifies:
 //   1. The primitive is registered and returns a hash
 //   2. The hash has :inlined, :branch-aware, :total keys
@@ -41,19 +41,21 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 }
 
 bool test_inline_pass_stats_registered() {
-    std::println("\n--- Test 1.1: (compile:inline-pass-stats) is registered ---");
+    std::println(
+        "\n--- Test 1.1: (engine:metrics \"compile:inline-pass-stats\") is registered ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(compile:inline-pass-stats)");
+    auto v = run_on(cs, "(engine:metrics \"compile:inline-pass-stats\")");
     // Should return a hash (or void if hash creation failed).
     // We don't inspect the contents here; just that it
     // doesn't error.
     CHECK(!aura::compiler::types::is_int(v) || v.val != 0 || true,
-          "(compile:inline-pass-stats) runs without error");
+          "(engine:metrics \"compile:inline-pass-stats\") runs without error");
     return true;
 }
 
 bool test_inline_pass_stats_extra_args_ignored() {
-    std::println("\n--- Test 1.2: (compile:inline-pass-stats) ignores extra args ---");
+    std::println(
+        "\n--- Test 1.2: (engine:metrics \"compile:inline-pass-stats\") ignores extra args ---");
     aura::compiler::CompilerService cs;
     auto v = run_on(cs, "(compile:inline-pass-stats 99999 \"str\")");
     CHECK(true, "primitive ignores extra args (no crash)");
@@ -73,7 +75,7 @@ bool test_inline_pass_stats_no_evaluator_hook_safe() {
     // safe when called with a fresh service (which
     // has the hook installed).
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(compile:inline-pass-stats)");
+    auto v = run_on(cs, "(engine:metrics \"compile:inline-pass-stats\")");
     CHECK(true, "primitive is safe with service-installed hook");
     return true;
 }

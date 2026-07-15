@@ -12,7 +12,7 @@
 // eager vs lazy. That full path requires: (1) wiring
 // infer_flat_partial into the typed_mutate success path so the
 // affected nodes have updated type_id_ cached, and (2) a
-// (compile:incremental-typecheck-stats) observability primitive
+// (engine:metrics \"compile:incremental-typecheck-stats\") observability primitive
 // so users can measure how often the auto-path runs and how
 // many nodes it re-infers. The per-symbol optimization (which
 // will reduce the avg re-inferred count) is a separate follow-up
@@ -33,13 +33,13 @@
 //    (post-COW) using the most recent mutation record when the
 //    mode is Eager. The same path that the manual
 //    (typecheck-incremental) Aura primitive uses.
-// 5. (compile:incremental-typecheck-stats) Aura primitive returns
+// 5. (engine:metrics \"compile:incremental-typecheck-stats\") Aura primitive returns
 //    a hash with 3 fields: auto-invocations-total,
 //    re-inferred-total, avg-re-inferred-bp.
 //
 // Test cases:
 //   AC1: fresh CompilerService → snapshot fields start at 0
-//   AC2: (compile:incremental-typecheck-stats) returns a hash
+//   AC2: (engine:metrics \"compile:incremental-typecheck-stats\") returns a hash
 //        with 3 keys
 //   AC3: typed_mutate in Eager mode auto-invokes infer_flat_partial
 //        (auto_invocations_total increments + re_inferred_total > 0)
@@ -106,9 +106,11 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:incremental-typecheck-stats) returns hash with 3 keys ---");
+    std::println("\n--- AC2: (engine:metrics \"compile:incremental-typecheck-stats\") returns hash "
+                 "with 3 keys ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:incremental-typecheck-stats))\")");
+    auto r1 = cs.eval(
+        "(set-code \"(define h (engine:metrics \"compile:incremental-typecheck-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -126,7 +128,7 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:incremental-typecheck-stats) returns a hash");
+    CHECK(true, "(engine:metrics \"compile:incremental-typecheck-stats\") returns a hash");
     // Verify the 3 keys exist with int values.
     for (const char* key : {"auto-invocations-total", "re-inferred-total", "avg-re-inferred-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";

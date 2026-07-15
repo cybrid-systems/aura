@@ -47,7 +47,7 @@ static SolveResult solve_delta_with(ConstraintSystem& cs, Constraint c) {
 }
 
 static std::int64_t constraint_delta_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:constraint-delta-stats)");
+    auto r = cs.eval("(engine:metrics \"query:constraint-delta-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -150,8 +150,8 @@ static void run_integration_matrix(CompilerService& cs) {
     (void)solve_delta_with(constraint_cs, {Constraint::EQUAL, t, reg.string_type()});
 
     std::println("\n--- AC7: query regression ---");
-    auto cstats = cs.eval("(query:constraint-stats)");
-    auto safety = cs.eval("(query:solve-delta-safety-stats)");
+    auto cstats = cs.eval("(engine:metrics \"query:constraint-stats\")");
+    auto safety = cs.eval("(engine:metrics \"query:solve-delta-safety-stats\")");
     CHECK(cstats && is_int(*cstats), "query:constraint-stats returns int");
     CHECK(safety && is_int(*safety), "query:solve-delta-safety-stats returns int");
 

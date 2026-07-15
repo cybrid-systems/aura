@@ -39,7 +39,9 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t occ_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:constraint-reverify-occurrence-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:constraint-reverify-occurrence-stats\") \"" +
+                key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -108,7 +110,7 @@ static void run_unit_ac2() {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:constraint-reverify-occurrence-stats (schema 745) ---");
-    auto h = cs.eval("(query:constraint-reverify-occurrence-stats)");
+    auto h = cs.eval("(engine:metrics \"query:constraint-reverify-occurrence-stats\")");
     CHECK(h && is_hash(*h), "constraint-reverify-occurrence-stats returns hash");
     CHECK(occ_hash(cs, "schema") == 745, "schema == 745");
     CHECK(occ_hash(cs, "reverify-hits-on-narrow") >= 0, "reverify-hits-on-narrow present");
@@ -164,7 +166,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats3b >= stats3a, "occurrence-reverify stats monotonic after heavy mutate");
 
     std::println("\n--- AC6: query regression ---");
-    auto ctm = cs.eval("(query:constraint-typed-mutate-stats)");
+    auto ctm = cs.eval("(engine:metrics \"query:constraint-typed-mutate-stats\")");
     CHECK(ctm && is_hash(*ctm), "constraint-typed-mutate-stats regression");
     auto count = cs.eval("(stats:count)");
     CHECK(count && is_int(*count) && as_int(*count) > 0, "stats:count positive");

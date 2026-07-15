@@ -32,7 +32,8 @@ static constexpr const char* k_linear_prog = R"(
 )";
 
 static std::int64_t jit_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:linear-jit-safety-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:linear-jit-safety-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -49,7 +50,7 @@ static std::int64_t jit_sum(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:linear-jit-safety-stats (schema 740) ---");
-    auto h = cs.eval("(query:linear-jit-safety-stats)");
+    auto h = cs.eval("(engine:metrics \"query:linear-jit-safety-stats\")");
     CHECK(h && is_hash(*h), "linear-jit-safety-stats returns hash");
     CHECK(jit_hash(cs, "schema") == 740, "schema == 740");
     CHECK(jit_hash(cs, "arena-forced-post-mutate") >= 0, "arena-forced-post-mutate present");
@@ -87,8 +88,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(sum4b >= sum4a, "jit-safety stats monotonic over mutate+invalidate");
 
     std::println("\n--- AC5: query regression ---");
-    auto enforce = cs.eval("(query:linear-ownership-enforcement-stats)");
-    auto safety = cs.eval("(query:linear-ownership-safety-stats)");
+    auto enforce = cs.eval("(engine:metrics \"query:linear-ownership-enforcement-stats\")");
+    auto safety = cs.eval("(engine:metrics \"query:linear-ownership-safety-stats\")");
     CHECK(enforce && is_hash(*enforce), "linear-ownership-enforcement-stats regression");
     CHECK(safety && is_int(*safety), "linear-ownership-safety-stats regression");
 }

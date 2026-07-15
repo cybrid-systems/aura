@@ -26,12 +26,12 @@
 // 3. Bump sites in IRInterpreter::run_function's instruction
 //    loop (ir_executor_impl.cpp:201) — counts every instruction
 //    executed.
-// 4. (compile:type-propagation-stats) Aura primitive returns
+// 4. (engine:metrics \"compile:type-propagation-stats\") Aura primitive returns
 //    a hash with all 3 fields.
 //
 // Test cases:
 //   AC1: snapshot fields start at 0 on a fresh CompilerService
-//   AC2: (compile:type-propagation-stats) primitive returns a
+//   AC2: (engine:metrics \"compile:type-propagation-stats\") primitive returns a
 //        hash (counters are queryable via Aura API)
 //   AC3: ir_instructions_total bumps on IR execution
 //   AC4: type_propagation_coverage_bp is in valid range (0-10000)
@@ -85,9 +85,11 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:type-propagation-stats) primitive returns a hash ---");
+    std::println("\n--- AC2: (engine:metrics \"compile:type-propagation-stats\") primitive returns "
+                 "a hash ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:type-propagation-stats))\")");
+    auto r1 =
+        cs.eval("(set-code \"(define h (engine:metrics \"compile:type-propagation-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -105,14 +107,14 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:type-propagation-stats) returns a hash (hash? is #t)");
+    CHECK(true, "(engine:metrics \"compile:type-propagation-stats\") returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
     if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:type-propagation-stats) is not a pair (pair? is #f)");
+    CHECK(true, "(engine:metrics \"compile:type-propagation-stats\") is not a pair (pair? is #f)");
     // Verify the 3 keys exist with int values.
     for (const char* key : {"ir-instructions-total", "ir-instructions-with-type-total",
                             "type-propagation-coverage-bp"}) {
@@ -145,7 +147,8 @@ bool test_ir_instructions_total_bumps() {
         return false;
     }
     // Capture baseline.
-    auto rg = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-total\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:type-propagation-stats\") \"ir-instructions-total\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -163,7 +166,8 @@ bool test_ir_instructions_total_bumps() {
             return false;
         }
     }
-    auto rg2 = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-total\")");
+    auto rg2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:type-propagation-stats\") \"ir-instructions-total\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after eval failed");
         ++g_failed;
@@ -199,11 +203,12 @@ bool test_coverage_in_valid_range() {
     // different snapshots when counters are still ticking.
     // Capture into let bindings first, then read all 3 from
     // the same hash.
-    auto r_total = cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-total\")");
-    auto r_with =
-        cs.eval("(hash-ref (compile:type-propagation-stats) \"ir-instructions-with-type-total\")");
-    auto r_cov =
-        cs.eval("(hash-ref (compile:type-propagation-stats) \"type-propagation-coverage-bp\")");
+    auto r_total = cs.eval(
+        "(hash-ref (engine:metrics \"compile:type-propagation-stats\") \"ir-instructions-total\")");
+    auto r_with = cs.eval("(hash-ref (engine:metrics \"compile:type-propagation-stats\") "
+                          "\"ir-instructions-with-type-total\")");
+    auto r_cov = cs.eval("(hash-ref (engine:metrics \"compile:type-propagation-stats\") "
+                         "\"type-propagation-coverage-bp\")");
     if (!r_total || !aura::compiler::types::is_int(*r_total) || !r_with ||
         !aura::compiler::types::is_int(*r_with) || !r_cov ||
         !aura::compiler::types::is_int(*r_cov)) {

@@ -10,7 +10,7 @@
 // Discovery before this PR: the GC Safepoint observability
 // surface already covers the base GC safepoint summary via
 // existing primitives + counters:
-//   - (query:gc-safepoint-stats) — base GC safepoint primitive
+//   - (engine:metrics \"query:gc-safepoint-stats\") — base GC safepoint primitive
 //     (no deferral-specific breakdown)
 //   - #591 gc pause attributed to mutation count
 //   - #588 per-fiber stack + GC coordination
@@ -82,8 +82,8 @@ int aura_issue_646_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:gc-safepoint-deferral-stats) shape ---");
-        auto h = cs.eval("(query:gc-safepoint-deferral-stats)");
+        std::println("\n--- AC1: (engine:metrics \"query:gc-safepoint-deferral-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "gc-safepoint-deferral-stats returns a hash");
         const auto outermost = hash_int(cs, "outermost-deferral");
@@ -100,22 +100,26 @@ int aura_issue_646_run() {
     // (back-compat — #646 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_gc = cs.eval("(query:gc-safepoint-stats)");
-        CHECK(s_gc.has_value(), "(query:gc-safepoint-stats) reachable (existing base GC safepoint "
-                                "primitive back-compat)");
-        auto s_645 = cs.eval("(query:scheduler-steal-bias-stats)");
-        CHECK(s_645.has_value(), "(query:scheduler-steal-bias-stats) reachable (#645 back-compat)");
-        auto s_644 = cs.eval("(query:aot-reload-func-table-stats)");
-        CHECK(s_644.has_value(),
-              "(query:aot-reload-func-table-stats) reachable (#644 back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
+        auto s_gc = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
+        CHECK(s_gc.has_value(),
+              "(engine:metrics \"query:gc-safepoint-stats\") reachable (existing base GC safepoint "
+              "primitive back-compat)");
+        auto s_645 = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
+        CHECK(s_645.has_value(),
+              "(engine:metrics \"query:scheduler-steal-bias-stats\") reachable (#645 back-compat)");
+        auto s_644 = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
+        CHECK(
+            s_644.has_value(),
+            "(engine:metrics \"query:aot-reload-func-table-stats\") reachable (#644 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
         auto s_643 = cs.eval("(query:primitives-meta)");
         CHECK(s_643.has_value(), "(query:primitives-meta) reachable (#643 back-compat)");
-        auto s_640 = cs.eval("(query:sv-verification-closedloop-stats)");
-        CHECK(s_640.has_value(),
-              "(query:sv-verification-closedloop-stats) reachable (#640 back-compat)");
+        auto s_640 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+        CHECK(s_640.has_value(), "(engine:metrics \"query:sv-verification-closedloop-stats\") "
+                                 "reachable (#640 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -147,12 +151,13 @@ int aura_issue_646_run() {
     // `query:gc-safepoint-stats` (no `-deferral-` midfix).
     {
         std::println("\n--- AC5: naming distinction from existing gc-safepoint-stats ---");
-        auto new_p = cs.eval("(query:gc-safepoint-deferral-stats)");
-        auto old_p = cs.eval("(query:gc-safepoint-stats)");
+        auto new_p = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
+        auto old_p = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
         CHECK(new_p.has_value(),
-              "new primitive (query:gc-safepoint-deferral-stats) reachable (-deferral- midfix)");
-        CHECK(old_p.has_value(),
-              "existing (query:gc-safepoint-stats) still reachable (no -deferral- midfix)");
+              "new primitive (engine:metrics \"query:gc-safepoint-deferral-stats\") reachable "
+              "(-deferral- midfix)");
+        CHECK(old_p.has_value(), "existing (engine:metrics \"query:gc-safepoint-stats\") still "
+                                 "reachable (no -deferral- midfix)");
         // The new primitive uses `schema` as its primary
         // sentinel — distinct from the existing one's
         // (no `schema` field). Verify via the documented
@@ -174,7 +179,7 @@ int aura_issue_646_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:gc-safepoint-deferral-stats)");
+                auto r = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

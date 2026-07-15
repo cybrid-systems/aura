@@ -22,14 +22,14 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", q, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
 }
 
 void expect_hash_schema(CompilerService& cs, std::string_view q, std::int64_t schema) {
-    auto h = cs.eval(std::format("({})", q));
+    auto h = cs.eval(aura::test::aura_call_expr(q));
     CHECK(h && is_hash(*h), std::format("{} returns hash", q));
     CHECK(href(cs, q, "schema") == schema, std::format("{} schema == {}", q, schema));
 }

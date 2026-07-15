@@ -35,7 +35,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t coverage_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:mutation-rollback-coverage-stats)");
+    auto r = cs.eval("(engine:metrics \"query:mutation-rollback-coverage-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -163,7 +163,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "coverage stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto mls = cs.eval("(query:mutation-log-stats)");
+    auto mls = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     auto ags = cs.eval("(ast:generation-stats)");
     CHECK(mls && is_int(*mls), "mutation-log-stats regression");
     CHECK(ags.has_value(), "ast:generation-stats regression");

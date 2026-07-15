@@ -1,5 +1,5 @@
 // @category: integration
-// @reason: tests (query:aot-stats) primitive + verifies the
+// @reason: tests (engine:metrics \"query:aot-stats\") primitive + verifies the
 //          AOT bridge metrics counter hooks wired into
 //          aura_reload_aot_module
 
@@ -25,7 +25,7 @@
 //      filtering lands as a follow-up).
 //   3. aura_set_aot_metrics(&metrics_) is wired in
 //      CompilerService::register_jit_primitives.
-//   4. (query:aot-stats) Aura primitive — 3-field hash
+//   4. (engine:metrics \"query:aot-stats\") Aura primitive — 3-field hash
 //      returning {aot-stale-reject-count,
 //      aot-region-mismatch-count,
 //      aot-hot-update-success-count}.
@@ -93,11 +93,11 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 // AC1: query:aot-stats returns a hash
 // ═══════════════════════════════════════════════════════════
 bool test_aot_stats_is_hash() {
-    std::println("\n--- AC1: (query:aot-stats) is a hash ---");
+    std::println("\n--- AC1: (engine:metrics \"query:aot-stats\") is a hash ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(query:aot-stats)");
+    auto v = run_on(cs, "(engine:metrics \"query:aot-stats\")");
     bool ok = aura::compiler::types::is_hash(v);
-    CHECK(ok, "(query:aot-stats) returns a hash");
+    CHECK(ok, "(engine:metrics \"query:aot-stats\") returns a hash");
     return true;
 }
 

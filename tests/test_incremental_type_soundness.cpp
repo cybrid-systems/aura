@@ -141,7 +141,7 @@ static void test_happy_path_compatible_deltas() {
 static void test_constraint_stats_query() {
     std::println("\n--- AC6: query:constraint-stats plumbed ---");
     CompilerService cs;
-    const auto stats0 = cs.eval("(query:constraint-stats)");
+    const auto stats0 = cs.eval("(engine:metrics \"query:constraint-stats\")");
     CHECK(stats0 && is_int(*stats0), "query:constraint-stats returns int");
     const auto snap = cs.snapshot();
     CHECK(snap.delta_conflict_reverify_total == 0 || snap.delta_conflict_reverify_total >= 0,

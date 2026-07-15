@@ -287,9 +287,9 @@ bool test_long_stress_steal_attempts() {
 bool test_fiber_migration_stats_monotonic() {
     std::println("\n--- AC7: query:fiber-migration-stats monotonic ---");
     CompilerService cs;
-    auto r0 = cs.eval("(query:fiber-migration-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(r0.has_value() && aura::compiler::types::is_int(*r0),
-          "(query:fiber-migration-stats) reachable");
+          "(engine:metrics \"query:fiber-migration-stats\") reachable");
     Scheduler sched(2);
     std::atomic<int> done{0};
     for (int i = 0; i < 4; ++i) {
@@ -306,9 +306,9 @@ bool test_fiber_migration_stats_monotonic() {
     }
     sched.stop();
     io.join();
-    auto r1 = cs.eval("(query:fiber-migration-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:fiber-migration-stats) after fiber load");
+          "(engine:metrics \"query:fiber-migration-stats\") after fiber load");
     if (r0 && r1 && aura::compiler::types::is_int(*r0) && aura::compiler::types::is_int(*r1)) {
         const auto v0 = aura::compiler::types::as_int(*r0);
         const auto v1 = aura::compiler::types::as_int(*r1);
@@ -324,9 +324,9 @@ bool test_regression_orchestration_primitives() {
     auto r1 = cs.eval("(query:orchestration-metrics)");
     CHECK(r1.has_value() && aura::compiler::types::is_string(*r1),
           "(query:orchestration-metrics) regression (JSON string)");
-    auto r2 = cs.eval("(query:mutation-coordination-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:mutation-coordination-stats) regression for #438");
+          "(engine:metrics \"query:mutation-coordination-stats\") regression for #438");
     return true;
 }
 

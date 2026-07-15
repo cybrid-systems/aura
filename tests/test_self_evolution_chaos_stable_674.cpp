@@ -44,7 +44,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:self-evolution-chaos-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:self-evolution-chaos-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -65,7 +66,7 @@ static std::int64_t chaos_events_total(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:self-evolution-chaos-stats (schema 674) ---");
-    auto h = cs.eval("(query:self-evolution-chaos-stats)");
+    auto h = cs.eval("(engine:metrics \"query:self-evolution-chaos-stats\")");
     CHECK(h && is_hash(*h), "self-evolution-chaos-stats returns hash");
     CHECK(hash_int(cs, "schema") == 674, "schema == 674");
     const auto s0_cycles = chaos_cycles(cs);
@@ -130,9 +131,9 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression — existing recovery stats still reachable ---");
     auto pcl_stats = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
-    auto abr_stats = cs.eval("(query:atomic-batch-rollback-stats)");
-    auto src_stats = cs.eval("(query:stable-ref-cow-fiber-stats)");
-    auto rrc_stats = cs.eval("(query:runtime-observability-correlated-stats)");
+    auto abr_stats = cs.eval("(engine:metrics \"query:atomic-batch-rollback-stats\")");
+    auto src_stats = cs.eval("(engine:metrics \"query:stable-ref-cow-fiber-stats\")");
+    auto rrc_stats = cs.eval("(engine:metrics \"query:runtime-observability-correlated-stats\")");
     CHECK(pcl_stats && (is_int(*pcl_stats) || is_hash(*pcl_stats)),
           "panic-checkpoint-lifecycle-stats regression");
     CHECK(abr_stats && (is_int(*abr_stats) || is_hash(*abr_stats)),

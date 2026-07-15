@@ -25,7 +25,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → delta_constraints_* = 0
 //   AC2: snapshot has 3 new constraint fields
-//   AC3: (compile:constraint-dep-stats) returns 3-key hash
+//   AC3: (engine:metrics \"compile:constraint-dep-stats\") returns 3-key hash
 //   AC4: typecheck-current triggers solve_delta → counters bump
 //   AC5: existing eval still works (regression)
 
@@ -88,11 +88,12 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (compile:constraint-dep-stats) returns 3-key hash
+// ── AC3: (engine:metrics \"compile:constraint-dep-stats\") returns 3-key hash
 bool test_constraint_dep_stats_primitive() {
-    std::println("\n--- AC3: (compile:constraint-dep-stats) returns 3-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:constraint-dep-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define cds (compile:constraint-dep-stats))\")");
+    cs.eval("(set-code \"(define cds (engine:metrics \"compile:constraint-dep-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"processed-total", "total", "ratio-bp"}) {
         std::string check = std::string("(hash-ref cds \"") + key + "\")";

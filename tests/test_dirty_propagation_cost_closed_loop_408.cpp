@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t dirty_cost_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:dirty-propagation-cost-stats)");
+    auto r = cs.eval("(engine:metrics \"query:dirty-propagation-cost-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -84,7 +84,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(dst.has_value(), "query:dirty-subtree returns value");
 
     std::println("\n--- AC6: query regression ---");
-    auto drp = cs.eval("(query:dirty-reason-propagation-stats)");
+    auto drp = cs.eval("(engine:metrics \"query:dirty-reason-propagation-stats\")");
     auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(drp && is_int(*drp), "dirty-reason-propagation-stats regression");
     CHECK(tms && is_int(*tms), "typed-mutation-stats regression");

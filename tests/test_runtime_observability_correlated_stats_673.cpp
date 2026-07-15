@@ -37,7 +37,9 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:runtime-observability-correlated-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:runtime-observability-correlated-stats\") \"" +
+                key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -58,7 +60,7 @@ static std::int64_t correlated_total(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:runtime-observability-correlated-stats (schema 673) ---");
-    auto h = cs.eval("(query:runtime-observability-correlated-stats)");
+    auto h = cs.eval("(engine:metrics \"query:runtime-observability-correlated-stats\")");
     CHECK(h && is_hash(*h), "runtime-observability-correlated-stats returns hash");
     CHECK(hash_int(cs, "schema") == 673, "schema == 673");
     const auto s0_attempts = steal_attempts(cs);
@@ -116,10 +118,10 @@ static void run_matrix(CompilerService& cs) {
     CHECK(t_after == t_before + 10, "multi-round adds exactly 10 to total");
 
     std::println("\n--- AC7: query regression — module-local primitives still reachable ---");
-    auto cs_stats = cs.eval("(query:compiler-root-stats)");
-    auto fiber_stats = cs.eval("(query:fiber-migration-stats)");
-    auto mutation_coord = cs.eval("(query:mutation-coordination-stats)");
-    auto guard_panic_reflect = cs.eval("(query:guard-panic-reflect-stats)");
+    auto cs_stats = cs.eval("(engine:metrics \"query:compiler-root-stats\")");
+    auto fiber_stats = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
+    auto mutation_coord = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
+    auto guard_panic_reflect = cs.eval("(engine:metrics \"query:guard-panic-reflect-stats\")");
     // Note: fiber-migration-stats and mutation-coordination-stats return
     // make_int(sum); compiler-root-stats and guard-panic-reflect-stats
     // return hashes (schema + multi-field). Mixed types here is correct.

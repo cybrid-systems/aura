@@ -38,7 +38,7 @@
 
 // 5 ACs (from the issue body, scoped to this PR):
 //   AC1 ShapeProfiler's profiles_ is std::flat_map
-//       (verified via the new (compile:shape-stats)
+//       (verified via the new (engine:metrics \"compile:shape-stats\")
 //       primitive that reports the container type)
 //   AC2 FlatAST dirty_view() returns a
 //       non-empty std::span after add_node

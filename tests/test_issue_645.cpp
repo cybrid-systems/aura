@@ -11,7 +11,7 @@
 // Discovery before this PR: the Work-Stealing LIFO/FIFO
 // adaptive bias surface already covers the high-level
 // scheduler adaptive bias via existing primitives + counters:
-//   - (query:scheduler-stealbudget-adaptive-stats) (#706) —
+//   - (engine:metrics \"query:scheduler-stealbudget-adaptive-stats\") (#706) —
 //     steal-budget adaptive bias primitive (LLM-bottleneck
 //     adjustments — higher level orchestration tune)
 //   - #618 per-fiber yield_reason classification +
@@ -84,8 +84,8 @@ int aura_issue_645_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:scheduler-steal-bias-stats) shape ---");
-        auto h = cs.eval("(query:scheduler-steal-bias-stats)");
+        std::println("\n--- AC1: (engine:metrics \"query:scheduler-steal-bias-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h), "scheduler-steal-bias-stats returns a hash");
         const auto lifo = hash_int(cs, "lifo-hits");
         const auto fifo = hash_int(cs, "fifo-steals");
@@ -101,23 +101,26 @@ int aura_issue_645_run() {
     // (back-compat — #645 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_706 = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
-        CHECK(s_706.has_value(), "(query:scheduler-stealbudget-adaptive-stats) reachable (#706 "
-                                 "back-compat — orchestration tune)");
-        auto s_644 = cs.eval("(query:aot-reload-func-table-stats)");
-        CHECK(s_644.has_value(),
-              "(query:aot-reload-func-table-stats) reachable (#644 back-compat)");
+        auto s_706 = cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
+        CHECK(s_706.has_value(),
+              "(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\") reachable (#706 "
+              "back-compat — orchestration tune)");
+        auto s_644 = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
+        CHECK(
+            s_644.has_value(),
+            "(engine:metrics \"query:aot-reload-func-table-stats\") reachable (#644 back-compat)");
         auto s_643 = cs.eval("(query:primitives-meta)");
         CHECK(s_643.has_value(), "(query:primitives-meta) reachable (#643 back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
-        auto s_641 = cs.eval("(query:stable-ref-provenance-sv-stats)");
-        CHECK(s_641.has_value(),
-              "(query:stable-ref-provenance-sv-stats) reachable (#641 back-compat)");
-        auto s_640 = cs.eval("(query:sv-verification-closedloop-stats)");
-        CHECK(s_640.has_value(),
-              "(query:sv-verification-closedloop-stats) reachable (#640 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
+        auto s_641 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats\")");
+        CHECK(s_641.has_value(), "(engine:metrics \"query:stable-ref-provenance-sv-stats\") "
+                                 "reachable (#641 back-compat)");
+        auto s_640 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+        CHECK(s_640.has_value(), "(engine:metrics \"query:sv-verification-closedloop-stats\") "
+                                 "reachable (#640 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -150,12 +153,13 @@ int aura_issue_645_run() {
     // #706's `-stealbudget-adaptive-stats` (no `-bias-` midfix).
     {
         std::println("\n--- AC5: naming distinction from #706 ---");
-        auto new_p = cs.eval("(query:scheduler-steal-bias-stats)");
-        auto old_p = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
-        CHECK(new_p.has_value(),
-              "new primitive (query:scheduler-steal-bias-stats) reachable (-bias- midfix)");
-        CHECK(old_p.has_value(), "existing (query:scheduler-stealbudget-adaptive-stats) still "
-                                 "reachable (#706, -stealbudget- prefix)");
+        auto new_p = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
+        auto old_p = cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
+        CHECK(new_p.has_value(), "new primitive (engine:metrics "
+                                 "\"query:scheduler-steal-bias-stats\") reachable (-bias- midfix)");
+        CHECK(old_p.has_value(),
+              "existing (engine:metrics \"query:scheduler-stealbudget-adaptive-stats\") still "
+              "reachable (#706, -stealbudget- prefix)");
         // #706 uses `mutation-bias-hits` as its primary sentinel
         // (no `schema` field — same pattern as #708 aot-reload-
         // stats). Verify it via field reachability, NOT via
@@ -187,7 +191,7 @@ int aura_issue_645_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:scheduler-steal-bias-stats)");
+                auto r = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

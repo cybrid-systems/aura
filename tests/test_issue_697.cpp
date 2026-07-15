@@ -74,7 +74,7 @@ int aura_issue_697_run() {
     // AC1: query:primitives-extension-stats hash fields
     {
         std::println("\n--- AC1: query:primitives-extension-stats ---");
-        auto stats = cs.eval("(query:primitives-extension-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-extension-stats returns hash");
         CHECK(stat_int(cs, "eda-meta-backfilled") >= 4,

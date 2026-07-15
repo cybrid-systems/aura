@@ -35,7 +35,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t dualpath_stale_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:envframe-dualpath-stale-stats)");
+    auto r = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -101,7 +101,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto eds = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
-    auto mbi = cs.eval("(query:mutation-boundary-invariant-stats)");
+    auto mbi = cs.eval("(engine:metrics \"query:mutation-boundary-invariant-stats\")");
     CHECK(eds && is_int(*eds), "envframe-dualpath-stats regression");
     CHECK(mbi && is_int(*mbi), "mutation-boundary-invariant-stats regression");
 }

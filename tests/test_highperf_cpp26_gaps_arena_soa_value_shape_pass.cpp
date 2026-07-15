@@ -33,7 +33,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:highperf-cpp26-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:highperf-cpp26-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +61,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:highperf-cpp26-stats (schema 658) ---");
     CHECK(setup_workspace(cs), "recursive workspace setup");
-    auto h = cs.eval("(query:highperf-cpp26-stats)");
+    auto h = cs.eval("(engine:metrics \"query:highperf-cpp26-stats\")");
     CHECK(h && is_hash(*h), "highperf-cpp26-stats returns hash");
     CHECK(hash_int(cs, "schema") == 658, "schema == 658");
 
@@ -104,9 +104,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(pass >= 0, "pass-dirty-skips readable");
 
     std::println("\n--- AC7: query regression ---");
-    auto soa = cs.eval("(query:soa-dirty-stats)");
+    auto soa = cs.eval("(engine:metrics \"query:soa-dirty-stats\")");
     auto vdisp = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
-    auto shape = cs.eval("(query:shape-stability-stats)");
+    auto shape = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
     CHECK(soa && is_hash(*soa), "soa-dirty-stats regression");
     // #571 was int; later observability surfaces upgraded to hash with schema.
     CHECK(vdisp && (is_int(*vdisp) || is_hash(*vdisp)),

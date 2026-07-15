@@ -97,10 +97,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:compiler-arena-closure-lifetime-stats) hash shape ---");
-    auto r = cs.eval("(query:compiler-arena-closure-lifetime-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:compiler-arena-closure-lifetime-stats\") hash "
+                 "shape ---");
+    auto r = cs.eval("(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:compiler-arena-closure-lifetime-stats) returns a hash");
+          "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\") returns a hash");
     const std::vector<std::string> keys = {"root-hits", "bridge-sharedptr-pinned",
                                            "cross-violations-prevented", "invalidate-ast-refresh",
                                            "schema"};
@@ -113,25 +114,28 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto rh =
-        hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)", "root-hits");
+    const auto rh = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")", "root-hits");
     CHECK(rh == 0, std::format("root-hits = {} (expected 0 on fresh service)", rh));
-    const auto bsp = hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)",
-                                    "bridge-sharedptr-pinned");
+    const auto bsp =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                       "bridge-sharedptr-pinned");
     CHECK(bsp == 0, std::format("bridge-sharedptr-pinned = {} (expected 0 on fresh service)", bsp));
-    const auto cvp = hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)",
-                                    "cross-violations-prevented");
+    const auto cvp =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                       "cross-violations-prevented");
     CHECK(cvp == 0,
           std::format("cross-violations-prevented = {} (expected 0 on fresh service)", cvp));
-    const auto iar = hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)",
-                                    "invalidate-ast-refresh");
+    const auto iar =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                       "invalidate-ast-refresh");
     CHECK(iar == 0, std::format("invalidate-ast-refresh = {} (expected 0 on fresh service)", iar));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 764 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")", "schema");
     CHECK(schema == 764, std::format("schema = {} (expected 764)", schema));
 }
 
@@ -148,14 +152,17 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_compiler_arena_closure_lifetime_invalidate_ast_refresh();
     ev.bump_compiler_arena_closure_lifetime_invalidate_ast_refresh();
     ev.bump_compiler_arena_closure_lifetime_invalidate_ast_refresh();
-    const auto rh =
-        hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)", "root-hits");
-    const auto bsp = hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)",
-                                    "bridge-sharedptr-pinned");
-    const auto cvp = hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)",
-                                    "cross-violations-prevented");
-    const auto iar = hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)",
-                                    "invalidate-ast-refresh");
+    const auto rh = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")", "root-hits");
+    const auto bsp =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                       "bridge-sharedptr-pinned");
+    const auto cvp =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                       "cross-violations-prevented");
+    const auto iar =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                       "invalidate-ast-refresh");
     CHECK(rh == 3, std::format("after 3 root-hit bumps: root-hits = {} (expected 3)", rh));
     CHECK(bsp == 2,
           std::format("after 2 bridge-sharedptr-pinned bumps: bridge-sharedptr-pinned = {} "
@@ -176,13 +183,16 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                  "sibling primitives unaffected ---");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
+    auto macro_hygiene_provenance =
+        cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
-    auto code_as_data_maturity = cs.eval("(query:code-as-data-maturity-stats)");
-    auto pattern_perf = cs.eval("(query:pattern-performance-stats)");
-    auto mutate_batch = cs.eval("(query:mutate-batch-stats)");
-    auto workspace_closedloop = cs.eval("(query:workspace-closedloop-orchestration-stats)");
-    auto linear_ownership_gc_compiler = cs.eval("(query:linear-ownership-gc-compiler-stats)");
+    auto code_as_data_maturity = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
+    auto pattern_perf = cs.eval("(engine:metrics \"query:pattern-performance-stats\")");
+    auto mutate_batch = cs.eval("(engine:metrics \"query:mutate-batch-stats\")");
+    auto workspace_closedloop =
+        cs.eval("(engine:metrics \"query:workspace-closedloop-orchestration-stats\")");
+    auto linear_ownership_gc_compiler =
+        cs.eval("(engine:metrics \"query:linear-ownership-gc-compiler-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
     CHECK(envframe_policy && aura::compiler::types::is_hash(*envframe_policy),
@@ -213,7 +223,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
     const auto macro_hygiene_provenance_schema =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(macro_hygiene_provenance_schema == 757,
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));
@@ -223,25 +233,26 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));
     const auto code_as_data_maturity_schema =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(code_as_data_maturity_schema == 759,
           std::format("code-as-data-maturity schema = {} (expected 759, no drift)",
                       code_as_data_maturity_schema));
     const auto pattern_perf_schema =
-        hash_int_field(cs, "(query:pattern-performance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "schema");
     CHECK(pattern_perf_schema == 760,
           std::format("pattern-performance schema = {} (expected 760, no drift)",
                       pattern_perf_schema));
-    const auto mutate_batch_schema = hash_int_field(cs, "(query:mutate-batch-stats)", "schema");
+    const auto mutate_batch_schema =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "schema");
     CHECK(mutate_batch_schema == 761,
           std::format("mutate-batch schema = {} (expected 761, no drift)", mutate_batch_schema));
-    const auto workspace_closedloop_schema =
-        hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)", "schema");
+    const auto workspace_closedloop_schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")", "schema");
     CHECK(workspace_closedloop_schema == 762,
           std::format("workspace-closedloop-orchestration schema = {} (expected 762, no drift)",
                       workspace_closedloop_schema));
-    const auto linear_ownership_gc_compiler_schema =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "schema");
+    const auto linear_ownership_gc_compiler_schema = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "schema");
     CHECK(linear_ownership_gc_compiler_schema == 763,
           std::format("linear-ownership-gc-compiler schema = {} (expected 763, no drift)",
                       linear_ownership_gc_compiler_schema));

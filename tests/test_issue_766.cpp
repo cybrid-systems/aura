@@ -92,9 +92,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:ir-soa-migration-stats) hash shape ---");
-    auto r = cs.eval("(query:ir-soa-migration-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:ir-soa-migration-stats) returns a hash");
+    std::println("\n--- AC1: (engine:metrics \"query:ir-soa-migration-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:ir-soa-migration-stats\") returns a hash");
     const std::vector<std::string> keys = {"soa-instructions-emitted", "dirty-block-skips",
                                            "clean-block-hit-rate",     "pmr-column-utilization",
                                            "jit-soa-codegen-time-ns",  "schema"};
@@ -107,25 +108,29 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto sie =
-        hash_int_field(cs, "(query:ir-soa-migration-stats)", "soa-instructions-emitted");
+    const auto sie = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                    "soa-instructions-emitted");
     CHECK(sie == 0,
           std::format("soa-instructions-emitted = {} (expected 0 on fresh service)", sie));
-    const auto dbs = hash_int_field(cs, "(query:ir-soa-migration-stats)", "dirty-block-skips");
+    const auto dbs = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                    "dirty-block-skips");
     CHECK(dbs == 0, std::format("dirty-block-skips = {} (expected 0 on fresh service)", dbs));
-    const auto cbhr = hash_int_field(cs, "(query:ir-soa-migration-stats)", "clean-block-hit-rate");
+    const auto cbhr = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                     "clean-block-hit-rate");
     CHECK(cbhr == 0, std::format("clean-block-hit-rate = {} (expected 0 on fresh service)", cbhr));
-    const auto pmr = hash_int_field(cs, "(query:ir-soa-migration-stats)", "pmr-column-utilization");
+    const auto pmr = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                    "pmr-column-utilization");
     CHECK(pmr == 0, std::format("pmr-column-utilization = {} (expected 0 on fresh service)", pmr));
-    const auto jctn =
-        hash_int_field(cs, "(query:ir-soa-migration-stats)", "jit-soa-codegen-time-ns");
+    const auto jctn = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                     "jit-soa-codegen-time-ns");
     CHECK(jctn == 0,
           std::format("jit-soa-codegen-time-ns = {} (expected 0 on fresh service)", jctn));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 766 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(schema == 766, std::format("schema = {} (expected 766)", schema));
 }
 
@@ -143,13 +148,16 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.set_ir_soa_pmr_column_utilization_pct(4500); // 45.00%
     ev.bump_ir_soa_jit_codegen_time_ns(123456);
     ev.bump_ir_soa_jit_codegen_time_ns(789012);
-    const auto sie =
-        hash_int_field(cs, "(query:ir-soa-migration-stats)", "soa-instructions-emitted");
-    const auto dbs = hash_int_field(cs, "(query:ir-soa-migration-stats)", "dirty-block-skips");
-    const auto cbhr = hash_int_field(cs, "(query:ir-soa-migration-stats)", "clean-block-hit-rate");
-    const auto pmr = hash_int_field(cs, "(query:ir-soa-migration-stats)", "pmr-column-utilization");
-    const auto jctn =
-        hash_int_field(cs, "(query:ir-soa-migration-stats)", "jit-soa-codegen-time-ns");
+    const auto sie = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                    "soa-instructions-emitted");
+    const auto dbs = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                    "dirty-block-skips");
+    const auto cbhr = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                     "clean-block-hit-rate");
+    const auto pmr = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                    "pmr-column-utilization");
+    const auto jctn = hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")",
+                                     "jit-soa-codegen-time-ns");
     CHECK(sie == 60,
           std::format("after 10+20+30 emitted bumps: soa-instructions-emitted = {} (expected 60)",
                       sie));
@@ -169,8 +177,10 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #758/#763/#764 sibling primitives unaffected ---");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
-    auto linear_ownership_gc_compiler = cs.eval("(query:linear-ownership-gc-compiler-stats)");
-    auto compiler_arena_closure_lifetime = cs.eval("(query:compiler-arena-closure-lifetime-stats)");
+    auto linear_ownership_gc_compiler =
+        cs.eval("(engine:metrics \"query:linear-ownership-gc-compiler-stats\")");
+    auto compiler_arena_closure_lifetime =
+        cs.eval("(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")");
     CHECK(edsl_reflection && aura::compiler::types::is_hash(*edsl_reflection),
           "query:edsl-reflection-stats hash regression (#758)");
     CHECK(linear_ownership_gc_compiler &&
@@ -184,13 +194,13 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(edsl_reflection_schema == 758,
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));
-    const auto linear_ownership_gc_compiler_schema =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "schema");
+    const auto linear_ownership_gc_compiler_schema = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "schema");
     CHECK(linear_ownership_gc_compiler_schema == 763,
           std::format("linear-ownership-gc-compiler schema = {} (expected 763, no drift)",
                       linear_ownership_gc_compiler_schema));
-    const auto compiler_arena_closure_lifetime_schema =
-        hash_int_field(cs, "(query:compiler-arena-closure-lifetime-stats)", "schema");
+    const auto compiler_arena_closure_lifetime_schema = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")", "schema");
     CHECK(compiler_arena_closure_lifetime_schema == 764,
           std::format("compiler-arena-closure-lifetime schema = {} (expected 764, no drift)",
                       compiler_arena_closure_lifetime_schema));

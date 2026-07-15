@@ -46,7 +46,7 @@ int aura_issue_683_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:linear-ownership-gc-stats ---");
-        auto stats = cs.eval("(query:linear-ownership-gc-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:linear-ownership-gc-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:linear-ownership-gc-stats returns hash");
         CHECK(stat_int(cs, "safepoint-violations") >= 0, "safepoint-violations present");

@@ -12,7 +12,7 @@
 //   → eval/recompile → fiber yield/resume → combined stats.
 //
 //   - AC1:  E2E single-cycle matrix (macro → query → mutate → eval)
-//   - AC2:  (query:macro-reflect-self-evo-stats) reachable + monotonic
+//   - AC2:  (engine:metrics \"query:macro-reflect-self-evo-stats\") reachable + monotonic
 //   - AC3:  Combined path stats bundle (hygiene/epoch/guard/reflect)
 //   - AC4:  MacroIntroduced marker preserved across mutate cycles
 //   - AC5:  Default query:pattern hygiene filter (skip macro nodes)
@@ -88,7 +88,7 @@ bool test_e2e_macro_query_mutate_eval_matrix() {
     CHECK(setup_macro_workspace(cs), "macro workspace setup + eval");
     auto q = cs.eval("(query:pattern \"user-val\")");
     CHECK(q.has_value(), "query:pattern finds user binding post-macro");
-    auto epoch0 = cs.eval("(query:epoch-stats)");
+    auto epoch0 = cs.eval("(engine:metrics \"query:epoch-stats\")");
     CHECK(epoch0.has_value() && aura::compiler::types::is_int(*epoch0),
           "query:epoch-stats observable pre-mutate");
     auto r = cs.eval("(mutate:replace-value (define user-val 1) "
@@ -108,10 +108,10 @@ bool test_e2e_macro_query_mutate_eval_matrix() {
 
 // ── AC2: query:macro-reflect-self-evo-stats ───────────────
 bool test_query_macro_reflect_self_evo_stats() {
-    std::println("\n--- AC2: (query:macro-reflect-self-evo-stats) ---");
+    std::println("\n--- AC2: (engine:metrics \"query:macro-reflect-self-evo-stats\") ---");
     CompilerService cs;
     CHECK(setup_macro_workspace(cs), "macro workspace for combined stats");
-    const auto s0 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     CHECK(s0 >= 0, "combined stats starts >= 0");
     for (int i = 0; i < 5; ++i) {
         (void)cs.eval("(query:pattern \"user-val\")");
@@ -119,7 +119,7 @@ bool test_query_macro_reflect_self_evo_stats() {
                       ") (define user-val " + std::to_string(100 + i) + "))");
         (void)cs.eval("(eval-current)");
     }
-    const auto s1 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     std::println("  macro-reflect-self-evo-stats: {} -> {}", s0, s1);
     CHECK(s1 > s0, "combined stats grew after self-evo loop");
     return true;
@@ -133,15 +133,15 @@ bool test_combined_path_stats_bundle() {
     (void)cs.eval("(mutate:replace-value (define user-val 1) "
                   "(define user-val 42))");
     const char* stats[] = {
-        "(query:hygiene-stats)",
+        "(engine:metrics \"query:hygiene-stats\")",
         "(engine:metrics \"query:pattern-hygiene-stats\")",
-        "(query:epoch-stats)",
+        "(engine:metrics \"query:epoch-stats\")",
         "(query:mutation-impact)",
-        "(query:reflect-postmutate-stats)",
+        "(engine:metrics \"query:reflect-postmutate-stats\")",
         "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")",
-        "(query:self-evolution-stability-stats)",
+        "(engine:metrics \"query:self-evolution-stability-stats\")",
         "(query:dirty-impact)",
-        "(query:macro-reflect-self-evo-stats)",
+        "(engine:metrics \"query:macro-reflect-self-evo-stats\")",
     };
     for (const char* prim : stats) {
         auto r = cs.eval(prim);
@@ -237,7 +237,7 @@ bool test_fuzz_macro_self_evo_panic() {
     std::uniform_int_distribution<int> op_dist(0, 4);
     std::uniform_int_distribution<int> val_dist(0, 999);
     int panics = 0;
-    const auto stats0 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
+    const auto stats0 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         switch (op_dist(rng)) {
             case 0:
@@ -252,7 +252,7 @@ bool test_fuzz_macro_self_evo_panic() {
                 (void)cs.eval("(query:epoch-delta-since-last-query)");
                 break;
             case 3:
-                (void)cs.eval("(query:macro-reflect-self-evo-stats)");
+                (void)cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
                 break;
             default:
                 (void)cs.eval("(panic-checkpoint)");
@@ -264,7 +264,7 @@ bool test_fuzz_macro_self_evo_panic() {
                 break;
         }
     }
-    const auto stats1 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
+    const auto stats1 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     const auto rollback = cs.evaluator().get_rollback_success_on_panic();
     std::println("  panics: {} stats: {} -> {} rollback_success: {}", panics, stats0, stats1,
                  rollback);
@@ -295,7 +295,7 @@ bool test_eight_thread_concurrent_matrix() {
             if (!cs.eval(code))
                 errors.fetch_add(1);
             if ((i & 15) == 0) {
-                (void)cs.eval("(query:macro-reflect-self-evo-stats)");
+                (void)cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
             }
             completed.fetch_add(1);
         }
@@ -356,7 +356,7 @@ bool test_long_running_self_evo_stress() {
     std::println("\n--- AC11a: {} iters long-running self-evo stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_macro_workspace(cs), "macro workspace for stress");
-    const auto s0 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     std::mt19937 rng(5971u);
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
@@ -365,7 +365,7 @@ bool test_long_running_self_evo_stress() {
                       ") (define user-val " + std::to_string(val_dist(rng)) + "))");
     }
     (void)cs.eval("(eval-current)");
-    const auto s1 = eval_int(cs, "(query:macro-reflect-self-evo-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     CHECK(s1 > s0, "combined stats grew under long-running stress");
     return true;
 }
@@ -377,18 +377,18 @@ bool test_regression_related_primitives() {
     auto r1 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(engine:metrics \"query:pattern-hygiene-stats\") (regression for #547)");
-    auto r2 = cs.eval("(query:reflect-postmutate-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_hash(*r2),
-          "(query:reflect-postmutate-stats) (regression for #502)");
+          "(engine:metrics \"query:reflect-postmutate-stats\") (regression for #502)");
     auto r3 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");
-    auto r4 = cs.eval("(query:self-evolution-stability-stats)");
+    auto r4 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:self-evolution-stability-stats) (regression for #549)");
-    auto r5 = cs.eval("(query:epoch-stats)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
+    auto r5 = cs.eval("(engine:metrics \"query:epoch-stats\")");
     CHECK(r5.has_value() && aura::compiler::types::is_int(*r5),
-          "(query:epoch-stats) (regression for #456)");
+          "(engine:metrics \"query:epoch-stats\") (regression for #456)");
     if (!cs.eval("(define reg-597-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

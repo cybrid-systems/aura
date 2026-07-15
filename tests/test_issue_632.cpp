@@ -12,9 +12,9 @@
 //   - (mutate:atomic-batch ops-list "summary") (#192/#213) —
 //     list-call form
 //   - (atomic-batch:stats) (#192) — 5-field observable hash
-//   - (query:atomic-batch-stats) (#437) — int statistic
-//   - (query:atomic-batch-stats-hash) (#622) — 4-field structured
-//   - (query:atomic-batch-rollback-stats) (#529) — int-sum of
+//   - (engine:metrics \"query:atomic-batch-stats\") (#437) — int statistic
+//   - (engine:metrics \"query:atomic-batch-stats-hash\") (#622) — 4-field structured
+//   - (engine:metrics \"query:atomic-batch-rollback-stats\") (#529) — int-sum of
 //     rollback observability
 //
 // What the issue body AC4 specifies by **exact name + fields** —
@@ -78,8 +78,8 @@ int aura_issue_632_run() {
 
     // AC1: hash returns a hash with the documented fields (5).
     {
-        std::println("\n--- AC1: (query:atomic-batch-sv-stats-hash) shape ---");
-        auto h = cs.eval("(query:atomic-batch-sv-stats-hash)");
+        std::println("\n--- AC1: (engine:metrics \"query:atomic-batch-sv-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:atomic-batch-sv-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h), "atomic-batch-sv-stats-hash returns a hash");
         const auto active = hash_int(cs, "active-sv-batches");
         const auto suppressed = hash_int(cs, "suppressed-bumps-on-sv");
@@ -100,15 +100,17 @@ int aura_issue_632_run() {
         std::println("\n--- AC2: existing primitives back-compat ---");
         auto s_stats = cs.eval("(atomic-batch:stats)");
         CHECK(s_stats.has_value(), "(atomic-batch:stats) reachable (#192 back-compat)");
-        auto s_st = cs.eval("(query:atomic-batch-stats)");
+        auto s_st = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
         CHECK(s_st && aura::compiler::types::is_int(*s_st),
-              "(query:atomic-batch-stats) returns an int (#437 back-compat)");
-        auto s_hash = cs.eval("(query:atomic-batch-stats-hash)");
-        CHECK(s_hash && aura::compiler::types::is_hash(*s_hash),
-              "(query:atomic-batch-stats-hash) returns a hash (#622 back-compat)");
-        auto s_roll = cs.eval("(query:atomic-batch-rollback-stats)");
+              "(engine:metrics \"query:atomic-batch-stats\") returns an int (#437 back-compat)");
+        auto s_hash = cs.eval("(engine:metrics \"query:atomic-batch-stats-hash\")");
+        CHECK(
+            s_hash && aura::compiler::types::is_hash(*s_hash),
+            "(engine:metrics \"query:atomic-batch-stats-hash\") returns a hash (#622 back-compat)");
+        auto s_roll = cs.eval("(engine:metrics \"query:atomic-batch-rollback-stats\")");
         CHECK(s_roll && aura::compiler::types::is_int(*s_roll),
-              "(query:atomic-batch-rollback-stats) returns an int (#529 back-compat)");
+              "(engine:metrics \"query:atomic-batch-rollback-stats\") returns an int (#529 "
+              "back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -147,7 +149,7 @@ int aura_issue_632_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:atomic-batch-sv-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:atomic-batch-sv-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

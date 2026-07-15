@@ -144,12 +144,13 @@ int aura_issue_606_run() {
         CHECK(cf.folded_count() >= folded, "run(BasicBlock&) alias does not decrease folded_count");
     }
 
-    // AC4: EDSL observable — (query:pass-pipeline-stats) exposes
+    // AC4: EDSL observable — (engine:metrics \"query:pass-pipeline-stats\") exposes
     // pure-delegation-{shape,linear,total} counters.
     {
-        std::println("\n--- AC4: (query:pass-pipeline-stats) pure-delegation fields ---");
+        std::println(
+            "\n--- AC4: (engine:metrics \"query:pass-pipeline-stats\") pure-delegation fields ---");
         aura::compiler::CompilerService cs;
-        auto stats = cs.eval("(query:pass-pipeline-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pass-pipeline-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pass-pipeline-stats returns a hash");
         const auto shape_pure = stat_int(cs, "pure-delegation-shape");

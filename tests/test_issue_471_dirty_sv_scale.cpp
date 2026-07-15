@@ -1,7 +1,7 @@
 // @category: unit
 // @reason: pure C++ test of SV-scale dirty
 //          propagation observability +
-//          (query:dirty-propagation-stats) primitive
+//          (engine:metrics \"query:dirty-propagation-stats\") primitive
 
 // test_issue_471_dirty_sv_scale.cpp — Issue #471:
 // Optimize mark_dirty_upward + incremental dirty
@@ -22,13 +22,13 @@
 //        (atomic max across all mark_dirty_upward
 //        calls; the key signal for SV-scale deep
 //        hierarchy perf)
-//   2. (query:dirty-propagation-stats) Aura primitive
+//   2. (engine:metrics \"query:dirty-propagation-stats\") Aura primitive
 //      — 3-counter integer sum:
 //        upward_calls + early_exit + max_depth
 //   3. (stats:count) 65 → 66
 //
 // Test cases:
-//   AC1:  (query:dirty-propagation-stats) returns an int
+//   AC1:  (engine:metrics \"query:dirty-propagation-stats\") returns an int
 //   AC2:  mark_dirty_upward bumps upward_calls counter
 //   AC3:  mark_dirty_upward_fast bumps early-exit
 //         counter when parent has bits
@@ -62,7 +62,7 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 static std::int64_t primitive_int(aura::compiler::CompilerService& cs, std::string_view prim) {
-    auto r = cs.eval(std::format("({})", prim));
+    auto r = cs.eval(aura::test::aura_call_expr(prim));
     if (!r)
         return -1;
     if (!aura::compiler::types::is_int(*r))
@@ -70,17 +70,18 @@ static std::int64_t primitive_int(aura::compiler::CompilerService& cs, std::stri
     return aura::compiler::types::as_int(*r);
 }
 
-// ── AC1: (query:dirty-propagation-stats) returns an int
+// ── AC1: (engine:metrics \"query:dirty-propagation-stats\") returns an int
 bool test_primitive_returns_int() {
     std::println("\n--- AC1: primitive returns int ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:dirty-propagation-stats)");
+    auto r = cs.eval("(engine:metrics \"query:dirty-propagation-stats\")");
     if (!r) {
         CHECK(false, "eval returned error");
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_int(v), "(query:dirty-propagation-stats) returns an int");
+    CHECK(aura::compiler::types::is_int(v),
+          "(engine:metrics \"query:dirty-propagation-stats\") returns an int");
     return true;
 }
 

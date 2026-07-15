@@ -69,7 +69,7 @@
 //        + slo-validation-pct + recommendation transition
 //        correctly
 //   AC5: sibling observability regression — #775
-//        (query:extension-kit-stats) + #633 (query:stdlib-
+//        (engine:metrics \"query:extension-kit-stats\") + #633 (query:stdlib-
 //        compiler-demands-stats-hash) + #797 (query:arena-
 //        auto-compact-defrag-fiber-stats) primitives still
 //        reachable with their schema sentinels intact
@@ -108,10 +108,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:registry-extension-stats) hash shape ---");
-    auto r = cs.eval("(query:registry-extension-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:registry-extension-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:registry-extension-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:registry-extension-stats) returns a hash");
+          "(engine:metrics \"query:registry-extension-stats\") returns a hash");
     const std::vector<std::string> keys = {
         "extensions",         "validation-pass",
         "validation-fail",    "meta-completeness",
@@ -130,8 +130,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                  "#767/#775/#797) ---");
     // 1 NEW #806 atomic — strict == 0 on fresh service (no
     // extend primitive yet, so no validation passes).
-    const auto validation_pass =
-        hash_int_field(cs, "(query:registry-extension-stats)", "validation-pass");
+    const auto validation_pass = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "validation-pass");
     CHECK(validation_pass == 0,
           std::format("validation-pass = {} (expected == 0 on fresh service — NEW atomic "
                       "#806 registry_extension_validation_passes_total; bumped by "
@@ -141,7 +141,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       validation_pass));
     // Reused atomics — >= 0 (split-zero rule: reused counters may
     // be non-zero on fresh service, but never negative).
-    const auto extensions = hash_int_field(cs, "(query:registry-extension-stats)", "extensions");
+    const auto extensions =
+        hash_int_field(cs, "(engine:metrics \"query:registry-extension-stats\")", "extensions");
     CHECK(extensions >= 0,
           std::format("extensions = {} (expected >= 0 — reused stdlib_extension_count_total; "
                       "bumped on primitives_.add call site in evaluator.ixx; typically 0 on "
@@ -149,16 +150,16 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "is itself deferred — the atomic is the production foundation for the "
                       "future AC3 wire-up)",
                       extensions));
-    const auto validation_fail =
-        hash_int_field(cs, "(query:registry-extension-stats)", "validation-fail");
+    const auto validation_fail = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "validation-fail");
     CHECK(validation_fail >= 0,
           std::format("validation-fail = {} (expected >= 0 — reused primitive_capture_violations_"
                       "total; bumped by prim_record_capture_violation; value tracks the *failure* "
                       "side of the validation pipeline while the NEW #806 atomic tracks the "
                       "*pass* side; pairing them enables the slo-validation-pct derivation)",
                       validation_fail));
-    const auto meta_completeness =
-        hash_int_field(cs, "(query:registry-extension-stats)", "meta-completeness");
+    const auto meta_completeness = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "meta-completeness");
     // Derived pct — vacuous-true 10000 baseline when slot_count == 0;
     // otherwise integer division yields a value in [0, 10000].
     // The hard floor for SLO 100% is 10000 (100.00%).
@@ -168,8 +169,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "vacuous-true default mirror #775; non-baseline values reflect "
                       "schema_documented_meta_count / slot_count integer division)",
                       meta_completeness));
-    const auto slo_validation_pct =
-        hash_int_field(cs, "(query:registry-extension-stats)", "slo-validation-pct");
+    const auto slo_validation_pct = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "slo-validation-pct");
     CHECK(slo_validation_pct >= 0 && slo_validation_pct <= 10000,
           std::format("slo-validation-pct = {} (expected in [0, 10000] range — 0-10000 "
                       "fixed-point percent × 100; 10000 = 100.00% baseline when validation-"
@@ -177,8 +178,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "= >= 9800)",
                       slo_validation_pct));
     // Hardcoded "not yet" flag — strict == 0.
-    const auto extend_active =
-        hash_int_field(cs, "(query:registry-extension-stats)", "extend-registry-safe-active");
+    const auto extend_active = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "extend-registry-safe-active");
     CHECK(extend_active == 0,
           std::format("extend-registry-safe-active = {} (expected == 0 — Phase 2+ deferred; "
                       "the actual `(primitive:extend-registry-safe name doc schema [category] "
@@ -187,7 +188,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "tests/test_primitives_extension_registry_ai_gen.cpp harness all remain "
                       "follow-up work per body Actionable #1)",
                       extend_active));
-    const auto rec = hash_int_field(cs, "(query:registry-extension-stats)", "recommendation");
+    const auto rec =
+        hash_int_field(cs, "(engine:metrics \"query:registry-extension-stats\")", "recommendation");
     CHECK(rec >= 0 && rec <= 3,
           std::format("recommendation = {} (expected in [0, 3] ordinal range — 0 = production-"
                       "ready, 1 = near-production, 2 = partial Phase 1, 3 = early-stage; "
@@ -197,7 +199,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 806 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:registry-extension-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:registry-extension-stats\")", "schema");
     CHECK(schema == 806, std::format("schema = {} (expected 806 — drift sentinel)", schema));
 }
 
@@ -206,14 +209,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
                  "slo-validation-pct / recommendation transition ---");
 
     // Snapshot before.
-    const auto validation_pass_before =
-        hash_int_field(cs, "(query:registry-extension-stats)", "validation-pass");
-    const auto validation_fail_before =
-        hash_int_field(cs, "(query:registry-extension-stats)", "validation-fail");
-    const auto slo_validation_pct_before =
-        hash_int_field(cs, "(query:registry-extension-stats)", "slo-validation-pct");
+    const auto validation_pass_before = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "validation-pass");
+    const auto validation_fail_before = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "validation-fail");
+    const auto slo_validation_pct_before = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "slo-validation-pct");
     const auto rec_before =
-        hash_int_field(cs, "(query:registry-extension-stats)", "recommendation");
+        hash_int_field(cs, "(engine:metrics \"query:registry-extension-stats\")", "recommendation");
 
     // Exercise the 1 NEW #806 per-Evaluator bump helper. The helper
     // bumps the CompilerMetrics atomic registry_extension_validation_
@@ -224,11 +227,12 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_registry_extension_validation_pass();
     }
 
-    const auto validation_pass_after =
-        hash_int_field(cs, "(query:registry-extension-stats)", "validation-pass");
-    const auto slo_validation_pct_after =
-        hash_int_field(cs, "(query:registry-extension-stats)", "slo-validation-pct");
-    const auto rec_after = hash_int_field(cs, "(query:registry-extension-stats)", "recommendation");
+    const auto validation_pass_after = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "validation-pass");
+    const auto slo_validation_pct_after = hash_int_field(
+        cs, "(engine:metrics \"query:registry-extension-stats\")", "slo-validation-pct");
+    const auto rec_after =
+        hash_int_field(cs, "(engine:metrics \"query:registry-extension-stats\")", "recommendation");
 
     std::println("  counts after AC4 bumps: validation-pass {} -> {}, slo-validation-pct {} -> "
                  "{}, recommendation {} -> {}",
@@ -264,12 +268,13 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println(
         "\n--- AC5: sibling observability regression (#775 / #633 / #797 primitives intact) ---");
 
-    // #775: (query:extension-kit-stats) — the canonical AI Native
+    // #775: (engine:metrics \"query:extension-kit-stats\") — the canonical AI Native
     // Extension Kit observability surface that #806 refines/consolidates.
-    auto r775 = cs.eval("(query:extension-kit-stats)");
+    auto r775 = cs.eval("(engine:metrics \"query:extension-kit-stats\")");
     CHECK(r775 && aura::compiler::types::is_hash(*r775),
-          "#775 (query:extension-kit-stats) still returns a hash");
-    const auto schema_775 = hash_int_field(cs, "(query:extension-kit-stats)", "schema");
+          "#775 (engine:metrics \"query:extension-kit-stats\") still returns a hash");
+    const auto schema_775 =
+        hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")", "schema");
     CHECK(schema_775 == 775, std::format("#775 schema = {} (expected 775)", schema_775));
     for (const auto& k : {"extensions_registered", "contract_violations_caught",
                           "meta_completeness_pct", "test_skeletons_generated"}) {
@@ -278,12 +283,13 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         CHECK(f, std::format("#775 field '{}' still present", k));
     }
 
-    // #633: (query:stdlib-compiler-demands-stats-hash) — the
+    // #633: (engine:metrics \"query:stdlib-compiler-demands-stats-hash\") — the
     // original stdlib commercial-evolution reverse-ask counters
     // primitive. No schema sentinel (pre-schema convention).
-    auto r633 = cs.eval("(query:stdlib-compiler-demands-stats-hash)");
-    CHECK(r633 && aura::compiler::types::is_hash(*r633),
-          "#633 (query:stdlib-compiler-demands-stats-hash) still returns a hash");
+    auto r633 = cs.eval("(engine:metrics \"query:stdlib-compiler-demands-stats-hash\")");
+    CHECK(
+        r633 && aura::compiler::types::is_hash(*r633),
+        "#633 (engine:metrics \"query:stdlib-compiler-demands-stats-hash\") still returns a hash");
 
     // #797 (most recent sibling) regression: confirm that the
     // (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") primitive is

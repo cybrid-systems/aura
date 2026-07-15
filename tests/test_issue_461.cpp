@@ -99,7 +99,7 @@ bool test_query_jit_fallback_stats() {
     std::println("\n--- AC5: query:jit-fallback-stats returns counter ---");
     aura::compiler::CompilerService cs;
     auto before = aura_jit_fallback_count_v_read();
-    auto r = cs.eval("(query:jit-fallback-stats)");
+    auto r = cs.eval("(engine:metrics \"query:jit-fallback-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -122,7 +122,7 @@ bool test_query_after_fallback() {
     int64_t args[1] = {42};
     aura_jit_fallback_to_interpreter(args, 1);
     auto after = aura_jit_fallback_count_v_read();
-    auto r = cs.eval("(query:jit-fallback-stats)");
+    auto r = cs.eval("(engine:metrics \"query:jit-fallback-stats\")");
     if (!r) {
         ++g_failed;
         return false;

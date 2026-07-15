@@ -32,7 +32,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t consolidated_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:consolidated-production-priority-stats)");
+    auto r = cs.eval("(engine:metrics \"query:consolidated-production-priority-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -68,11 +68,11 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats3b > stats3a, "coverage feedback bumps EDA verification counters");
 
     std::println("\n--- AC4: P2 Memory safety regression ---");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
 
     std::println("\n--- AC5: P3 SoA hotpath regression ---");
-    auto soa = cs.eval("(query:soa-hotpath-adoption-stats)");
+    auto soa = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
     CHECK(soa && is_int(*soa), "soa-hotpath-adoption-stats regression");
 
     std::println("\n--- AC6: multi-round mutate matrix monotonic ---");
@@ -87,7 +87,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "consolidated stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto roadmap = cs.eval("(query:production-roadmap-stats)");
+    auto roadmap = cs.eval("(engine:metrics \"query:production-roadmap-stats\")");
     auto p6 = cs.eval("(query:prompt6-safety-score)");
     CHECK(roadmap && is_int(*roadmap), "production-roadmap-stats regression");
     CHECK(p6 && is_int(*p6), "prompt6-safety-score regression");

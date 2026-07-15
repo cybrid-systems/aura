@@ -68,10 +68,10 @@
 //     EnvFrame::version_ bump after the func_table refcount swap
 //
 // ACs shipped by this test:
-//   AC1 — (query:aot-safe-swap-boundary-stats) primitive stays
+//   AC1 — (engine:metrics \"query:aot-safe-swap-boundary-stats\") primitive stays
 //         queryable in default build and exposes all 5 expected
 //         fields (regression: #732 surface unchanged).
-//   AC2 — (query:aot-concurrent-hotupdate-stats) primitive stays
+//   AC2 — (engine:metrics \"query:aot-concurrent-hotupdate-stats\") primitive stays
 //         queryable in default build and exposes all 8 expected
 //         fields including `schema == 785` (regression: #785
 //         surface unchanged).
@@ -118,11 +118,12 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_safe_boundary_surface(aura::compiler::CompilerService& cs) {
-    std::println(
-        "\n--- AC1: (query:aot-safe-swap-boundary-stats) stays queryable in default build ---");
-    auto r = cs.eval("(query:aot-safe-swap-boundary-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:aot-safe-swap-boundary-stats\") stays "
+                 "queryable in default build ---");
+    auto r = cs.eval("(engine:metrics \"query:aot-safe-swap-boundary-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:aot-safe-swap-boundary-stats) returns a hash (regression #732 surface)");
+          "(engine:metrics \"query:aot-safe-swap-boundary-stats\") returns a hash (regression #732 "
+          "surface)");
     const std::vector<std::string> keys = {"safe-boundary-hits", "refcount-swaps",
                                            "region-violations-prevented", "concurrent-safe-reloads",
                                            "deopt-on-steal"};
@@ -134,11 +135,12 @@ static void run_ac1_safe_boundary_surface(aura::compiler::CompilerService& cs) {
 }
 
 static void run_ac2_hotupdate_surface(aura::compiler::CompilerService& cs) {
-    std::println(
-        "\n--- AC2: (query:aot-concurrent-hotupdate-stats) stays queryable in default build ---");
-    auto r = cs.eval("(query:aot-concurrent-hotupdate-stats)");
+    std::println("\n--- AC2: (engine:metrics \"query:aot-concurrent-hotupdate-stats\") stays "
+                 "queryable in default build ---");
+    auto r = cs.eval("(engine:metrics \"query:aot-concurrent-hotupdate-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:aot-concurrent-hotupdate-stats) returns a hash (regression #785 surface)");
+          "(engine:metrics \"query:aot-concurrent-hotupdate-stats\") returns a hash (regression "
+          "#785 surface)");
     const std::vector<std::string> keys = {"concurrent-steal-during-reload",
                                            "grace-period-hits",
                                            "env-version-sync-on-reload",
@@ -152,31 +154,34 @@ static void run_ac2_hotupdate_surface(aura::compiler::CompilerService& cs) {
             "(hash-ref (engine:metrics \"query:aot-concurrent-hotupdate-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present in #785 primitive", k));
     }
-    const auto schema = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "schema");
     CHECK(schema == 785, std::format("schema = {} (expected 785, no drift)", schema));
 }
 
 static void run_ac3_metric_fields_zero_default_build(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: all 4 newly added metric fields read 0 in default build ---");
     std::println("  (default build has 0 callers — fields are wired through, no drift to hide)");
-    const auto safe_boundary =
-        hash_int_field(cs, "(query:aot-safe-swap-boundary-stats)", "safe-boundary-hits");
+    const auto safe_boundary = hash_int_field(
+        cs, "(engine:metrics \"query:aot-safe-swap-boundary-stats\")", "safe-boundary-hits");
     CHECK(safe_boundary == 0,
           std::format(
               "safe-boundary-hits = {} (expected 0 — no aura_reload_aot_module call site yet)",
               safe_boundary));
-    const auto steal = hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)",
-                                      "concurrent-steal-during-reload");
+    const auto steal =
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "concurrent-steal-during-reload");
     CHECK(steal == 0, std::format("concurrent-steal-during-reload = {} (expected 0 — "
                                   "no WorkerThread::steal hook yet)",
                                   steal));
-    const auto grace =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "grace-period-hits");
+    const auto grace = hash_int_field(
+        cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")", "grace-period-hits");
     CHECK(grace == 0, std::format("grace-period-hits = {} (expected 0 — "
                                   "no aura_reload_aot_module pre/post-swap hook yet)",
                                   grace));
     const auto env_version =
-        hash_int_field(cs, "(query:aot-concurrent-hotupdate-stats)", "env-version-sync-on-reload");
+        hash_int_field(cs, "(engine:metrics \"query:aot-concurrent-hotupdate-stats\")",
+                       "env-version-sync-on-reload");
     CHECK(env_version == 0, std::format("env-version-sync-on-reload = {} (expected 0 — "
                                         "no EnvFrame::version_ sync hook yet)",
                                         env_version));

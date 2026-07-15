@@ -3,7 +3,7 @@
 //
 // Validates:
 //  - (compile:relower-strategy) returns 'none / 'incremental / 'full / 'unknown
-//  - (query:compiler-cache-stats) returns 3-tuple
+//  - (engine:metrics \"query:compiler-cache-stats\") returns 3-tuple
 //    (total-dirty-blocks, total-dirty-functions, incremental-candidates)
 //  - Strategy reflects the per-function block_dirty count threshold
 //  - Backward compat: relower-strategy on non-cached fn returns 'unknown
@@ -143,7 +143,7 @@ bool test_cache_stats_3tuple() {
     aura::compiler::CompilerService cs;
     // Without a loaded workspace, the stats should all be 0.
     // The 3-tuple structure is ((dirty-blocks . dirty-funcs) . incremental-cands).
-    auto r = cs.eval("(query:compiler-cache-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     if (!r) {
         ++g_failed;
         std::println(std::cerr, "eval returned null");

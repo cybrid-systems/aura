@@ -23,12 +23,12 @@
 // 2. 4 lifetime-total metrics track the path split:
 //    - per_symbol_reinfer_used_total / visited_total
 //    - ancestor_reinfer_used_total / visited_total
-// 3. (compile:per-symbol-reinfer-stats) Aura primitive
+// 3. (engine:metrics \"compile:per-symbol-reinfer-stats\") Aura primitive
 //    returns a hash with 6 fields (4 raw + 2 derived).
 //
 // Test cases:
 //   AC1: fresh CompilerService → per_symbol/ancestor counters = 0
-//   AC2: (compile:per-symbol-reinfer-stats) returns hash with 6 keys
+//   AC2: (engine:metrics \"compile:per-symbol-reinfer-stats\") returns hash with 6 keys
 //   AC3: typed_mutate on a top-level define takes the
 //        per-symbol path (per_symbol_used_total > 0)
 //   AC4: path-share-bp > 0 after per-symbol mutations
@@ -87,9 +87,11 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:per-symbol-reinfer-stats) returns hash with 6 keys ---");
+    std::println("\n--- AC2: (engine:metrics \"compile:per-symbol-reinfer-stats\") returns hash "
+                 "with 6 keys ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
+    auto r1 =
+        cs.eval("(set-code \"(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -102,7 +104,7 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:per-symbol-reinfer-stats) returns a hash");
+    CHECK(true, "(engine:metrics \"compile:per-symbol-reinfer-stats\") returns a hash");
     for (const char* key :
          {"per-symbol-used-total", "per-symbol-visited-total", "ancestor-used-total",
           "ancestor-visited-total", "path-share-bp", "avg-per-symbol-bp"}) {
@@ -189,7 +191,8 @@ bool test_avg_per_symbol_bp() {
     // there's been at least one per-symbol mutation.
     if (snap.per_symbol_reinfer_used_total > 0) {
         // Fetch the avg-per-symbol-bp via the primitive.
-        auto r = cs.eval("(hash-ref (compile:per-symbol-reinfer-stats) \"avg-per-symbol-bp\")");
+        auto r = cs.eval("(hash-ref (engine:metrics \"compile:per-symbol-reinfer-stats\") "
+                         "\"avg-per-symbol-bp\")");
         if (r && aura::compiler::types::is_int(*r)) {
             std::int64_t primitive_bp = aura::compiler::types::as_int(*r);
             std::int64_t manual_bp =

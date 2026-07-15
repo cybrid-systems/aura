@@ -34,7 +34,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:longrunning-infra-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:longrunning-infra-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +62,7 @@ static std::int64_t events_total(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:longrunning-infra-stats (schema 753) ---");
-    auto h = cs.eval("(query:longrunning-infra-stats)");
+    auto h = cs.eval("(engine:metrics \"query:longrunning-infra-stats\")");
     CHECK(h && is_hash(*h), "longrunning-infra-stats returns hash");
     CHECK(stat_int(cs, "schema") == 753, "schema == 753");
     CHECK(quota_violations(cs) >= 0, "quota-violations non-negative");
@@ -141,9 +142,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(events_total(cs) > ev7a, "infra-events-total monotonic over real infra matrix");
 
     std::println("\n--- AC8: query regression ---");
-    auto dep = cs.eval("(query:deployment-stats)");
+    auto dep = cs.eval("(engine:metrics \"query:deployment-stats\")");
     auto panic = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
-    auto chaos = cs.eval("(query:self-evolution-chaos-stats)");
+    auto chaos = cs.eval("(engine:metrics \"query:self-evolution-chaos-stats\")");
     CHECK(dep && is_hash(*dep), "deployment-stats regression");
     CHECK(panic && is_int(*panic), "panic-checkpoint-lifecycle-stats regression");
     CHECK(chaos && is_hash(*chaos), "self-evolution-chaos-stats regression");

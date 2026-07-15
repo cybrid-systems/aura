@@ -72,7 +72,7 @@ static std::int64_t events_total(aura::compiler::CompilerService& cs) {
 
 static void run_ac1_schema(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:sv-defuse-stats (schema 664) ---");
-    auto h = cs.eval("(query:sv-defuse-stats)");
+    auto h = cs.eval("(engine:metrics \"query:sv-defuse-stats\")");
     CHECK(h && aura::compiler::types::is_hash(*h), "sv-defuse-stats returns hash");
     CHECK(stat_int(cs, "schema") == 664, "schema == 664");
     const auto n = nested(cs);
@@ -152,9 +152,9 @@ static void run_ac6_multi_round(aura::compiler::CompilerService& cs) {
 
 static void run_ac7_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: regression — adjacent SV primitives reachable ---");
-    auto sv_sva = cs.eval("(query:sv-sva-structure-stats)");
-    auto sv_iface = cs.eval("(query:sv-interface-structure-stats)");
-    auto sv_hw = cs.eval("(query:hardware-backend-sv-stats)");
+    auto sv_sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
+    auto sv_iface = cs.eval("(engine:metrics \"query:sv-interface-structure-stats\")");
+    auto sv_hw = cs.eval("(engine:metrics \"query:hardware-backend-sv-stats\")");
     CHECK(sv_sva && aura::compiler::types::is_hash(*sv_sva),
           "query:sv-sva-structure-stats (schema 694) regression [hash]");
     CHECK(sv_iface && aura::compiler::types::is_hash(*sv_iface),

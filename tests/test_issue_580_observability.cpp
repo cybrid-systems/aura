@@ -79,7 +79,7 @@ int main() {
     // AC1: query:hardware-backend-stats returns hash
     {
         std::println("\n--- AC1: query:hardware-backend-stats ---");
-        auto stats = cs.eval("(query:hardware-backend-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:hardware-backend-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:hardware-backend-stats returns hash");
         CHECK(hash_int(cs, "emit-compatibility-pass-rate") >= 0,
@@ -141,10 +141,10 @@ int main() {
     // AC4: related hardware backend primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto commercial = cs.eval("(query:hardware-backend-commercial-stats)");
-        auto closed = cs.eval("(query:hardware-backend-sv-closedloop-stats)");
-        auto feedback = cs.eval("(query:verification-feedback-loop-stats)");
-        auto structured = cs.eval("(query:sv-structured-edsl-stats)");
+        auto commercial = cs.eval("(engine:metrics \"query:hardware-backend-commercial-stats\")");
+        auto closed = cs.eval("(engine:metrics \"query:hardware-backend-sv-closedloop-stats\")");
+        auto feedback = cs.eval("(engine:metrics \"query:verification-feedback-loop-stats\")");
+        auto structured = cs.eval("(engine:metrics \"query:sv-structured-edsl-stats\")");
         CHECK(commercial && aura::compiler::types::is_hash(*commercial),
               "query:hardware-backend-commercial-stats hash regression (#698)");
         CHECK(closed && aura::compiler::types::is_hash(*closed),

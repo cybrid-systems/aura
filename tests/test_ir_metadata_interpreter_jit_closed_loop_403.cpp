@@ -33,7 +33,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t metadata_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:ir-metadata-stats)");
+    auto r = cs.eval("(engine:metrics \"query:ir-metadata-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -92,8 +92,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "metadata stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto shp = cs.eval("(query:shape-stability-stats)");
-    auto lor = cs.eval("(query:linear-ownership-runtime-stats)");
+    auto shp = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
+    auto lor = cs.eval("(engine:metrics \"query:linear-ownership-runtime-stats\")");
     CHECK(shp && is_int(*shp), "shape-stability-stats regression");
     CHECK(lor && is_int(*lor), "linear-ownership-runtime-stats regression");
 }

@@ -34,7 +34,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:incremental-closure-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:incremental-closure-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +62,7 @@ static bool setup_closure_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:incremental-closure-stats (schema 600) ---");
     CHECK(setup_closure_workspace(cs), "recursive closure workspace setup");
-    auto h = cs.eval("(query:incremental-closure-stats)");
+    auto h = cs.eval("(engine:metrics \"query:incremental-closure-stats\")");
     CHECK(h && is_hash(*h), "incremental-closure-stats returns hash");
     CHECK(hash_int(cs, "schema") == 600, "schema == 600");
     const auto s0 = stats_sum(cs);
@@ -116,9 +117,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "incremental-closure stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto ipr = cs.eval("(query:incremental-production-relower-stats)");
-    auto soa = cs.eval("(query:soa-dirty-stats)");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
+    auto ipr = cs.eval("(engine:metrics \"query:incremental-production-relower-stats\")");
+    auto soa = cs.eval("(engine:metrics \"query:soa-dirty-stats\")");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(ipr && is_hash(*ipr), "incremental-production-reloader-stats regression");
     CHECK(soa && is_hash(*soa), "soa-dirty-stats regression");
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");

@@ -27,7 +27,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → match_subject_* = 0
 //   AC2: snapshot has 3 new match_narrowing fields
-//   AC3: (compile:match-narrowing-stats) returns 3-key hash
+//   AC3: (engine:metrics \"compile:match-narrowing-stats\") returns 3-key hash
 //   AC4: typecheck on a match expression →
 //        match_subject_total > 0 (a __match_tmp let
 //        was processed). The narrowed ratio
@@ -94,11 +94,12 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (compile:match-narrowing-stats) returns 3-key hash
+// ── AC3: (engine:metrics \"compile:match-narrowing-stats\") returns 3-key hash
 bool test_match_narrowing_stats_primitive() {
-    std::println("\n--- AC3: (compile:match-narrowing-stats) returns 3-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:match-narrowing-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define mns (compile:match-narrowing-stats))\")");
+    cs.eval("(set-code \"(define mns (engine:metrics \"compile:match-narrowing-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"narrowed-total", "total", "ratio-bp"}) {
         std::string check = std::string("(hash-ref mns \"") + key + "\")";

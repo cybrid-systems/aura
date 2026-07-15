@@ -157,20 +157,21 @@ static void run_ac4_subtree_walk(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression_654(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — query:macro-hygiene-fiber-panic-stats (#654) ---");
-    auto r = cs.eval("(query:macro-hygiene-fiber-panic-stats)");
+    auto r = cs.eval("(engine:metrics \"query:macro-hygiene-fiber-panic-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
           "query:macro-hygiene-fiber-panic-stats returns a hash (#654)");
-    const auto schema = hash_int_field(cs, "(query:macro-hygiene-fiber-panic-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-fiber-panic-stats\")", "schema");
     CHECK(schema == 654, std::format("schema = {} (expected 654, no drift)", schema));
 }
 
 static void run_ac6_regression_488(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — schema validation pass/fail accessors (#488) ---");
     // The whole-workspace schema_validation_pass/fail counters from
-    // #488 still exposed via (query:primitives-extension-stats) which
+    // #488 still exposed via (engine:metrics \"query:primitives-extension-stats\") which
     // looks up the registry schema counters (alternative
     // observability surface). We verify both queries return hashes.
-    auto ext = cs.eval("(query:primitives-extension-stats)");
+    auto ext = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
     CHECK(ext && aura::compiler::types::is_hash(*ext),
           "query:primitives-extension-stats hash regression (#697 includes #488 counters)");
 }

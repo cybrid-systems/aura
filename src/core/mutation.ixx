@@ -237,6 +237,8 @@ export enum class RollbackKind : std::uint8_t {
     ScalarTypeId,
     ScalarSymId,
     ScalarFloat,
+    // Issue #1441: mutate:rebind (Define body swap) — restores child 0 from old_value.
+    Rebind,
 };
 
 export enum class StructuralRollbackOp : std::uint8_t {
@@ -259,6 +261,10 @@ namespace mutation {
         std::uint64_t old_value = 0;
         std::uint64_t new_value = 0;
         bool has_rollback_data = false;
+        // Issue #1419: compound provenance (0 = system / none).
+        std::uint64_t author_fingerprint = 0;
+        std::uint64_t parent_mutation_id = 0;
+        std::uint64_t composite_transaction_id = 0;
     };
 
     export struct SubtreeMutationParams {
@@ -269,6 +275,10 @@ namespace mutation {
         std::string_view old_subtree_source;
         std::string_view operator_name;
         std::string_view summary;
+        // Issue #1419: compound provenance (0 = system / none).
+        std::uint64_t author_fingerprint = 0;
+        std::uint64_t parent_mutation_id = 0;
+        std::uint64_t composite_transaction_id = 0;
     };
 
     export [[nodiscard]] std::uint64_t timestamp_ms() noexcept {
@@ -278,44 +288,23 @@ namespace mutation {
     }
 
     export [[nodiscard]] MutationRecord create_mutation_record(const MutationRecordParams& p) {
-        return MutationRecord{p.mutation_id,
-                              timestamp_ms(),
-                              p.target_node,
-                              std::string(p.operator_name),
-                              std::string(p.old_type_str),
-                              std::string(p.new_type_str),
-                              std::string(p.summary),
-                              p.status,
-                              p.field_offset,
-                              p.old_value,
-                              p.new_value,
-                              p.has_rollback_data,
-                              NULL_NODE,
-                              0,
-                              "",
-                              false,
-                              InvariantStatus::NotChecked};
+        return MutationRecord{
+            p.mutation_id, timestamp_ms(), p.target_node, std::string(p.operator_name),
+            std::string(p.old_type_str), std::string(p.new_type_str), std::string(p.summary),
+            p.status, p.field_offset, p.old_value, p.new_value, p.has_rollback_data, NULL_NODE, 0,
+            "", false, InvariantStatus::NotChecked,
+            // Issue #1419: stamp compound provenance
+            p.author_fingerprint, p.parent_mutation_id, p.composite_transaction_id};
     }
 
     export [[nodiscard]] MutationRecord
     create_subtree_mutation_record(const SubtreeMutationParams& p) {
-        return MutationRecord{p.mutation_id,
-                              timestamp_ms(),
-                              p.target_node,
-                              std::string(p.operator_name),
-                              "",
-                              "",
-                              std::string(p.summary),
-                              MutationStatus::Committed,
-                              0,
-                              0,
-                              0,
-                              false,
-                              p.parent_id,
-                              p.child_idx,
-                              std::string(p.old_subtree_source),
-                              true,
-                              InvariantStatus::NotChecked};
+        return MutationRecord{
+            p.mutation_id, timestamp_ms(), p.target_node, std::string(p.operator_name), "", "",
+            std::string(p.summary), MutationStatus::Committed, 0, 0, 0, false, p.parent_id,
+            p.child_idx, std::string(p.old_subtree_source), true, InvariantStatus::NotChecked,
+            // Issue #1419: stamp compound provenance
+            p.author_fingerprint, p.parent_mutation_id, p.composite_transaction_id};
     }
 
     export [[nodiscard]] std::expected<StructuralRollbackOp, MutationError>
@@ -365,6 +354,13 @@ namespace mutation {
             return std::unexpected(MutationError::NoRollbackData);
         if (rec.operator_name.starts_with("structural-"))
             return {};
+        // Issue #1441: rebind stores Define-body NodeIds in old_value/new_value
+        // (field_offset = body child index, typically 0) — not a SoA scalar field.
+        if (rec.operator_name == "rebind" || rec.operator_name == "batch-rebind") {
+            if (rec.target_node >= tag_size)
+                return std::unexpected(MutationError::InvalidTarget);
+            return {};
+        }
         if (rec.target_node >= tag_size)
             return std::unexpected(MutationError::InvalidTarget);
         switch (rec.field_offset) {
@@ -387,6 +383,9 @@ namespace mutation {
             return std::unexpected(MutationError::NoRollbackData);
         if (rec.operator_name.starts_with("structural-"))
             return RollbackKind::Structural;
+        // Issue #1441: mutate:rebind / batch-rebind body restore.
+        if (rec.operator_name == "rebind" || rec.operator_name == "batch-rebind")
+            return RollbackKind::Rebind;
         switch (rec.field_offset) {
             case static_cast<std::uint32_t>(MutationSoAField::IntVal):
                 return RollbackKind::ScalarInt;

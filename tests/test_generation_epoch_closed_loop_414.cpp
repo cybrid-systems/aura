@@ -33,7 +33,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t generation_epoch_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:generation-epoch-stats)");
+    auto r = cs.eval("(engine:metrics \"query:generation-epoch-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -85,8 +85,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b > stats5a, "generation epoch stats grow over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto eps = cs.eval("(query:epoch-stats)");
-    auto srs = cs.eval("(query:stable-ref-stats)");
+    auto eps = cs.eval("(engine:metrics \"query:epoch-stats\")");
+    auto srs = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(eps && is_int(*eps), "epoch-stats regression");
     CHECK(srs && is_int(*srs), "stable-ref-stats regression");
 }

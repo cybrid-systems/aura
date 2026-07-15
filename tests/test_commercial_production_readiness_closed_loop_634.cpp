@@ -34,7 +34,7 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
 
 static std::int64_t commercial_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:commercial-production-readiness-stats)");
+    auto r = cs.eval("(engine:metrics \"query:commercial-production-readiness-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -47,15 +47,15 @@ static void run_matrix(CompilerService& cs) {
     CHECK(s0 >= 0, "commercial stats non-negative");
 
     std::println("\n--- AC2: P0 #620/#631 stable-ref pillar ---");
-    auto srs = cs.eval("(query:stable-ref-stats)");
+    auto srs = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(srs && is_int(*srs), "query:stable-ref-stats returns int");
     std::println("  stable-ref-stats = {}", as_int(*srs));
 
     std::println("\n--- AC3: P0 #623 gc-safepoint pillar ---");
-    const auto gc0 = cs.eval("(query:gc-safepoint-stats)");
+    const auto gc0 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc0 && is_int(*gc0), "query:gc-safepoint-stats returns int");
     (void)cs.eval("(mutate:request-gc-safepoint 50)");
-    const auto gc1 = cs.eval("(query:gc-safepoint-stats)");
+    const auto gc1 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc1 && is_int(*gc1), "gc-safepoint-stats after request");
     CHECK(as_int(*gc1) > as_int(*gc0),
           "gc-safepoint-stats bumped after mutate:request-gc-safepoint");
@@ -64,16 +64,16 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(set-code \"(define add1 (lambda (x) (+ x 1)))\")").has_value(),
           "workspace setup for shape profiler");
     CHECK(cs.eval("(eval-current)").has_value(), "eval add1");
-    auto sps = cs.eval("(query:shape-stability-stats)");
+    auto sps = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
     CHECK(sps && is_int(*sps), "query:shape-stability-stats returns int");
 
     std::println("\n--- AC5: P0 #629 coercion-zerooverhead pillar ---");
-    auto czs = cs.eval("(query:coercion-zerooverhead-stats)");
+    auto czs = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
     CHECK(czs && is_int(*czs), "query:coercion-zerooverhead-stats returns int");
 
     std::println("\n--- AC6: P0 #630 verify-dirty pillar ---");
     CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "EDA workspace setup");
-    auto vds = cs.eval("(query:verify-dirty-stats)");
+    auto vds = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(vds && is_int(*vds), "query:verify-dirty-stats returns int");
     (void)cs.eval("(verify:assertion-failed 0)");
 

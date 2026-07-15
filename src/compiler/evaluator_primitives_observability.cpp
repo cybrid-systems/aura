@@ -1217,6 +1217,43 @@ const std::vector<std::string>& ObservabilityPrims::stats_primitives() {
     return kObservabilityStatsPrimitives;
 }
 
+// Issue #1439: private map for query:/compile:*-stats hash builders.
+// Not exposed via Primitives / api-reference; only engine:metrics + stats:list catalog.
+namespace {
+    std::unordered_map<std::string, PrimFn>& legacy_stats_impls() {
+        static std::unordered_map<std::string, PrimFn> m;
+        return m;
+    }
+} // namespace
+
+bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
+    // Issue #1439 scope: only query:*-stats and compile:*-stats leave the
+    // public registry. Other *-stats (gc-stats, arena:*, ast:*, …) stay public.
+    if (!(name.starts_with("query:") || name.starts_with("compile:")))
+        return false;
+    if (name.ends_with("-stats") || name.ends_with("-stats-hash"))
+        return true;
+    if (name.find("-stats-") != std::string_view::npos)
+        return true;
+    return false;
+}
+
+void ObservabilityPrims::register_stats_impl(std::string name, PrimFn fn) {
+    legacy_stats_impls()[std::move(name)] = std::move(fn);
+}
+
+std::optional<PrimFn> ObservabilityPrims::lookup_stats_impl(std::string_view name) {
+    auto& m = legacy_stats_impls();
+    auto it = m.find(std::string(name));
+    if (it == m.end())
+        return std::nullopt;
+    return it->second;
+}
+
+bool ObservabilityPrims::stats_impl_registered(std::string_view name) {
+    return lookup_stats_impl(name).has_value();
+}
+
 void ObservabilityPrims::register_eval_all(PrimRegistrar add, Evaluator& ev) {
     register_eval_p0(add, ev);
     register_eval_p1(add, ev);

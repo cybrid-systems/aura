@@ -30,7 +30,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-sweep-1281-1285-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-sweep-1281-1285-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, "query:production-sweep-1281-1285-stats", "schema") == 1281, "schema");
         CHECK(href(cs, "query:production-sweep-1281-1285-stats", "active") == 1, "active");
@@ -55,7 +55,7 @@ int main() {
 
     // #1282: query:generation-stats
     {
-        auto r = cs.eval("(query:generation-stats)");
+        auto r = cs.eval("(engine:metrics \"query:generation-stats\")");
         CHECK(r && is_hash(*r), "query:generation-stats is hash");
         CHECK(href(cs, "query:generation-stats", "schema") == 1282, "gen schema");
         CHECK(href(cs, "query:generation-stats", "wrap-restamp-policy") == 1,
@@ -64,7 +64,7 @@ int main() {
 
     // #1283: query:dirty-provenance-stats
     {
-        auto r = cs.eval("(query:dirty-provenance-stats)");
+        auto r = cs.eval("(engine:metrics \"query:dirty-provenance-stats\")");
         CHECK(r && is_hash(*r), "query:dirty-provenance-stats is hash");
         CHECK(href(cs, "query:dirty-provenance-stats", "schema") == 1283, "prov schema");
         CHECK(href(cs, "query:dirty-provenance-stats", "active") == 1, "prov active");

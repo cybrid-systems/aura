@@ -40,7 +40,7 @@ using aura::ir::IRModule;
 using aura::ir::IROpcode;
 
 static bool zerooverhead_stats_hash(CompilerService& cs) {
-    auto r = cs.eval("(query:dead-coercion-zerooverhead-stats)");
+    auto r = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
     return r && is_hash(*r);
 }
 
@@ -49,7 +49,8 @@ static bool zerooverhead_stats_hash(CompilerService& cs) {
 // Reads the 'zerooverhead-wins' field from the hash and
 // returns it as a std::size_t for compare/monotonic checks.
 static std::size_t zerooverhead_stats(CompilerService& cs) {
-    auto r = cs.eval("(hash-ref (query:dead-coercion-zerooverhead-stats) 'zerooverhead-wins)");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:dead-coercion-zerooverhead-stats\") "
+                     "'zerooverhead-wins)");
     if (!r || !is_int(*r))
         return 0;
     return static_cast<std::size_t>(as_int(*r));
@@ -145,12 +146,12 @@ static void run_matrix(CompilerService& cs) {
     CHECK(elim4b >= elim4a, "dead_coercion_eliminated monotonic");
 
     std::println("\n--- AC5: compile:dead-coercion-stats regression ---");
-    auto dcs = cs.eval("(compile:dead-coercion-stats)");
+    auto dcs = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
     CHECK(dcs && is_int(*dcs), "compile:dead-coercion-stats returns int");
 
     std::println("\n--- AC6: query regression ---");
-    auto ces = cs.eval("(query:coercion-elim-stats)");
-    auto czs = cs.eval("(query:coercion-zerooverhead-stats)");
+    auto ces = cs.eval("(engine:metrics \"query:coercion-elim-stats\")");
+    auto czs = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
     CHECK(ces && is_int(*ces), "coercion-elim-stats regression");
     CHECK(czs && is_int(*czs), "coercion-zerooverhead-stats regression");
 

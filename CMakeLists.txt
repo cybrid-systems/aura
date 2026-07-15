@@ -4769,6 +4769,14 @@ aura_add_issue_test(test_composite_typed_mutate)
 # properly defined. Use the existing helper that wires LLVM includes +
 # libs (same pattern as test_issue_1406 / test_ir / test_spec_jit).
 aura_issue_test_link_llvm_jit(test_composite_typed_mutate)
+# Issue #1441: try_rollback_rebind_op — variable-state rollback for
+# mutate:rebind (completes #1408 atomic-batch rebind contract).
+aura_add_issue_test(test_issue_1408_followup_rebind_rollback)
+aura_issue_test_link_llvm_jit(test_issue_1408_followup_rebind_rollback)
+# Issue #1442: EDSL (typed-mutate-atomic) — Aura surface for
+# CompilerService::typed_mutate_atomic (#1408 follow-up).
+aura_add_issue_test(test_issue_1408_followup_edsl)
+aura_issue_test_link_llvm_jit(test_issue_1408_followup_edsl)
 # Issue #1410: Linear ∩ Refinement type-driven discovery in
 # validate_ownership_full (src/compiler/type_checker_impl.cpp:5387+).
 # Production code already has the type-driven path (uses reg.linear_of
@@ -4777,6 +4785,28 @@ aura_issue_test_link_llvm_jit(test_composite_typed_mutate)
 # type) and defense-in-depth. 3 ACs: type-driven only, syntactic
 # regression, both-paths fire independently.
 aura_add_issue_test(test_issue_1410)
+# Issue #1417: Linear ∩ Refinement type-driven discovery (full AC
+# surface). Extends #1387/#1410 with: move→no-leak, TypeAnnotation
+# +drop→no-leak, Let-node type_id discovery, TypeAnnotation name
+# lookup, defense-in-depth, and #117 syntactic baseline. Production
+# changes in validate_ownership_full discovery (type_checker_impl).
+aura_add_issue_test(test_issue_1417)
+# Issue #1418: DeadCoercionEliminationPass wire-up to run_pipeline
+# packs that previously omitted it (eval_ir / exec_jit / hot-swap
+# in service.ixx). Default eval() + run_coercion_elim_on_function
+# already ran DCE; this closes the gap so dead CastOps cannot
+# accumulate on IR-direct / JIT / evolve! paths. Test: synthetic
+# IR with 5 CastOps (2 identity → elided, 3 necessary → kept) +
+# run_pipeline Pass-concept invocation.
+aura_add_issue_test(test_issue_1418)
+# Issue #1419: Compound provenance wire-up on MutationRecord
+# (follow-up to #1412 field addition). FlatAST stamps
+# author_fingerprint / parent_mutation_id / composite_transaction_id
+# into every add_mutation; TypedTransactionGuard opens composite
+# tx + parent chain; Evaluator agent fingerprint; query:mutation-
+# provenance + MutationLogEntry surface. 6 ACs: stamp, defaults,
+# shared composite, parent chain, create_record params, accessors.
+aura_add_issue_test(test_issue_1419)
 # Issue #1412: Compound provenance on MutationRecord (author_fingerprint
 # + parent_mutation_id + composite_transaction_id). Production struct
 # change in src/core/mutation.ixx adds 3 fields (default 0 = system for

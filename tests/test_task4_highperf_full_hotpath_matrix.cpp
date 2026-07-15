@@ -150,10 +150,11 @@ bool test_combined_task4_stats_bundle() {
         auto r = cs.eval(prim);
         CHECK(r.has_value(), std::string(prim) + " returns a value");
     }
-    auto soa = cs.eval("(compile:ir-soa-stats)");
-    CHECK(soa.has_value(), "(compile:ir-soa-stats) returns a value");
-    auto inline_stats = cs.eval("(compile:inline-pass-stats)");
-    CHECK(inline_stats.has_value(), "(compile:inline-pass-stats) returns a value");
+    auto soa = cs.eval("(engine:metrics \"compile:ir-soa-stats\")");
+    CHECK(soa.has_value(), "(engine:metrics \"compile:ir-soa-stats\") returns a value");
+    auto inline_stats = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
+    CHECK(inline_stats.has_value(),
+          "(engine:metrics \"compile:inline-pass-stats\") returns a value");
     return true;
 }
 
@@ -381,11 +382,11 @@ bool test_regression_related_primitives() {
     auto r2 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:pattern-index-stats\") (regression for #547)");
-    auto r3 = cs.eval("(query:compiler-cache-stats)");
-    CHECK(r3.has_value(), "(query:compiler-cache-stats) (regression)");
-    auto r4 = cs.eval("(query:macro-reflect-self-evo-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
+    CHECK(r3.has_value(), "(engine:metrics \"query:compiler-cache-stats\") (regression)");
+    auto r4 = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:macro-reflect-self-evo-stats) (regression for #597)");
+          "(engine:metrics \"query:macro-reflect-self-evo-stats\") (regression for #597)");
     if (!cs.eval("(define reg-607-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

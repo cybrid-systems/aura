@@ -64,7 +64,7 @@ int main() {
     // AC1: query:verification-feedback-loop-stats returns hash
     {
         std::println("\n--- AC1: query:verification-feedback-loop-stats ---");
-        auto stats = cs.eval("(query:verification-feedback-loop-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:verification-feedback-loop-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:verification-feedback-loop-stats returns hash");
         CHECK(hash_int(cs, "feedback-cycles") >= 0, "feedback-cycles present");
@@ -148,10 +148,10 @@ int main() {
     // AC4: related SV verification primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto prod = cs.eval("(query:sv-production-verification-stats)");
-        auto structured = cs.eval("(query:sv-structured-edsl-stats)");
-        auto closed = cs.eval("(query:sv-verification-closedloop-stats-hash)");
-        auto stress = cs.eval("(query:eda-sv-closedloop-stress-stats)");
+        auto prod = cs.eval("(engine:metrics \"query:sv-production-verification-stats\")");
+        auto structured = cs.eval("(engine:metrics \"query:sv-structured-edsl-stats\")");
+        auto closed = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
+        auto stress = cs.eval("(engine:metrics \"query:eda-sv-closedloop-stress-stats\")");
         CHECK(prod && aura::compiler::types::is_hash(*prod),
               "query:sv-production-verification-stats hash regression (#539)");
         CHECK(structured && aura::compiler::types::is_hash(*structured),

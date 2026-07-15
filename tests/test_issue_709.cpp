@@ -55,7 +55,7 @@ int aura_issue_709_run() {
     // AC1: query:primitives-registry-stats hash fields
     {
         std::println("\n--- AC1: query:primitives-registry-stats ---");
-        auto stats = cs.eval("(query:primitives-registry-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-registry-stats returns hash");
         CHECK(reg_stat(cs, "capture-violations") >= 0, "capture-violations present");
@@ -130,8 +130,8 @@ int aura_issue_709_run() {
                 (void)cs.eval("(map not big)");
                 (void)cs.eval("(filter null? big)");
                 (void)cs.eval("(mutate:request-gc-safepoint)");
-                auto r1 = cs.eval("(query:primitives-registry-stats)");
-                auto r2 = cs.eval("(query:primitives-extension-stats)");
+                auto r1 = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
+                auto r2 = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
                 if (r1 && aura::compiler::types::is_hash(*r1) && r2 &&
                     aura::compiler::types::is_hash(*r2)) {
                     ok_count.fetch_add(1, std::memory_order_relaxed);

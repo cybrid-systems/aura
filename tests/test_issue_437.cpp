@@ -53,7 +53,7 @@ bool test_verify_dirty_counters() {
 bool test_query_verify_dirty_stats() {
     std::println("\n--- AC3: query:verify-dirty-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:verify-dirty-stats)");
+    auto r = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -130,7 +130,7 @@ bool test_define_eval_regression() {
 bool test_atomic_batch_stats_regression() {
     std::println("\n--- AC7: query:atomic-batch-stats still works (regression) ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:atomic-batch-stats)");
+    auto r = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -144,7 +144,7 @@ bool test_atomic_batch_stats_regression() {
 bool test_compiler_incremental_stats_regression() {
     std::println("\n--- AC8: query:compiler-incremental-stats still works (regression) ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:compiler-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     if (!r) {
         ++g_failed;
         return false;

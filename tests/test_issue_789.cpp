@@ -61,8 +61,8 @@
 //        per-Evaluator bump helpers + cross-check the
 //        primitive reads reflect the bumps
 //   AC5: sibling observability regression — #760
-//        (query:pattern-performance-stats) + #788
-//        (query:ai-native-extension-stats) primitives
+//        (engine:metrics \"query:pattern-performance-stats\") + #788
+//        (engine:metrics \"query:ai-native-extension-stats\") primitives
 //        still reachable with their schema sentinels
 //        intact
 
@@ -100,10 +100,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:pattern-index-safe-span-stats) hash shape ---");
-    auto r = cs.eval("(query:pattern-index-safe-span-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:pattern-index-safe-span-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:pattern-index-safe-span-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:pattern-index-safe-span-stats) returns a hash");
+          "(engine:metrics \"query:pattern-index-safe-span-stats\") returns a hash");
     const std::vector<std::string> keys = {"safe-span-uses",
                                            "dangling-prevented",
                                            "index-hit-rate",
@@ -121,8 +122,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no SafePCVSpan activity) ---");
-    const auto safe_uses =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "safe-span-uses");
+    const auto safe_uses = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "safe-span-uses");
     CHECK(safe_uses == 0,
           std::format("safe-span-uses = {} (expected 0 on fresh service — Phase 2+ deferred to "
                       "wire children_safe_view / SafePCVSpan pin call sites in query_matcher.cpp "
@@ -130,42 +131,45 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "\"Mandate children_safe_view / SafePCVSpan for all children iteration in "
                       "pattern match / filter / where; add generation pin check\")",
                       safe_uses));
-    const auto dangling =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "dangling-prevented");
+    const auto dangling = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "dangling-prevented");
     CHECK(dangling == 0,
           std::format("dangling-prevented = {} (expected 0 on fresh service — Phase 2+ deferred "
                       "to wire generation pin check in ast.ixx children_safe_view)",
                       dangling));
-    const auto index_rate =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "index-hit-rate");
+    const auto index_rate = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "index-hit-rate");
     CHECK(index_rate == 0,
           std::format("index-hit-rate = {} (expected 0 in Phase 1 — Phase 2+ to derive from "
                       "#760 pattern_match_index_hits_total / (linear-scans + index-hits) × "
                       "10000)",
                       index_rate));
-    const auto mandate =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "safe-span-mandate-active");
+    const auto mandate = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "safe-span-mandate-active");
     CHECK(mandate == 0,
           std::format("safe-span-mandate-active = {} (expected 0 — Phase 2+ deferred per body "
                       "\"Mandate children_safe_view / SafePCVSpan for all children iteration "
                       "in pattern match / filter / where\")",
                       mandate));
-    const auto tag_arity = hash_int_field(cs, "(query:pattern-index-safe-span-stats)",
-                                          "tag-arity-index-population-active");
+    const auto tag_arity =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")",
+                       "tag-arity-index-population-active");
     CHECK(tag_arity == 0,
           std::format("tag-arity-index-population-active = {} (expected 0 — Phase 2+ deferred "
                       "per body \"Fully populate tag_arity_index_ (hash on tag+arity+marker) "
                       "on every structural change; wire fast-path lookup in matcher before "
                       "linear fallback\")",
                       tag_arity));
-    const auto deep_pred = hash_int_field(cs, "(query:pattern-index-safe-span-stats)",
-                                          "deep-hygiene-predicate-active");
+    const auto deep_pred =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")",
+                       "deep-hygiene-predicate-active");
     CHECK(deep_pred == 0,
           std::format("deep-hygiene-predicate-active = {} (expected 0 — Phase 2+ deferred per "
                       "body \"Add support for hygiene provenance predicates ... auto-filter "
                       "or stamp in matcher under macro context\")",
                       deep_pred));
-    const auto rec = hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "recommendation");
+    const auto rec = hash_int_field(cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")",
+                                    "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when all 3 deferred flags "
                       "== 0 AND no activity)",
@@ -174,7 +178,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 789 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "schema");
     CHECK(schema == 789, std::format("schema = {} (expected 789)", schema));
 }
 
@@ -182,10 +187,10 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto safe_before =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "safe-span-uses");
-    const auto dangling_before =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "dangling-prevented");
+    const auto safe_before = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "safe-span-uses");
+    const auto dangling_before = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "dangling-prevented");
 
     // Exercise the 2 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
@@ -198,10 +203,10 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_pattern_dangling_prevented();
     }
 
-    const auto safe_after =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "safe-span-uses");
-    const auto dangling_after =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "dangling-prevented");
+    const auto safe_after = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "safe-span-uses");
+    const auto dangling_after = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "dangling-prevented");
 
     std::println("  counts after AC4 bumps: safe-span {} -> {}, dangling-prevented {} -> {}",
                  safe_before, safe_after, dangling_before, dangling_after);
@@ -217,8 +222,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Recommendation should now be 2 (Phase 1 only —
     // all 3 deferred flags == 0 BUT activity > 0).
-    const auto rec_after =
-        hash_int_field(cs, "(query:pattern-index-safe-span-stats)", "recommendation");
+    const auto rec_after = hash_int_field(
+        cs, "(engine:metrics \"query:pattern-index-safe-span-stats\")", "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with all 3 deferred flags == 0)",
@@ -227,16 +232,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #760 + #788 sibling primitives unaffected ---");
-    auto a760 = cs.eval("(query:pattern-performance-stats)");
-    auto a788 = cs.eval("(query:ai-native-extension-stats)");
+    auto a760 = cs.eval("(engine:metrics \"query:pattern-performance-stats\")");
+    auto a788 = cs.eval("(engine:metrics \"query:ai-native-extension-stats\")");
     CHECK(a760 && aura::compiler::types::is_hash(*a760),
           "query:pattern-performance-stats hash regression (#760)");
     CHECK(a788 && aura::compiler::types::is_hash(*a788),
           "query:ai-native-extension-stats hash regression (#788)");
-    const auto a760_schema = hash_int_field(cs, "(query:pattern-performance-stats)", "schema");
+    const auto a760_schema =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "schema");
     CHECK(a760_schema == 760,
           std::format("#760 schema = {} (expected 760, no drift)", a760_schema));
-    const auto a788_schema = hash_int_field(cs, "(query:ai-native-extension-stats)", "schema");
+    const auto a788_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")", "schema");
     CHECK(a788_schema == 788,
           std::format("#788 schema = {} (expected 788, no drift)", a788_schema));
 }

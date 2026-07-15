@@ -1,6 +1,6 @@
 // @category: unit
 // @reason: pure C++ test of ShapeAwareFoldingPass + EDSL
-//          (query:shape-folding-stats) primitive + pipeline
+//          (engine:metrics \"query:shape-folding-stats\") primitive + pipeline
 //          wiring
 
 // test_issue_462_shape_aware_folding.cpp — Issue #462:
@@ -21,7 +21,7 @@
 //      guard_shape_hits
 //   3. Pass wired into service.ixx pipeline (after
 //      EscapeAnalysis, before JIT)
-//   4. (query:shape-folding-stats) Aura primitive — 4-field
+//   4. (engine:metrics \"query:shape-folding-stats\") Aura primitive — 4-field
 //      hash
 //   5. (stats:count) 48 → 49
 //   6. Docs regen
@@ -37,7 +37,7 @@
 //        counter bumps
 //   AC6:  IRFunction with a CastOp on a slot with
 //        narrow_evidence != 0 → narrow_check_count bumps
-//   AC7:  EDSL: (query:shape-folding-stats) returns a hash
+//   AC7:  EDSL: (engine:metrics \"query:shape-folding-stats\") returns a hash
 //        with 4 fields
 //   AC8:  EDSL: (stats:count) >= 49
 //   AC9:  EDSL: (stats:list) includes query:shape-folding-stats
@@ -245,18 +245,19 @@ bool test_narrow_evidence_count() {
     return true;
 }
 
-// ── AC7: EDSL: (query:shape-folding-stats) returns a hash
+// ── AC7: EDSL: (engine:metrics \"query:shape-folding-stats\") returns a hash
 //        with 4 fields
 bool test_edsl_stats_returns_hash() {
-    std::println("\n--- AC7: EDSL (query:shape-folding-stats) ---");
+    std::println("\n--- AC7: EDSL (engine:metrics \"query:shape-folding-stats\") ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:shape-folding-stats)");
+    auto r = cs.eval("(engine:metrics \"query:shape-folding-stats\")");
     if (!r) {
         CHECK(false, "eval returned error");
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v), "(query:shape-folding-stats) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v),
+          "(engine:metrics \"query:shape-folding-stats\") returns a hash");
     // Check each of the 4 fields exists
     for (auto key : {"shape-fold-count", "shape-linear-elide-count", "shape-narrow-check-count",
                      "guard-shape-hits"}) {

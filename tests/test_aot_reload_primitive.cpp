@@ -132,7 +132,7 @@ int main() {
     // ── query:aot-reload-primitive-stats ──
     {
         CompilerService cs;
-        auto s = cs.eval("(query:aot-reload-primitive-stats)");
+        auto s = cs.eval("(engine:metrics \"query:aot-reload-primitive-stats\")");
         CHECK(s && is_hash(*s), "query:aot-reload-primitive-stats is hash");
         CHECK(href(cs, "query:aot-reload-primitive-stats", "attempts-via-primitive") >= 0,
               "attempts-via-primitive key");

@@ -31,7 +31,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t rollback_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:atomic-batch-rollback-stats)");
+    auto r = cs.eval("(engine:metrics \"query:atomic-batch-rollback-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -95,8 +95,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "rollback stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto mls = cs.eval("(query:mutation-log-stats)");
-    auto abs = cs.eval("(query:atomic-batch-stats)");
+    auto mls = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
+    auto abs = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     CHECK(mls && is_int(*mls), "mutation-log-stats regression");
     CHECK(abs && is_int(*abs), "atomic-batch-stats regression");
 }

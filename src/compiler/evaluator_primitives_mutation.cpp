@@ -15,7 +15,6 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
-import aura.compiler.service; // Issue #1415: typed-mutate-atomic primitive
 
 namespace aura::compiler::primitives_detail {
 
@@ -68,59 +67,60 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // Issue #1364: (query:safepoint-mutation-stats) — mutation × GC safepoint telemetry
-    add("query:safepoint-mutation-stats", [&ev](const auto&) -> EvalValue {
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto put = [&](const char* k, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            EvalValue val_ev = make_int(v);
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = val_ev.val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:safepoint-mutation-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto put = [&](const char* k, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                EvalValue val_ev = make_int(v);
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = val_ev.val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        put("in-gc-safepoint", aura::gc_hooks::in_gc_safepoint() ? 1 : 0);
-        put("mutation-in-safepoint-total",
-            m ? static_cast<std::int64_t>(
-                    m->mutation_in_safepoint_total.load(std::memory_order_relaxed))
-              : 0);
-        // Prefer process-wide fiber counter; also fold CompilerMetrics mirror.
-        const auto yield_hooks =
-            static_cast<std::int64_t>(aura::gc_hooks::safepoint_yield_on_mutation_total());
-        const auto yield_metrics =
-            m ? static_cast<std::int64_t>(
-                    m->safepoint_yield_on_mutation_total.load(std::memory_order_relaxed))
-              : 0;
-        put("safepoint-yield-on-mutation-total",
-            yield_hooks > yield_metrics ? yield_hooks : yield_metrics);
-        put("safepoint-collision-total",
-            m ? static_cast<std::int64_t>(
-                    m->safepoint_collision_total.load(std::memory_order_relaxed))
-              : 0);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            put("in-gc-safepoint", aura::gc_hooks::in_gc_safepoint() ? 1 : 0);
+            put("mutation-in-safepoint-total",
+                m ? static_cast<std::int64_t>(
+                        m->mutation_in_safepoint_total.load(std::memory_order_relaxed))
+                  : 0);
+            // Prefer process-wide fiber counter; also fold CompilerMetrics mirror.
+            const auto yield_hooks =
+                static_cast<std::int64_t>(aura::gc_hooks::safepoint_yield_on_mutation_total());
+            const auto yield_metrics =
+                m ? static_cast<std::int64_t>(
+                        m->safepoint_yield_on_mutation_total.load(std::memory_order_relaxed))
+                  : 0;
+            put("safepoint-yield-on-mutation-total",
+                yield_hooks > yield_metrics ? yield_hooks : yield_metrics);
+            put("safepoint-collision-total",
+                m ? static_cast<std::int64_t>(
+                        m->safepoint_collision_total.load(std::memory_order_relaxed))
+                  : 0);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #1362: compact committed mutation log prefix (keep recent tail).
     // (mutation-log-compact [keep-recent=1000] [keep-rolledback?=true]) → dropped count
@@ -144,49 +144,51 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     // integer sum of atomic-batch + steal/rollback counters (registered
     // in register_query_primitives). Overwriting it broke late4
     // test_issue_557_observability and every #553 int regression.
-    add("query:mutation-log-compact-stats", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_void();
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto put = [&](const char* k, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            EvalValue val_ev = make_int(v);
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = val_ev.val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-log-compact-stats", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_void();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto put = [&](const char* k, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                EvalValue val_ev = make_int(v);
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = val_ev.val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        auto* flat = ev.workspace_flat_;
-        put("log-size", static_cast<std::int64_t>(flat->mutation_count()));
-        put("compacted-records", static_cast<std::int64_t>(flat->mutation_log_compacted_records()));
-        put("compact-ops", static_cast<std::int64_t>(flat->mutation_log_compact_ops()));
-        put("auto-threshold",
-            static_cast<std::int64_t>(aura::ast::FlatAST::kMutationLogAutoCompactThreshold));
-        put("schema", 1362);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            auto* flat = ev.workspace_flat_;
+            put("log-size", static_cast<std::int64_t>(flat->mutation_count()));
+            put("compacted-records",
+                static_cast<std::int64_t>(flat->mutation_log_compacted_records()));
+            put("compact-ops", static_cast<std::int64_t>(flat->mutation_log_compact_ops()));
+            put("auto-threshold",
+                static_cast<std::int64_t>(aura::ast::FlatAST::kMutationLogAutoCompactThreshold));
+            put("schema", 1362);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #1054: bad-arg and empty-history both return void (list-or-void
     // contract). Never return make_int(0) on bad args (truthy, wrong type).
@@ -559,50 +561,51 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     // observability surface with the per-batch runtime state
     // (which batch is currently open, how much bumps the current
     // batch would emit if committed).
-    add("query:atomic-batch-stats-hash", [&ev](const auto&) -> EvalValue {
-        std::uint64_t commits = 0;
-        std::uint64_t bumps_saved = 0;
-        bool active = false;
-        if (ev.workspace_flat_) {
-            commits = ev.workspace_flat_->atomic_batch_commits();
-            bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
-            active = ev.workspace_flat_->atomic_batch_active();
-        }
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:atomic-batch-stats-hash", [&ev](const auto&) -> EvalValue {
+            std::uint64_t commits = 0;
+            std::uint64_t bumps_saved = 0;
+            bool active = false;
+            if (ev.workspace_flat_) {
+                commits = ev.workspace_flat_->atomic_batch_commits();
+                bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
+                active = ev.workspace_flat_->atomic_batch_active();
             }
-        };
-        insert_kv("active", active ? 1 : 0);
-        insert_kv("commits-total", static_cast<std::int64_t>(commits));
-        insert_kv("bumps-saved-last-batch", static_cast<std::int64_t>(bumps_saved));
-        insert_kv("schema", 622);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("active", active ? 1 : 0);
+            insert_kv("commits-total", static_cast<std::int64_t>(commits));
+            insert_kv("bumps-saved-last-batch", static_cast<std::int64_t>(bumps_saved));
+            insert_kv("schema", 622);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #632: query:atomic-batch-sv-stats-hash — Agent-
     // discoverable structured SV-specific observability dashboard
@@ -664,61 +667,62 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     // SV nodes) is invasive C++ + hot-path EDA + Guard-internal
     // work that needs benchmarking + perf regression coverage —
     // separate follow-ups.
-    add("query:atomic-batch-sv-stats-hash", [&ev](const auto&) -> EvalValue {
-        std::uint64_t commits = 0;
-        std::uint64_t bumps_saved = 0;
-        bool active = false;
-        if (ev.workspace_flat_) {
-            commits = ev.workspace_flat_->atomic_batch_commits();
-            bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
-            active = ev.workspace_flat_->atomic_batch_active();
-        }
-        const std::uint64_t rollback_sv =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t impact_sv =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->atomic_batch_sv_impact_nodes_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:atomic-batch-sv-stats-hash", [&ev](const auto&) -> EvalValue {
+            std::uint64_t commits = 0;
+            std::uint64_t bumps_saved = 0;
+            bool active = false;
+            if (ev.workspace_flat_) {
+                commits = ev.workspace_flat_->atomic_batch_commits();
+                bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
+                active = ev.workspace_flat_->atomic_batch_active();
             }
-        };
-        insert_kv("active-sv-batches", active ? 1 : 0);
-        insert_kv("suppressed-bumps-on-sv", static_cast<std::int64_t>(bumps_saved));
-        insert_kv("rollback-success-sv", static_cast<std::int64_t>(rollback_sv));
-        insert_kv("batch-impact-sv-nodes", static_cast<std::int64_t>(impact_sv));
-        insert_kv("schema", 632);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            const std::uint64_t rollback_sv =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t impact_sv =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->atomic_batch_sv_impact_nodes_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("active-sv-batches", active ? 1 : 0);
+            insert_kv("suppressed-bumps-on-sv", static_cast<std::int64_t>(bumps_saved));
+            insert_kv("rollback-success-sv", static_cast<std::int64_t>(rollback_sv));
+            insert_kv("batch-impact-sv-nodes", static_cast<std::int64_t>(impact_sv));
+            insert_kv("schema", 632);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #737: query:atomic-batch-snapshot-stats-hash — end-to-end
     // atomic batch + snapshot + StableNodeRef pinning observability
@@ -734,7 +738,8 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     //   - snapshot-rollbacks         ast:restore on batch failure
     //   - suppressed-bumps-total     atomic_batch_domain_.bumps_saved_total
     //   - schema == 737
-    add("query:atomic-batch-snapshot-stats-hash", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:atomic-batch-snapshot-stats-hash", [&ev](const auto&) -> EvalValue {
         auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();
@@ -761,6 +766,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                     return;
                 }
             }
+        }
         };
         insert_kv("batch-commits", static_cast<std::int64_t>(ev.atomic_batch_count()));
         insert_kv("rollback-triggers", static_cast<std::int64_t>(ev.atomic_batch_rollbacks()));
@@ -778,48 +784,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
-    });
+});
 
-    // Issue #1415: (typed-mutate-atomic mutations:list) — EDSL exposure
-    // of CompilerService::typed_mutate_atomic. Atomic multi-mutate
-    // from the tree-walker path. mutations is a list of mutation sexpr
-    // strings, e.g. `(list "(mutate:rebind ...)" "(mutate:set-child ...)")`.
-    // Walks the pair chain (canonical Aura list representation) and
-    // extracts each car as a string_view pointing into ev.string_heap_.
-    // On success returns #t; on failure returns an error value with
-    // the abort message (e.g., "tx_abort" if any sub-mutation fails,
-    // triggering TypedTransactionGuard's RAII rollback).
-    add("typed-mutate-atomic", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        auto* svc_void = ev.compiler_service();
-        if (!svc_void)
-            return make_error(std::string_view("no compiler service"));
-        auto* svc = static_cast<CompilerService*>(svc_void);
-        if (a.empty() || !is_pair(a[0]))
-            return make_error(std::string_view("usage: (typed-mutate-atomic mutations:list)"));
-
-        // Walk the pair list (head=pair.car, tail=pair.cdr).
-        // Same walk pattern as evaluator_primitives_char.cpp list ops.
-        std::vector<std::string_view> mutations;
-        auto v = a[0];
-        while (is_pair(v)) {
-            auto idx = as_pair_idx(v);
-            if (idx >= ev.pairs_.size())
-                break;
-            auto car = ev.pairs_[idx].car;
-            if (!is_string(car))
-                return make_error(std::string_view("mutation list element must be a string sexpr"));
-            auto sidx = as_string_idx(car);
-            if (sidx >= ev.string_heap_.size())
-                return make_error(std::string_view("string index out of range"));
-            mutations.emplace_back(ev.string_heap_[sidx]);
-            v = ev.pairs_[idx].cdr;
-        }
-        if (mutations.empty())
-            return make_error(std::string_view("empty mutations list"));
-
-        auto result = svc->typed_mutate_atomic(mutations);
-        return result.success ? make_bool(true) : make_error(std::string_view(result.error));
-    });
+// typed-mutate-atomic is registered in evaluator_primitives_mutate.cpp
+// (Issue #1415/#1442) — list + varargs forms. Do not re-register here.
 }
 
 } // namespace aura::compiler::primitives_detail

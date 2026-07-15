@@ -110,7 +110,7 @@ int aura_issue_678_run() {
         aura::compiler::CompilerService cs;
         cs.eval("(set-code \"(define x 1)\")");
         cs.eval("(eval-current)");
-        auto stats = cs.eval("(query:span-lifetime-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:span-lifetime-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:span-lifetime-stats returns hash");
         auto unsafe = hash_int(cs, "unsafe-access-attempts");

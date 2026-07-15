@@ -97,10 +97,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:linear-ownership-gc-compiler-stats) hash shape ---");
-    auto r = cs.eval("(query:linear-ownership-gc-compiler-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:linear-ownership-gc-compiler-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-gc-compiler-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:linear-ownership-gc-compiler-stats) returns a hash");
+          "(engine:metrics \"query:linear-ownership-gc-compiler-stats\") returns a hash");
     const std::vector<std::string> keys = {"root-registrations", "root-stale-hits",
                                            "violations-prevented", "env-version-resync", "schema"};
     for (const auto& k : keys) {
@@ -112,23 +113,25 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto rr =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "root-registrations");
+    const auto rr = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "root-registrations");
     CHECK(rr == 0, std::format("root-registrations = {} (expected 0 on fresh service)", rr));
-    const auto rs =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "root-stale-hits");
+    const auto rs = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "root-stale-hits");
     CHECK(rs == 0, std::format("root-stale-hits = {} (expected 0 on fresh service)", rs));
     const auto vp =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "violations-prevented");
+        hash_int_field(cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")",
+                       "violations-prevented");
     CHECK(vp == 0, std::format("violations-prevented = {} (expected 0 on fresh service)", vp));
-    const auto ev =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "env-version-resync");
+    const auto ev = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "env-version-resync");
     CHECK(ev == 0, std::format("env-version-resync = {} (expected 0 on fresh service)", ev));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 763 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "schema");
     CHECK(schema == 763, std::format("schema = {} (expected 763)", schema));
 }
 
@@ -145,14 +148,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_linear_ownership_gc_env_version_resync();
     ev.bump_linear_ownership_gc_env_version_resync();
     ev.bump_linear_ownership_gc_env_version_resync();
-    const auto rr =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "root-registrations");
-    const auto rs =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "root-stale-hits");
+    const auto rr = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "root-registrations");
+    const auto rs = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "root-stale-hits");
     const auto vp =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "violations-prevented");
-    const auto env =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "env-version-resync");
+        hash_int_field(cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")",
+                       "violations-prevented");
+    const auto env = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "env-version-resync");
     CHECK(rr == 4,
           std::format("after 4 root-registration bumps: root-registrations = {} (expected 4)", rr));
     CHECK(rs == 2,
@@ -170,12 +174,14 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                  "primitives unaffected ---");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
+    auto macro_hygiene_provenance =
+        cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
-    auto code_as_data_maturity = cs.eval("(query:code-as-data-maturity-stats)");
-    auto pattern_perf = cs.eval("(query:pattern-performance-stats)");
-    auto mutate_batch = cs.eval("(query:mutate-batch-stats)");
-    auto workspace_closedloop = cs.eval("(query:workspace-closedloop-orchestration-stats)");
+    auto code_as_data_maturity = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
+    auto pattern_perf = cs.eval("(engine:metrics \"query:pattern-performance-stats\")");
+    auto mutate_batch = cs.eval("(engine:metrics \"query:mutate-batch-stats\")");
+    auto workspace_closedloop =
+        cs.eval("(engine:metrics \"query:workspace-closedloop-orchestration-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
     CHECK(envframe_policy && aura::compiler::types::is_hash(*envframe_policy),
@@ -203,7 +209,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
     const auto macro_hygiene_provenance_schema =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(macro_hygiene_provenance_schema == 757,
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));
@@ -213,20 +219,21 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));
     const auto code_as_data_maturity_schema =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(code_as_data_maturity_schema == 759,
           std::format("code-as-data-maturity schema = {} (expected 759, no drift)",
                       code_as_data_maturity_schema));
     const auto pattern_perf_schema =
-        hash_int_field(cs, "(query:pattern-performance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "schema");
     CHECK(pattern_perf_schema == 760,
           std::format("pattern-performance schema = {} (expected 760, no drift)",
                       pattern_perf_schema));
-    const auto mutate_batch_schema = hash_int_field(cs, "(query:mutate-batch-stats)", "schema");
+    const auto mutate_batch_schema =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "schema");
     CHECK(mutate_batch_schema == 761,
           std::format("mutate-batch schema = {} (expected 761, no drift)", mutate_batch_schema));
-    const auto workspace_closedloop_schema =
-        hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)", "schema");
+    const auto workspace_closedloop_schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")", "schema");
     CHECK(workspace_closedloop_schema == 762,
           std::format("workspace-closedloop-orchestration schema = {} (expected 762, no drift)",
                       workspace_closedloop_schema));

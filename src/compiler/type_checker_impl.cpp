@@ -5434,15 +5434,56 @@ bool OwnershipEnv::validate_ownership(const FlatAST& flat, const StringPool& poo
 // / closure / global-scope ownership flows that the dirty
 // path misses.
 //
-// Linear bindings are discovered by walking the AST: a
-// let-introduced binding is linear if the let value is a
-// `(Linear ...)` node (syntactic check). For type-driven
-// discovery (caller knows the registry), pass the
-// pre-computed set via the dirty-only `validate_ownership`
-// instead — that's the more precise path.
+// Linear bindings are discovered by walking the AST via set
+// union of several sources (defense in depth, Issue #1387 /
+// #1410 / #1417):
+//   1. Syntactic `(Linear e)` wrapper on the let value
+//   2. Type-driven: let-value / Let-node `flat.type_id` is
+//      registered linear in `reg` (`register_linear` /
+//      `linear_of`)
+//   3. TypeAnnotation value: annotation node type_id, inner
+//      expr type_id, or registry lookup of the annotation
+//      type name (`(: LinearNumber 5)` style)
+// Requires a prior infer_flat (or test stamp) to populate
+// type_ids for patterns 2–3. The `reg` parameter is required.
 bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool& pool,
                                            const TypeRegistry& reg, NodeId root,
                                            std::vector<OwnershipNote>& notes_out) {
+    // Returns true if raw TypeId index is a linear type in reg.
+    auto type_is_linear = [&](std::uint32_t raw_tid) -> bool {
+        if (raw_tid == 0)
+            return false;
+        aura::core::TypeId ty_id{raw_tid};
+        return reg.linear_of(ty_id) != nullptr;
+    };
+
+    // Issue #1417: does this expression node carry a linear type?
+    // Covers stamped type_id, TypeAnnotation name lookup, and
+    // nested TypeAnnotation inner types.
+    auto node_carries_linear_type = [&](NodeId nid) -> bool {
+        if (nid == NULL_NODE || nid >= flat.size())
+            return false;
+        if (type_is_linear(flat.type_id(nid)))
+            return true;
+        auto nv = flat.get(nid);
+        if (nv.tag == NodeTag::TypeAnnotation) {
+            // (: TypeName e) / check-form: resolve TypeName in reg.
+            if (nv.sym_id != INVALID_SYM) {
+                auto tname = std::string(pool.resolve(nv.sym_id));
+                if (!tname.empty()) {
+                    auto looked = reg.lookup_type(tname);
+                    if (looked.valid() && reg.linear_of(looked) != nullptr)
+                        return true;
+                }
+            }
+            // Inner expr may be the stamped linear carrier.
+            if (!nv.children.empty() && nv.child(0) != NULL_NODE &&
+                type_is_linear(flat.type_id(nv.child(0))))
+                return true;
+        }
+        return false;
+    };
+
     std::unordered_set<std::string> linear_bindings;
     std::function<void(NodeId)> discover = [&](NodeId id) {
         if (id == NULL_NODE || id >= flat.size())
@@ -5456,23 +5497,17 @@ bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool
                 flat.get(v.child(0)).tag == NodeTag::Linear) {
                 is_linear = true;
             }
-            // Pattern 2 (Issue #1387): type-driven discovery.
-            // If the let value's type is registered linear in
-            // `reg` (via register_linear / kLinear flag), the
-            // binding is linear even without a Linear wrapper.
-            // Requires a prior infer_flat call to populate
-            // flat.type_id. Kept in addition to the syntactic
-            // check (defense in depth — works even if the
-            // registry hasn't been consulted yet).
+            // Pattern 2 (Issue #1387/#1410): type-driven on the
+            // let value (including TypeAnnotation carriers).
             if (!is_linear && !v.children.empty() && v.child(0) != NULL_NODE) {
-                auto tid = flat.type_id(v.child(0));
-                if (tid != 0) {
-                    aura::core::TypeId ty_id{static_cast<std::uint32_t>(tid)};
-                    if (reg.linear_of(ty_id) != nullptr) {
-                        is_linear = true;
-                    }
-                }
+                if (node_carries_linear_type(v.child(0)))
+                    is_linear = true;
             }
+            // Pattern 3 (Issue #1417): Let node itself stamped
+            // with a linear type_id (post-infer often stamps
+            // the binding site as well as the value).
+            if (!is_linear && type_is_linear(flat.type_id(id)))
+                is_linear = true;
             if (is_linear) {
                 auto name = std::string(pool.resolve(v.sym_id));
                 if (!name.empty())

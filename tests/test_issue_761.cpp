@@ -17,7 +17,7 @@
 // commit: single bump + unified rollback log; integrate hygiene guard
 // across batch, (2) observability: enhance atomic_batch_bumps_saved_
 // to per-boundary (via active_mutation_stack or depth); expose
-// (query:mutate-batch-stats) returning (batches_started,
+// (engine:metrics \"query:mutate-batch-stats\") returning (batches_started,
 // suppressed_bumps, cross_fiber_steals_during_batch,
 // hygiene_violations_in_batch, generation_churn_saved), (3) cross-
 // fiber safety: in fiber steal / restore_post_yield_or_rollback +
@@ -92,9 +92,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:mutate-batch-stats) hash shape ---");
-    auto r = cs.eval("(query:mutate-batch-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:mutate-batch-stats) returns a hash");
+    std::println("\n--- AC1: (engine:metrics \"query:mutate-batch-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:mutate-batch-stats\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:mutate-batch-stats\") returns a hash");
     const std::vector<std::string> keys = {"batches-started", "suppressed-bumps",
                                            "cross-fiber-steals-during-batch",
                                            "hygiene-violations-in-batch", "schema"};
@@ -107,24 +108,27 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto batches = hash_int_field(cs, "(query:mutate-batch-stats)", "batches-started");
+    const auto batches =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "batches-started");
     CHECK(batches == 0, std::format("batches-started = {} (expected 0 on fresh service)", batches));
-    const auto bumps = hash_int_field(cs, "(query:mutate-batch-stats)", "suppressed-bumps");
+    const auto bumps =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "suppressed-bumps");
     CHECK(bumps == 0, std::format("suppressed-bumps = {} (expected 0 on fresh service)", bumps));
-    const auto steals =
-        hash_int_field(cs, "(query:mutate-batch-stats)", "cross-fiber-steals-during-batch");
+    const auto steals = hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")",
+                                       "cross-fiber-steals-during-batch");
     CHECK(
         steals == 0,
         std::format("cross-fiber-steals-during-batch = {} (expected 0 on fresh service)", steals));
-    const auto hygiene =
-        hash_int_field(cs, "(query:mutate-batch-stats)", "hygiene-violations-in-batch");
+    const auto hygiene = hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")",
+                                        "hygiene-violations-in-batch");
     CHECK(hygiene == 0,
           std::format("hygiene-violations-in-batch = {} (expected 0 on fresh service)", hygiene));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 761 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:mutate-batch-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "schema");
     CHECK(schema == 761, std::format("schema = {} (expected 761)", schema));
 }
 
@@ -142,12 +146,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_mutate_cross_fiber_steal_during_batch();
     ev.bump_mutate_cross_fiber_steal_during_batch();
     ev.bump_mutate_hygiene_violation_in_batch();
-    const auto batches = hash_int_field(cs, "(query:mutate-batch-stats)", "batches-started");
-    const auto bumps = hash_int_field(cs, "(query:mutate-batch-stats)", "suppressed-bumps");
-    const auto steals =
-        hash_int_field(cs, "(query:mutate-batch-stats)", "cross-fiber-steals-during-batch");
-    const auto hygiene =
-        hash_int_field(cs, "(query:mutate-batch-stats)", "hygiene-violations-in-batch");
+    const auto batches =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "batches-started");
+    const auto bumps =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "suppressed-bumps");
+    const auto steals = hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")",
+                                       "cross-fiber-steals-during-batch");
+    const auto hygiene = hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")",
+                                        "hygiene-violations-in-batch");
     CHECK(batches == 3,
           std::format("after 3 batch-started bumps: batches-started = {} (expected 3)", batches));
     CHECK(bumps == 5,
@@ -167,10 +173,11 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                  "unaffected ---");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
+    auto macro_hygiene_provenance =
+        cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
-    auto code_as_data_maturity = cs.eval("(query:code-as-data-maturity-stats)");
-    auto pattern_perf = cs.eval("(query:pattern-performance-stats)");
+    auto code_as_data_maturity = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
+    auto pattern_perf = cs.eval("(engine:metrics \"query:pattern-performance-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
     CHECK(envframe_policy && aura::compiler::types::is_hash(*envframe_policy),
@@ -194,7 +201,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
     const auto macro_hygiene_provenance_schema =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(macro_hygiene_provenance_schema == 757,
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));
@@ -204,12 +211,12 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));
     const auto code_as_data_maturity_schema =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(code_as_data_maturity_schema == 759,
           std::format("code-as-data-maturity schema = {} (expected 759, no drift)",
                       code_as_data_maturity_schema));
     const auto pattern_perf_schema =
-        hash_int_field(cs, "(query:pattern-performance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "schema");
     CHECK(pattern_perf_schema == 760,
           std::format("pattern-performance schema = {} (expected 760, no drift)",
                       pattern_perf_schema));

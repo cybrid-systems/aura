@@ -52,7 +52,7 @@ int aura_issue_511_observability_run() {
     // AC1: query:workspace-snapshot-stats returns hash
     {
         std::println("\n--- AC1: query:workspace-snapshot-stats ---");
-        auto stats = cs.eval("(query:workspace-snapshot-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:workspace-snapshot-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:workspace-snapshot-stats returns hash");
         CHECK(hash_int(cs, "workspace-size") >= 0, "workspace-size present");
@@ -115,7 +115,7 @@ int aura_issue_511_observability_run() {
         auto pcs = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
         CHECK(pcs && aura::compiler::types::is_int(*pcs),
               "query:panic-checkpoint-lifecycle-stats int regression");
-        auto srl = cs.eval("(query:stable-ref-lifecycle-stats)");
+        auto srl = cs.eval("(engine:metrics \"query:stable-ref-lifecycle-stats\")");
         CHECK(srl && aura::compiler::types::is_hash(*srl),
               "query:stable-ref-lifecycle-stats hash regression");
     }

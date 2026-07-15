@@ -118,14 +118,25 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics :all)", "schema") == 2, ":all schema 2");
     }
 
-    // ── AC6: legacy query:*-stats still registered (full default) ──
+    // ── AC6: legacy query:*-stats still via facade (internal impl, #1439) ──
     {
-        auto r = cs.eval("(query:macro-hygiene-stats)");
+        auto r = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
         // Under full primitives this is a hash; if missing, suite still OK for s0 builds.
         if (r && !is_void(*r))
-            CHECK(is_hash(*r), "query:macro-hygiene-stats still works");
+            CHECK(is_hash(*r), "query:macro-hygiene-stats still works via engine:metrics");
         else
             CHECK(true, "query:*-stats absent (s0) — skip");
+        // Must NOT be a public primitive name after #1439 (facade-only).
+        // Unknown symbol typically returns error or empty optional — not a stats hash.
+        try {
+            auto bare = cs.eval("(query:macro-hygiene-stats)");
+            if (bare && is_hash(*bare))
+                CHECK(false, "bare query:macro-hygiene-stats must not return stats hash");
+            else
+                CHECK(true, "bare query:*-stats not a public primitive");
+        } catch (...) {
+            CHECK(true, "bare query:*-stats not a public primitive (threw)");
+        }
     }
 
     if (::aura::test::g_failed) {

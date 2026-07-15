@@ -25,7 +25,7 @@
 //   AC3: typed_mutate on a top-level define bumps the
 //        per-binding gen (via mark_dirty_upward) —
 //        verified via the per_binding_gen_bumps metric
-//   AC4: (compile:type-cache-stats) has the per-binding
+//   AC4: (engine:metrics \"compile:type-cache-stats\") has the per-binding
 //        gen keys (we extend the existing primitive)
 //   AC5: regression — existing eval still works
 
@@ -111,9 +111,9 @@ bool test_typed_mutate_bumps_per_binding_gen() {
 }
 
 bool test_type_cache_stats_primitive_works() {
-    std::println("\n--- AC4: (compile:type-cache-stats) still works ---");
+    std::println("\n--- AC4: (engine:metrics \"compile:type-cache-stats\") still works ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define h (compile:type-cache-stats))\")");
+    cs.eval("(set-code \"(define h (engine:metrics \"compile:type-cache-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"cache-hits-total", "cache-misses-total", "stale-cache-total",
                             "gen-saved-total", "gen-saved-ratio-bp"}) {

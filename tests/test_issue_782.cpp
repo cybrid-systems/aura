@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // test_issue_782.cpp — Issue #782: Dedicated terminal
 // rendering primitives module + profiling integration
 // observability (P2 infrastructure surface).
@@ -72,6 +73,8 @@ namespace aura_issue_782_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -92,10 +95,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:terminal-rendering-module-stats) hash shape ---");
-    auto r = cs.eval("(query:terminal-rendering-module-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:terminal-rendering-module-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:terminal-rendering-module-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:terminal-rendering-module-stats) returns a hash");
+          "(engine:metrics \"query:terminal-rendering-module-stats\") returns a hash");
     const std::vector<std::string> keys = {"core-primitive-count",
                                            "terminal-module-available",
                                            "shape-profiler-integration-available",
@@ -112,32 +116,35 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no terminal module + no core "
                  "primitives) ---");
-    const auto core_count =
-        hash_int_field(cs, "(query:terminal-rendering-module-stats)", "core-primitive-count");
+    const auto core_count = hash_int_field(
+        cs, "(engine:metrics \"query:terminal-rendering-module-stats\")", "core-primitive-count");
     CHECK(core_count == 0,
           std::format("core-primitive-count = {} (expected 0 on fresh service — no "
                       "evaluator_primitives_terminal.cpp exists on main)",
                       core_count));
     const auto module_avail =
-        hash_int_field(cs, "(query:terminal-rendering-module-stats)", "terminal-module-available");
+        hash_int_field(cs, "(engine:metrics \"query:terminal-rendering-module-stats\")",
+                       "terminal-module-available");
     CHECK(module_avail == 0, std::format("terminal-module-available = {} (expected 0 — "
                                          "evaluator_primitives_terminal.cpp is Phase 2+ deferred)",
                                          module_avail));
-    const auto profiler_avail = hash_int_field(cs, "(query:terminal-rendering-module-stats)",
-                                               "shape-profiler-integration-available");
+    const auto profiler_avail =
+        hash_int_field(cs, "(engine:metrics \"query:terminal-rendering-module-stats\")",
+                       "shape-profiler-integration-available");
     CHECK(profiler_avail == 0,
           std::format("shape-profiler-integration-available = {} (expected 0 — "
                       "shape_profiler.cpp integration for rendering paths is Phase 2+ "
                       "deferred)",
                       profiler_avail));
     const auto example_avail =
-        hash_int_field(cs, "(query:terminal-rendering-module-stats)", "example-renderer-available");
+        hash_int_field(cs, "(engine:metrics \"query:terminal-rendering-module-stats\")",
+                       "example-renderer-available");
     CHECK(example_avail == 0,
           std::format("example-renderer-available = {} (expected 0 — minimal high-perf "
                       "terminal renderer example is Phase 2+ deferred)",
                       example_avail));
-    const auto rec =
-        hash_int_field(cs, "(query:terminal-rendering-module-stats)", "recommendation");
+    const auto rec = hash_int_field(
+        cs, "(engine:metrics \"query:terminal-rendering-module-stats\")", "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when all 3 module flags "
                       "== 0 AND core-primitive-count == 0)",
@@ -146,7 +153,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 782 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:terminal-rendering-module-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:terminal-rendering-module-stats\")", "schema");
     CHECK(schema == 782, std::format("schema = {} (expected 782)", schema));
 }
 
@@ -169,7 +177,7 @@ static void run_ac4_live_lookup_correctness(aura::compiler::CompilerService& cs)
         // or returns void. We use a try/catch-style check
         // by evaluating and seeing if the result is non-void.
         try {
-            auto r = cs.eval(std::format("({})", name));
+            auto r = cs.eval(aura::test::aura_call_expr(name));
             if (r) {
                 ++found_count;
                 std::println("  [info] core primitive '{}' IS reachable (unexpected)", name);
@@ -189,8 +197,8 @@ static void run_ac4_live_lookup_correctness(aura::compiler::CompilerService& cs)
 
     // Cross-check: the live count from the primitive
     // matches the independent EDSL check.
-    const auto core_count =
-        hash_int_field(cs, "(query:terminal-rendering-module-stats)", "core-primitive-count");
+    const auto core_count = hash_int_field(
+        cs, "(engine:metrics \"query:terminal-rendering-module-stats\")", "core-primitive-count");
     CHECK(core_count == static_cast<std::int64_t>(found_count),
           std::format("core-primitive-count matches independent EDSL check: {} == {}", core_count,
                       found_count));
@@ -198,16 +206,18 @@ static void run_ac4_live_lookup_correctness(aura::compiler::CompilerService& cs)
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #780 + #781 sibling primitives unaffected ---");
-    auto jit_coverage = cs.eval("(query:jit-rendering-coverage-stats)");
-    auto zero_copy = cs.eval("(query:zero-copy-framebuffer-stats)");
+    auto jit_coverage = cs.eval("(engine:metrics \"query:jit-rendering-coverage-stats\")");
+    auto zero_copy = cs.eval("(engine:metrics \"query:zero-copy-framebuffer-stats\")");
     CHECK(jit_coverage && aura::compiler::types::is_hash(*jit_coverage),
           "query:jit-rendering-coverage-stats hash regression (#780)");
     CHECK(zero_copy && aura::compiler::types::is_hash(*zero_copy),
           "query:zero-copy-framebuffer-stats hash regression (#781)");
-    const auto a780_schema = hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "schema");
+    const auto a780_schema =
+        hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "schema");
     CHECK(a780_schema == 780,
           std::format("#780 schema = {} (expected 780, no drift)", a780_schema));
-    const auto a781_schema = hash_int_field(cs, "(query:zero-copy-framebuffer-stats)", "schema");
+    const auto a781_schema =
+        hash_int_field(cs, "(engine:metrics \"query:zero-copy-framebuffer-stats\")", "schema");
     CHECK(a781_schema == 781,
           std::format("#781 schema = {} (expected 781, no drift)", a781_schema));
 }

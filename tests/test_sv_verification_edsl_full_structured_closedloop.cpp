@@ -33,7 +33,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t loc_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:sv-verification-structure-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:sv-verification-structure-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -89,7 +90,7 @@ static void run_matrix(CompilerService& cs) {
     SvWorkspace ws{};
     std::println("\n--- AC1: query:sv-verification-structure-stats (schema 748) ---");
     CHECK(seed_workspace(cs, ws), "full SV verification workspace seeded");
-    auto h = cs.eval("(query:sv-verification-structure-stats)");
+    auto h = cs.eval("(engine:metrics \"query:sv-verification-structure-stats\")");
     CHECK(h && is_hash(*h), "sv-verification-structure-stats returns hash");
     CHECK(loc_hash(cs, "schema") == 748, "schema == 748");
     CHECK(loc_hash(cs, "structure-mutate-hits") >= 0, "structure-mutate-hits present");
@@ -160,10 +161,10 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "stats monotonic over mutate matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto sva = cs.eval("(query:sv-sva-structure-stats)");
-    auto sv_node = cs.eval("(query:sv-node-stats)");
-    auto hw = cs.eval("(query:hardware-backend-sv-closedloop-stats)");
-    auto verify = cs.eval("(query:sv-verification-closedloop-stats)");
+    auto sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
+    auto sv_node = cs.eval("(engine:metrics \"query:sv-node-stats\")");
+    auto hw = cs.eval("(engine:metrics \"query:hardware-backend-sv-closedloop-stats\")");
+    auto verify = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
     CHECK(sva && is_hash(*sva), "sv-sva-structure-stats regression");
     CHECK(sv_node && (is_int(*sv_node) || is_hash(*sv_node)), "sv-node-stats regression");
     CHECK(hw && is_hash(*hw), "hardware-backend-sv-closedloop-stats regression");

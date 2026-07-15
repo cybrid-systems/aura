@@ -89,10 +89,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:pattern-performance-stats) hash shape ---");
-    auto r = cs.eval("(query:pattern-performance-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:pattern-performance-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:pattern-performance-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:pattern-performance-stats) returns a hash");
+          "(engine:metrics \"query:pattern-performance-stats\") returns a hash");
     const std::vector<std::string> keys = {"linear-scans", "index-hits", "wildcard-cost",
                                            "hygiene-filtered", "schema"};
     for (const auto& k : keys) {
@@ -104,21 +104,25 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto linear = hash_int_field(cs, "(query:pattern-performance-stats)", "linear-scans");
+    const auto linear =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "linear-scans");
     CHECK(linear == 0, std::format("linear-scans = {} (expected 0 on fresh service)", linear));
-    const auto idx = hash_int_field(cs, "(query:pattern-performance-stats)", "index-hits");
+    const auto idx =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "index-hits");
     CHECK(idx == 0, std::format("index-hits = {} (expected 0 on fresh service)", idx));
-    const auto wc = hash_int_field(cs, "(query:pattern-performance-stats)", "wildcard-cost");
+    const auto wc =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "wildcard-cost");
     CHECK(wc == 0, std::format("wildcard-cost = {} (expected 0 on fresh service)", wc));
-    const auto hygiene =
-        hash_int_field(cs, "(query:pattern-performance-stats)", "hygiene-filtered");
+    const auto hygiene = hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")",
+                                        "hygiene-filtered");
     CHECK(hygiene == 0,
           std::format("hygiene-filtered = {} (expected 0 on fresh service)", hygiene));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 760 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:pattern-performance-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "schema");
     CHECK(schema == 760, std::format("schema = {} (expected 760)", schema));
 }
 
@@ -140,11 +144,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_pattern_match_hygiene_filtered();
     ev.bump_pattern_match_hygiene_filtered();
     ev.bump_pattern_match_hygiene_filtered();
-    const auto linear = hash_int_field(cs, "(query:pattern-performance-stats)", "linear-scans");
-    const auto idx = hash_int_field(cs, "(query:pattern-performance-stats)", "index-hits");
-    const auto wc = hash_int_field(cs, "(query:pattern-performance-stats)", "wildcard-cost");
-    const auto hygiene =
-        hash_int_field(cs, "(query:pattern-performance-stats)", "hygiene-filtered");
+    const auto linear =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "linear-scans");
+    const auto idx =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "index-hits");
+    const auto wc =
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "wildcard-cost");
+    const auto hygiene = hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")",
+                                        "hygiene-filtered");
     CHECK(linear == 6,
           std::format("after 6 linear-scan bumps: linear-scans = {} (expected 6)", linear));
     CHECK(idx == 3, std::format("after 3 index-hit bumps: index-hits = {} (expected 3)", idx));
@@ -159,9 +166,10 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         "\n--- AC5: regression \u2014 #735/#756/#757/#758/#759 sibling primitives unaffected ---");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
+    auto macro_hygiene_provenance =
+        cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
-    auto code_as_data_maturity = cs.eval("(query:code-as-data-maturity-stats)");
+    auto code_as_data_maturity = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
     CHECK(envframe_policy && aura::compiler::types::is_hash(*envframe_policy),
@@ -183,7 +191,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
     const auto macro_hygiene_provenance_schema =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(macro_hygiene_provenance_schema == 757,
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));
@@ -193,7 +201,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));
     const auto code_as_data_maturity_schema =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(code_as_data_maturity_schema == 759,
           std::format("code-as-data-maturity schema = {} (expected 759, no drift)",
                       code_as_data_maturity_schema));

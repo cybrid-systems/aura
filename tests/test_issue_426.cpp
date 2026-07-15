@@ -9,7 +9,7 @@
 //              and return sensible counts
 //            - CompilerService::total_dirty_block_count()
 //              is callable and returns >= 0
-//            - (query:compiler-cache-stats) primitive
+//            - (engine:metrics \"query:compiler-cache-stats\") primitive
 //              is wired and returns an integer
 //            - empty mask → 0 dirty blocks
 //            - fully-dirty mask (all bits set) →
@@ -43,7 +43,7 @@ namespace aura_issue_426_detail {
 bool test_query_compiler_cache_stats() {
     std::println("\n--- AC1: query:compiler-cache-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:compiler-cache-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -54,9 +54,9 @@ bool test_query_compiler_cache_stats() {
     // count from the nested pair. The primitive returns
     //   ((dirty-blocks . dirty-functions) . incremental-candidates)
     // so (car (car <result>)) is the dirty-blocks int.
-    auto r_extract = cs.eval("(car (car (query:compiler-cache-stats)))");
+    auto r_extract = cs.eval("(car (car (engine:metrics \"query:compiler-cache-stats\")))");
     CHECK(r_extract.has_value() && aura::compiler::types::is_int(*r_extract),
-          "(car (car (query:compiler-cache-stats))) extracts dirty-blocks int");
+          "(car (car (engine:metrics \"query:compiler-cache-stats\"))) extracts dirty-blocks int");
     if (r_extract && aura::compiler::types::is_int(*r_extract)) {
         const auto n = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_extract));
         CHECK(n >= 0, "dirty-blocks count is >= 0");
@@ -140,7 +140,7 @@ bool test_query_compiler_cache_stats_after_mutate() {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(query:compiler-cache-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     if (!r || !aura::compiler::types::is_pair(*r)) {
         ++g_failed;
         return false;
@@ -148,7 +148,7 @@ bool test_query_compiler_cache_stats_after_mutate() {
     // 3-tuple: ((dirty-blocks . dirty-functions) .
     //            incremental-candidates). Extract the
     // total dirty blocks via (car (car <r>)).
-    auto r_count = cs.eval("(car (car (query:compiler-cache-stats)))");
+    auto r_count = cs.eval("(car (car (engine:metrics \"query:compiler-cache-stats\")))");
     CHECK(r_count.has_value() && aura::compiler::types::is_int(*r_count),
           "dirty-blocks count extracted from 3-tuple");
     if (r_count && aura::compiler::types::is_int(*r_count)) {
@@ -163,10 +163,10 @@ bool test_query_compiler_cache_stats_after_mutate() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC7: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:compiler-incremental-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:compiler-incremental-stats (regression for #460)");
-    auto r2 = cs.eval("(query:mutation-coordination-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:mutation-coordination-stats (regression for #448)");
     auto r3 = cs.eval("(query:mutation-impact)");

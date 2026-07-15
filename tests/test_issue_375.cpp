@@ -29,7 +29,7 @@
 //      last_ir_mod_ is set. C++ test API + Aura primitive
 //      both read this (avoids the "primitive sees its own
 //      IR" clobber problem).
-//   3. (compile:ir-stats) Aura primitive — returns the
+//   3. (engine:metrics \"compile:ir-stats\") Aura primitive — returns the
 //      snapshot as a hash for EDSL code. Best-effort: when
 //      called from .aura, the stats reflect the LAST workload
 //      that was lowered, not the stats-call's own IR.

@@ -16,7 +16,7 @@
 //   - (query:primitives-meta-catalog) (#617) — catalog
 //     primitive with category + arity + meta
 //   - (query:primitives-by-category) — category filter primitive
-//   - (query:primitives-extension-stats) (#618/#625) — extension
+//   - (engine:metrics \"query:primitives-extension-stats\") (#618/#625) — extension
 //     stats primitive
 //   - primitives_meta_catalog_query_total (#617) — catalog
 //     hit-rate counter
@@ -130,15 +130,16 @@ int aura_issue_643_run() {
         auto s_by_cat = cs.eval("(query:primitives-by-category 'core)");
         CHECK(s_by_cat.has_value(), "(query:primitives-by-category 'core) reachable (existing "
                                     "category filter back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
-        auto s_641 = cs.eval("(query:stable-ref-provenance-sv-stats)");
-        CHECK(s_641.has_value(),
-              "(query:stable-ref-provenance-sv-stats) reachable (#641 back-compat)");
-        auto s_640 = cs.eval("(query:sv-verification-closedloop-stats)");
-        CHECK(s_640.has_value(),
-              "(query:sv-verification-closedloop-stats) reachable (#640 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
+        auto s_641 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats\")");
+        CHECK(s_641.has_value(), "(engine:metrics \"query:stable-ref-provenance-sv-stats\") "
+                                 "reachable (#641 back-compat)");
+        auto s_640 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+        CHECK(s_640.has_value(), "(engine:metrics \"query:sv-verification-closedloop-stats\") "
+                                 "reachable (#640 back-compat)");
     }
 
     // AC4: derived-metric invariants on a fresh service.

@@ -47,7 +47,7 @@ int aura_issue_499_run() {
     // AC1: query:eda-foundation-stats fields
     {
         std::println("\n--- AC1: query:eda-foundation-stats ---");
-        auto stats = cs.eval("(query:eda-foundation-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:eda-foundation-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:eda-foundation-stats returns hash");
         CHECK(snap_stat(cs, "parse-total") >= 0, "parse-total present");
@@ -141,7 +141,7 @@ int aura_issue_499_run() {
     // AC5: query:sv-node-stats regression
     {
         std::println("\n--- AC5: sv-node-stats regression ---");
-        auto sva = cs.eval("(query:sv-node-stats)");
+        auto sva = cs.eval("(engine:metrics \"query:sv-node-stats\")");
         CHECK(sva && aura::compiler::types::is_hash(*sva), "sv-node-stats regression");
     }
 

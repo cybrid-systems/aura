@@ -21,7 +21,7 @@
 // operands_ + linear_/shape_ for dispatch); wire
 // DirtyAware checks; refresh shape_ids_/linear_ on
 // re-lower impact, (4) metrics/primitive: new
-// (query:ir-soa-full-migration-stats) returning
+// (engine:metrics \"query:ir-soa-full-migration-stats\") returning
 // (soa_instructions_emitted, dirty_block_skips,
 // clean_block_hit_rate, pmr_utilization,
 // jit_soa_time_ns, impact_dirty_hybrid_skips);
@@ -120,10 +120,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:ir-soa-full-migration-stats) hash shape ---");
-    auto r = cs.eval("(query:ir-soa-full-migration-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:ir-soa-full-migration-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:ir-soa-full-migration-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:ir-soa-full-migration-stats) returns a hash");
+          "(engine:metrics \"query:ir-soa-full-migration-stats\") returns a hash");
     const std::vector<std::string> keys = {"soa-instructions-emitted-total",
                                            "dirty-block-skips-total",
                                            "clean-block-hit-rate-pct",
@@ -143,41 +144,43 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no IR SoA migration activity) ---");
     const auto emitted =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "soa-instructions-emitted-total");
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                       "soa-instructions-emitted-total");
     CHECK(emitted == 0,
           std::format("soa-instructions-emitted-total = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire lowering_impl.cpp + JIT emit sites to "
                       "prefer IRFunctionSoA vs AoS IRModule path)",
                       emitted));
-    const auto skips =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "dirty-block-skips-total");
+    const auto skips = hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                                      "dirty-block-skips-total");
     CHECK(skips == 0,
           std::format("dirty-block-skips-total = {} (expected 0 on fresh service — Phase 2+ "
                       "deferred to wire service.ixx invalidate_function + lowering/JIT "
                       "DirtyAwarePass + is_block_dirty check)",
                       skips));
-    const auto jit_ns =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "jit-soa-time-ns-total");
+    const auto jit_ns = hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                                       "jit-soa-time-ns-total");
     CHECK(jit_ns == 0,
           std::format("jit-soa-time-ns-total = {} (expected 0 on fresh service — time-based "
                       "signal; Phase 2+ deferred to wire aura_jit.cpp SoA emit path)",
                       jit_ns));
-    const auto impact_dirty = hash_int_field(cs, "(query:ir-soa-full-migration-stats)",
-                                             "impact-dirty-hybrid-skips-total");
+    const auto impact_dirty =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                       "impact-dirty-hybrid-skips-total");
     CHECK(impact_dirty == 0,
           std::format("impact-dirty-hybrid-skips-total = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire service.ixx invalidate_function hybrid "
                       "impact_scope + SoA block dirty consultation)",
                       impact_dirty));
-    const auto hit_rate =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "clean-block-hit-rate-pct");
+    const auto hit_rate = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "clean-block-hit-rate-pct");
     CHECK(hit_rate >= 0,
           std::format("clean-block-hit-rate-pct = {} (expected >= 0 — reads existing "
                       "ir_soa_clean_block_hit_rate_pct atomic set via "
                       "set_ir_soa_clean_block_hit_rate_pct with 0-100 \u00d7 100 fixed-point)",
                       hit_rate));
-    const auto full_active =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "full-soa-migration-active");
+    const auto full_active = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "full-soa-migration-active");
     CHECK(full_active == 0,
           std::format("full-soa-migration-active = {} (expected 0 — Phase 2+ deferred to "
                       "actually complete production-grade migration of LoweringState emit + "
@@ -185,7 +188,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "pmr column migration + DepGraph integration; single flag covers all "
                       "deferred wire-up areas)",
                       full_active));
-    const auto rec = hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "recommendation");
+    const auto rec = hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                                    "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when deferred flag == 0 "
                       "AND no activity)",
@@ -194,7 +198,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 796 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "schema");
     CHECK(schema == 796, std::format("schema = {} (expected 796)", schema));
 }
 
@@ -203,13 +208,15 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Snapshot before.
     const auto emitted_before =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "soa-instructions-emitted-total");
-    const auto skips_before =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "dirty-block-skips-total");
-    const auto jit_ns_before =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "jit-soa-time-ns-total");
-    const auto impact_dirty_before = hash_int_field(cs, "(query:ir-soa-full-migration-stats)",
-                                                    "impact-dirty-hybrid-skips-total");
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                       "soa-instructions-emitted-total");
+    const auto skips_before = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "dirty-block-skips-total");
+    const auto jit_ns_before = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "jit-soa-time-ns-total");
+    const auto impact_dirty_before =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                       "impact-dirty-hybrid-skips-total");
 
     // Exercise the 4 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
@@ -226,13 +233,15 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     }
 
     const auto emitted_after =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "soa-instructions-emitted-total");
-    const auto skips_after =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "dirty-block-skips-total");
-    const auto jit_ns_after =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "jit-soa-time-ns-total");
-    const auto impact_dirty_after = hash_int_field(cs, "(query:ir-soa-full-migration-stats)",
-                                                   "impact-dirty-hybrid-skips-total");
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                       "soa-instructions-emitted-total");
+    const auto skips_after = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "dirty-block-skips-total");
+    const auto jit_ns_after = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "jit-soa-time-ns-total");
+    const auto impact_dirty_after =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")",
+                       "impact-dirty-hybrid-skips-total");
 
     std::println("  counts after AC4 bumps: emitted {} -> {}, skips {} -> {}, jit-ns {} -> "
                  "{}, impact-dirty {} -> {}",
@@ -260,8 +269,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Recommendation should now be 2 (Phase 1 only —
     // deferred flag == 0 BUT activity > 0).
-    const auto rec_after =
-        hash_int_field(cs, "(query:ir-soa-full-migration-stats)", "recommendation");
+    const auto rec_after = hash_int_field(
+        cs, "(engine:metrics \"query:ir-soa-full-migration-stats\")", "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with deferred flag == 0)",
@@ -270,17 +279,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #766 + #795 sibling primitives unaffected ---");
-    auto a766 = cs.eval("(query:ir-soa-migration-stats)");
-    auto a795 = cs.eval("(query:shape-pass-hotpath-contracts-stats)");
+    auto a766 = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
+    auto a795 = cs.eval("(engine:metrics \"query:shape-pass-hotpath-contracts-stats\")");
     CHECK(a766 && aura::compiler::types::is_hash(*a766),
           "query:ir-soa-migration-stats hash regression (#766)");
     CHECK(a795 && aura::compiler::types::is_hash(*a795),
           "query:shape-pass-hotpath-contracts-stats hash regression (#795)");
-    const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto a766_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(a766_schema == 766,
           std::format("#766 schema = {} (expected 766, no drift)", a766_schema));
-    const auto a795_schema =
-        hash_int_field(cs, "(query:shape-pass-hotpath-contracts-stats)", "schema");
+    const auto a795_schema = hash_int_field(
+        cs, "(engine:metrics \"query:shape-pass-hotpath-contracts-stats\")", "schema");
     CHECK(a795_schema == 795,
           std::format("#795 schema = {} (expected 795, no drift)", a795_schema));
 }

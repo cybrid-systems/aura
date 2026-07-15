@@ -47,41 +47,64 @@ compile-print-current-ir: mutation-safety
 compile-binary-validate: mutation-safety
 compile-binary-load: mutation-safety
 
-# String utilities → convenience (stdlib candidates)
+# ── Issue #1440: hot-path string / vector / JSON are CORE (red-line #3) ──
+# lib/std/* composes ON TOP of these; they are not "dead weight".
+string-append: core
+string-length: core
+string-ref: core
+string-copy: core
+string-fill!: core
+string-index: core
+string->list: core
+string->number: core
+string-join: core
+string?: core
+string=?: core
+string<?: core
+json-parse: core
+json-encode: core
+json-get-string: core
+vector: core
+vector?: core
+vector-ref: core
+vector-set!: core
+vector-length: core
+vector->list: core
+list->vector: core
+make-vector: core
+
+# Pure-stdlib API names (implemented in lib/std only — not C++ add()).
+# Listed so docs/gen never treat them as missing engine prims if mentioned.
 string-split: convenience
-string-join: convenience
 string-upcase: convenience
 string-downcase: convenience
 string-trim: convenience
 string-replace: convenience
+path-join: convenience
+path-dirname: convenience
+path-basename: convenience
+path-extname: convenience
 
-# JSON utilities → convenience (stdlib candidates)
-json-parse: convenience
-json-stringify: convenience
-json-get: convenience
-json-set: convenience
+# Math bare names (C++ builtins; math.aura re-exports)
+floor: core
+ceil: core
+round: core
+trunc: core
+sin: core
+cos: core
+tan: core
+asin: core
+acos: core
+atan: core
+sqrt: core
+pow: core
+exp: core
+log: core
+abs: core
+min: core
+max: core
 
-# Math utilities → convenience (stdlib candidates)
-math-sqrt: convenience
-math-pow: convenience
-math-sin: convenience
-math-cos: convenience
-math-floor: convenience
-math-ceil: convenience
-math-round: convenience
-
-# Vector / list utilities → convenience (stdlib candidates)
-vector-new: convenience
-vector-push: convenience
-vector-pop: convenience
-vector-ref: convenience
-vector-set: convenience
-vector-length: convenience
-vector-map: convenience
-vector-filter: convenience
-vector-reduce: convenience
-
-# Orchestrator / agent primitives (high-level, stdlib candidates)
+# Orchestrator / agent (high-level stdlib candidates if still in C++)
 orchestrator-spawn: convenience
 orchestrator-join: convenience
 orchestrator-cancel: convenience
@@ -89,22 +112,17 @@ agent-self-edit: convenience
 agent-query: convenience
 agent-evolve: convenience
 
-# Path / FS utilities → convenience (could be stdlib with FFI)
-path-join: convenience
-path-split: convenience
-path-dirname: convenience
-path-basename: convenience
-path-exists: convenience
-fs-read: convenience
-fs-write: convenience
-fs-list: convenience
+# Host FS (red-line #4)
+file-copy: mutation-safety
+file-delete: mutation-safety
+file-exists?: mutation-safety
+file-size: mutation-safety
 
-# Time utilities → convenience
-time-now: convenience
-time-format: convenience
-time-parse: convenience
+# Engine string-pool ops (observability / arena)
+string-pool:compact: internal-observable
+string-pool:stats: internal-observable
 
-# Internal-observable (already correct but pinned here for clarity)
+# Internal-observable (pinned for clarity)
 snapshot: internal-observable
 metrics-reset: internal-observable
 metrics-dump: internal-observable

@@ -79,7 +79,7 @@ int main() {
     // AC1: query:eda-concurrency-stats returns hash
     {
         std::println("\n--- AC1: query:eda-concurrency-stats ---");
-        auto stats = cs.eval("(query:eda-concurrency-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:eda-concurrency-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:eda-concurrency-stats returns hash");
         CHECK(hash_int(cs, "sv-concurrent-mutate-deadlocks") >= 0,
@@ -135,10 +135,10 @@ int main() {
     // AC4: related concurrency primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto multi = cs.eval("(query:multi-fiber-orchestration-stats)");
-        auto sv_batch = cs.eval("(query:atomic-batch-sv-stats-hash)");
-        auto feedback = cs.eval("(query:verification-feedback-loop-stats)");
-        auto sv_scale = cs.eval("(query:stable-ref-sv-scale-stats)");
+        auto multi = cs.eval("(engine:metrics \"query:multi-fiber-orchestration-stats\")");
+        auto sv_batch = cs.eval("(engine:metrics \"query:atomic-batch-sv-stats-hash\")");
+        auto feedback = cs.eval("(engine:metrics \"query:verification-feedback-loop-stats\")");
+        auto sv_scale = cs.eval("(engine:metrics \"query:stable-ref-sv-scale-stats\")");
         CHECK(multi && aura::compiler::types::is_hash(*multi),
               "query:multi-fiber-orchestration-stats hash regression (#521)");
         CHECK(sv_batch && aura::compiler::types::is_hash(*sv_batch),

@@ -4,7 +4,7 @@
 // foundation: 3 new counters (jit_hotswap_live_closure_refreshed_total,
 // jit_hotswap_forced_deopt_total, jit_hotswap_epoch_mismatch_prevented_total),
 // a proactive IRClosure walk in invalidate_function, and the
-// (query:jit-hotswap-closure-stats) Aura primitive.
+// (engine:metrics \"query:jit-hotswap-closure-stats\") Aura primitive.
 
 #include <format>
 #include <iostream>
@@ -51,7 +51,7 @@ int aura_issue_601_run() {
     // AC1: query:jit-hotswap-closure-stats primitive exists, returns hash
     {
         std::println("\n--- AC1: primitive exists + hash shape ---");
-        auto h = cs.eval("(query:jit-hotswap-closure-stats)");
+        auto h = cs.eval("(engine:metrics \"query:jit-hotswap-closure-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "query:jit-hotswap-closure-stats returns hash");
         CHECK(snap_stat(cs, "live-closure-refreshed-total") == 0,
@@ -122,7 +122,7 @@ int aura_issue_601_run() {
     // AC6: jit-stats-hash still works (back-compat with #491)
     {
         std::println("\n--- AC6: jit-stats-hash back-compat ---");
-        auto stats = cs.eval("(query:jit-stats-hash)");
+        auto stats = cs.eval("(engine:metrics \"query:jit-stats-hash\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:jit-stats-hash still returns hash after #601 wiring");
         auto r = cs.eval(std::format(

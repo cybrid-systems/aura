@@ -32,8 +32,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r =
-        cs.eval(std::format("(hash-ref (query:orchestration-llm-bottleneck-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:orchestration-llm-bottleneck-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -57,7 +57,7 @@ static std::int64_t events_total(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:orchestration-llm-bottleneck-stats (schema 754) ---");
-    auto h = cs.eval("(query:orchestration-llm-bottleneck-stats)");
+    auto h = cs.eval("(engine:metrics \"query:orchestration-llm-bottleneck-stats\")");
     CHECK(h && is_hash(*h), "orchestration-llm-bottleneck-stats returns hash");
     CHECK(stat_int(cs, "schema") == 754, "schema == 754");
     CHECK(outermost_preferred(cs) >= 0, "outermost-preferred non-negative");
@@ -126,8 +126,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(events_total(cs) > ev7a, "orchestration-events-total monotonic after bump");
 
     std::println("\n--- AC8: query regression ---");
-    auto adaptive = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
-    auto gc_defer = cs.eval("(query:gc-safepoint-deferral-stats)");
+    auto adaptive = cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
+    auto gc_defer = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
     CHECK(adaptive && is_hash(*adaptive), "scheduler-stealbudget-adaptive-stats regression (#706)");
     CHECK(gc_defer && is_hash(*gc_defer), "gc-safepoint-deferral-stats regression (#646)");
 }

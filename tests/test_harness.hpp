@@ -50,6 +50,7 @@
 #ifndef AURA_TEST_HARNESS_HPP
 #define AURA_TEST_HARNESS_HPP
 
+#include <format>
 #include <iostream>
 #include <print>
 #include <string>
@@ -63,6 +64,18 @@ namespace aura::test {
 // at static-init time.
 inline int g_passed = 0;
 inline int g_failed = 0;
+
+// Issue #1439: build an Aura expression that evaluates a primitive or
+// legacy stats name. query:/compile:*-stats are not public prims — route
+// through (engine:metrics "…"). Structural query:* etc. stay bare.
+inline std::string aura_call_expr(std::string_view name) {
+    const bool stats_ns = name.starts_with("query:") || name.starts_with("compile:");
+    const bool stats_suffix = name.ends_with("-stats") || name.ends_with("-stats-hash") ||
+                              name.find("-stats-") != std::string_view::npos;
+    if (stats_ns && stats_suffix)
+        return std::format("(engine:metrics \"{}\")", name);
+    return std::format("({})", name);
+}
 
 // One registered test. We use a function pointer (not
 // std::function) to avoid pulling in <functional>, which

@@ -153,11 +153,11 @@ bool test_shape_stability_stats_includes_jit_miss() {
     std::println("\n--- AC5: shape-stability-stats includes jit_shape_miss ---");
     CompilerService cs;
     CHECK(setup_jit_shape_workspace(cs), "workspace ready");
-    const auto s0 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     CHECK(jit_eval(cs), "JIT compile");
     (void)cs.typed_mutate("(mutate:rebind \"acc\" \"7\")");
     CHECK(jit_eval(cs), "re-JIT after mutate");
-    const auto s1 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     const auto miss = jit_shape_miss_count.load();
     std::println("  stats: {} -> {} jit_shape_miss={}", s0, s1, miss);
     CHECK(s1 >= s0, "shape-stability-stats monotonic");
@@ -269,7 +269,7 @@ bool test_long_stress_mutate_jit_cycles() {
     CompilerService cs;
     CHECK(setup_jit_shape_workspace(cs), "workspace ready");
     CHECK(jit_eval(cs), "initial JIT");
-    const auto stats0 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto stats0 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     const auto miss0 = jit_shape_miss_count.load();
     std::mt19937 rng(605u);
     std::uniform_int_distribution<int> val_dist(0, 500);
@@ -285,7 +285,7 @@ bool test_long_stress_mutate_jit_cycles() {
         if ((i & 15) == 0)
             CHECK(jit_eval(cs), "periodic JIT eval in stress");
     }
-    const auto stats1 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto stats1 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     const auto miss1 = jit_shape_miss_count.load();
     std::println("  stats: {} -> {} jit_miss: {} -> {}", stats0, stats1, miss0, miss1);
     CHECK(stats1 >= stats0, "shape-stability-stats monotonic under stress");
@@ -298,8 +298,9 @@ bool test_long_stress_mutate_jit_cycles() {
 bool test_regression_related_primitives() {
     std::println("\n--- AC10: regression primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:shape-stability-stats)");
-    CHECK(r1.has_value() && is_int(*r1), "(query:shape-stability-stats) regression for #570");
+    auto r1 = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
+    CHECK(r1.has_value() && is_int(*r1),
+          "(engine:metrics \"query:shape-stability-stats\") regression for #570");
     auto r2 = cs.eval("(query:prompt6-safety-score)");
     CHECK(r2.has_value() && is_int(*r2), "(query:prompt6-safety-score) regression for #602");
     auto r3 = cs.eval("(query:task4-hotpath-safety-score)");

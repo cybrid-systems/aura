@@ -83,7 +83,7 @@ int aura_issue_690_run() {
     // AC2: stats hash fields
     {
         std::println("\n--- AC2: query:constraint-typed-mutate-stats ---");
-        auto stats = cs.eval("(query:constraint-typed-mutate-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:constraint-typed-mutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:constraint-typed-mutate-stats returns hash");
         CHECK(stat_int(cs, "reverify-scans") >= 0, "reverify-scans present");
@@ -96,7 +96,7 @@ int aura_issue_690_run() {
     // AC3: query:constraint-delta-blame-stats
     {
         std::println("\n--- AC3: query:constraint-delta-blame-stats ---");
-        auto blame = cs.eval("(query:constraint-delta-blame-stats)");
+        auto blame = cs.eval("(engine:metrics \"query:constraint-delta-blame-stats\")");
         CHECK(blame && aura::compiler::types::is_int(*blame),
               "query:constraint-delta-blame-stats returns int");
         CHECK(aura::compiler::types::as_int(*blame) >= 0,
@@ -104,7 +104,7 @@ int aura_issue_690_run() {
     }
 
     const auto reverify_before = stat_int(cs, "reverify-scans");
-    const auto blame_before = cs.eval("(query:constraint-delta-blame-stats)");
+    const auto blame_before = cs.eval("(engine:metrics \"query:constraint-delta-blame-stats\")");
     const auto blame_before_i = blame_before && aura::compiler::types::is_int(*blame_before)
                                     ? aura::compiler::types::as_int(*blame_before)
                                     : 0;
@@ -132,7 +132,7 @@ int aura_issue_690_run() {
         CHECK(reverify_after >= reverify_before,
               std::format("reverify-scans non-decreasing ({} -> {})", reverify_before,
                           reverify_after));
-        auto blame_after = cs.eval("(query:constraint-delta-blame-stats)");
+        auto blame_after = cs.eval("(engine:metrics \"query:constraint-delta-blame-stats\")");
         const auto blame_after_i = blame_after && aura::compiler::types::is_int(*blame_after)
                                        ? aura::compiler::types::as_int(*blame_after)
                                        : 0;

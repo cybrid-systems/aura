@@ -33,7 +33,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-safety-1097-1122-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-safety-1097-1122-stats\")");
         CHECK(r && is_hash(*r), "safety stats is hash");
         CHECK(href(cs, "query:production-safety-1097-1122-stats", "schema") == 1097, "schema 1097");
         CHECK(href(cs, "query:production-safety-1097-1122-stats", "active") == 1, "active");

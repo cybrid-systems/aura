@@ -86,10 +86,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:code-as-data-maturity-stats) hash shape ---");
-    auto r = cs.eval("(query:code-as-data-maturity-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:code-as-data-maturity-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:code-as-data-maturity-stats) returns a hash");
+          "(engine:metrics \"query:code-as-data-maturity-stats\") returns a hash");
     const std::vector<std::string> keys = {"fidelity-samples", "fidelity-drift",
                                            "guard-rollback-hygiene-safe",
                                            "reflect-schema-macro-edsl", "schema"};
@@ -102,25 +103,27 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto samples =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "fidelity-samples");
+    const auto samples = hash_int_field(
+        cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "fidelity-samples");
     CHECK(samples == 0,
           std::format("fidelity-samples = {} (expected 0 on fresh service)", samples));
-    const auto drift = hash_int_field(cs, "(query:code-as-data-maturity-stats)", "fidelity-drift");
+    const auto drift = hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")",
+                                      "fidelity-drift");
     CHECK(drift == 0, std::format("fidelity-drift = {} (expected 0 on fresh service)", drift));
-    const auto guard =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "guard-rollback-hygiene-safe");
+    const auto guard = hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")",
+                                      "guard-rollback-hygiene-safe");
     CHECK(guard == 0,
           std::format("guard-rollback-hygiene-safe = {} (expected 0 on fresh service)", guard));
-    const auto reflect =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "reflect-schema-macro-edsl");
+    const auto reflect = hash_int_field(
+        cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "reflect-schema-macro-edsl");
     CHECK(reflect == 0,
           std::format("reflect-schema-macro-edsl = {} (expected 0 on fresh service)", reflect));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 759 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(schema == 759, std::format("schema = {} (expected 759)", schema));
 }
 
@@ -141,13 +144,14 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_code_as_data_reflect_schema_macro_edsl();
     ev.bump_code_as_data_reflect_schema_macro_edsl();
     ev.bump_code_as_data_reflect_schema_macro_edsl();
-    const auto samples =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "fidelity-samples");
-    const auto drift = hash_int_field(cs, "(query:code-as-data-maturity-stats)", "fidelity-drift");
-    const auto guard =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "guard-rollback-hygiene-safe");
-    const auto reflect =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "reflect-schema-macro-edsl");
+    const auto samples = hash_int_field(
+        cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "fidelity-samples");
+    const auto drift = hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")",
+                                      "fidelity-drift");
+    const auto guard = hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")",
+                                      "guard-rollback-hygiene-safe");
+    const auto reflect = hash_int_field(
+        cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "reflect-schema-macro-edsl");
     CHECK(
         samples == 4,
         std::format("after 4 fidelity-sample bumps: fidelity-samples = {} (expected 4)", samples));
@@ -167,7 +171,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #735/#756/#757/#758 sibling primitives unaffected ---");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
+    auto macro_hygiene_provenance =
+        cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
@@ -188,7 +193,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
     const auto macro_hygiene_provenance_schema =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(macro_hygiene_provenance_schema == 757,
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));

@@ -30,7 +30,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → schema_cache_* = 0
 //   AC2: snapshot has 3 new schema_cache fields
-//   AC3: (compile:schema-cache-stats) returns 3-key hash
+//   AC3: (engine:metrics \"compile:schema-cache-stats\") returns 3-key hash
 //   AC4: clone_macro_body populates schema_cache for
 //        nodes whose type is known (post-#390 auto-
 //        populate path)
@@ -99,11 +99,12 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (compile:schema-cache-stats) returns 3-key hash
+// ── AC3: (engine:metrics \"compile:schema-cache-stats\") returns 3-key hash
 bool test_schema_cache_stats_primitive() {
-    std::println("\n--- AC3: (compile:schema-cache-stats) returns 3-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:schema-cache-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define scs (compile:schema-cache-stats))\")");
+    cs.eval("(set-code \"(define scs (engine:metrics \"compile:schema-cache-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"lookups-total", "hits-total", "hit-rate-bp"}) {
         std::string check = std::string("(hash-ref scs \"") + key + "\")";

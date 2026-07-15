@@ -52,7 +52,7 @@ int aura_issue_540_observability_run() {
     // AC1: query:eda-stability-stats returns hash
     {
         std::println("\n--- AC1: query:eda-stability-stats ---");
-        auto stats = cs.eval("(query:eda-stability-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:eda-stability-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:eda-stability-stats returns hash");
         CHECK(hash_int(cs, "cross-cow-invalidations") >= 0, "cross-cow-invalidations present");
@@ -102,9 +102,9 @@ int aura_issue_540_observability_run() {
     // AC4: related stability primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto cow_fiber = cs.eval("(query:stable-ref-cow-fiber-stats)");
-        auto edsl = cs.eval("(query:edsl-stability-stats)");
-        auto lifecycle = cs.eval("(query:stable-ref-lifecycle-stats)");
+        auto cow_fiber = cs.eval("(engine:metrics \"query:stable-ref-cow-fiber-stats\")");
+        auto edsl = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
+        auto lifecycle = cs.eval("(engine:metrics \"query:stable-ref-lifecycle-stats\")");
         CHECK(cow_fiber && aura::compiler::types::is_int(*cow_fiber),
               "query:stable-ref-cow-fiber-stats int regression");
         CHECK(edsl && aura::compiler::types::is_int(*edsl),

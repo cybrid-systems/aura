@@ -83,76 +83,78 @@ void ObservabilityPrims::register_eval_p96(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #685: (query:arena-auto-compact-stats) — alloc-path
     // auto-compact policy + Shape/dirty synergy metrics.
-    add("query:arena-auto-compact-stats", [&ev](const auto&) -> EvalValue {
-        std::uint64_t auto_triggers = 0;
-        std::uint64_t frag_reduced = 0;
-        std::uint64_t shape_inval = 0;
-        std::uint64_t defrag_savings = 0;
-        std::uint64_t yield_checks = 0;
-        if (ev.arena_) {
-            const auto s = ev.arena_->stats();
-            auto_triggers += s.auto_alloc_trigger_count;
-            frag_reduced += s.frag_reduced_bp;
-            shape_inval += s.shape_inval_on_compact;
-            defrag_savings += s.defrag_savings_alloc;
-            yield_checks += s.compaction_yield_checks;
-        }
-        if (ev.arena_group_) {
-            const auto ag = ev.arena_group_->auto_compact_policy_stats();
-            auto_triggers += ag.auto_triggers;
-            frag_reduced += ag.frag_reduced;
-            shape_inval += ag.shape_inval_on_compact;
-            defrag_savings += ag.defrag_savings;
-            yield_checks += ag.yield_checks_hit;
-        }
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-auto-compact-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t auto_triggers = 0;
+            std::uint64_t frag_reduced = 0;
+            std::uint64_t shape_inval = 0;
+            std::uint64_t defrag_savings = 0;
+            std::uint64_t yield_checks = 0;
+            if (ev.arena_) {
+                const auto s = ev.arena_->stats();
+                auto_triggers += s.auto_alloc_trigger_count;
+                frag_reduced += s.frag_reduced_bp;
+                shape_inval += s.shape_inval_on_compact;
+                defrag_savings += s.defrag_savings_alloc;
+                yield_checks += s.compaction_yield_checks;
+            }
+            if (ev.arena_group_) {
+                const auto ag = ev.arena_group_->auto_compact_policy_stats();
+                auto_triggers += ag.auto_triggers;
+                frag_reduced += ag.frag_reduced;
+                shape_inval += ag.shape_inval_on_compact;
+                defrag_savings += ag.defrag_savings;
+                yield_checks += ag.yield_checks_hit;
+            }
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"auto-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
-            {"frag-reduced", make_int(static_cast<std::int64_t>(frag_reduced))},
-            {"shape-inval-on-compact", make_int(static_cast<std::int64_t>(shape_inval))},
-            {"defrag-savings", make_int(static_cast<std::int64_t>(defrag_savings))},
-            {"yield-checks-hit", make_int(static_cast<std::int64_t>(yield_checks))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"auto-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
+                {"frag-reduced", make_int(static_cast<std::int64_t>(frag_reduced))},
+                {"shape-inval-on-compact", make_int(static_cast<std::int64_t>(shape_inval))},
+                {"defrag-savings", make_int(static_cast<std::int64_t>(defrag_savings))},
+                {"yield-checks-hit", make_int(static_cast<std::int64_t>(yield_checks))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 97 (orig lines 10995-11090)
@@ -160,99 +162,105 @@ void ObservabilityPrims::register_eval_p97(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #569: Task4-review closing hash for tiered SmallObjectPool +
     // dtor tracking + auto-compaction + live defrag + fiber safepoint coordination.
-    add("query:arena-auto-compact-defrag-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(32);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-auto-compact-defrag-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        const auto& group = ev.arena_group();
-        const auto stats = group.total_stats();
-        const auto policy = group.auto_compact_policy_stats();
-        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t live_dtors = ev.arena_ ? ev.arena_->live_count() : 0;
-        const std::int64_t frag_pct =
-            static_cast<std::int64_t>(stats.fragmentation_ratio() * 100.0);
-        const std::uint64_t auto_compact_count =
-            group.auto_compact_trigger_count() + policy.auto_triggers;
-        const std::uint64_t auto_compact_skips = group.auto_compact_skip_count();
-        const std::uint64_t guard_calls = group.auto_compact_guard_call_count();
-        const std::uint64_t defrag_saved =
-            policy.defrag_savings + stats.defrag_savings_alloc + stats.last_defrag_saved;
-        const std::uint64_t defrag_attempted = stats.defrag_attempted_count;
-        const std::uint64_t yield_checks = group.compaction_yield_checks_group() +
-                                           policy.yield_checks_hit + stats.compaction_yield_checks;
-        const std::uint64_t paused = ev.compaction_paused_by_boundary();
-        const std::uint64_t gc_waits = ev.get_gc_safepoint_waits_total();
-        const std::uint64_t gc_deferred = ev.get_gc_safepoint_deferred_total();
-        const std::uint64_t safepoint_coord = yield_checks + paused + gc_waits + gc_deferred;
-        const std::uint64_t mutation_volume = ev.total_mutations();
-        const std::uint64_t threshold_config =
-            m ? m->arena_auto_compact_threshold_set_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t total =
-            live_dtors + stats.peak_used + auto_compact_count + auto_compact_skips + guard_calls +
-            defrag_saved + defrag_attempted + safepoint_coord + mutation_volume + threshold_config;
-        std::int64_t recommendation = 0;
-        if (frag_pct > 30 && auto_compact_count == 0)
-            recommendation = 3;
-        else if (paused > yield_checks && paused > 0)
-            recommendation = 2;
-        else if (auto_compact_count > 0 || defrag_saved > 0 || safepoint_coord > 0)
-            recommendation = 1;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"fragmentation-ratio-pct", make_int(frag_pct)},
-            {"peak-used-bytes", make_int(static_cast<std::int64_t>(stats.peak_used))},
-            {"live-dtor-count", make_int(static_cast<std::int64_t>(live_dtors))},
-            {"auto-compact-count", make_int(static_cast<std::int64_t>(auto_compact_count))},
-            {"auto-compact-skips", make_int(static_cast<std::int64_t>(auto_compact_skips))},
-            {"auto-compact-guard-calls", make_int(static_cast<std::int64_t>(guard_calls))},
-            {"defrag-saved-bytes", make_int(static_cast<std::int64_t>(defrag_saved))},
-            {"defrag-attempted-count", make_int(static_cast<std::int64_t>(defrag_attempted))},
-            {"safepoint-coordination-count", make_int(static_cast<std::int64_t>(safepoint_coord))},
-            {"mutation-volume-trigger", make_int(static_cast<std::int64_t>(mutation_volume))},
-            {"threshold-config-count", make_int(static_cast<std::int64_t>(threshold_config))},
-            {"compaction-yield-checks", make_int(static_cast<std::int64_t>(yield_checks))},
-            {"paused-by-boundary", make_int(static_cast<std::int64_t>(paused))},
-            {"task4-review-schema", make_int(569)},
-            {"arena-auto-compact-defrag-total", make_int(static_cast<std::int64_t>(total))},
-            {"arena-auto-compact-defrag-recommendation", make_int(recommendation)},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            const auto& group = ev.arena_group();
+            const auto stats = group.total_stats();
+            const auto policy = group.auto_compact_policy_stats();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t live_dtors = ev.arena_ ? ev.arena_->live_count() : 0;
+            const std::int64_t frag_pct =
+                static_cast<std::int64_t>(stats.fragmentation_ratio() * 100.0);
+            const std::uint64_t auto_compact_count =
+                group.auto_compact_trigger_count() + policy.auto_triggers;
+            const std::uint64_t auto_compact_skips = group.auto_compact_skip_count();
+            const std::uint64_t guard_calls = group.auto_compact_guard_call_count();
+            const std::uint64_t defrag_saved =
+                policy.defrag_savings + stats.defrag_savings_alloc + stats.last_defrag_saved;
+            const std::uint64_t defrag_attempted = stats.defrag_attempted_count;
+            const std::uint64_t yield_checks = group.compaction_yield_checks_group() +
+                                               policy.yield_checks_hit +
+                                               stats.compaction_yield_checks;
+            const std::uint64_t paused = ev.compaction_paused_by_boundary();
+            const std::uint64_t gc_waits = ev.get_gc_safepoint_waits_total();
+            const std::uint64_t gc_deferred = ev.get_gc_safepoint_deferred_total();
+            const std::uint64_t safepoint_coord = yield_checks + paused + gc_waits + gc_deferred;
+            const std::uint64_t mutation_volume = ev.total_mutations();
+            const std::uint64_t threshold_config =
+                m ? m->arena_auto_compact_threshold_set_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t total = live_dtors + stats.peak_used + auto_compact_count +
+                                        auto_compact_skips + guard_calls + defrag_saved +
+                                        defrag_attempted + safepoint_coord + mutation_volume +
+                                        threshold_config;
+            std::int64_t recommendation = 0;
+            if (frag_pct > 30 && auto_compact_count == 0)
+                recommendation = 3;
+            else if (paused > yield_checks && paused > 0)
+                recommendation = 2;
+            else if (auto_compact_count > 0 || defrag_saved > 0 || safepoint_coord > 0)
+                recommendation = 1;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"fragmentation-ratio-pct", make_int(frag_pct)},
+                {"peak-used-bytes", make_int(static_cast<std::int64_t>(stats.peak_used))},
+                {"live-dtor-count", make_int(static_cast<std::int64_t>(live_dtors))},
+                {"auto-compact-count", make_int(static_cast<std::int64_t>(auto_compact_count))},
+                {"auto-compact-skips", make_int(static_cast<std::int64_t>(auto_compact_skips))},
+                {"auto-compact-guard-calls", make_int(static_cast<std::int64_t>(guard_calls))},
+                {"defrag-saved-bytes", make_int(static_cast<std::int64_t>(defrag_saved))},
+                {"defrag-attempted-count", make_int(static_cast<std::int64_t>(defrag_attempted))},
+                {"safepoint-coordination-count",
+                 make_int(static_cast<std::int64_t>(safepoint_coord))},
+                {"mutation-volume-trigger", make_int(static_cast<std::int64_t>(mutation_volume))},
+                {"threshold-config-count", make_int(static_cast<std::int64_t>(threshold_config))},
+                {"compaction-yield-checks", make_int(static_cast<std::int64_t>(yield_checks))},
+                {"paused-by-boundary", make_int(static_cast<std::int64_t>(paused))},
+                {"task4-review-schema", make_int(569)},
+                {"arena-auto-compact-defrag-total", make_int(static_cast<std::int64_t>(total))},
+                {"arena-auto-compact-defrag-recommendation", make_int(recommendation)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 98 (orig lines 11091-11181)
@@ -371,94 +379,98 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
     // stdlib usages paying pair-allocation cost that I should
     // consolidate to Arena-backed storage?" + "is cdr-walk
     // getting pathological under mutation?".
-    add("query:primitives-hotpath-stats", [&ev](const auto&) -> EvalValue {
-        std::uint64_t call_total = 0;
-        std::uint64_t pair_total = 0;
-        std::uint64_t tra_total = 0;
-        std::uint64_t depth_max = 0;
-        std::uint64_t fastpath_hits = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            call_total = m->primitive_call_total.load(std::memory_order_relaxed);
-            pair_total = m->pair_alloc_total.load(std::memory_order_relaxed);
-            tra_total = m->linear_traverse_total.load(std::memory_order_relaxed);
-            depth_max = m->cdr_depth_max.load(std::memory_order_relaxed);
-            fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
-        }
-        const std::uint64_t mutations = ev.total_mutations();
-        const std::uint64_t queries = ev.get_total_query_calls();
-        const std::uint64_t call_denom = call_total + mutations + queries + 1;
-        const std::int64_t call_rate = static_cast<std::int64_t>((call_total * 100) / call_denom);
-        const std::int64_t alloc_per_call =
-            static_cast<std::int64_t>(pair_total / (call_total + 1));
-        const std::int64_t regex_time_us =
-            static_cast<std::int64_t>((tra_total * 10) / (call_total + 1));
-        const std::int64_t stability_penalty =
-            static_cast<std::int64_t>(alloc_per_call * 3 + (depth_max > 32 ? depth_max / 8 : 0));
-        const std::int64_t stability_score = stability_penalty >= 100 ? 0 : 100 - stability_penalty;
-        const std::uint64_t total = call_total + pair_total + tra_total + depth_max +
-                                    fastpath_hits + static_cast<std::uint64_t>(call_rate);
-        std::int64_t recommendation = 0;
-        if (stability_score < 50)
-            recommendation = 3;
-        else if (alloc_per_call > 10 || depth_max > 64)
-            recommendation = 2;
-        else if (call_total > 0 || fastpath_hits > 0)
-            recommendation = 1;
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:primitives-hotpath-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t call_total = 0;
+            std::uint64_t pair_total = 0;
+            std::uint64_t tra_total = 0;
+            std::uint64_t depth_max = 0;
+            std::uint64_t fastpath_hits = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                call_total = m->primitive_call_total.load(std::memory_order_relaxed);
+                pair_total = m->pair_alloc_total.load(std::memory_order_relaxed);
+                tra_total = m->linear_traverse_total.load(std::memory_order_relaxed);
+                depth_max = m->cdr_depth_max.load(std::memory_order_relaxed);
+                fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
+            }
+            const std::uint64_t mutations = ev.total_mutations();
+            const std::uint64_t queries = ev.get_total_query_calls();
+            const std::uint64_t call_denom = call_total + mutations + queries + 1;
+            const std::int64_t call_rate =
+                static_cast<std::int64_t>((call_total * 100) / call_denom);
+            const std::int64_t alloc_per_call =
+                static_cast<std::int64_t>(pair_total / (call_total + 1));
+            const std::int64_t regex_time_us =
+                static_cast<std::int64_t>((tra_total * 10) / (call_total + 1));
+            const std::int64_t stability_penalty = static_cast<std::int64_t>(
+                alloc_per_call * 3 + (depth_max > 32 ? depth_max / 8 : 0));
+            const std::int64_t stability_score =
+                stability_penalty >= 100 ? 0 : 100 - stability_penalty;
+            const std::uint64_t total = call_total + pair_total + tra_total + depth_max +
+                                        fastpath_hits + static_cast<std::uint64_t>(call_rate);
+            std::int64_t recommendation = 0;
+            if (stability_score < 50)
+                recommendation = 3;
+            else if (alloc_per_call > 10 || depth_max > 64)
+                recommendation = 2;
+            else if (call_total > 0 || fastpath_hits > 0)
+                recommendation = 1;
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"primitive-call-total", make_int(static_cast<std::int64_t>(call_total))},
-            {"pair-alloc-total", make_int(static_cast<std::int64_t>(pair_total))},
-            {"linear-traverse-total", make_int(static_cast<std::int64_t>(tra_total))},
-            {"cdr-depth-max", make_int(static_cast<std::int64_t>(depth_max))},
-            {"call-rate", make_int(call_rate)},
-            {"alloc-per-call", make_int(alloc_per_call)},
-            {"regex-time-us", make_int(regex_time_us)},
-            {"stability-score", make_int(stability_score)},
-            {"hotpath-schema", make_int(584)},
-            {"primitives-hotpath-total", make_int(static_cast<std::int64_t>(total))},
-            {"primitives-hotpath-recommendation", make_int(recommendation)},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"primitive-call-total", make_int(static_cast<std::int64_t>(call_total))},
+                {"pair-alloc-total", make_int(static_cast<std::int64_t>(pair_total))},
+                {"linear-traverse-total", make_int(static_cast<std::int64_t>(tra_total))},
+                {"cdr-depth-max", make_int(static_cast<std::int64_t>(depth_max))},
+                {"call-rate", make_int(call_rate)},
+                {"alloc-per-call", make_int(alloc_per_call)},
+                {"regex-time-us", make_int(regex_time_us)},
+                {"stability-score", make_int(stability_score)},
+                {"hotpath-schema", make_int(584)},
+                {"primitives-hotpath-total", make_int(static_cast<std::int64_t>(total))},
+                {"primitives-hotpath-recommendation", make_int(recommendation)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 100 (orig lines 11289-11366)
@@ -743,7 +755,7 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
     // return the same hash shape; the new one just adds
     // 2 bridge_epoch fields. The old primitive stays for
     // backward compat (existing tests use closure:stats).
-    add("query:closure-stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("query:closure-stats", [&ev](const auto&) -> EvalValue {
         // Reuse the same build_hash pattern as closure:stats.
         // Inline here (instead of refactoring closure:stats to
         // a helper) so the new primitive stays self-contained

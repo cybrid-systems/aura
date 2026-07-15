@@ -34,7 +34,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:guard-panic-reflect-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:guard-panic-reflect-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +62,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:guard-panic-reflect-stats (schema 596) ---");
     CHECK(setup_workspace(cs), "reflectable workspace setup");
-    auto h = cs.eval("(query:guard-panic-reflect-stats)");
+    auto h = cs.eval("(engine:metrics \"query:guard-panic-reflect-stats\")");
     CHECK(h && is_hash(*h), "guard-panic-reflect-stats returns hash");
     CHECK(hash_int(cs, "schema") == 596, "schema == 596");
     const auto s0 = stats_sum(cs);
@@ -92,7 +93,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(fail > 0, "schema_validation_fail_count observable");
 
     std::println("\n--- AC4: panic-checkpoint-fiber-stats regression ---");
-    auto hook = cs.eval("(query:panic-checkpoint-fiber-stats)");
+    auto hook = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
     CHECK(hook.has_value() && is_hash(*hook), "panic-checkpoint-fiber-stats regression for resume");
 
     std::println("\n--- AC5: boundary-violation-prevented observable ---");
@@ -114,8 +115,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "guard-panic-reflect stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto rsm = cs.eval("(query:reflection-selfmod-stats)");
-    auto sel = cs.eval("(query:self-evolution-loop-stats)");
+    auto rsm = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
+    auto sel = cs.eval("(engine:metrics \"query:self-evolution-loop-stats\")");
     auto pcl = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(rsm && is_int(*rsm), "reflection-selfmod-stats regression");
     CHECK(sel && is_int(*sel), "self-evolution-loop-stats regression");

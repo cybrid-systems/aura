@@ -12,13 +12,13 @@
 // surfaced to the user — the metric lived only on the
 // per-call pass instance. Post-#433, the count is
 // accumulated into a lifetime CompilerMetrics counter
-// and exposed via the (compile:dead-coercion-stats)
+// and exposed via the (engine:metrics \"compile:dead-coercion-stats\")
 // Aura primitive and CompilerSnapshot.
 //
 // Test cases:
 //   AC1: fresh CompilerService → dead_coercion_eliminated_total = 0
 //   AC2: snapshot has dead_coercion_eliminated_total field
-//   AC3: (compile:dead-coercion-stats) returns int (0 initially)
+//   AC3: (engine:metrics \"compile:dead-coercion-stats\") returns int (0 initially)
 //   AC4: typing + eval IR on a gradual-typing expression →
 //        counter is wired (may be 0 if no identity casts in
 //        the IR — we don't require > 0 because the pass only
@@ -80,10 +80,11 @@ bool test_snapshot_has_new_field() {
 }
 
 bool test_dead_coercion_stats_primitive() {
-    std::println("\n--- AC3: (compile:dead-coercion-stats) returns int ---");
+    std::println("\n--- AC3: (engine:metrics \"compile:dead-coercion-stats\") returns int ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(compile:dead-coercion-stats)");
-    CHECK(r && aura::compiler::types::is_int(*r), "(compile:dead-coercion-stats) returns int");
+    auto r = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
+    CHECK(r && aura::compiler::types::is_int(*r),
+          "(engine:metrics \"compile:dead-coercion-stats\") returns int");
     if (r && aura::compiler::types::is_int(*r)) {
         std::println("  initial value: {}", aura::compiler::types::as_int(*r));
         CHECK_EQ(aura::compiler::types::as_int(*r), 0, "initial dead-coercion-stats is 0");
@@ -102,9 +103,9 @@ bool test_dce_wired_into_pipeline() {
     // pipeline runs end-to-end.
     cs.eval("(set-code \"(define q 42)\")");
     cs.eval("(eval-current)");
-    auto r = cs.eval("(compile:dead-coercion-stats)");
+    auto r = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
     CHECK(r && aura::compiler::types::is_int(*r),
-          "(compile:dead-coercion-stats) returns int after eval");
+          "(engine:metrics \"compile:dead-coercion-stats\") returns int after eval");
     auto snap = cs.snapshot();
     std::println("  dead_coercion_eliminated_total: {}", snap.dead_coercion_eliminated_total);
     CHECK(snap.dead_coercion_eliminated_total == 0u,

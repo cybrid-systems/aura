@@ -58,7 +58,7 @@ int aura_issue_494_run() {
     // AC1: query:pass-pipeline-stats fields
     {
         std::println("\n--- AC1: query:pass-pipeline-stats ---");
-        auto stats = cs.eval("(query:pass-pipeline-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pass-pipeline-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pass-pipeline-stats returns hash");
         CHECK(snap_stat(cs, "pipeline-yield-count") >= 0, "pipeline-yield-count present");
@@ -96,7 +96,7 @@ int aura_issue_494_run() {
     // AC3: query:pass-contracts-stats regression
     {
         std::println("\n--- AC3: pass-contracts-stats regression ---");
-        auto contracts = cs.eval("(query:pass-contracts-stats)");
+        auto contracts = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
         CHECK(contracts && aura::compiler::types::is_int(*contracts),
               "query:pass-contracts-stats regression");
     }

@@ -96,10 +96,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:ir-soa-completeness-stats) hash shape ---");
-    auto r = cs.eval("(query:ir-soa-completeness-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:ir-soa-completeness-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:ir-soa-completeness-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:ir-soa-completeness-stats) returns a hash");
+          "(engine:metrics \"query:ir-soa-completeness-stats\") returns a hash");
     const std::vector<std::string> keys = {"column-migration-hits", "dirty-cascade-to-shape",
                                            "pcv-wiring-savings-bytes", "schema"};
     for (const auto& k : keys) {
@@ -111,21 +111,22 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto col =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "column-migration-hits");
+    const auto col = hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                                    "column-migration-hits");
     CHECK(col == 0, std::format("column-migration-hits = {} (expected 0 on fresh service)", col));
-    const auto cas =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "dirty-cascade-to-shape");
+    const auto cas = hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                                    "dirty-cascade-to-shape");
     CHECK(cas == 0, std::format("dirty-cascade-to-shape = {} (expected 0 on fresh service)", cas));
-    const auto pcv =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "pcv-wiring-savings-bytes");
+    const auto pcv = hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                                    "pcv-wiring-savings-bytes");
     CHECK(pcv == 0,
           std::format("pcv-wiring-savings-bytes = {} (expected 0 on fresh service)", pcv));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 721 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")", "schema");
     CHECK(schema == 721, std::format("schema = {} (expected 721)", schema));
 }
 
@@ -148,12 +149,12 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     // incremental delta track).
     ev.bump_ir_soa_pcv_wiring_savings_bytes(4096);
     ev.bump_ir_soa_pcv_wiring_savings_bytes(2048);
-    const auto col =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "column-migration-hits");
-    const auto cas =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "dirty-cascade-to-shape");
-    const auto pcv =
-        hash_int_field(cs, "(query:ir-soa-completeness-stats)", "pcv-wiring-savings-bytes");
+    const auto col = hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                                    "column-migration-hits");
+    const auto cas = hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                                    "dirty-cascade-to-shape");
+    const auto pcv = hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                                    "pcv-wiring-savings-bytes");
     CHECK(col == 3,
           std::format("after 3 column-migration-hit bumps: column-migration-hits = {} (expected 3)",
                       col));

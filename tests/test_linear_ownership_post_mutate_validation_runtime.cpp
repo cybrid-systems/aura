@@ -97,7 +97,7 @@ static void test_post_mutate_invariant_catches_leak() {
 }
 
 static std::int64_t linear_mutation_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:linear-ownership-mutation-stats)");
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-mutation-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -160,7 +160,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats4b > stats4a, "linear-mutation-stats grew after post-mutate linear revalidate");
 
     std::println("\n--- AC5: closure-env-safety-stats regression ---");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(ces && is_hash(*ces), "query:closure-env-safety-stats still works");
 
     std::println("\n--- AC6: invalidate bumps deopt_on_linear ---");

@@ -52,7 +52,7 @@ int aura_issue_535_observability_run() {
     // AC1: query:contracts-production-hotpath-stats returns hash
     {
         std::println("\n--- AC1: query:contracts-production-hotpath-stats ---");
-        auto stats = cs.eval("(query:contracts-production-hotpath-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:contracts-production-hotpath-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:contracts-production-hotpath-stats returns hash");
         CHECK(hash_int(cs, "contract-site-count") == 6, "contract-site-count == 6");
@@ -105,8 +105,8 @@ int aura_issue_535_observability_run() {
     {
         std::println("\n--- AC4: regression ---");
         auto task4 = cs.eval("(query:task4-hotpath-contracts)");
-        auto pass_contracts = cs.eval("(query:pass-contracts-stats)");
-        auto hotpath_hash = cs.eval("(query:contracts-hotpath-stats-hash)");
+        auto pass_contracts = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
+        auto hotpath_hash = cs.eval("(engine:metrics \"query:contracts-hotpath-stats-hash\")");
         CHECK(task4 && aura::compiler::types::is_hash(*task4),
               "query:task4-hotpath-contracts hash regression");
         CHECK(pass_contracts && aura::compiler::types::is_int(*pass_contracts),

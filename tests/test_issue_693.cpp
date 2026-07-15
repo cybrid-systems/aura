@@ -47,7 +47,7 @@ int aura_issue_693_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:hardware-backend-sv-closedloop-stats ---");
-        auto stats = cs.eval("(query:hardware-backend-sv-closedloop-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:hardware-backend-sv-closedloop-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:hardware-backend-sv-closedloop-stats returns hash");
         CHECK(stat_int(cs, "hook-calls") >= 0, "hook-calls present");

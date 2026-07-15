@@ -1,6 +1,6 @@
 // @category: unit
 // @reason: pure C++ test of ArenaGroup auto-compaction
-//          lifecycle + EDSL (query:arena-auto-stats) primitive
+//          lifecycle + EDSL (engine:metrics \"query:arena-auto-stats\") primitive
 
 // test_issue_464_arena_auto_compaction.cpp — Issue #464:
 // Arena auto-compaction policy + fiber scheduler / AI
@@ -26,7 +26,7 @@
 //   5. MutationBoundaryGuard dtor calls
 //      bump_auto_compact_guard_call() on outermost +
 //      success path
-//   6. (query:arena-auto-stats) Aura primitive — 4-field
+//   6. (engine:metrics \"query:arena-auto-stats\") Aura primitive — 4-field
 //      hash
 //   7. (stats:count) 50 → 51
 //
@@ -38,7 +38,7 @@
 //   AC3:  ArenaGroup::bump_compaction_yield_check bumps
 //         the counter
 //   AC4:  auto_compact_with_safety bumps both counters
-//   AC5:  EDSL: (query:arena-auto-stats) returns a hash
+//   AC5:  EDSL: (engine:metrics \"query:arena-auto-stats\") returns a hash
 //         with 4 fields
 //   AC6:  EDSL: guard-call counter is observable (post-
 //         mutate increments it via the guard dtor)
@@ -120,18 +120,19 @@ bool test_with_safety_bumps_both() {
     return true;
 }
 
-// ── AC5: EDSL: (query:arena-auto-stats) returns a hash
+// ── AC5: EDSL: (engine:metrics \"query:arena-auto-stats\") returns a hash
 //         with 4 fields
 bool test_edsl_stats_returns_hash() {
-    std::println("\n--- AC5: EDSL (query:arena-auto-stats) ---");
+    std::println("\n--- AC5: EDSL (engine:metrics \"query:arena-auto-stats\") ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:arena-auto-stats)");
+    auto r = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
     if (!r) {
         CHECK(false, "eval returned error");
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v), "(query:arena-auto-stats) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v),
+          "(engine:metrics \"query:arena-auto-stats\") returns a hash");
     for (auto key : {"auto-compact-guard-call-count", "compaction-yield-checks",
                      "auto-compact-trigger-count", "auto-compact-skip-count"}) {
         auto rr = cs.eval(

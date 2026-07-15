@@ -53,30 +53,32 @@ static int k_stress_iters() {
 
 // ── AC1: query:mutation-log-stats returns integer sum
 bool test_query_mutation_log_stats() {
-    std::println("\n--- AC1: (query:mutation-log-stats) returns integer ---");
+    std::println("\n--- AC1: (engine:metrics \"query:mutation-log-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:mutation-log-stats)");
-    CHECK(r.has_value(), "(query:mutation-log-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:mutation-log-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:mutation-log-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:mutation-log-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:mutation-log-stats = {}", v);
-        CHECK(v >= 0, "(query:mutation-log-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(engine:metrics \"query:mutation-log-stats\") >= 0 (4 counters sum)");
     }
     return true;
 }
 
 // ── AC2: query:atomic-batch-stats regression
 bool test_query_atomic_batch_stats_regression() {
-    std::println("\n--- AC2: (query:atomic-batch-stats) regression for #459 ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"query:atomic-batch-stats\") regression for #459 ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:atomic-batch-stats)");
+    auto r = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),
-          "(query:atomic-batch-stats) returns (regression for #459)");
+          "(engine:metrics \"query:atomic-batch-stats\") returns (regression for #459)");
     return true;
 }
 
@@ -236,13 +238,13 @@ bool test_mutation_log_stats_accessibility() {
     (void)cs.eval("(mutate:atomic-batch "
                   "(list (mutate:replace-value (define a 50) "
                   "(define a 50))) \"first batch\")");
-    auto r1 = cs.eval("(query:mutation-log-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:mutation-log-stats after first batch");
     (void)cs.eval("(mutate:atomic-batch "
                   "(list (mutate:replace-value (define a 100) "
                   "(define a 100))) \"second batch\")");
-    auto r2 = cs.eval("(query:mutation-log-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:mutation-log-stats after second batch");
     const auto v1 = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
@@ -256,18 +258,18 @@ bool test_mutation_log_stats_accessibility() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:mutation-log-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:mutation-log-stats) (new for #553)");
-    auto r2 = cs.eval("(query:atomic-batch-stats)");
+          "(engine:metrics \"query:mutation-log-stats\") (new for #553)");
+    auto r2 = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:atomic-batch-stats) (regression for #459)");
-    auto r3 = cs.eval("(query:edsl-stability-stats)");
+          "(engine:metrics \"query:atomic-batch-stats\") (regression for #459)");
+    auto r3 = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:edsl-stability-stats) (regression for #552)");
-    auto r4 = cs.eval("(query:self-evolution-stability-stats)");
+          "(engine:metrics \"query:edsl-stability-stats\") (regression for #552)");
+    auto r4 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:self-evolution-stability-stats) (regression for #549)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
     if (!cs.eval("(define reg-553-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

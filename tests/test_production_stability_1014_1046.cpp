@@ -34,7 +34,7 @@ int main() {
 
     // Dashboard
     {
-        auto r = cs.eval("(query:production-stability-1014-1046-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-stability-1014-1046-stats\")");
         CHECK(r && is_hash(*r), "stability stats is hash");
         CHECK(href(cs, "query:production-stability-1014-1046-stats", "schema") == 1014,
               "schema 1014");
@@ -84,10 +84,10 @@ int main() {
     CompilerService cs2; // fresh, sandbox off
     {
         // #1039 ir-marker-stats returns hash (not bare 0)
-        auto r = cs2.eval("(query:ir-marker-stats)");
+        auto r = cs2.eval("(engine:metrics \"query:ir-marker-stats\")");
         CHECK(r && is_hash(*r), "ir-marker-stats is hash");
         // fields may be zero without workspace, but keys exist
-        auto total = cs2.eval("(hash-ref (query:ir-marker-stats) \"total\")");
+        auto total = cs2.eval("(hash-ref (engine:metrics \"query:ir-marker-stats\") \"total\")");
         CHECK(total && is_int(*total) && as_int(*total) >= 0, "ir-marker total int");
     }
 

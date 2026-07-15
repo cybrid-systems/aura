@@ -179,7 +179,7 @@ static void test_gradual_mutate_semantic_and_metrics() {
 static void test_coercion_zerooverhead_stats_primitive() {
     std::println("\n--- AC5: query:coercion-zerooverhead-stats ---");
     CompilerService cs;
-    auto r0 = cs.eval("(query:coercion-zerooverhead-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
     CHECK(r0 && is_int(*r0), "primitive returns int");
     const auto s0 = as_int(*r0);
     CHECK(s0 >= 0, "initial stats >= 0");
@@ -187,7 +187,7 @@ static void test_coercion_zerooverhead_stats_primitive() {
     cs.eval("(set-code \"(define x 42) (define y \\\"hello\\\") (define z #t)\")");
     CHECK(cs.eval("(eval-current)").has_value(), "pipeline eval succeeds");
 
-    auto r1 = cs.eval("(query:coercion-zerooverhead-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
     CHECK(r1 && is_int(*r1), "primitive returns int after pipeline");
     CHECK(as_int(*r1) >= s0, "stats grow (monotonic) after pipeline");
 }

@@ -32,7 +32,7 @@ namespace aura_issue_456_detail {
 bool test_query_epoch_stats() {
     std::println("\n--- AC1: query:epoch-stats returns the current epoch ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:epoch-stats)");
+    auto r = cs.eval("(engine:metrics \"query:epoch-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -100,7 +100,7 @@ bool test_query_epoch_delta_after_mutate() {
         return false;
     }
     // Capture initial epoch.
-    auto r_init = cs.eval("(query:epoch-stats)");
+    auto r_init = cs.eval("(engine:metrics \"query:epoch-stats\")");
     if (!r_init || !aura::compiler::types::is_int(*r_init)) {
         ++g_failed;
         return false;
@@ -187,13 +187,13 @@ bool test_query_dirty_subtree_reason_mask() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC8: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:atomic-batch-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:atomic-batch-stats (regression for #459)");
-    auto r2 = cs.eval("(query:verify-dirty-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:verify-dirty-stats (regression for #437)");
-    auto r3 = cs.eval("(query:ir-marker-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:ir-marker-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:ir-marker-stats (regression for #455)");
     return true;

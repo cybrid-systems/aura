@@ -1265,6 +1265,7 @@ public:
             "apply",
             "typecheck-current",
             "typed-mutate",
+            "typed-mutate-atomic", // Issue #1442 / #1408 EDSL atomic multi-mutate
             "rollback",
             "mutation-log",
             "query-mutation-log",
@@ -1473,6 +1474,7 @@ public:
             "apply",
             "typecheck-current",
             "typed-mutate",
+            "typed-mutate-atomic", // Issue #1442
             "rollback",
             "mutation-log",
             "query-mutation-log",
@@ -2435,17 +2437,24 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        // Issue #1418: DeadCoercionEliminationPass was wired on the
+        // default eval() path but missing from eval_ir's run_pipeline
+        // pack — dead CastOps accumulated on --inspect / IR-direct.
+        DeadCoercionEliminationPass dce(&type_registry_);
         const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
         cf.set_pipeline_epoch(pipeline_epoch);
+        dce.set_pipeline_epoch(pipeline_epoch);
 
-        std::println(std::cerr, "PM: running {}->{}->{}->{}", ts.name(), ck.name(), ar.name(),
-                     cf.name());
+        std::println(std::cerr, "PM: running {}->{}->{}->{}->{}", ts.name(), ck.name(), ar.name(),
+                     cf.name(), dce.name());
 
         // Issue #163: use run_pipeline (Pass concept fold) instead of
         // individual *.run() calls. Short-circuits on has_error().
-        aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
+        // Issue #1418: include DCE after ConstantFolding.
+        aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf, dce);
+        accumulate_coercion_pass_metrics(ts, dce);
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -2627,13 +2636,20 @@ public:
             aura::compiler::ComputeKindWrap ck;
             aura::compiler::ArityWrap ar;
             aura::compiler::ConstantFoldingWrap cf;
+            // Issue #1418: DCE was missing from the exec_jit
+            // run_pipeline pack (only default eval + post-mutate
+            // re-lower ran it). Wire after ConstantFolding so JIT
+            // never compiles dead CastOps.
+            aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
             const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
             ts.set_pipeline_epoch(pipeline_epoch);
             ar.set_pipeline_epoch(pipeline_epoch);
             cf.set_pipeline_epoch(pipeline_epoch);
+            dce.set_pipeline_epoch(pipeline_epoch);
             // Issue #163: run_pipeline (Pass concept fold) replaces
-            // the 4 individual *.run() calls.
-            aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
+            // the individual *.run() calls. Issue #1418: include DCE.
+            aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf, dce);
+            accumulate_coercion_pass_metrics(ts, dce);
             // Issue #253: accumulate linear-move elision count.
             if (ts.linear_elide_count() > 0) {
                 metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
@@ -5067,13 +5083,19 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        // Issue #1418: DCE on hot-swap re-lower so evolve! /
+        // cache_define paths don't leave dead CastOps in the
+        // live IR module.
+        DeadCoercionEliminationPass dce(&type_registry_);
         const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
         cf.set_pipeline_epoch(pipeline_epoch);
+        dce.set_pipeline_epoch(pipeline_epoch);
         // Issue #163: run_pipeline (Pass concept fold) replaces
-        // the 4 individual *.run() calls.
-        aura::compiler::run_pipeline(*last_ir_mod_, ts, ck, ar, cf);
+        // the individual *.run() calls. Issue #1418: include DCE.
+        aura::compiler::run_pipeline(*last_ir_mod_, ts, ck, ar, cf, dce);
+        accumulate_coercion_pass_metrics(ts, dce);
 
         if (ar.has_error()) {
             return std::unexpected(
@@ -6719,6 +6741,10 @@ public:
         // encoding. Default "NotChecked" for records that pre-date
         // the post-mutation check or were never run.
         std::string invariant_status;
+        // Issue #1419: compound provenance (0 = system / none).
+        std::uint64_t author_fingerprint = 0;
+        std::uint64_t parent_mutation_id = 0;
+        std::uint64_t composite_transaction_id = 0;
     };
 
     // RAII transaction guard for mutation operations.
@@ -6771,11 +6797,36 @@ public:
         std::uint64_t snapshot_id;
         std::vector<std::uint64_t> applied_mutation_ids;
         bool committed = false;
+        // Issue #1419: composite provenance for the atomic batch.
+        std::uint64_t composite_tx_id = 0;
+        std::uint64_t prev_author = 0;
+        std::uint64_t prev_parent = 0;
+        std::uint64_t prev_composite = 0;
+        bool provenance_active = false;
 
         explicit TypedTransactionGuard(CompilerService* s)
             : svc(s)
             , ws_flat(s->evaluator_.workspace_flat())
-            , snapshot_id(ws_flat ? ws_flat->next_mutation_id() : 0) {}
+            , snapshot_id(ws_flat ? ws_flat->next_mutation_id() : 0) {
+            // Issue #1419: open a composite transaction on the
+            // workspace so every sub-mutation stamps the same
+            // composite_transaction_id. Parent chain: first
+            // mutation is root (parent=0); subsequent ones link
+            // to the first applied mutation_id.
+            if (ws_flat) {
+                prev_author = ws_flat->mutation_author_fingerprint();
+                prev_parent = ws_flat->mutation_parent_mutation_id();
+                prev_composite = ws_flat->mutation_composite_transaction_id();
+                // Prefer evaluator agent fingerprint when set.
+                const auto agent_fp = s->evaluator_.current_agent_fingerprint();
+                if (agent_fp != 0)
+                    ws_flat->set_mutation_author_fingerprint(agent_fp);
+                composite_tx_id = snapshot_id != 0 ? snapshot_id : 1;
+                ws_flat->set_mutation_composite_transaction_id(composite_tx_id);
+                ws_flat->set_mutation_parent_mutation_id(0);
+                provenance_active = true;
+            }
+        }
 
         // Apply one mutation. Returns true on success (records id),
         // false on failure (caller should stop, destructor will roll back).
@@ -6784,6 +6835,10 @@ public:
             if (!result.success)
                 return false;
             applied_mutation_ids.push_back(result.mutation_id);
+            // After the first sub-mutation, chain subsequent records
+            // to the batch root (parent_mutation_id = first mid).
+            if (ws_flat && applied_mutation_ids.size() == 1)
+                ws_flat->set_mutation_parent_mutation_id(result.mutation_id);
             return true;
         }
 
@@ -6791,21 +6846,27 @@ public:
             if (committed)
                 return {0, false, "double-commit"};
             committed = true;
+            restore_provenance();
             return MutationResult{0, true, "", aura::ast::InvariantStatus::Ok, {}};
+        }
+
+        void restore_provenance() noexcept {
+            if (!provenance_active || !ws_flat)
+                return;
+            ws_flat->set_mutation_author_fingerprint(prev_author);
+            ws_flat->set_mutation_parent_mutation_id(prev_parent);
+            ws_flat->set_mutation_composite_transaction_id(prev_composite);
+            provenance_active = false;
         }
 
         ~TypedTransactionGuard() {
             if (!committed && ws_flat && snapshot_id > 0) {
                 // Issue #1408 RAII rollback — two-phase:
                 //
-                // Phase 1 (rollback_since): best-effort undo the EFFECTS
-                // of mutations added during the batch. For structural
-                // ops (set_child / insert_child / remove_child) this
-                // restores the FlatAST children_ column. For non-structural
-                // ops (mutate:rebind etc.) try_rollback_record returns
-                // an error today, so the record stays in MutationStatus::Committed
-                // and the variable-state change persists — that's a known
-                // follow-up (rebind rollback handler), not addressed here.
+                // Phase 1 (rollback_since): undo effects of mutations added
+                // during the batch. Structural ops restore children_; Issue
+                // #1441 try_rollback_rebind_op restores mutate:rebind Define
+                // bodies when the rebind record has has_rollback_data.
                 //
                 // Phase 2 (erase_mutations_since): physically erase all
                 // records with mutation_id >= snapshot_id from the audit
@@ -6819,6 +6880,7 @@ public:
                 ws_flat->rollback_since(snapshot_id);
                 ws_flat->erase_mutations_since(snapshot_id);
             }
+            restore_provenance();
         }
 
         // Disallow copy
@@ -6830,9 +6892,15 @@ public:
             , ws_flat(other.ws_flat)
             , snapshot_id(other.snapshot_id)
             , applied_mutation_ids(std::move(other.applied_mutation_ids))
-            , committed(other.committed) {
+            , committed(other.committed)
+            , composite_tx_id(other.composite_tx_id)
+            , prev_author(other.prev_author)
+            , prev_parent(other.prev_parent)
+            , prev_composite(other.prev_composite)
+            , provenance_active(other.provenance_active) {
             other.svc = nullptr;
             other.ws_flat = nullptr;
+            other.provenance_active = false;
         }
     };
 
@@ -7331,11 +7399,13 @@ public:
                     ist = "NotChecked";
                     break;
             }
-            result.push_back(
-                {rec.mutation_id, rec.timestamp_ms, rec.target_node, rec.operator_name,
-                 rec.old_type_str, rec.new_type_str, rec.summary,
-                 rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack",
-                 ist});
+            result.push_back(MutationLogEntry{
+                rec.mutation_id, rec.timestamp_ms, rec.target_node, rec.operator_name,
+                rec.old_type_str, rec.new_type_str, rec.summary,
+                rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack",
+                ist,
+                // Issue #1419: surface compound provenance
+                rec.author_fingerprint, rec.parent_mutation_id, rec.composite_transaction_id});
         }
         return result;
     }

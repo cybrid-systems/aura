@@ -57,7 +57,7 @@ static int count_kind(const std::vector<aura::compiler::OwnershipNote>& notes,
 }
 
 static std::int64_t linear_safety_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:linear-ownership-safety-stats)");
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-safety-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -171,9 +171,9 @@ static void run_matrix(CompilerService& cs) {
     (void)stable_before;
 
     std::println("\n--- AC7: query regression ---");
-    auto lms = cs.eval("(query:linear-ownership-mutation-stats)");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
-    auto sps = cs.eval("(query:shape-stability-stats)");
+    auto lms = cs.eval("(engine:metrics \"query:linear-ownership-mutation-stats\")");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
+    auto sps = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
     CHECK(lms && is_int(*lms), "linear-ownership-mutation-stats regression");
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
     CHECK(sps && is_int(*sps), "shape-stability-stats regression");

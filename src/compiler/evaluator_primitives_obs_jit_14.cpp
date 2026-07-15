@@ -81,37 +81,40 @@ using types::make_void;
 // Issue #909 part 112 (orig lines 21343-21394)
 void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
     // Issue #395: query:gcc16-modules-buildenv-stats
-    add("query:gcc16-modules-buildenv-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
-        const std::int64_t total = m ? static_cast<std::int64_t>(m->gcc16_modules_env_total.load(
-                                           std::memory_order_relaxed))
-                                     : 0;
-        const std::int64_t hits =
-            m ? static_cast<std::int64_t>(
-                    m->gcc16_modules_env_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t savings =
-            m ? static_cast<std::int64_t>(
-                    m->gcc16_modules_env_savings_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t active = 1;
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
-                                                               make_string, make_int);
-        };
-        insert_kv("total", total);
-        insert_kv("hits", hits);
-        insert_kv("savings", savings);
-        insert_kv("active", active);
-        insert_kv("schema", 395);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:gcc16-modules-buildenv-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const std::int64_t total =
+                m ? static_cast<std::int64_t>(
+                        m->gcc16_modules_env_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hits =
+                m ? static_cast<std::int64_t>(
+                        m->gcc16_modules_env_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t savings =
+                m ? static_cast<std::int64_t>(
+                        m->gcc16_modules_env_savings_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t active = 1;
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
+            };
+            insert_kv("total", total);
+            insert_kv("hits", hits);
+            insert_kv("savings", savings);
+            insert_kv("active", active);
+            insert_kv("schema", 395);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 113 (orig lines 21395-21426)

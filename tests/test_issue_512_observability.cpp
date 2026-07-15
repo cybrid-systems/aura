@@ -52,7 +52,7 @@ int aura_issue_512_observability_run() {
     // AC1: query:runtime-orchestration-stats returns hash
     {
         std::println("\n--- AC1: query:runtime-orchestration-stats ---");
-        auto stats = cs.eval("(query:runtime-orchestration-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:runtime-orchestration-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:runtime-orchestration-stats returns hash");
         CHECK(hash_int(cs, "steal-attempts") >= 0, "steal-attempts present");
@@ -82,7 +82,7 @@ int aura_issue_512_observability_run() {
         auto tune = cs.eval("(orchestration:tune-gc-frequency 75)");
         CHECK(tune && aura::compiler::types::is_int(*tune),
               "orchestration:tune-gc-frequency returns int");
-        auto coord = cs.eval("(query:scheduler-mutation-coord-stats)");
+        auto coord = cs.eval("(engine:metrics \"query:scheduler-mutation-coord-stats\")");
         CHECK(coord && aura::compiler::types::is_hash(*coord),
               "query:scheduler-mutation-coord-stats hash regression");
     }
@@ -96,7 +96,7 @@ int aura_issue_512_observability_run() {
         CHECK(total_after >= total_before,
               std::format("runtime-orchestration-total monotonic ({} -> {})", total_before,
                           total_after));
-        auto wss = cs.eval("(query:work-steal-stats)");
+        auto wss = cs.eval("(engine:metrics \"query:work-steal-stats\")");
         CHECK(wss && aura::compiler::types::is_hash(*wss),
               "query:work-steal-stats hash regression");
         auto legacy = cs.eval("(query:orchestration-metrics)");

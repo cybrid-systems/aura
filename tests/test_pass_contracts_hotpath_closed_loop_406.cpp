@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t pass_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:pass-contracts-stats)");
+    auto r = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -92,7 +92,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query regression ---");
     auto vds = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
-    auto soa = cs.eval("(query:soa-hotpath-adoption-stats)");
+    auto soa = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
     CHECK(vds && is_int(*vds), "value-dispatch-stats regression");
     CHECK(soa && is_int(*soa), "soa-hotpath-adoption-stats regression");
 }

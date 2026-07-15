@@ -1384,7 +1384,7 @@
 (test-suite "edsl:query-index"
   (set-code "(define (add x y) (+ x y))(define (mul x y) (* x y))")
   (check (query:build-index))
-  (let ((stats (query:index-stats)))
+  (let ((stats (engine:metrics "query:index-stats")))
     (check (pair? stats))
     (check (> (length stats) 0))))
 
