@@ -883,6 +883,35 @@ public:
             return static_cast<std::uint64_t>(
                 aura::compiler::InlinePass::total_macro_hygiene_skipped());
         });
+        // Issue #1420 AC3: hook for (compile:bidirectional-stats).
+        // Reads the 4 CompilerMetrics counters incremented
+        // by InferenceEngine::check_flat_call and packs
+        // them into a single uint64. Bit layout (see
+        // Evaluator::get_bidirectional_stats_fn_ comment):
+        //   bits  0-23: compile_bidirectional_check_call_total
+        //   bits 24-39: compile_bidirectional_annotation_pass_total
+        //   bits 40-55: compile_bidirectional_annotation_fail_total
+        //   bits 56-63: compile_bidirectional_coercion_deferred_total
+        // Mode (full / disabled) is read separately via
+        // CompilerService::bidirectional_mode() because
+        // the persistent CompilerService flag is the
+        // authoritative source (per-call TypeChecker
+        // instances are short-lived and pick up the flag
+        // via tc.set_bidirectional_mode(bidirectional_mode_)
+        // at construction).
+        evaluator_.set_get_bidirectional_stats_fn([this]() -> std::uint64_t {
+            auto& m = this->metrics_;
+            std::uint64_t check_call =
+                m.compile_bidirectional_check_call_total.load(std::memory_order_relaxed);
+            std::uint64_t pass =
+                m.compile_bidirectional_annotation_pass_total.load(std::memory_order_relaxed);
+            std::uint64_t fail =
+                m.compile_bidirectional_annotation_fail_total.load(std::memory_order_relaxed);
+            std::uint64_t coercion =
+                m.compile_bidirectional_coercion_deferred_total.load(std::memory_order_relaxed);
+            return ((coercion & 0xFF) << 56) | ((fail & 0xFFFF) << 40) | ((pass & 0xFFFF) << 24) |
+                   (check_call & 0xFFFFFF);
+        });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send = [](const std::string& target,
@@ -1172,6 +1201,12 @@ public:
     // with many nested ifs where the bidirectional path is
     // measurably slower than the legacy path.
     void set_bidirectional_mode(bool b) { bidirectional_mode_ = b; }
+    // Issue #1420 AC3: accessor for (compile:bidirectional-stats)
+    // :mode field. The persistent CompilerService flag is the
+    // authoritative source — per-call TypeChecker instances are
+    // short-lived and pick up the flag via
+    // tc.set_bidirectional_mode(bidirectional_mode_) at
+    // construction (see service.ixx:3291 for one example).
     bool bidirectional_mode() const { return bidirectional_mode_; }
 
     // ---- Unified evaluation (IR-first with fallback) -----------------

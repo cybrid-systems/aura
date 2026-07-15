@@ -822,6 +822,113 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
         return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
     });
+
+    // Issue #1420 AC3: (compile:bidirectional-stats)
+    // EDSL primitive. Surfaces the bidirectional
+    // annotation check plumbing counters from
+    // InferenceEngine::check_flat_call + the persistent
+    // CompilerService bidirectional_mode_ flag. Used by
+    // AI self-evol to detect whether annotation
+    // contracts are being enforced (and how often
+    // they're being violated / coerced via Gradual
+    // Typing).
+    //
+    // The hash has 6 keys:
+    //   - mode:              "full" | "disabled"
+    //                        (persistent CompilerService flag;
+    //                        "sampled" deferred to a follow-up
+    //                        because it requires bidirectional_mode_
+    //                        bool→enum upgrade in type_checker.ixx)
+    //   - check-calls:       int (compile_bidirectional_check_call_total)
+    //   - annotation-passes: int (compile_bidirectional_annotation_pass_total)
+    //   - annotation-fails:  int (compile_bidirectional_annotation_fail_total)
+    //   - coercion-deferred: int (compile_bidirectional_coercion_deferred_total)
+    //   - narrow-records:    int (check_mode_narrow_hits_total, pre-existing
+    //                        field — reuse rather than add a new atomic)
+    //
+    // Counter access via ev.get_bidirectional_stats_fn_() packed
+    // uint64 (see Evaluator::get_bidirectional_stats_fn_ comment
+    // for bit layout); mode + narrow-records read directly from
+    // CompilerService / CompilerMetrics via the existing
+    // ev.compiler_service() / ev.compiler_metrics() accessors.
+    //
+    // Default tier (kPrimSecSafe) — read-only stats primitive;
+    // mirrors (compile:inline-pass-stats) at line 72 of
+    // compile_05.cpp.
+    add("compile:bidirectional-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t packed = 0;
+        if (ev.get_bidirectional_stats_fn_) {
+            packed = ev.get_bidirectional_stats_fn_();
+        }
+        const std::uint64_t check_call = packed & 0xFFFFFF;
+        const std::uint64_t pass = (packed >> 24) & 0xFFFF;
+        const std::uint64_t fail = (packed >> 40) & 0xFFFF;
+        const std::uint64_t coercion = (packed >> 56) & 0xFF;
+
+        std::string mode_str = "full"; // default if no service back-pointer
+        if (auto* svc = static_cast<CompilerService*>(ev.compiler_service())) {
+            mode_str = svc->bidirectional_mode() ? "full" : "disabled";
+        }
+
+        std::uint64_t narrow_records = 0;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            narrow_records = m->check_mode_narrow_hits_total.load(std::memory_order_relaxed);
+        }
+
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+
+        auto mode_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(mode_str);
+        EvalValue mode_ev = make_string(mode_idx);
+
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"mode", mode_ev},
+            {"check-calls", make_int(static_cast<std::int64_t>(check_call))},
+            {"annotation-passes", make_int(static_cast<std::int64_t>(pass))},
+            {"annotation-fails", make_int(static_cast<std::int64_t>(fail))},
+            {"coercion-deferred", make_int(static_cast<std::int64_t>(coercion))},
+            {"narrow-records", make_int(static_cast<std::int64_t>(narrow_records))},
+        };
+        return build_hash(kv);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

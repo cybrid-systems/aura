@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**614** registrations scanned from `src/**/*.cpp` (27 marked **deprecated** — Issue #1438).
+**615** registrations scanned from `src/**/*.cpp` (28 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 122 primitives (20%)
+- **mutation-safety**: 123 primitives (20%)
 - **core**: 403 primitives (66%)
 - **internal-observable**: 81 primitives (13%)
 - **convenience**: 8 primitives (1%)
@@ -183,8 +183,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (38)
+## Compile: (39)
 
+- `compile:bidirectional-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:cache-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
@@ -778,7 +779,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (122)
+### Mutation safety (must remain primitive) (123)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -818,6 +819,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
+- `compile:bidirectional-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:cache-size` — `src/compiler/evaluator_primitives_compile_02.cpp`
@@ -1406,7 +1408,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **27** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **28** names:
 
 - `arena:adaptive-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1414,6 +1416,7 @@ Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(wo
 - `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
 - `closure:free-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `compile:bidirectional-stats` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
 - `gc-arena-stats` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-stats` — `src/compiler/evaluator_primitives_memory.cpp`

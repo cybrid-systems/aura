@@ -4832,6 +4832,20 @@ aura_add_issue_test(test_bidirectional_annotation)
 # undefined references (g_tl_arena, tl_arena_push/pop,
 # AuraJIT::unhandled_opcode_count_for_function, aura_set_aot_metrics, etc).
 aura_issue_test_link_llvm_jit(test_bidirectional_annotation)
+# Issue #1420: (compile:bidirectional-stats) EDSL primitive +
+# engine:metrics facade wiring (4 new compile_bidirectional_*
+# atomic fields land in :compile group via prefix rule).
+# Production code: src/compiler/observability_metrics.h
+# (4 atomic fields), src/compiler/type_checker_impl.cpp:4590
+# (counter increments at check_flat_call pass/coerce/fail
+# paths), src/compiler/evaluator.ixx (get_bidirectional_stats_fn_
+# field), src/compiler/service.ixx (hook +
+# bidirectional_mode() accessor), src/compiler/evaluator_primitives_compile_07.cpp
+# (primitive in p63). Tests direct CompilerService::eval,
+# requires aura_issue_test_link_llvm_jit per #1408/#1410/#1411
+# invariant.
+aura_add_issue_test(test_bidirectional_stats)
+aura_issue_test_link_llvm_jit(test_bidirectional_stats)
 # Issue #1416: Runtime GuardShape enforcement — kPrimSec* capability
 # gate at primitive dispatch site. Production code lives in
 # src/compiler/security_capabilities.h (new kCapSandbox constant),

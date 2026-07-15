@@ -1496,6 +1496,25 @@ public:
     void set_get_macro_hygiene_skipped_fn(std::function<GetMacroHygieneSkippedFn> fn) {
         get_macro_hygiene_skipped_fn_ = std::move(fn);
     }
+    // Issue #1420 AC3: packed uint64 layout for
+    // (compile:bidirectional-stats) EDSL primitive. The
+    // hook reads 4 CompilerMetrics counters (per Issue
+    // #1420's annotation contract enforcement in
+    // check_flat_call) and packs them as:
+    //   bits  0-23: check_call_total (24-bit, ~16M max)
+    //   bits 24-39: annotation_pass_total (16-bit, 65535)
+    //   bits 40-55: annotation_fail_total (16-bit, 65535)
+    //   bits 56-63: coercion_deferred_total (8-bit, 255)
+    // Mode (full / disabled) is read separately via
+    // CompilerService::bidirectional_mode() because bool
+    // fits awkwardly into 64-bit packed counters and the
+    // accessor already exists for the persistent
+    // TypeChecker instance.
+    using GetBidirectionalStatsFn = std::uint64_t();
+    std::function<GetBidirectionalStatsFn> get_bidirectional_stats_fn_ = nullptr;
+    void set_get_bidirectional_stats_fn(std::function<GetBidirectionalStatsFn> fn) {
+        get_bidirectional_stats_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
