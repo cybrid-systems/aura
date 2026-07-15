@@ -22,6 +22,7 @@
     "test_cyber_cat_smoke",
     "test_issue_1455_occurrence_stale_propagation",
     "test_issue_1456_affected_subtree_locality",
-    "test_issue_1457_type_propagation_castop_zerooverhead"
+    "test_issue_1457_type_propagation_castop_zerooverhead",
+    "test_issue_1458_linear_ownership_post_mutate"
   ]
 }

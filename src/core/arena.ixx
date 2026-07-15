@@ -668,65 +668,31 @@ public:
             invoke_compact_hook_();
         }
         // Note: NOT touching stats_.compaction_count /
-
-        // Issue #1467 Phase 1: live-object-moving defrag foundation.
-        //
-        // What this does today (skeleton):
-        //   1. Runs the existing conservative defrag() (trim unused tail).
-        //   2. Walks the SmallObjectPool tiers and counts live objects
-        //      (for each tier: bump_ - start_)/obj_sz). This is the
-        //      "mark" phase of mark-and-sweep — we identify how many
-        //      live objects exist but DO NOT move them yet.
-        //   3. Bumps live_defrag_attempted_count + live_objects_marked_total.
-        //   4. Triggers shape invalidation via the compact hook (since
-        //      any future copy-and-remap would invalidate ShapeIDs that
-        //      point into the arena).
-        //
-        // What's NOT in this skeleton (tracked as #1467 follow-ups):
-        //   - Actual object relocation (copy-and-sweep) — requires
-        //     patching all internal pointers / NodeId / StableNodeRef.
-        //   - PersistentChildVector / gap_buffer coordination (compact
-        //     their gap to end and update data()).
-        //   - Stop-the-world / safepoint integration with the GC.
-        //
-        // Returns the number of live objects marked (the new "saved"
-        // metric for live defrag, distinct from defrag()'s bytes-saved).
-        [[nodiscard]] std::size_t live_defrag() noexcept {
-            // Step 1: conservative trim (same as defrag()).
-            defrag_impl(false);
-            // Step 2: mark phase — count live objects in each tier.
-            std::size_t marked = 0;
-            for (const auto& tier : classes_) {
-                if (tier.obj_sz > 0) {
-                    const std::size_t used_bytes = static_cast<std::size_t>(tier.bump - tier.start);
-                    marked += used_bytes / tier.obj_sz;
-                }
-            }
-            // Step 3: bump counters.
-            stats_.live_defrag_attempted_count++;
-            stats_.live_objects_marked_total += marked;
-            live_defrag_attempted_count_.fetch_add(1, std::memory_order_relaxed);
-            live_objects_marked_total_.fetch_add(marked, std::memory_order_relaxed);
-            // Step 4: shape invalidation hook (same as defrag/compact —
-            // any future copy-and-remap invalidates ShapeIDs pointing
-            // into the arena). Safe to call today: invalidation just
-            // bumps shape_inval_on_compact and ShapeProfiler resets.
-            invoke_compact_hook_();
-            return marked;
-        }
-
-        // Issue #1467: live-defrag counter accessors. Public so
-        // (arena:live-defrag-stats) primitive + tests can read them
-        // without touching the stats struct directly.
-        [[nodiscard]] std::uint64_t live_defrag_attempted_count_relaxed() const noexcept {
-            return live_defrag_attempted_count_.load(std::memory_order_relaxed);
-        }
-        [[nodiscard]] std::uint64_t live_objects_marked_total_relaxed() const noexcept {
-            return live_objects_marked_total_.load(std::memory_order_relaxed);
-        }
         // last_compaction_saved. This is intentionally a separate
         // counter from compact().
         return saved;
+    }
+
+    // Issue #1467 Phase 1: live-object-moving defrag foundation.
+    // Skeleton: conservative trim + count allocated small-pool
+    // bytes as a mark proxy. Full copy/remap is a follow-up.
+    [[nodiscard]] std::size_t live_defrag() noexcept {
+        defrag_impl(false);
+        // Mark proxy: small-pool allocated bytes (not object count
+        // until pool exposes per-tier live counts publicly).
+        const std::size_t marked = small_pool_.allocated();
+        stats_.live_defrag_attempted_count++;
+        stats_.live_objects_marked_total += marked;
+        invoke_compact_hook_();
+        return marked;
+    }
+
+    // Issue #1467: live-defrag counters (from ArenaStats).
+    [[nodiscard]] std::uint64_t live_defrag_attempted_count_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_defrag_attempted_count);
+    }
+    [[nodiscard]] std::uint64_t live_objects_marked_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_objects_marked_total);
     }
 
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
@@ -1274,7 +1240,8 @@ public:
                             "\"live_defrag_attempted_count\":{},\"live_objects_marked_total\":{}}}",
                             esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
                             s.compaction_count, s.last_compaction_saved, s.total_compaction_saved,
-                            s.fragmentation_ratio(), s.defrag_attempted_count, s.last_defrag_saved);
+                            s.fragmentation_ratio(), s.defrag_attempted_count, s.last_defrag_saved,
+                            s.live_defrag_attempted_count, s.live_objects_marked_total);
         }
         out += "],\"compact_threshold\":" + std::to_string(compact_threshold_) + "}";
         return out;

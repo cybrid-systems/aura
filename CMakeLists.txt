@@ -1782,6 +1782,9 @@ aura_issue_test_link_llvm_jit(test_issue_1456_affected_subtree_locality)
 # Issue #1457: IR type propagation + CastOp zero-overhead
 aura_add_issue_test(test_issue_1457_type_propagation_castop_zerooverhead)
 aura_issue_test_link_llvm_jit(test_issue_1457_type_propagation_castop_zerooverhead)
+# Issue #1458: linear ownership post-mutate hardening
+aura_add_issue_test(test_issue_1458_linear_ownership_post_mutate)
+aura_issue_test_link_llvm_jit(test_issue_1458_linear_ownership_post_mutate)
 aura_add_issue_test(test_bidirectional_check_occurrence_narrow_post_mutate)
 aura_issue_test_link_llvm_jit(test_bidirectional_check_occurrence_narrow_post_mutate)
 # Issue #609: occurrence typing blame + post-mutate recovery
@@ -4924,6 +4927,7 @@ aura_add_issue_test(test_issue_1468)
 # query:* primitives. Integration test (uses CompilerService to load
 # lib/std/compat.aura and verify shim wrappers route to the new
 # stdlib/primitive equivalents).
+aura_add_issue_test(test_issue_1462)
 aura_issue_test_link_llvm_jit(test_issue_1462)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
