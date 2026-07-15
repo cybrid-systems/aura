@@ -37,14 +37,14 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -92,7 +92,7 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
       with:
@@ -101,7 +101,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -134,7 +134,7 @@ jobs:
         # binary 8 levels looking for lib/runtime.c, (3) CWD-
         # relative lib/../lib/runtime.c, (4) FHS install-path
         # fallbacks (/usr/local/share/aura, /usr/share/aura,
-        # /opt/aura/share). On the v1.0.1 CI image the walk-up
+        # /opt/aura/share). On the v1.0.4 CI image the walk-up
         # normally finds lib/runtime.c under the workspace; if
         # it ever fails (e.g. custom Docker layer with stripped
         # /proc, or a non-standard build tree depth > 8), the
@@ -150,14 +150,14 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -202,7 +202,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
@@ -227,7 +227,7 @@ jobs:
     needs: [asan-build]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
@@ -280,14 +280,14 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -307,14 +307,14 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
     # Issue #675 follow-up: cache the Trivy vuln DB so
     # the first run downloads it once and subsequent runs
@@ -367,7 +367,7 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
@@ -377,7 +377,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -391,7 +391,7 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/aura-dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
