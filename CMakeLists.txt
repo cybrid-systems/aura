@@ -4917,6 +4917,11 @@ aura_add_issue_test(test_issue_1467)
 # deopt-storm detection, 4 metric accessors, invalidate_all counter,
 # history_hit counter, SpecJITController coordination hook.
 aura_add_issue_test(test_issue_1468)
+# Issue #1462: Agent Migration Guide + compat shims for demoted
+# query:* primitives. Integration test (uses CompilerService to load
+# lib/std/compat.aura and verify shim wrappers route to the new
+# stdlib/primitive equivalents).
+aura_issue_test_link_llvm_jit(test_issue_1462)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
