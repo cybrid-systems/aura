@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Issue #1432: primitive surface freeze gate — unit + synthetic injection.
+"""Issue #1432 freeze + #1448 SlimSurface --strict — unit + synthetic injection.
 
 Run:  python3 tests/test_primitive_surface_gate.py
 Also invoked from ./build.py gate via cmd_primitive_surface.
@@ -84,6 +84,12 @@ class TestBlockedPatterns(unittest.TestCase):
         cur = ["string-append"]
         self.assertEqual(self.m.freeze_violations(cur, base), [])
 
+    # ── Issue #1448 SlimSurface constants ──
+    def test_slim_surface_budgets(self):
+        self.assertEqual(self.m.TARGET_BUDGET, 420)
+        self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, self.m.TARGET_BUDGET)
+        self.assertEqual(self.m.INTERIM_HARD_CEILING, 700)
+
 
 class TestSyntheticInjection(unittest.TestCase):
     """Simulate a deliberately-bad add() by monkeypatching scan results."""
@@ -117,6 +123,26 @@ class TestSyntheticInjection(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
         self.assertIn("OK: primitive surface freeze", r.stdout)
+
+    def test_live_strict_passes(self):
+        """Issue #1448: --strict must pass on the current tree."""
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT), "--strict"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
+        self.assertIn("SlimSurface --strict", r.stdout)
+        self.assertIn("OK: SlimSurface --strict checks passed", r.stdout)
+
+    def test_strict_fails_when_over_ceiling(self):
+        """Budget hard-fail when public count exceeds INTERIM_HARD_CEILING."""
+        m = self.m
+        # Fabricate a huge name list above the ceiling.
+        fake = [f"core-fake-{i}" for i in range(m.INTERIM_HARD_CEILING + 1)]
+        rc = m.run_strict_checks(fake, stats_names=[])
+        self.assertEqual(rc, 1)
 
 
 def main() -> int:

@@ -69,9 +69,9 @@ These four issues do **not** duplicate any current open engine/Guard/SlimSurface
 
 ### Priority 0 (this week)
 
-1. **Land SlimSurface infrastructure**  
-   Finish registry gate + scripts/check_primitive_surface.py --strict + PrimMeta.deprecated + CI. Without this, any later demotion is cancelled by new convenience primitives.  
-   Simultaneously force all query:*-stats / compile:*-stats through the facade (keep <50 core internal aliases). Target: cliff-edge drop in stats-class count.
+1. **Land SlimSurface infrastructure** — **#1448 done**  
+   Registry gate + `scripts/check_primitive_surface.py --strict` + `PrimMeta.deprecated` dispatch counter + `docs/design/primitives-slim-surface-v2.md` + gate CI + `test_primitives_surface_convergence`.  
+   Remaining: real demotion to public ≤420; force remaining public stats through facade.
 
 2. **MutationBoundary contract + first-class atomic-batch**  
    - Every mutate:* entry must go through outermost Guard (runtime contract + metric).  

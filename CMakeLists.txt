@@ -4872,6 +4872,12 @@ aura_issue_test_link_llvm_jit(test_bidirectional_stats)
 # required (same reusable invariant from #1408/#1410/#1411).
 aura_add_issue_test(test_capability_gating)
 aura_issue_test_link_llvm_jit(test_capability_gating)
+# Issue #1448: SlimSurface infrastructure — PrimMeta.deprecated dispatch
+# counter, (stats:count)/(stats:list)/(engine:metrics) catalog ACs.
+# Script-side freeze + --strict live in check_primitive_surface.py +
+# tests/test_primitive_surface_gate.py (./build.py gate).
+aura_add_issue_test(test_primitives_surface_convergence)
+aura_issue_test_link_llvm_jit(test_primitives_surface_convergence)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
