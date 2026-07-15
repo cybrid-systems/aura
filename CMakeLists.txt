@@ -4929,6 +4929,12 @@ aura_add_issue_test(test_issue_1468)
 # stdlib/primitive equivalents).
 aura_add_issue_test(test_issue_1462)
 aura_issue_test_link_llvm_jit(test_issue_1462)
+# Issue #1469: FlatAST generation wrap-around handling (P0 EDSL Review).
+# Pure C++ (no CompilerService / LLVM JIT); tests bump_generation_count
+# observability + 100k mutate cycle + StableNodeRef capture +
+# code-presence checks for wrap_epoch_ + generation_wrap_count_ +
+# maybe_auto_restamp_on_wrap wire points.
+aura_add_issue_test(test_issue_1469)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
