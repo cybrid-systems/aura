@@ -104,7 +104,7 @@ int aura_issue_535_observability_run() {
     // AC4: related contracts primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto task4 = cs.eval("(query:task4-hotpath-contracts)");
+        auto task4 = cs.eval("(stats:get \"query:task4-hotpath-contracts\")");
         auto pass_contracts = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
         auto hotpath_hash = cs.eval("(engine:metrics \"query:contracts-hotpath-stats-hash\")");
         CHECK(task4 && aura::compiler::types::is_hash(*task4),

@@ -496,63 +496,65 @@ void ObservabilityPrims::register_eval_p100(PrimRegistrar add, Evaluator& ev) {
     //   - The Pass concept instance count
     //   - The SoA column count
     //   - The dirty bitmask byte width
-    add("query:cxx26-hotpath-invariants", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:cxx26-hotpath-invariants", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        // These values are the ones static_assert'd in
-        // value_tags.h. The build will fail if they drift.
-        // We hardcode the values here because the
-        // EvalValueTag enum is in value.ixx (a different
-        // module partition) and not directly accessible
-        // from this file. The static_assert chain in
-        // value_tags.h is the source of truth; the
-        // primitive reports the same values so the
-        // AI Agent can verify a deployed binary matches
-        // the expected encoding.
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"fixnum-tag-encoding", make_int(0)},    {"ref-tag-encoding", make_int(1)},
-            {"string-v2-tag-encoding", make_int(2)}, {"special-tag-encoding", make_int(3)},
-            {"float-tag-encoding", make_int(4)},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            // These values are the ones static_assert'd in
+            // value_tags.h. The build will fail if they drift.
+            // We hardcode the values here because the
+            // EvalValueTag enum is in value.ixx (a different
+            // module partition) and not directly accessible
+            // from this file. The static_assert chain in
+            // value_tags.h is the source of truth; the
+            // primitive reports the same values so the
+            // AI Agent can verify a deployed binary matches
+            // the expected encoding.
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"fixnum-tag-encoding", make_int(0)},    {"ref-tag-encoding", make_int(1)},
+                {"string-v2-tag-encoding", make_int(2)}, {"special-tag-encoding", make_int(3)},
+                {"float-tag-encoding", make_int(4)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 101 (orig lines 11367-11442)

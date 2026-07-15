@@ -99,7 +99,7 @@ int aura_issue_512_observability_run() {
         auto wss = cs.eval("(engine:metrics \"query:work-steal-stats\")");
         CHECK(wss && aura::compiler::types::is_hash(*wss),
               "query:work-steal-stats hash regression");
-        auto legacy = cs.eval("(query:orchestration-metrics)");
+        auto legacy = cs.eval("(stats:get \"query:orchestration-metrics\")");
         CHECK(legacy && aura::compiler::types::is_string(*legacy),
               "query:orchestration-metrics string regression");
     }

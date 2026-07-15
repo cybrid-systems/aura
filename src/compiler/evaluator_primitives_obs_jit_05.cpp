@@ -319,96 +319,99 @@ void ObservabilityPrims::register_jit_p43(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 44 (orig lines 17618-17708)
 void ObservabilityPrims::register_jit_p44(PrimRegistrar add, Evaluator& ev) {
     // Issue #814: runtime-production-health — unified composite health + self-heal counters
-    add("query:runtime-production-health", [&ev](const auto&) -> EvalValue {
-        auto load = [&](auto* atomic_ptr) -> std::uint64_t {
-            return atomic_ptr ? atomic_ptr->load(std::memory_order_relaxed) : 0;
-        };
-        CompilerMetrics* m =
-            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
-        const std::int64_t f_health_score = ([&]() -> std::int64_t {
-            if (!m)
-                return 100;
-            const auto drift =
-                m->runtime_health_drift_detected_total.load(std::memory_order_relaxed);
-            const auto heal =
-                m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed);
-            const auto guard = m->guard_aura_result_path_total.load(std::memory_order_relaxed);
-            const auto steal_y =
-                m->steal_arena_yield_during_compact_total.load(std::memory_order_relaxed);
-            // Start at 100; each unhealed drift costs 5 (min 0).
-            std::int64_t score = 100;
-            if (drift > heal) {
-                const auto unpaid = drift - heal;
-                score -= static_cast<std::int64_t>(unpaid > 20 ? 100 : unpaid * 5);
-            }
-            if (score < 0)
-                score = 0;
-            // Bonus signal: any guard/steal activity keeps score well-defined.
-            (void)guard;
-            (void)steal_y;
-            return score;
-        })();
-        const std::int64_t f_env_consistency = 100;
-        const std::int64_t f_aot_fidelity = 100;
-        const std::int64_t f_guard_rollback_safe =
-            m ? (m->guard_aura_result_path_total.load(std::memory_order_relaxed) > 0 ? 100 : 100)
-              : 100;
-        const std::int64_t f_steal_safety = 100;
-        const std::int64_t f_memory_stability = 100;
-        const std::int64_t f_drift_violations =
-            m ? static_cast<std::int64_t>(
-                    m->runtime_health_drift_detected_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t f_self_heal_invocations =
-            m ? static_cast<std::int64_t>(
-                    m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t f_recommended_action =
-            m && m->runtime_health_drift_detected_total.load(std::memory_order_relaxed) >
-                        m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed)
-                ? 1
-                : 0;
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:runtime-production-health", [&ev](const auto&) -> EvalValue {
+            auto load = [&](auto* atomic_ptr) -> std::uint64_t {
+                return atomic_ptr ? atomic_ptr->load(std::memory_order_relaxed) : 0;
+            };
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const std::int64_t f_health_score = ([&]() -> std::int64_t {
+                if (!m)
+                    return 100;
+                const auto drift =
+                    m->runtime_health_drift_detected_total.load(std::memory_order_relaxed);
+                const auto heal =
+                    m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed);
+                const auto guard = m->guard_aura_result_path_total.load(std::memory_order_relaxed);
+                const auto steal_y =
+                    m->steal_arena_yield_during_compact_total.load(std::memory_order_relaxed);
+                // Start at 100; each unhealed drift costs 5 (min 0).
+                std::int64_t score = 100;
+                if (drift > heal) {
+                    const auto unpaid = drift - heal;
+                    score -= static_cast<std::int64_t>(unpaid > 20 ? 100 : unpaid * 5);
                 }
-            }
-        };
-        insert_kv("health-score", f_health_score);
-        insert_kv("env-consistency", f_env_consistency);
-        insert_kv("aot-fidelity", f_aot_fidelity);
-        insert_kv("guard-rollback-safe", f_guard_rollback_safe);
-        insert_kv("steal-safety", f_steal_safety);
-        insert_kv("memory-stability", f_memory_stability);
-        insert_kv("drift-violations", f_drift_violations);
-        insert_kv("self-heal-invocations", f_self_heal_invocations);
-        insert_kv("recommended-action", f_recommended_action);
-        insert_kv("schema", 814);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+                if (score < 0)
+                    score = 0;
+                // Bonus signal: any guard/steal activity keeps score well-defined.
+                (void)guard;
+                (void)steal_y;
+                return score;
+            })();
+            const std::int64_t f_env_consistency = 100;
+            const std::int64_t f_aot_fidelity = 100;
+            const std::int64_t f_guard_rollback_safe =
+                m ? (m->guard_aura_result_path_total.load(std::memory_order_relaxed) > 0 ? 100
+                                                                                         : 100)
+                  : 100;
+            const std::int64_t f_steal_safety = 100;
+            const std::int64_t f_memory_stability = 100;
+            const std::int64_t f_drift_violations =
+                m ? static_cast<std::int64_t>(
+                        m->runtime_health_drift_detected_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t f_self_heal_invocations =
+                m ? static_cast<std::int64_t>(
+                        m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t f_recommended_action =
+                m && m->runtime_health_drift_detected_total.load(std::memory_order_relaxed) >
+                            m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed)
+                    ? 1
+                    : 0;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("health-score", f_health_score);
+            insert_kv("env-consistency", f_env_consistency);
+            insert_kv("aot-fidelity", f_aot_fidelity);
+            insert_kv("guard-rollback-safe", f_guard_rollback_safe);
+            insert_kv("steal-safety", f_steal_safety);
+            insert_kv("memory-stability", f_memory_stability);
+            insert_kv("drift-violations", f_drift_violations);
+            insert_kv("self-heal-invocations", f_self_heal_invocations);
+            insert_kv("recommended-action", f_recommended_action);
+            insert_kv("schema", 814);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 45 (orig lines 17709-17759)

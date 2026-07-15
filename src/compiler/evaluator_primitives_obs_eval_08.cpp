@@ -265,101 +265,102 @@ void ObservabilityPrims::register_eval_p66(PrimRegistrar add, Evaluator& ev) {
     //   - slo-breach-total           sv_slo_breach_total
     //                                (cumulative SLO breach counter)
     //   - schema == 772
-    add("query:sv-closedloop-slo", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        const std::int64_t emit_success =
-            m ? static_cast<std::int64_t>(
-                    m->sv_slo_emit_parse_success_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t emit_failure =
-            m ? static_cast<std::int64_t>(
-                    m->sv_slo_emit_parse_failure_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t reemit_latency_max_us =
-            m ? static_cast<std::int64_t>(
-                    m->sv_slo_reemit_latency_max_us.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t reemit_hits =
-            m ? static_cast<std::int64_t>(
-                    m->sv_slo_reemit_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t slo_breach =
-            m ? static_cast<std::int64_t>(m->sv_slo_breach_total.load(std::memory_order_relaxed))
-              : 0;
-        // Compute slo-status from current counters + SLO thresholds:
-        //   fidelity >= 99% (numerator/denominator * ::aura::compiler::kBasisPointScale >= 9900)
-        //   latency   <= 50ms (50_000us)
-        //   breach    = 0
-        // The thresholds match the issue body's "fidelity >99%,
-        // re-emit latency <X" requirement with X = 50ms as a
-        // production-grade default. The status is the MAX of all
-        // threshold violations (independently evaluated) so any
-        // single breach/warn promotes the overall status.
-        std::int64_t slo_status = 0;
-        const std::int64_t total_emits = emit_success + emit_failure;
-        if (total_emits > 0) {
-            // Fixed-point fidelity in basis points × 100
-            // (10000 = 100.00%).
-            const std::int64_t fidelity_bp_x100 =
-                (emit_success * ::aura::compiler::kBasisPointScale) / total_emits;
-            if (fidelity_bp_x100 < 9500) {
-                slo_status = 2; // breach — fidelity < 95%
-            } else if (fidelity_bp_x100 < 9900) {
-                slo_status = 1; // warn — fidelity 95-99%
-            }
-        }
-        // Latency thresholds evaluated independently from fidelity so a
-        // high latency can promote the status even when fidelity is
-        // borderline-warn.
-        if (reemit_latency_max_us > 100000) {
-            slo_status = 2; // breach — latency > 100ms
-        } else if (reemit_latency_max_us > 50000 && slo_status < 1) {
-            slo_status = 1; // warn — latency 50-100ms (only upgrade to warn,
-            //                 don't override an existing fidelity breach)
-        }
-        if (slo_breach > 0) {
-            slo_status = 2; // explicit breach bump wins over derived
-        }
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:sv-closedloop-slo", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            const std::int64_t emit_success =
+                m ? static_cast<std::int64_t>(
+                        m->sv_slo_emit_parse_success_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t emit_failure =
+                m ? static_cast<std::int64_t>(
+                        m->sv_slo_emit_parse_failure_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t reemit_latency_max_us =
+                m ? static_cast<std::int64_t>(
+                        m->sv_slo_reemit_latency_max_us.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t reemit_hits =
+                m ? static_cast<std::int64_t>(
+                        m->sv_slo_reemit_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t slo_breach =
+                m ? static_cast<std::int64_t>(
+                        m->sv_slo_breach_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Compute slo-status from current counters + SLO thresholds:
+            //   fidelity >= 99% (numerator/denominator * ::aura::compiler::kBasisPointScale >=
+            //   9900) latency   <= 50ms (50_000us) breach    = 0
+            // The thresholds match the issue body's "fidelity >99%,
+            // re-emit latency <X" requirement with X = 50ms as a
+            // production-grade default. The status is the MAX of all
+            // threshold violations (independently evaluated) so any
+            // single breach/warn promotes the overall status.
+            std::int64_t slo_status = 0;
+            const std::int64_t total_emits = emit_success + emit_failure;
+            if (total_emits > 0) {
+                // Fixed-point fidelity in basis points × 100
+                // (10000 = 100.00%).
+                const std::int64_t fidelity_bp_x100 =
+                    (emit_success * ::aura::compiler::kBasisPointScale) / total_emits;
+                if (fidelity_bp_x100 < 9500) {
+                    slo_status = 2; // breach — fidelity < 95%
+                } else if (fidelity_bp_x100 < 9900) {
+                    slo_status = 1; // warn — fidelity 95-99%
                 }
             }
-        };
-        insert_kv("slo-status", slo_status);
-        insert_kv("emit-parse-success", emit_success);
-        insert_kv("emit-parse-failure", emit_failure);
-        insert_kv("reemit-latency-max-us", reemit_latency_max_us);
-        insert_kv("reemit-hits", reemit_hits);
-        insert_kv("slo-breach-total", slo_breach);
-        insert_kv("schema", 772);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            // Latency thresholds evaluated independently from fidelity so a
+            // high latency can promote the status even when fidelity is
+            // borderline-warn.
+            if (reemit_latency_max_us > 100000) {
+                slo_status = 2; // breach — latency > 100ms
+            } else if (reemit_latency_max_us > 50000 && slo_status < 1) {
+                slo_status = 1; // warn — latency 50-100ms (only upgrade to warn,
+                //                 don't override an existing fidelity breach)
+            }
+            if (slo_breach > 0) {
+                slo_status = 2; // explicit breach bump wins over derived
+            }
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("slo-status", slo_status);
+            insert_kv("emit-parse-success", emit_success);
+            insert_kv("emit-parse-failure", emit_failure);
+            insert_kv("reemit-latency-max-us", reemit_latency_max_us);
+            insert_kv("reemit-hits", reemit_hits);
+            insert_kv("slo-breach-total", slo_breach);
+            insert_kv("schema", 772);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 67 (orig lines 7902-8040)

@@ -59,7 +59,7 @@ int main() {
 
     // #1215 production health composite
     {
-        auto r = cs.eval("(query:production-health)");
+        auto r = cs.eval("(stats:get \"query:production-health\")");
         CHECK(r && is_hash(*r), "production-health is hash");
         CHECK(href(cs, "query:production-health", "schema") == 1215, "health schema");
         CHECK(href(cs, "query:production-health", "score") == 100, "fresh score 100");

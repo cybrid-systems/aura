@@ -31,7 +31,7 @@ namespace aura_issue_451_detail {
 bool test_query_orchestration_metrics() {
     std::println("\n--- AC1: query:orchestration-metrics returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:orchestration-metrics)");
+    auto r = cs.eval("(stats:get \"query:orchestration-metrics\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -53,7 +53,7 @@ bool test_c_linkage_shim() {
 bool test_orchestration_metrics_content() {
     std::println("\n--- AC3: orchestration-metrics content ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:orchestration-metrics)");
+    auto r = cs.eval("(stats:get \"query:orchestration-metrics\")");
     if (!r || !aura::compiler::types::is_string(*r)) {
         ++g_failed;
         return false;
@@ -78,7 +78,7 @@ bool test_metrics_reachable_after_mutate() {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(query:orchestration-metrics)");
+    auto r = cs.eval("(stats:get \"query:orchestration-metrics\")");
     if (!r) {
         ++g_failed;
         return false;

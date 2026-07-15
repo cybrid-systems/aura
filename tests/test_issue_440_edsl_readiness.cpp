@@ -12,7 +12,7 @@
 // #421, #423, #424, #425, #438, #439) — the scope-limited
 // close ships the OBSERVABILITY + TEST layer:
 //
-//   (query:edsl-readiness) — new 6-field hash that
+//   (stats:get "query:edsl-readiness") — new 6-field hash that
 //   aggregates the top EDSL production-readiness
 //   signals in one call. Replaces the conservative
 //   "ask 30+ separate (query:*-stats) primitives" pattern
@@ -30,7 +30,7 @@
 //         dirty-block-rate >= 0
 //   AC3:  hash 6 fields present + each is non-negative
 //   AC4:  empty workspace — no crash
-//   AC5:  repeated (query:edsl-readiness) calls return
+//   AC5:  repeated (stats:get "query:edsl-readiness") calls return
 //         consistent hashes (idempotent)
 //   AC6:  stats:list includes the new primitive
 //   AC7:  stats:count >= 43 (was 42 in #431, now 43 in #440)

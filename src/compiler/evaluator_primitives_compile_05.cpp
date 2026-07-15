@@ -153,7 +153,7 @@ void CompilePrims::register_compile_p41(PrimRegistrar add, Evaluator& ev) {
     //   - verify a (mutate:*) actually bumped the version
     //   - count how many mutations a workload has applied
     //   - debug concurrent fiber contention via boundary-depth
-    add("concurrency:stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("concurrency:stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
             if (!ht)

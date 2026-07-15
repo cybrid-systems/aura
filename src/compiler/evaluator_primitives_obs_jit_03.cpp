@@ -761,111 +761,112 @@ void ObservabilityPrims::register_jit_p28(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from composite-slo-status
     //       + activity signal
     //   - schema == 786
-    add("query:code-as-data-production-health", [&ev](const auto&) -> EvalValue {
-        // Live primitive lookup: 8 expected
-        // sub-primitives (mirror #777 milestone_pct
-        // pattern). Each represents a component
-        // production-readiness signal the body
-        // explicitly lists in the consolidation.
-        const std::vector<const char*> expected_sub_primitives = {
-            "query:code-as-data-maturity-stats",          // #759
-            "query:edsl-reflection-stats",                // #758
-            "query:macro-hygiene-provenance-stats",       // #757
-            "query:reflection-schema-stats",              // #750
-            "query:concurrent-safety-full-cycle-stats",   // #755
-            "query:workspace-closedloop-fiber-eda-stats", // #773
-            "query:sv-verification-self-evolution-stats", // #774 SV EDSL
-            "query:closed-loop-reliability-stats",        // #726
-        };
-        std::size_t found_count = 0;
-        for (const char* name : expected_sub_primitives) {
-            if (ObservabilityPrims::stats_impl_registered(name) ||
-                ev.primitives_.lookup(name).has_value())
-                ++found_count;
-        }
-        const std::int64_t found = static_cast<std::int64_t>(found_count);
-        const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
-        // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
-        // / total. When total == 0 (degenerate) the
-        // primitive returns 0 — but total is always 8
-        // here (constant array).
-        const std::int64_t sub_primitive_coverage =
-            total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
-        // 4 derived percentages (initial values:
-        // 10000 = "vacuously true — no measurements yet
-        // so can't fail"; #786 explicitly defers the
-        // actual percentage derivation to Phase 2+ since
-        // it requires cross-component atomic reads +
-        // composite formula).
-        const std::int64_t fidelity_pct = 10000;
-        const std::int64_t guard_rollback_hygiene_pct = 10000;
-        const std::int64_t concurrent_stress_success_pct = 10000;
-        // Composite SLO status derived from coverage
-        // + activity signals. The body explicitly
-        // mentions "production gates (fidelity >99%,
-        // schema pass-rate >95%, zero hygiene drift
-        // post-rollback)" so we mirror that with
-        // coverage thresholds.
-        std::int64_t composite_slo_status = 3; // default not-started
-        if (sub_primitive_coverage == 10000 && fidelity_pct == 10000 &&
-            guard_rollback_hygiene_pct == 10000 && concurrent_stress_success_pct == 10000)
-            composite_slo_status = 0; // production-ready
-        else if (sub_primitive_coverage >= 5000)
-            composite_slo_status = 1; // partial (>= half registered)
-        else if (sub_primitive_coverage > 0)
-            composite_slo_status = 2; // early-stage (some registered)
-        else
-            composite_slo_status = 3; // not-started (none registered)
-        // Recommendation: derived from composite
-        // status + activity signal.
-        std::int64_t recommendation = 3;
-        if (composite_slo_status == 0 && fidelity_pct >= 9900)
-            recommendation = 0; // production-ready with fidelity gate met
-        else if (composite_slo_status <= 1 && sub_primitive_coverage > 0)
-            recommendation = 1; // partial deployment
-        else if (sub_primitive_coverage > 0)
-            recommendation = 2; // early-stage
-        else
-            recommendation = 3; // not-started
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:code-as-data-production-health", [&ev](const auto&) -> EvalValue {
+            // Live primitive lookup: 8 expected
+            // sub-primitives (mirror #777 milestone_pct
+            // pattern). Each represents a component
+            // production-readiness signal the body
+            // explicitly lists in the consolidation.
+            const std::vector<const char*> expected_sub_primitives = {
+                "query:code-as-data-maturity-stats",          // #759
+                "query:edsl-reflection-stats",                // #758
+                "query:macro-hygiene-provenance-stats",       // #757
+                "query:reflection-schema-stats",              // #750
+                "query:concurrent-safety-full-cycle-stats",   // #755
+                "query:workspace-closedloop-fiber-eda-stats", // #773
+                "query:sv-verification-self-evolution-stats", // #774 SV EDSL
+                "query:closed-loop-reliability-stats",        // #726
+            };
+            std::size_t found_count = 0;
+            for (const char* name : expected_sub_primitives) {
+                if (ObservabilityPrims::stats_impl_registered(name) ||
+                    ev.primitives_.lookup(name).has_value())
+                    ++found_count;
             }
-        };
-        insert_kv("sub-primitive-coverage", sub_primitive_coverage);
-        insert_kv("found-sub-primitive-count", found);
-        insert_kv("fidelity-pct", fidelity_pct);
-        insert_kv("guard-rollback-hygiene-pct", guard_rollback_hygiene_pct);
-        insert_kv("concurrent-stress-success-pct", concurrent_stress_success_pct);
-        insert_kv("composite-slo-status", composite_slo_status);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 786);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            const std::int64_t found = static_cast<std::int64_t>(found_count);
+            const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
+            // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
+            // / total. When total == 0 (degenerate) the
+            // primitive returns 0 — but total is always 8
+            // here (constant array).
+            const std::int64_t sub_primitive_coverage =
+                total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
+            // 4 derived percentages (initial values:
+            // 10000 = "vacuously true — no measurements yet
+            // so can't fail"; #786 explicitly defers the
+            // actual percentage derivation to Phase 2+ since
+            // it requires cross-component atomic reads +
+            // composite formula).
+            const std::int64_t fidelity_pct = 10000;
+            const std::int64_t guard_rollback_hygiene_pct = 10000;
+            const std::int64_t concurrent_stress_success_pct = 10000;
+            // Composite SLO status derived from coverage
+            // + activity signals. The body explicitly
+            // mentions "production gates (fidelity >99%,
+            // schema pass-rate >95%, zero hygiene drift
+            // post-rollback)" so we mirror that with
+            // coverage thresholds.
+            std::int64_t composite_slo_status = 3; // default not-started
+            if (sub_primitive_coverage == 10000 && fidelity_pct == 10000 &&
+                guard_rollback_hygiene_pct == 10000 && concurrent_stress_success_pct == 10000)
+                composite_slo_status = 0; // production-ready
+            else if (sub_primitive_coverage >= 5000)
+                composite_slo_status = 1; // partial (>= half registered)
+            else if (sub_primitive_coverage > 0)
+                composite_slo_status = 2; // early-stage (some registered)
+            else
+                composite_slo_status = 3; // not-started (none registered)
+            // Recommendation: derived from composite
+            // status + activity signal.
+            std::int64_t recommendation = 3;
+            if (composite_slo_status == 0 && fidelity_pct >= 9900)
+                recommendation = 0; // production-ready with fidelity gate met
+            else if (composite_slo_status <= 1 && sub_primitive_coverage > 0)
+                recommendation = 1; // partial deployment
+            else if (sub_primitive_coverage > 0)
+                recommendation = 2; // early-stage
+            else
+                recommendation = 3; // not-started
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("sub-primitive-coverage", sub_primitive_coverage);
+            insert_kv("found-sub-primitive-count", found);
+            insert_kv("fidelity-pct", fidelity_pct);
+            insert_kv("guard-rollback-hygiene-pct", guard_rollback_hygiene_pct);
+            insert_kv("concurrent-stress-success-pct", concurrent_stress_success_pct);
+            insert_kv("composite-slo-status", composite_slo_status);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 786);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 29 (orig lines 15688-15871)
@@ -961,100 +962,103 @@ void ObservabilityPrims::register_jit_p29(PrimRegistrar add, Evaluator& ev) {
     //       of the expected sub-primitives ship
     //       yet)
     //   - schema == 787
-    add("query:task6-concurrent-fidelity", [&ev](const auto&) -> EvalValue {
-        // Live primitive lookup: 6 expected
-        // sub-primitives (the component P0s the
-        // body explicitly cites for
-        // consolidation).
-        const std::vector<const char*> expected_sub_primitives = {
-            "query:macro-hygiene-provenance-stats",      // #757
-            "query:edsl-reflection-stats",               // #758
-            "query:reflection-schema-stats",             // #750
-            "query:concurrent-safety-full-cycle-stats",  // #755
-            "query:orchestration-steal-outermost-stats", // #783
-            "query:aot-concurrent-hotupdate-stats",      // #785
-        };
-        std::size_t found_count = 0;
-        for (const char* name : expected_sub_primitives) {
-            if (ObservabilityPrims::stats_impl_registered(name) ||
-                ev.primitives_.lookup(name).has_value())
-                ++found_count;
-        }
-        const std::int64_t found = static_cast<std::int64_t>(found_count);
-        const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
-        // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
-        // / total. When total == 0 (degenerate) the
-        // primitive returns 0 — but total is always 6
-        // here (constant array).
-        const std::int64_t sub_primitive_coverage =
-            total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
-        // 4 hardcoded "not yet" fidelity signals
-        // (Phase 2+ to wire to actual post-rollback /
-        // post-reload / steal-resume validation
-        // hooks). Phase 1 ships the composite
-        // structure; the per-signal bumps come in
-        // dedicated follow-up sessions.
-        const std::int64_t hygiene_drift_prevented = 0;
-        const std::int64_t schema_violation_caught_post_rollback = 0;
-        const std::int64_t linear_safe_after_steal_reload = 0;
-        const std::int64_t epoch_consistent_hits = 0;
-        // Composite fidelity status derived from
-        // coverage + fidelity signals. The body
-        // explicitly mentions "SLO: 100% fidelity
-        // preservation in 10k+ concurrent cycles; zero
-        // undetected stale/hygiene/schema/linear
-        // issues" so we mirror that with coverage
-        // thresholds.
-        std::int64_t composite_fidelity_status = 3; // default not-started
-        if (sub_primitive_coverage == 10000 && hygiene_drift_prevented == 0 &&
-            schema_violation_caught_post_rollback == 0 && linear_safe_after_steal_reload == 0 &&
-            epoch_consistent_hits == 0)
-            composite_fidelity_status = 0; // production-ready (vacuously — no violations detected)
-        else if (sub_primitive_coverage >= 5000)
-            composite_fidelity_status = 1; // partial (>= half registered)
-        else if (sub_primitive_coverage > 0)
-            composite_fidelity_status = 2; // early-stage
-        else
-            composite_fidelity_status = 3; // not-started
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:task6-concurrent-fidelity", [&ev](const auto&) -> EvalValue {
+            // Live primitive lookup: 6 expected
+            // sub-primitives (the component P0s the
+            // body explicitly cites for
+            // consolidation).
+            const std::vector<const char*> expected_sub_primitives = {
+                "query:macro-hygiene-provenance-stats",      // #757
+                "query:edsl-reflection-stats",               // #758
+                "query:reflection-schema-stats",             // #750
+                "query:concurrent-safety-full-cycle-stats",  // #755
+                "query:orchestration-steal-outermost-stats", // #783
+                "query:aot-concurrent-hotupdate-stats",      // #785
+            };
+            std::size_t found_count = 0;
+            for (const char* name : expected_sub_primitives) {
+                if (ObservabilityPrims::stats_impl_registered(name) ||
+                    ev.primitives_.lookup(name).has_value())
+                    ++found_count;
             }
-        };
-        insert_kv("sub-primitive-coverage", sub_primitive_coverage);
-        insert_kv("found-sub-primitive-count", found);
-        insert_kv("hygiene-drift-prevented", hygiene_drift_prevented);
-        insert_kv("schema-violation-caught-post-rollback", schema_violation_caught_post_rollback);
-        insert_kv("linear-safe-after-steal-reload", linear_safe_after_steal_reload);
-        insert_kv("epoch-consistent-hits", epoch_consistent_hits);
-        insert_kv("composite-fidelity-status", composite_fidelity_status);
-        insert_kv("schema", 787);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            const std::int64_t found = static_cast<std::int64_t>(found_count);
+            const std::int64_t total = static_cast<std::int64_t>(expected_sub_primitives.size());
+            // Coverage in 0-10000 fixed-point: (found * ::aura::compiler::kBasisPointScale)
+            // / total. When total == 0 (degenerate) the
+            // primitive returns 0 — but total is always 6
+            // here (constant array).
+            const std::int64_t sub_primitive_coverage =
+                total > 0 ? (found * ::aura::compiler::kBasisPointScale) / total : 0;
+            // 4 hardcoded "not yet" fidelity signals
+            // (Phase 2+ to wire to actual post-rollback /
+            // post-reload / steal-resume validation
+            // hooks). Phase 1 ships the composite
+            // structure; the per-signal bumps come in
+            // dedicated follow-up sessions.
+            const std::int64_t hygiene_drift_prevented = 0;
+            const std::int64_t schema_violation_caught_post_rollback = 0;
+            const std::int64_t linear_safe_after_steal_reload = 0;
+            const std::int64_t epoch_consistent_hits = 0;
+            // Composite fidelity status derived from
+            // coverage + fidelity signals. The body
+            // explicitly mentions "SLO: 100% fidelity
+            // preservation in 10k+ concurrent cycles; zero
+            // undetected stale/hygiene/schema/linear
+            // issues" so we mirror that with coverage
+            // thresholds.
+            std::int64_t composite_fidelity_status = 3; // default not-started
+            if (sub_primitive_coverage == 10000 && hygiene_drift_prevented == 0 &&
+                schema_violation_caught_post_rollback == 0 && linear_safe_after_steal_reload == 0 &&
+                epoch_consistent_hits == 0)
+                composite_fidelity_status =
+                    0; // production-ready (vacuously — no violations detected)
+            else if (sub_primitive_coverage >= 5000)
+                composite_fidelity_status = 1; // partial (>= half registered)
+            else if (sub_primitive_coverage > 0)
+                composite_fidelity_status = 2; // early-stage
+            else
+                composite_fidelity_status = 3; // not-started
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("sub-primitive-coverage", sub_primitive_coverage);
+            insert_kv("found-sub-primitive-count", found);
+            insert_kv("hygiene-drift-prevented", hygiene_drift_prevented);
+            insert_kv("schema-violation-caught-post-rollback",
+                      schema_violation_caught_post_rollback);
+            insert_kv("linear-safe-after-steal-reload", linear_safe_after_steal_reload);
+            insert_kv("epoch-consistent-hits", epoch_consistent_hits);
+            insert_kv("composite-fidelity-status", composite_fidelity_status);
+            insert_kv("schema", 787);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 30 (orig lines 15872-16037)

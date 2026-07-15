@@ -94,7 +94,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query regression ---");
     auto sss = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
-    auto ths = cs.eval("(query:task4-hotpath-safety-score)");
+    auto ths = cs.eval("(stats:get \"query:task4-hotpath-safety-score\")");
     CHECK(sss && is_int(*sss), "shape-stability-stats regression");
     CHECK(ths && is_int(*ths), "task4-hotpath-safety-score regression");
 }

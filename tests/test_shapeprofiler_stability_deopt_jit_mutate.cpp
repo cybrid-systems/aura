@@ -64,7 +64,7 @@ static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
 }
 
 static std::uint64_t prompt6_violations(CompilerService& cs) {
-    const auto v = eval_int(cs, "(query:prompt6-violation-count)");
+    const auto v = eval_int(cs, "(stats:get \"query:prompt6-violation-count\")");
     return v < 0 ? 0 : static_cast<std::uint64_t>(v);
 }
 
@@ -301,10 +301,12 @@ bool test_regression_related_primitives() {
     auto r1 = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
     CHECK(r1.has_value() && is_int(*r1),
           "(engine:metrics \"query:shape-stability-stats\") regression for #570");
-    auto r2 = cs.eval("(query:prompt6-safety-score)");
-    CHECK(r2.has_value() && is_int(*r2), "(query:prompt6-safety-score) regression for #602");
-    auto r3 = cs.eval("(query:task4-hotpath-safety-score)");
-    CHECK(r3.has_value() && is_int(*r3), "(query:task4-hotpath-safety-score) regression for #607");
+    auto r2 = cs.eval("(stats:get \"query:prompt6-safety-score\")");
+    CHECK(r2.has_value() && is_int(*r2),
+          "(stats:get \"query:prompt6-safety-score\") regression for #602");
+    auto r3 = cs.eval("(stats:get \"query:task4-hotpath-safety-score\")");
+    CHECK(r3.has_value() && is_int(*r3),
+          "(stats:get \"query:task4-hotpath-safety-score\") regression for #607");
     return true;
 }
 

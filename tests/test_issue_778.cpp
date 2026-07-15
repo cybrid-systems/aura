@@ -230,10 +230,11 @@ static void run_ac4_production_path_bumps_and_benchmark(aura::compiler::Compiler
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #777 sibling primitive unaffected ---");
-    auto eda_readiness = cs.eval("(query:eda-production-readiness)");
+    auto eda_readiness = cs.eval("(stats:get \"query:eda-production-readiness\")");
     CHECK(eda_readiness && aura::compiler::types::is_hash(*eda_readiness),
           "query:eda-production-readiness hash regression (#777)");
-    const auto a777_schema = hash_int_field(cs, "(query:eda-production-readiness)", "schema");
+    const auto a777_schema =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "schema");
     CHECK(a777_schema == 777,
           std::format("#777 schema = {} (expected 777, no drift)", a777_schema));
 }

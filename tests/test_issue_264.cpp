@@ -72,14 +72,14 @@ bool test_concurrency_stats_exposes_issue_264_metrics() {
         ++g_failed;
         return false;
     }
-    auto stats = cs.eval("(concurrency:stats)");
+    auto stats = cs.eval("(stats:get \"concurrency:stats\")");
     if (!stats) {
         ++g_failed;
         return false;
     }
     for (const char* key :
          {"mutation-yield-count", "compaction-paused-by-boundary", "cross-fiber-rollback-count"}) {
-        std::string q = "(hash-ref (concurrency:stats) \"" + std::string(key) + "\")";
+        std::string q = "(hash-ref (stats:get \"concurrency:stats\") \"" + std::string(key) + "\")";
         auto v = cs.eval(q);
         CHECK(v.has_value(), std::string(key) + " present in concurrency:stats");
         (void)stats;

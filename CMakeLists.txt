@@ -4950,6 +4950,9 @@ aura_issue_test_link_llvm_jit(test_issue_1461)
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
 aura_add_issue_test(test_issue_1472)
+# Epic #1449 demotion batch: facade dashboards + Tier-1 siblings removal
+aura_add_issue_test(test_issue_1449_demotion_batch)
+aura_issue_test_link_llvm_jit(test_issue_1449_demotion_batch)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash

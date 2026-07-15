@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query regression ---");
     auto soa = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
-    auto clw = cs.eval("(query:task4-cache-locality-win)");
+    auto clw = cs.eval("(stats:get \"query:task4-cache-locality-win\")");
     CHECK(soa && is_int(*soa), "soa-hotpath-adoption-stats regression");
     CHECK(clw && is_int(*clw), "task4-cache-locality-win regression");
 }

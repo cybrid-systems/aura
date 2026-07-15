@@ -75,7 +75,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
 
     std::println("\n--- AC5: P4 SoA hotpath regression ---");
-    auto ths = cs.eval("(query:task4-hotpath-safety-score)");
+    auto ths = cs.eval("(stats:get \"query:task4-hotpath-safety-score\")");
     CHECK(ths && is_int(*ths), "task4-hotpath-safety-score regression");
 
     std::println("\n--- AC6: P5 mutate cycle bumps stats ---");

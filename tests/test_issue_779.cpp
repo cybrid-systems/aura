@@ -211,13 +211,14 @@ static void run_ac4_vector_primitive_benchmark(aura::compiler::CompilerService& 
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #777 + #778 sibling primitives unaffected ---");
-    auto eda_readiness = cs.eval("(query:eda-production-readiness)");
+    auto eda_readiness = cs.eval("(stats:get \"query:eda-production-readiness\")");
     auto ffi_overhead = cs.eval("(engine:metrics \"query:ffi-call-overhead-stats\")");
     CHECK(eda_readiness && aura::compiler::types::is_hash(*eda_readiness),
           "query:eda-production-readiness hash regression (#777)");
     CHECK(ffi_overhead && aura::compiler::types::is_hash(*ffi_overhead),
           "query:ffi-call-overhead-stats hash regression (#778)");
-    const auto a777_schema = hash_int_field(cs, "(query:eda-production-readiness)", "schema");
+    const auto a777_schema =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "schema");
     CHECK(a777_schema == 777,
           std::format("#777 schema = {} (expected 777, no drift)", a777_schema));
     const auto a778_schema =

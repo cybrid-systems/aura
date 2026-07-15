@@ -165,7 +165,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: query regression ---");
     auto los = cs.eval("(engine:metrics \"query:linear-ownership-safety-stats\")");
     auto lms = cs.eval("(engine:metrics \"query:linear-ownership-mutation-stats\")");
-    auto p6v = cs.eval("(query:prompt6-violation-count)");
+    auto p6v = cs.eval("(stats:get \"query:prompt6-violation-count\")");
     CHECK(los && is_int(*los), "linear-ownership-safety-stats regression");
     CHECK(lms && is_int(*lms), "linear-ownership-mutation-stats regression");
     CHECK(p6v && is_int(*p6v), "prompt6-violation-count regression");

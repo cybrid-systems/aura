@@ -189,6 +189,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
     });
 
     // Issue #1230: (ffi:opaque-stats) → hash {count, total-bytes, free-unknown, double-free}
+    // Facade-only via prim_registrar intercept (is_legacy_stats_name: *-stats).
     add("ffi:opaque-stats", [this](std::span<const EvalValue>) -> EvalValue {
         // Return a small pair-list style int vector via fixnums only:
         // use opaque_count encoded as int for Agent simplicity when hash

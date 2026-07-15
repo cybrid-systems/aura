@@ -25,8 +25,11 @@
 (test-suite "edsl:query-parent"
   (check (pair? (query:parent 0))))
 
-(test-suite "edsl:query-siblings"
-  (check (pair? (query:siblings 0))))
+; #1449: query:siblings demoted — compose children/parent (or std/compat)
+(test-suite "edsl:query-siblings-compose"
+  (set-code "(begin (define a 1) (define b 2))")
+  (define kids (query:children (query:root)))
+  (check (pair? kids)))
 
 (test-suite "edsl:query-pattern"
   (set-code "(define (f x) (+ x 1))")
@@ -1342,7 +1345,6 @@
   (check (pair? (query:children)))
   (check (pair? (query:node)))
   (check (pair? (query:parent)))
-  (check (pair? (query:siblings)))
   (check (pair? (query:node-type)))
   (check (pair? (query:pattern)))
   (check (pair? (query:def-use)))
@@ -1355,8 +1357,7 @@
   (check (pair? (mutate:tweak-literal 999 1)))
   (check (pair? (query:node 999)))
   (check (pair? (query:children 999)))
-  (check (pair? (query:parent 999)))
-  (check (pair? (query:siblings 999))))
+  (check (pair? (query:parent 999))))
 
 (test-suite "edsl:err-not-found"
   (set-code "(define (f x) (+ x 1))")

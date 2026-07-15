@@ -62,6 +62,7 @@ void ac1_compat_module_loads() {
 void ac2_demoted_names_exported() {
     std::println("\n--- AC2: 4 demoted names exported by compat shim ---");
     aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(require \"std/compat\" all:)").has_value(), "require std/compat");
     // The shim exports query:siblings / find-by-name / nodes-with-marker / subtree.
     // Use a probe that calls each (no-op form) to verify they resolve.
     auto r_sib = cs.eval("(query:siblings 0)");
@@ -70,15 +71,16 @@ void ac2_demoted_names_exported() {
     auto r_sub = cs.eval("(query:subtree 0)");
     // None of these need to return a value; we just verify the
     // calls resolve to functions (i.e. don't error with "unbound").
-    CHECK(r_sib.has_value(), "(query:siblings 0) resolves");
-    CHECK(r_fbn.has_value(), "(query:find-by-name \"x\") resolves");
-    CHECK(r_nwm.has_value(), "(query:nodes-with-marker 'user) resolves");
-    CHECK(r_sub.has_value(), "(query:subtree 0) resolves");
+    CHECK(r_sib.has_value(), "(query:siblings 0) resolves via compat");
+    CHECK(r_fbn.has_value(), "(query:find-by-name \"x\") resolves via compat");
+    CHECK(r_nwm.has_value(), "(query:nodes-with-marker 'user) resolves via compat");
+    CHECK(r_sub.has_value(), "(query:subtree 0) resolves via compat");
 }
 
 void ac3_find_by_name_routes_to_find() {
     std::println("\n--- AC3: query:find-by-name routes to query:find ---");
     aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(require \"std/compat\" all:)").has_value(), "require compat");
     // Both old and new should return the same NodeId (or both
     // void if no match). Sanity: not error.
     auto r_old = cs.eval("(query:find-by-name \"nonexistent-test-name-xyz\")");
@@ -90,6 +92,7 @@ void ac3_find_by_name_routes_to_find() {
 void ac4_nodes_with_marker_routes_to_by_marker() {
     std::println("\n--- AC4: query:nodes-with-marker routes to query:by-marker ---");
     aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(require \"std/compat\" all:)").has_value(), "require compat");
     auto r_old = cs.eval("(query:nodes-with-marker 'nonexistent-test-marker-xyz)");
     auto r_new = cs.eval("(query:by-marker 'nonexistent-test-marker-xyz)");
     CHECK(r_old.has_value() == r_new.has_value(),
@@ -99,10 +102,19 @@ void ac4_nodes_with_marker_routes_to_by_marker() {
 void ac5_subtree_returns_at_least_children() {
     std::println("\n--- AC5: query:subtree returns at least query:children ---");
     aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(require \"std/compat\" all:)").has_value(), "require compat");
     auto r_sub = cs.eval("(query:subtree 0)");
     auto r_chl = cs.eval("(query:children 0)");
     CHECK(r_sub.has_value() && r_chl.has_value(), "subtree + children both return non-void");
     // Both resolve; semantic equality is pending fold-tree helper.
+}
+
+void ac7_siblings_not_public_engine() {
+    std::println("\n--- AC7: query:siblings no longer public engine add() (#1449) ---");
+    aura::compiler::CompilerService cs;
+    auto& prims = cs.evaluator().primitives();
+    const bool registered = prims.slot_for_name("query:siblings") < prims.slot_count();
+    CHECK(!registered, "query:siblings not in public Primitives table");
 }
 
 void ac6_link_in_slim_surface_doc() {
@@ -128,6 +140,7 @@ int main() {
     ac4_nodes_with_marker_routes_to_by_marker();
     ac5_subtree_returns_at_least_children();
     ac6_link_in_slim_surface_doc();
+    ac7_siblings_not_public_engine();
 
     std::println("\n─── #1462 summary: {}/{} passed, {}/{} failed ───", g_passed,
                  g_passed + g_failed, g_failed, g_passed + g_failed);

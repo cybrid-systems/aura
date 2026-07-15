@@ -114,7 +114,7 @@ int aura_issue_505_run() {
     // AC6: related primitive regression
     {
         std::println("\n--- AC6: related stats regression ---");
-        auto p6 = cs.eval("(query:prompt6-safety-score)");
+        auto p6 = cs.eval("(stats:get \"query:prompt6-safety-score\")");
         auto ef = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
         CHECK(p6 && aura::compiler::types::is_int(*p6), "prompt6-safety-score regression");
         CHECK(ef && aura::compiler::types::is_int(*ef), "envframe-dualpath-stats regression");

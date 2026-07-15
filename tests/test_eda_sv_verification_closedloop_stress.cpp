@@ -97,7 +97,7 @@ int aura_issue_eda_sv_verification_closedloop_stress_run() {
     // AC1: orchestration-metrics wired to EDA-SV stress counters
     {
         std::println("\n--- AC1: orchestration-metrics EDA-SV wiring ---");
-        auto orch = cs.eval("(query:orchestration-metrics)");
+        auto orch = cs.eval("(stats:get \"query:orchestration-metrics\")");
         CHECK(orch && aura::compiler::types::is_string(*orch),
               "query:orchestration-metrics returns string");
         if (orch && aura::compiler::types::is_string(*orch)) {
@@ -173,7 +173,7 @@ int aura_issue_eda_sv_verification_closedloop_stress_run() {
     // AC5: orchestration-metrics reflects post-stress evolution cycles
     {
         std::println("\n--- AC5: post-stress orchestration-metrics ---");
-        auto orch = cs.eval("(query:orchestration-metrics)");
+        auto orch = cs.eval("(stats:get \"query:orchestration-metrics\")");
         CHECK(orch && aura::compiler::types::is_string(*orch),
               "post-stress orchestration-metrics readable");
         if (orch && aura::compiler::types::is_string(*orch)) {

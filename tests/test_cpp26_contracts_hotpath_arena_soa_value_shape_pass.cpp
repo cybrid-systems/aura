@@ -94,8 +94,8 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query regression ---");
     auto hp = cs.eval("(engine:metrics \"query:highperf-cpp26-stats\")");
-    auto inv = cs.eval("(query:cxx26-invariants)");
-    auto hot = cs.eval("(query:cxx26-hotpath-invariants)");
+    auto inv = cs.eval("(stats:get \"query:cxx26-invariants\")");
+    auto hot = cs.eval("(stats:get \"query:cxx26-hotpath-invariants\")");
     CHECK(hp && is_hash(*hp), "highperf-cpp26-stats regression");
     CHECK(inv && is_hash(*inv), "cxx26-invariants regression");
     CHECK(hot && is_hash(*hot), "cxx26-hotpath-invariants regression");

@@ -8,9 +8,9 @@
 // #254 (ir-soa). This binary exercises the **unified** Task4
 // production-review matrix:
 //
-//   - AC1:  (query:task4-hotpath-safety-score) reachable
-//   - AC2:  (query:task4-cache-locality-win) monotonic after queries
-//   - AC3:  (query:task4-mutation-stability) grows under mutate
+//   - AC1:  (stats:get "query:task4-hotpath-safety-score") reachable
+//   - AC2:  (stats:get "query:task4-cache-locality-win") monotonic after queries
+//   - AC3:  (stats:get "query:task4-mutation-stability") grows under mutate
 //   - AC4:  Combined Task4 stats bundle callable
 //   - AC5:  SoA tag_arity_index dirty hook under mutate
 //   - AC6:  Shape profiler reachable post-eval
@@ -71,7 +71,7 @@ static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
 }
 
 static std::uint64_t prompt6_violations(CompilerService& cs) {
-    const auto v = eval_int(cs, "(query:prompt6-violation-count)");
+    const auto v = eval_int(cs, "(stats:get \"query:prompt6-violation-count\")");
     return v < 0 ? 0 : static_cast<std::uint64_t>(v);
 }
 
@@ -88,11 +88,11 @@ static bool setup_hotpath_workspace(CompilerService& cs) {
 
 // ── AC1: hotpath-safety-score reachable ───────────────────
 bool test_hotpath_safety_score_reachable() {
-    std::println("\n--- AC1: (query:task4-hotpath-safety-score) reachable ---");
+    std::println("\n--- AC1: (stats:get \"query:task4-hotpath-safety-score\") reachable ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    const auto s = eval_int(cs, "(query:task4-hotpath-safety-score)");
+    const auto s = eval_int(cs, "(stats:get \"query:task4-hotpath-safety-score\")");
     std::println("  task4-hotpath-safety-score baseline: {}", s);
     CHECK(s >= 0, "task4-hotpath-safety-score >= 0");
     return true;
@@ -100,15 +100,15 @@ bool test_hotpath_safety_score_reachable() {
 
 // ── AC2: cache-locality-win monotonic after queries ───────
 bool test_cache_locality_win_monotonic() {
-    std::println("\n--- AC2: (query:task4-cache-locality-win) monotonic ---");
+    std::println("\n--- AC2: (stats:get \"query:task4-cache-locality-win\") monotonic ---");
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "hotpath workspace setup");
-    const auto c0 = eval_int(cs, "(query:task4-cache-locality-win)");
+    const auto c0 = eval_int(cs, "(stats:get \"query:task4-cache-locality-win\")");
     for (int i = 0; i < 10; ++i) {
         (void)cs.eval("(query:tag-arity-count 32 0)");
         (void)cs.eval("(query:pattern \"base\")");
     }
-    const auto c1 = eval_int(cs, "(query:task4-cache-locality-win)");
+    const auto c1 = eval_int(cs, "(stats:get \"query:task4-cache-locality-win\")");
     std::println("  task4-cache-locality-win: {} -> {}", c0, c1);
     CHECK(c1 >= c0, "cache-locality-win monotonic after SoA queries");
     return true;
@@ -116,16 +116,16 @@ bool test_cache_locality_win_monotonic() {
 
 // ── AC3: mutation-stability grows under mutate ────────────
 bool test_mutation_stability_under_mutate() {
-    std::println("\n--- AC3: (query:task4-mutation-stability) under mutate ---");
+    std::println("\n--- AC3: (stats:get \"query:task4-mutation-stability\") under mutate ---");
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for mutation stability");
-    const auto m0 = eval_int(cs, "(query:task4-mutation-stability)");
+    const auto m0 = eval_int(cs, "(stats:get \"query:task4-mutation-stability\")");
     for (int i = 0; i < 10; ++i) {
         (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(100 + i) + "\")");
         (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(i) + ") (define acc " +
                       std::to_string(i) + "))");
     }
-    const auto m1 = eval_int(cs, "(query:task4-mutation-stability)");
+    const auto m1 = eval_int(cs, "(stats:get \"query:task4-mutation-stability\")");
     std::println("  task4-mutation-stability: {} -> {}", m0, m1);
     CHECK(m1 >= m0, "mutation-stability monotonic under mutate load");
     return true;
@@ -137,9 +137,9 @@ bool test_combined_task4_stats_bundle() {
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for stats bundle");
     const char* stats[] = {
-        "(query:task4-hotpath-safety-score)",
-        "(query:task4-cache-locality-win)",
-        "(query:task4-mutation-stability)",
+        "(stats:get \"query:task4-hotpath-safety-score\")",
+        "(stats:get \"query:task4-cache-locality-win\")",
+        "(stats:get \"query:task4-mutation-stability\")",
         "(engine:metrics \"query:pattern-index-stats\")",
         "(engine:metrics \"query:typed-mutation-stats\")",
         "(query:typed-mutation-stats-task1)",
@@ -284,7 +284,7 @@ bool test_eight_thread_concurrent_hotpath() {
                 (void)cs.eval("(mutate:replace-value (define tmp " + std::to_string(i) +
                               ") (define tmp " + std::to_string(tid + i) + "))");
             }
-            if (!cs.eval("(query:task4-hotpath-safety-score)")) {
+            if (!cs.eval("(stats:get \"query:task4-hotpath-safety-score\")")) {
                 errors.fetch_add(1);
             }
             completed.fetch_add(1);
@@ -345,8 +345,8 @@ bool test_long_running_hotpath_stress() {
     std::println("\n--- AC12: {} iters long-running stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for stress");
-    const auto s0 = eval_int(cs, "(query:task4-hotpath-safety-score)");
-    const auto m0 = eval_int(cs, "(query:task4-mutation-stability)");
+    const auto s0 = eval_int(cs, "(stats:get \"query:task4-hotpath-safety-score\")");
+    const auto m0 = eval_int(cs, "(stats:get \"query:task4-mutation-stability\")");
     std::mt19937 rng(6071u);
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
@@ -362,8 +362,8 @@ bool test_long_running_hotpath_stress() {
         if ((i & 31) == 0)
             (void)cs.eval("(gc-heap)");
     }
-    const auto s1 = eval_int(cs, "(query:task4-hotpath-safety-score)");
-    const auto m1 = eval_int(cs, "(query:task4-mutation-stability)");
+    const auto s1 = eval_int(cs, "(stats:get \"query:task4-hotpath-safety-score\")");
+    const auto m1 = eval_int(cs, "(stats:get \"query:task4-mutation-stability\")");
     const auto v = prompt6_violations(cs);
     std::println("  hotpath: {} -> {} stability: {} -> {} violations: {}", s0, s1, m0, m1, v);
     CHECK(s1 >= s0, "hotpath-safety-score monotonic under stress");
@@ -376,9 +376,9 @@ bool test_long_running_hotpath_stress() {
 bool test_regression_related_primitives() {
     std::println("\n--- AC13: regression — Task4/Prompt6 primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:prompt6-violation-count)");
+    auto r1 = cs.eval("(stats:get \"query:prompt6-violation-count\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:prompt6-violation-count) (regression for #602)");
+          "(stats:get \"query:prompt6-violation-count\") (regression for #602)");
     auto r2 = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:pattern-index-stats\") (regression for #547)");

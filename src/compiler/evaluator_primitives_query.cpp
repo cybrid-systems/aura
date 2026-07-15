@@ -1155,43 +1155,45 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // encoding; the follow-up returns a structured
     // list / JSON with per-fiber histograms + recent
     // agent loop samples.
-    add("query:orchestration-metrics", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        // The C-linkage shim returns the static
-        // gc_pause_attributed_to_mutation_count_ from
-        // the Fiber class. Per-Fiber yield counts are
-        // aggregated via the active yield-hook
-        // evaluator (the P0 reads them via a thread-
-        // local; the follow-up uses GlobalMetrics).
-        const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
-        std::uint64_t eda_sv_cycles = 0;
-        std::uint64_t eda_sv_corruption = 0;
-        if (auto* ev = Evaluator::get_query_evaluator()) {
-            if (const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics())) {
-                eda_sv_cycles = m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed);
-                eda_sv_corruption =
-                    m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed);
+    ObservabilityPrims::register_stats_impl(
+        "query:orchestration-metrics", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            // The C-linkage shim returns the static
+            // gc_pause_attributed_to_mutation_count_ from
+            // the Fiber class. Per-Fiber yield counts are
+            // aggregated via the active yield-hook
+            // evaluator (the P0 reads them via a thread-
+            // local; the follow-up uses GlobalMetrics).
+            const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
+            std::uint64_t eda_sv_cycles = 0;
+            std::uint64_t eda_sv_corruption = 0;
+            if (auto* ev = Evaluator::get_query_evaluator()) {
+                if (const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics())) {
+                    eda_sv_cycles =
+                        m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed);
+                    eda_sv_corruption =
+                        m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed);
+                }
             }
-        }
-        const std::uint64_t sum = gc_pauses + eda_sv_cycles;
-        std::string result = "{\"gc_pauses_attributed_to_mutation\":";
-        result += std::to_string(gc_pauses);
-        result += ",\"eda_sv_evolution_cycles\":";
-        result += std::to_string(eda_sv_cycles);
-        result += ",\"eda_sv_corruption_detected\":";
-        result += std::to_string(eda_sv_corruption);
-        result += ",\"sum\":";
-        result += std::to_string(sum);
-        result += "}";
-        // Return as a string. We have to find an
-        // evaluator to push the string into the
-        // string_heap_; if no evaluator, return #f.
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const auto idx = ev->push_string_heap(result);
-        return make_string(static_cast<std::int32_t>(idx));
-    });
+            const std::uint64_t sum = gc_pauses + eda_sv_cycles;
+            std::string result = "{\"gc_pauses_attributed_to_mutation\":";
+            result += std::to_string(gc_pauses);
+            result += ",\"eda_sv_evolution_cycles\":";
+            result += std::to_string(eda_sv_cycles);
+            result += ",\"eda_sv_corruption_detected\":";
+            result += std::to_string(eda_sv_corruption);
+            result += ",\"sum\":";
+            result += std::to_string(sum);
+            result += "}";
+            // Return as a string. We have to find an
+            // evaluator to push the string into the
+            // string_heap_; if no evaluator, return #f.
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const auto idx = ev->push_string_heap(result);
+            return make_string(static_cast<std::int32_t>(idx));
+        });
 
     // Issue #618 + #591: query:scheduler-mutation-coord-stats —
     // structured-hash companion to (query:orchestration-metrics).
@@ -5168,21 +5170,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // Non-duplicative with #438/#448/#531/#543 — those expose
     // per-theme stats; this primitive is the unified Prompt6
     // violation surface for the full memory-safety matrix.
-    add("query:prompt6-violation-count", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const std::uint64_t boundary = ev->get_boundary_violation_count();
-        const std::uint64_t steal_viol = ev->get_mutation_steal_violation_count();
-        const std::uint64_t desync = ev->get_envframe_desync_detected();
-        const std::uint64_t unsafe = ev->get_unsafe_boundary_attempts();
-        const std::uint64_t batch_steal = ev->get_atomic_batch_steal_violation();
-        const std::uint64_t provenance = ev->get_provenance_mismatch();
-        const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
-        return make_int(static_cast<std::int64_t>(boundary + steal_viol + desync + unsafe +
-                                                  batch_steal + provenance + fiber_stale));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:prompt6-violation-count", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t boundary = ev->get_boundary_violation_count();
+            const std::uint64_t steal_viol = ev->get_mutation_steal_violation_count();
+            const std::uint64_t desync = ev->get_envframe_desync_detected();
+            const std::uint64_t unsafe = ev->get_unsafe_boundary_attempts();
+            const std::uint64_t batch_steal = ev->get_atomic_batch_steal_violation();
+            const std::uint64_t provenance = ev->get_provenance_mismatch();
+            const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+            return make_int(static_cast<std::int64_t>(boundary + steal_viol + desync + unsafe +
+                                                      batch_steal + provenance + fiber_stale));
+        });
 
     // Issue #602: query:prompt6-safety-score. Returns
     // the sum of 7 Prompt6 memory-safety positive indicators
@@ -5202,27 +5205,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // Non-duplicative with #531/#543/#439 — those expose per-theme
     // pass counters; this primitive is the unified Prompt6 safety
     // score for the full memory-safety fuzz/stress matrix.
-    add("query:prompt6-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
-        const std::uint64_t bridge_hit =
-            m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t linear_pass =
-            m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t closure_refresh =
-            m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
-        const std::uint64_t gc_skipped =
-            m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t gc_walk_skips = ev->get_envframe_gc_walk_safe_skips();
-        const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
-        return make_int(static_cast<std::int64_t>(bridge_hit + linear_pass + closure_refresh +
-                                                  env_refresh + gc_skipped + gc_walk_skips +
-                                                  gc_waits));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:prompt6-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t bridge_hit =
+                m ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t linear_pass =
+                m ? m->linear_check_pass_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t closure_refresh =
+                m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t env_refresh = ev->get_envframe_stale_refresh_count();
+            const std::uint64_t gc_skipped =
+                m ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t gc_walk_skips = ev->get_envframe_gc_walk_safe_skips();
+            const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
+            return make_int(static_cast<std::int64_t>(bridge_hit + linear_pass + closure_refresh +
+                                                      env_refresh + gc_skipped + gc_walk_skips +
+                                                      gc_waits));
+        });
 
     // Issue #516: query:prompt6-memory-safety-stats. Hash view of Prompt6
     // memory/ownership/GC production-readiness pillars (non-duplicative
@@ -6219,26 +6224,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // P0: returns an integer = sum of all 6 counters.
     // Non-duplicative with #602/#547/#550 — unified Task4
     // hot-path observability for Arena/SoA/Value/Shape/Pass.
-    add("query:task4-hotpath-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
-        auto* ws = ev->workspace_flat();
-        const std::uint64_t spec_hits =
-            m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t relower_skip =
-            m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
-        const std::uint64_t linear_elide =
-            m ? m->linear_elide_count.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t index_hits = ws ? ws->tag_arity_index_hits() : 0;
-        const std::uint64_t mod_skip =
-            m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
-        return make_int(static_cast<std::int64_t>(spec_hits + relower_skip + passes_skip +
-                                                  linear_elide + index_hits + mod_skip));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:task4-hotpath-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t spec_hits =
+                m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t relower_skip =
+                m ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
+            const std::uint64_t linear_elide =
+                m ? m->linear_elide_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t index_hits = ws ? ws->tag_arity_index_hits() : 0;
+            const std::uint64_t mod_skip =
+                m ? m->module_dirty_skips.load(std::memory_order_relaxed) : 0;
+            return make_int(static_cast<std::int64_t>(spec_hits + relower_skip + passes_skip +
+                                                      linear_elide + index_hits + mod_skip));
+        });
 
     // Issue #607: query:task4-cache-locality-win. Returns
     // the sum of 5 cache-friendly / incremental-win counters:
@@ -6249,22 +6256,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - relower_per_function_called_   (per-fn incremental re-lower)
     //
     // P0: returns an integer = sum of all 5 counters.
-    add("query:task4-cache-locality-win", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
-        auto* ws = ev->workspace_flat();
-        const std::uint64_t hits = ws ? ws->tag_arity_index_hits() : 0;
-        const std::uint64_t delta = ws ? ws->tag_arity_index_delta_hits() : 0;
-        const std::uint64_t spec = m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t cascade =
-            m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t per_fn =
-            m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
-        return make_int(static_cast<std::int64_t>(hits + delta + spec + cascade + per_fn));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:task4-cache-locality-win", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t hits = ws ? ws->tag_arity_index_hits() : 0;
+            const std::uint64_t delta = ws ? ws->tag_arity_index_delta_hits() : 0;
+            const std::uint64_t spec =
+                m ? m->specialization_hits.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t cascade =
+                m ? m->cascade_body_only_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t per_fn =
+                m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+            return make_int(static_cast<std::int64_t>(hits + delta + spec + cascade + per_fn));
+        });
 
     // Issue #570/#605: query:shape-stability-stats. Returns the sum
     // of 6 ShapeProfiler stability observability counters:
@@ -6523,20 +6533,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - cross_cow_invalidations_     (COW boundary detection)
     //
     // P0: returns an integer = sum of all 6 counters.
-    add("query:task4-mutation-stability", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
-        const std::uint64_t selective = ev->get_selective_recheck_count();
-        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
-        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
-        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
-        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
-        return make_int(static_cast<std::int64_t>(dirty_prop + selective + guard_epoch + narrowing +
-                                                  snapshots + cross_cow));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:task4-mutation-stability", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
+            const std::uint64_t selective = ev->get_selective_recheck_count();
+            const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+            const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+            const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+            const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+            return make_int(static_cast<std::int64_t>(dirty_prop + selective + guard_epoch +
+                                                      narrowing + snapshots + cross_cow));
+        });
 
     // Issue #507: query:task4-hotpath-contracts. Hash view of C++26
     // Contracts + consteval invariants baked into Task4 hot paths
@@ -6553,58 +6564,59 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - consteval-hits: k_shape_value_consteval_hits inventory
     //   - task4-contracts-total: sum of contract-site flags
     //   - task4-contracts-recommendation: 0=ok
-    add("query:task4-hotpath-contracts", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_void();
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:task4-hotpath-contracts", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        constexpr std::int64_t k_site = 1;
-        const std::int64_t table_size =
-            static_cast<std::int64_t>(shape::k_task4_shape_dispatch_table_size);
-        const std::int64_t consteval_hits =
-            static_cast<std::int64_t>(shape::k_shape_value_consteval_hits);
-        const std::int64_t total = k_site * 6 + table_size + (consteval_hits > 0 ? 1 : 0);
-        insert_kv("inline-shape-post", k_site);
-        insert_kv("arena-create-pre", k_site);
-        insert_kv("arena-allocate-raw-pre", k_site);
-        insert_kv("run-one-contract", k_site);
-        insert_kv("run-pipeline-contract", k_site);
-        insert_kv("lowering-node-id-contract", k_site);
-        insert_kv("shape-dispatch-table-size", table_size);
-        insert_kv("consteval-hits", consteval_hits);
-        insert_kv("task4-contracts-total", total);
-        insert_kv("task4-contracts-recommendation", 0);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            constexpr std::int64_t k_site = 1;
+            const std::int64_t table_size =
+                static_cast<std::int64_t>(shape::k_task4_shape_dispatch_table_size);
+            const std::int64_t consteval_hits =
+                static_cast<std::int64_t>(shape::k_shape_value_consteval_hits);
+            const std::int64_t total = k_site * 6 + table_size + (consteval_hits > 0 ? 1 : 0);
+            insert_kv("inline-shape-post", k_site);
+            insert_kv("arena-create-pre", k_site);
+            insert_kv("arena-allocate-raw-pre", k_site);
+            insert_kv("run-one-contract", k_site);
+            insert_kv("run-pipeline-contract", k_site);
+            insert_kv("lowering-node-id-contract", k_site);
+            insert_kv("shape-dispatch-table-size", table_size);
+            insert_kv("consteval-hits", consteval_hits);
+            insert_kv("task4-contracts-total", total);
+            insert_kv("task4-contracts-recommendation", 0);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #626: query:contracts-hotpath-stats-hash — Agent-
     // discoverable structured companion to the existing

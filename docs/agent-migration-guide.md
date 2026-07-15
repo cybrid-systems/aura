@@ -20,7 +20,7 @@ available; Aura-side guard today).
 
 | Old name (engine) | New name (stdlib or compose) | Source | Removal target |
 | --- | --- | --- | --- |
-| `query:siblings` | `(filter (lambda (n) (not= n self)) (query:children (query:parent n)))` | `docs/design/query-namespace-decision.md` #33 | one release after stdlib helper ships |
+| `query:siblings` | `(filter (lambda (s) (not (= s n))) (query:children (query:parent n)))` or `(require "std/compat")` | `query-namespace-decision.md` #33; **engine removed** (#1449 batch) | shim one release, then drop compat |
 | `query:find-by-name` | `(query:find n)` (wraps the more general `find`) | `query-namespace-decision.md` #34 | one release after wrapper stabilizes |
 | `query:nodes-with-marker` | `(query:by-marker m)` (existing engine primitive) | `query-namespace-decision.md` #35 | one release after wrapper stabilizes |
 | `query:subtree` | `(fold-tree self cons)` (planned; not yet shipped) | mentioned in `agentic-slim-surface-rectification.md` #89 | pending stdlib helper |

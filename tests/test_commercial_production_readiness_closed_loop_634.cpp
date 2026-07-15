@@ -89,8 +89,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats7b >= stats7a, "commercial stats monotonic");
 
     std::println("\n--- AC8: query regression ---");
-    auto ths = cs.eval("(query:task4-hotpath-safety-score)");
-    auto orch = cs.eval("(query:orchestration-metrics)");
+    auto ths = cs.eval("(stats:get \"query:task4-hotpath-safety-score\")");
+    auto orch = cs.eval("(stats:get \"query:orchestration-metrics\")");
     CHECK(ths && is_int(*ths), "task4-hotpath-safety-score regression");
     CHECK(orch && is_string(*orch), "orchestration-metrics regression");
 }
