@@ -1981,6 +1981,9 @@ aura_issue_test_link_llvm_jit(test_orchestration_steal_boost)
 # Issue #1446: nested boundary + steal + GC compact re-pin smoke test.
 aura_add_issue_test(test_fiber_steal_panic_checkpoint_nested_gc)
 aura_issue_test_link_llvm_jit(test_fiber_steal_panic_checkpoint_nested_gc)
+# Follow-up smoke: #1446 AC3 primitive expose + #1445 priority-degrade counters.
+aura_add_issue_test(test_followup_smoke)
+aura_issue_test_link_llvm_jit(test_followup_smoke)
 # Issue #418: EnvFrame dual-path + stale policy closed loop.
 aura_add_issue_test(test_envframe_dualpath_stale_closed_loop_418)
 aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)

@@ -343,6 +343,13 @@ void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t dura
     // by calling AdaptiveStealStats counters directly.
     metrics::adaptive_steal_stats().starvation_mitigated_count.fetch_add(1,
                                                                          std::memory_order_relaxed);
+    // Issue #1445 follow-up: priority-degrade signal — also bump
+    // deferred_pressure_boosts so worker.cpp's adaptive budget path
+    // (which already consumes this counter) prefers ring-neighbor steal
+    // + extra budget for the next round. The actual queue manipulation
+    // is handled by WorkerThread; this hook just signals.
+    metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(1,
+                                                                       std::memory_order_relaxed);
 }
 
 bool Scheduler::has_waiting_fibers() const {
