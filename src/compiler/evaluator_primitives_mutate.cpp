@@ -1665,33 +1665,44 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // deadlock while the Guard holds unique_lock.
         (void)ev.run_post_mutate_typecheck_no_lock();
 
-        // ── Ownership validation: ensure ownership invariants hold ──
+        // ── Ownership validation (Issue #1458 hardened) ──
+        // Pre-#1458 only tracked the rebind *function name* as
+        // the dirty set, so linear lets inside the new body were
+        // never simulated and use-after-move went undetected.
+        // Discover Linear + Move/Borrow targets under the define
+        // (and callers), stamp kOwnershipDirty, then revalidate.
         if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
-            std::unordered_set<std::string> affected;
-            affected.insert(name);
-            // Also include caller names since they were dirtied
+            std::unordered_set<std::string> linear_bindings;
+            // Under the rebound define (old_define still points at
+            // the live Define node with the new body).
+            aura::compiler::discover_linear_bindings_in_subtree(flat, *ev.workspace_pool_,
+                                                                old_define, linear_bindings);
+            // Also scan callers (they were dirtied by def-use).
             for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
                 if (dep_callers[ui] < flat.size()) {
-                    auto caller_v = flat.get(dep_callers[ui]);
-                    if (caller_v.sym_id != aura::ast::INVALID_SYM) {
-                        auto caller_name =
-                            std::string(ev.workspace_pool_->resolve(caller_v.sym_id));
-                        if (!caller_name.empty())
-                            affected.insert(caller_name);
-                    }
+                    aura::compiler::discover_linear_bindings_in_subtree(
+                        flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
                 }
             }
-            std::vector<aura::compiler::OwnershipNote> onotes;
-            bool opass = aura::compiler::OwnershipEnv::validate_ownership(
-                flat, *ev.workspace_pool_, flat.root, affected, onotes);
-            aura::compiler::record_linear_ownership_mutation_metrics(ev.compiler_metrics(), true,
-                                                                     onotes, opass);
-            if (!opass) {
-                std::string err = "ownership validation after mutate:rebind failed:";
-                for (auto& n : onotes)
-                    err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message +
-                           ";";
-                ev.last_mutate_error_ = err;
+            // Stamp ownership-dirty bit on the define for
+            // post_mutation_invariant_check / observability.
+            if (!linear_bindings.empty() && old_define < flat.size()) {
+                flat.mark_dirty(old_define,
+                                static_cast<std::uint8_t>(aura::ast::FlatAST::kOwnershipDirty));
+            }
+            if (!linear_bindings.empty()) {
+                std::vector<aura::compiler::OwnershipNote> onotes;
+                bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                    flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
+                aura::compiler::record_linear_ownership_mutation_metrics(ev.compiler_metrics(),
+                                                                         true, onotes, opass);
+                if (!opass) {
+                    std::string err = "ownership validation after mutate:rebind failed:";
+                    for (auto& n : onotes)
+                        err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " +
+                               n.message + ";";
+                    ev.last_mutate_error_ = err;
+                }
             }
         }
 
@@ -1875,32 +1886,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // ── Auto-typecheck (Issue #107 / #526) ──────────
                 (void)ev.run_post_mutate_typecheck_no_lock();
 
-                // ── Ownership validation ──
+                // ── Ownership validation (Issue #1458 hardened) ──
                 if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
-                    std::unordered_set<std::string> affected;
-                    affected.insert(name);
+                    std::unordered_set<std::string> linear_bindings;
+                    aura::compiler::discover_linear_bindings_in_subtree(flat, *ev.workspace_pool_,
+                                                                        id, linear_bindings);
                     for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
                         if (dep_callers[ui] < flat.size()) {
-                            auto caller_v = flat.get(dep_callers[ui]);
-                            if (caller_v.sym_id != aura::ast::INVALID_SYM) {
-                                auto caller_name =
-                                    std::string(ev.workspace_pool_->resolve(caller_v.sym_id));
-                                if (!caller_name.empty())
-                                    affected.insert(caller_name);
-                            }
+                            aura::compiler::discover_linear_bindings_in_subtree(
+                                flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
                         }
                     }
-                    std::vector<aura::compiler::OwnershipNote> onotes;
-                    bool opass = aura::compiler::OwnershipEnv::validate_ownership(
-                        flat, *ev.workspace_pool_, flat.root, affected, onotes);
-                    aura::compiler::record_linear_ownership_mutation_metrics(ev.compiler_metrics(),
-                                                                             true, onotes, opass);
-                    if (!opass) {
-                        std::string err = "ownership validation after mutate:set-body failed:";
-                        for (auto& n : onotes)
-                            err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " +
-                                   n.message + ";";
-                        ev.last_mutate_error_ = err;
+                    if (!linear_bindings.empty() && id < flat.size()) {
+                        flat.mark_dirty(
+                            id, static_cast<std::uint8_t>(aura::ast::FlatAST::kOwnershipDirty));
+                    }
+                    if (!linear_bindings.empty()) {
+                        std::vector<aura::compiler::OwnershipNote> onotes;
+                        bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                            flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
+                        aura::compiler::record_linear_ownership_mutation_metrics(
+                            ev.compiler_metrics(), true, onotes, opass);
+                        if (!opass) {
+                            std::string err = "ownership validation after mutate:set-body failed:";
+                            for (auto& n : onotes)
+                                err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " +
+                                       n.message + ";";
+                            ev.last_mutate_error_ = err;
+                        }
                     }
                 }
 

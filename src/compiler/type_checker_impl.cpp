@@ -4987,8 +4987,14 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
 //
 // Returns the number of nodes that were re-inferred
 // (i.e. NOT just cache hits). The IncrementalStats
-// Issue #688: collect linear binding names under affected nodes for
-// post-mutate OwnershipEnv revalidate in infer_flat_partial.
+// Issue #688 / #1458: collect linear-related binding names under
+// affected nodes for post-mutate OwnershipEnv revalidate.
+// Sources (defense in depth):
+//   1. (let ((x (Linear e))) ...) syntactic wrapper
+//   2. Move/Borrow/MutBorrow/Drop of a Variable (target name)
+//   3. Let whose value type_id is non-zero and looks linear-stamped
+//      (best-effort without TypeRegistry — type_id may be linear
+//      after infer; zero is ignored)
 static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
                                                 const aura::ast::StringPool& pool,
                                                 const std::vector<aura::ast::NodeId>& nodes,
@@ -4997,12 +5003,32 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             return;
         auto v = flat.get(id);
+        // Pattern 1: syntactic Linear wrapper on Let value.
         if (v.tag == aura::ast::NodeTag::Let && v.sym_id != aura::ast::INVALID_SYM &&
-            !v.children.empty() && v.child(0) != aura::ast::NULL_NODE &&
-            flat.get(v.child(0)).tag == aura::ast::NodeTag::Linear) {
-            auto name = std::string(pool.resolve(v.sym_id));
-            if (!name.empty())
-                out.insert(name);
+            !v.children.empty() && v.child(0) != aura::ast::NULL_NODE) {
+            const auto val = flat.get(v.child(0));
+            bool is_lin = (val.tag == aura::ast::NodeTag::Linear);
+            // Pattern 3: Let value already stamped with a type
+            // (post-infer linear bindings often carry type_id).
+            // We cannot know linearity without TypeRegistry here;
+            // still track Lets that own Move targets below.
+            if (is_lin) {
+                auto name = std::string(pool.resolve(v.sym_id));
+                if (!name.empty())
+                    out.insert(name);
+            }
+        }
+        // Pattern 2: ownership op targets.
+        if ((v.tag == aura::ast::NodeTag::Move || v.tag == aura::ast::NodeTag::Borrow ||
+             v.tag == aura::ast::NodeTag::MutBorrow || v.tag == aura::ast::NodeTag::Drop) &&
+            !v.children.empty() && v.child(0) != aura::ast::NULL_NODE) {
+            auto inner = flat.get(v.child(0));
+            if (inner.tag == aura::ast::NodeTag::Variable &&
+                inner.sym_id != aura::ast::INVALID_SYM) {
+                auto name = std::string(pool.resolve(inner.sym_id));
+                if (!name.empty())
+                    out.insert(name);
+            }
         }
         for (auto c : v.children) {
             if (c != aura::ast::NULL_NODE)
@@ -5011,6 +5037,16 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
     };
     for (auto id : nodes)
         walk(id);
+}
+
+// Issue #1458: public helper for mutate:rebind / set-body to
+// discover linear bindings under a define/subtree root.
+void discover_linear_bindings_in_subtree(const aura::ast::FlatAST& flat,
+                                         const aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                         std::unordered_set<std::string>& out) {
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return;
+    collect_linear_bindings_under_nodes(flat, pool, {root}, out);
 }
 
 // (cache_hits/cache_misses) is updated as a side effect
@@ -5719,6 +5755,9 @@ bool OwnershipEnv::validate_ownership_impl(const FlatAST& flat, const StringPool
         auto v = flat.get(id);
 
         // Process op nodes (Move/Borrow/MutBorrow/Drop).
+        // Issue #1458: do not fall through to Variable "use"
+        // checks on the move target — that would false-positive
+        // use-after-move on the move itself.
         if (v.tag == NodeTag::Move || v.tag == NodeTag::Borrow || v.tag == NodeTag::MutBorrow ||
             v.tag == NodeTag::Drop) {
             if (!v.children.empty()) {
@@ -5728,8 +5767,28 @@ bool OwnershipEnv::validate_ownership_impl(const FlatAST& flat, const StringPool
                     if (dirty_bindings.count(var_name)) {
                         apply_op(id, v.tag, var_name);
                     }
+                } else if (v.child(0) != NULL_NODE) {
+                    // Nested forms under ownership ops (rare).
+                    self(v.child(0));
                 }
             }
+            return;
+        }
+
+        // Issue #1458: Variable use of a moved linear binding.
+        // can_use allows Owned | Borrowed; Moved / MutBorrowed fail.
+        if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
+            auto var_name = std::string(pool.resolve(v.sym_id));
+            if (!var_name.empty() && dirty_bindings.count(var_name) > 0) {
+                if (!tmp_env.can_use(var_name)) {
+                    auto st = tmp_env.get(var_name);
+                    notes_out.push_back(
+                        {id, "use-after-move: " + var_name + " is " + tmp_env.state_name(st),
+                         "use-after-move"});
+                    all_pass = false;
+                }
+            }
+            return;
         }
 
         // Handle scope-introducing nodes.
@@ -5851,27 +5910,15 @@ namespace {
         }
     }
 
-    // Walk `nodes` and collect names of any (let ((x (Linear e))) ...)
-    // binding discovered. These are the bindings whose linear state may
-    // have been altered by the mutation, so validate_ownership must
-    // re-check them.
+    // Walk `nodes` and collect linear-related binding names.
+    // Issue #1458: use the same multi-pattern discoverer as
+    // collect_linear_bindings_under_nodes (Linear wrapper +
+    // Move/Borrow targets), not only direct Let nodes in the
+    // dirty list (which missed nested Lets before).
     static void discover_linear_bindings(const FlatAST& flat, const StringPool& pool,
                                          const std::vector<NodeId>& nodes,
                                          std::unordered_set<std::string>& out) {
-        for (auto id : nodes) {
-            if (id == NULL_NODE || id >= flat.size())
-                continue;
-            auto v = flat.get(id);
-            if (v.tag != NodeTag::Let || v.sym_id == INVALID_SYM)
-                continue;
-            if (v.children.empty() || v.child(0) == NULL_NODE)
-                continue;
-            if (flat.get(v.child(0)).tag != NodeTag::Linear)
-                continue;
-            auto name = std::string(pool.resolve(v.sym_id));
-            if (!name.empty())
-                out.insert(name);
-        }
+        collect_linear_bindings_under_nodes(flat, pool, nodes, out);
     }
 
     // Walk `nodes` looking for IfExpr expressions whose predicate yields

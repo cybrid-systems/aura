@@ -398,6 +398,13 @@ public:
                                         std::vector<OwnershipNote>& notes_out);
 };
 
+// Issue #1458: discover linear-related bindings under a subtree
+// for post-mutate rebind/set-body ownership validation.
+export void discover_linear_bindings_in_subtree(const aura::ast::FlatAST& flat,
+                                                const aura::ast::StringPool& pool,
+                                                aura::ast::NodeId root,
+                                                std::unordered_set<std::string>& out);
+
 // Issue #281: moved to the module interface so the
 // InferenceEngine's predicate memo can use it as a value
 // type. The struct is unchanged from the pre-#281 .cpp

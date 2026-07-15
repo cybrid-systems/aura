@@ -218,6 +218,8 @@ private:
     };
 
     void maybe_evict_profiles_();
+    // Issue #1468: update deopt-storm ring + active flag.
+    void update_deopt_storm_state_(FnKey fn) noexcept;
 
     // Issue #337: std::flat_map (C++23) for the
     // profiles_ container. The flat_map's sorted
