@@ -4906,6 +4906,11 @@ aura_issue_test_link_llvm_jit(test_issue_1451)
 # flags + cross-source consistency between cpp26_contract_stats.h and
 # cxx26_invariants.ixx.
 aura_add_issue_test(test_issue_1466)
+# Issue #1467 Phase 1: live-object-moving defrag foundation (mark-only).
+# Pure C++ (no CompilerService / LLVM JIT); tests live_defrag() method
+# skeleton + counter bumps + shape invalidation hook integration.
+# Full copy + pointer remapping is Phase 2/3 follow-up.
+aura_add_issue_test(test_issue_1467)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
