@@ -5807,7 +5807,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> naked_mutate_attempt{0};                       // #1259
     std::atomic<std::uint64_t> panic_transfer_on_steal{0};                    // #1260
     std::atomic<std::uint64_t> panic_transfer_failed{0};                      // #1260
-    std::atomic<std::uint64_t> panic_checkpoint_steal_hardened{1};            // #1260
+    // Issue #1446: nested boundary + steal + GC compact re-pin telemetry.
+    // panic_transfer_nested_success: successful panic-checkpoint transfer
+    //   across nested Guard boundaries (depth > 1) after steal/GC compact.
+    // cow_repin_on_steal: bumped when re_pin_cow_children_from_snapshot()
+    //   re-validates pinned StableNodeRef / COW children after a steal.
+    // checkpoint_lost_on_compact: target 0; any non-zero value indicates a
+    //   panic-checkpoint that was destroyed by GC compact without being
+    //   re-pinned (memory-safety event).
+    std::atomic<std::uint64_t> panic_transfer_nested_success{0};   // #1446
+    std::atomic<std::uint64_t> cow_repin_on_steal{0};              // #1446
+    std::atomic<std::uint64_t> checkpoint_lost_on_compact{0};      // #1446
+    std::atomic<std::uint64_t> panic_checkpoint_steal_hardened{1}; // #1260
 
     // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};

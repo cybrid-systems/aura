@@ -1978,6 +1978,9 @@ aura_issue_test_link_llvm_jit(test_mutation_boundary_full_coverage)
 # Issue #1445: orchestration steal boost + new steal-stats primitive.
 aura_add_issue_test(test_orchestration_steal_boost)
 aura_issue_test_link_llvm_jit(test_orchestration_steal_boost)
+# Issue #1446: nested boundary + steal + GC compact re-pin smoke test.
+aura_add_issue_test(test_fiber_steal_panic_checkpoint_nested_gc)
+aura_issue_test_link_llvm_jit(test_fiber_steal_panic_checkpoint_nested_gc)
 # Issue #418: EnvFrame dual-path + stale policy closed loop.
 aura_add_issue_test(test_envframe_dualpath_stale_closed_loop_418)
 aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)
