@@ -41,6 +41,24 @@ extern "C" void aura_set_aot_metrics(void* metrics) {
         ++g_aot_metrics_explicit_stub;
 }
 
+// Issue #1443: long-mutation policy knob stubs (test binaries link this
+// instead of full aura_jit_bridge.cpp). All are no-ops in tests.
+extern "C" void aura_set_long_mutation_threshold_us(std::uint64_t us) {
+    (void)us;
+}
+extern "C" std::uint64_t aura_get_long_mutation_threshold_us(void) {
+    return 500'000;
+}
+extern "C" void aura_set_long_mutation_strict_mode(int on) {
+    (void)on;
+}
+extern "C" std::uint64_t aura_get_long_mutation_strict_mode(void) {
+    return 0;
+}
+extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
+    (void)us;
+}
+
 extern "C" void aura_ensure_aot_metrics(void* metrics) {
     if (metrics && !g_aot_metrics_stub) {
         g_aot_metrics_stub = metrics;

@@ -89,6 +89,40 @@ extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
         g_aot_metrics_explicit_sets.fetch_add(1, std::memory_order_relaxed);
 }
 
+// ── Issue #1443: long-mutation policy knobs ───────────
+//
+// C-linkage setters for `long_mutation_threshold_us` (default 500'000 µs
+// = 500ms) and `long_mutation_strict_mode` (0 = metric-only,
+// 1 = abort/rollback on extreme holds >= max_extreme_mutation_us).
+// Read in MutationBoundaryGuard::~MutationBoundaryGuard (evaluator.ixx)
+// via std::atomic load — racy by design (best-effort policy).
+extern "C" void aura_set_long_mutation_threshold_us(std::uint64_t us) {
+    if (g_aot_metrics)
+        g_aot_metrics->long_mutation_threshold_us.store(us, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_get_long_mutation_threshold_us(void) {
+    if (g_aot_metrics)
+        return g_aot_metrics->long_mutation_threshold_us.load(std::memory_order_relaxed);
+    return 500'000;
+}
+
+extern "C" void aura_set_long_mutation_strict_mode(int on) {
+    if (g_aot_metrics)
+        g_aot_metrics->long_mutation_strict_mode.store(on ? 1u : 0u, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_get_long_mutation_strict_mode(void) {
+    if (g_aot_metrics)
+        return g_aot_metrics->long_mutation_strict_mode.load(std::memory_order_relaxed);
+    return 0;
+}
+
+extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
+    if (g_aot_metrics)
+        g_aot_metrics->max_extreme_mutation_us.store(us, std::memory_order_relaxed);
+}
+
 // Lazy: only binds when global is still null (does not overwrite host wire-up).
 extern "C" void aura_ensure_aot_metrics(void* metrics) {
     if (!metrics)
