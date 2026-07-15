@@ -246,21 +246,22 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (gc-stats) — Return formatted string of all heap sizes for telemetry.
-    add("gc-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        std::uint64_t root_count = 0;
-        for (auto& [id, _] : ev.closures_) {
-            if (id < ev.gc_safe_closure_id_)
-                ++root_count;
-        }
-        auto result =
-            std::format("string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
-                        ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(),
-                        ev.error_values_.size(), g_hash_tables.size(), ev.vector_heap_.size(),
-                        ev.opaque_heap_.size(), ev.closures_.size(), root_count);
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "gc-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            std::uint64_t root_count = 0;
+            for (auto& [id, _] : ev.closures_) {
+                if (id < ev.gc_safe_closure_id_)
+                    ++root_count;
+            }
+            auto result = std::format(
+                "string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
+                ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(), ev.error_values_.size(),
+                g_hash_tables.size(), ev.vector_heap_.size(), ev.opaque_heap_.size(),
+                ev.closures_.size(), root_count);
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(result);
+            return types::make_string(sidx);
+        });
 
     // (gc-module "path") — Free a previously-loaded module's per-module
     // arena and remove it from the module cache. Returns #t on success,
@@ -284,58 +285,59 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (type-registry-stats) — Issue #78: TypeRegistry observability.
     // Returns a hash with current size, generation, and predefined count.
     // Use this to monitor TypeRegistry growth in long-running sessions.
-    add("type-registry-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.type_registry_) {
-            return make_void();
-        }
-        auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-        std::vector<std::pair<std::string, EvalValue>> kv;
-        kv.push_back({"size", make_int(static_cast<std::int64_t>(treg.size()))});
-        kv.push_back({"generation", make_int(static_cast<std::int64_t>(treg.generation()))});
-        kv.push_back({"predefined-count", make_int(static_cast<std::int64_t>(
-                                              aura::core::TypeRegistry::kPredefinedCount))});
-        kv.push_back(
-            {"user-types", make_int(static_cast<std::int64_t>(
-                               treg.size() - aura::core::TypeRegistry::kPredefinedCount))});
-        // Build a hash with the 4 keys.
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto cap = ht->capacity;
-        for (auto& [k, v] : kv) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            bool inserted = false;
-            for (std::size_t at = 0; at < cap; ++at) {
-                auto idx = ((h >> 1) + at) & (cap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = v.val;
-                    ht->size++;
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                FlatHashTable::destroy(ht);
+    ObservabilityPrims::register_stats_impl(
+        "type-registry-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            if (!ev.type_registry_) {
                 return make_void();
             }
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+            std::vector<std::pair<std::string, EvalValue>> kv;
+            kv.push_back({"size", make_int(static_cast<std::int64_t>(treg.size()))});
+            kv.push_back({"generation", make_int(static_cast<std::int64_t>(treg.generation()))});
+            kv.push_back({"predefined-count", make_int(static_cast<std::int64_t>(
+                                                  aura::core::TypeRegistry::kPredefinedCount))});
+            kv.push_back(
+                {"user-types", make_int(static_cast<std::int64_t>(
+                                   treg.size() - aura::core::TypeRegistry::kPredefinedCount))});
+            // Build a hash with the 4 keys.
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto cap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < cap; ++at) {
+                    auto idx = ((h >> 1) + at) & (cap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // (type-registry-compact) — Issue #78: reclaim all non-predefined
     // entries. Bumps the generation counter so any TypeId from the
@@ -808,18 +810,19 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (arena:adaptive-stats) — Issue #335: returns the
     // adaptive-compact counters as a 2-tuple
     // (trigger-count . skip-count). Stats-only.
-    add("arena:adaptive-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_group_)
-            return make_pair(ev.pairs_.size()); // empty pair
-        const auto trig = ev.arena_group_->auto_compact_trigger_count();
-        const auto skip = ev.arena_group_->auto_compact_skip_count();
-        // Issue #1072: return (trigger . skip) as ints only — do NOT
-        // push_string_heap for discarded intermediates (heap pollution).
-        auto car_idx = ev.pairs_.size();
-        ev.pairs_.push_back(
-            {make_int(static_cast<std::int64_t>(trig)), make_int(static_cast<std::int64_t>(skip))});
-        return make_pair(car_idx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "arena:adaptive-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            if (!ev.arena_group_)
+                return make_pair(ev.pairs_.size()); // empty pair
+            const auto trig = ev.arena_group_->auto_compact_trigger_count();
+            const auto skip = ev.arena_group_->auto_compact_skip_count();
+            // Issue #1072: return (trigger . skip) as ints only — do NOT
+            // push_string_heap for discarded intermediates (heap pollution).
+            auto car_idx = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(trig)),
+                                 make_int(static_cast<std::int64_t>(skip))});
+            return make_pair(car_idx);
+        });
     add("arena:shrink-to-fit", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_)
             return make_void();
@@ -853,60 +856,62 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // Issue #300 foundation: defrag-attempted-count is always 0; the
     // field exists so follow-up commits (B/C) can increment without
     // changing the primitive's contract.
-    add("arena:defrag-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        std::size_t compact_count = 0;
-        std::size_t defrag_count = 0;
-        std::size_t wasted = 0;
-        std::size_t cap = 0;
-        std::size_t used = 0;
-        std::size_t compact_est = 0;
-        // Sum across the main arena (ev.arena_) AND any per-module
-        // arenas (ev.arena_group_). Issue #300 foundation: the
-        // (arena:defrag) primitive operates on ev.arena_, so we
-        // must include its stats in the read path for the
-        // defrag_attempted_count to reflect the increment.
-        if (ev.arena_) {
-            auto s = ev.arena_->stats();
-            compact_count += s.compaction_count;
-            defrag_count += s.defrag_attempted_count;
-            wasted += s.wasted;
-            cap += s.capacity;
-            used += s.used;
-            compact_est += ev.arena_->compact_estimate();
-        }
-        if (ev.arena_group_) {
-            auto per_module = ev.arena_group_->module_stats();
-            for (auto& [name, s] : per_module) {
-                (void)name;
+    ObservabilityPrims::register_stats_impl(
+        "arena:defrag-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            std::size_t compact_count = 0;
+            std::size_t defrag_count = 0;
+            std::size_t wasted = 0;
+            std::size_t cap = 0;
+            std::size_t used = 0;
+            std::size_t compact_est = 0;
+            // Sum across the main arena (ev.arena_) AND any per-module
+            // arenas (ev.arena_group_). Issue #300 foundation: the
+            // (arena:defrag) primitive operates on ev.arena_, so we
+            // must include its stats in the read path for the
+            // defrag_attempted_count to reflect the increment.
+            if (ev.arena_) {
+                auto s = ev.arena_->stats();
                 compact_count += s.compaction_count;
                 defrag_count += s.defrag_attempted_count;
                 wasted += s.wasted;
                 cap += s.capacity;
                 used += s.used;
+                compact_est += ev.arena_->compact_estimate();
             }
-            for (auto& [name, s] : per_module) {
-                (void)s;
-                compact_est += ev.arena_group_->module_arena(name).compact_estimate();
+            if (ev.arena_group_) {
+                auto per_module = ev.arena_group_->module_stats();
+                for (auto& [name, s] : per_module) {
+                    (void)name;
+                    compact_count += s.compaction_count;
+                    defrag_count += s.defrag_attempted_count;
+                    wasted += s.wasted;
+                    cap += s.capacity;
+                    used += s.used;
+                }
+                for (auto& [name, s] : per_module) {
+                    (void)s;
+                    compact_est += ev.arena_group_->module_arena(name).compact_estimate();
+                }
             }
-        }
-        std::int64_t frag_bp =
-            (cap > 0) ? static_cast<std::int64_t>(((cap - used) * 10000) / cap) : 0;
-        // Build 5-tuple via (e1 . (e2 . (e3 . (e4 . e5)))) pattern,
-        // matching the issue body contract. Cell order:
-        //   e1=compaction-count, e2=defrag-attempted-count,
-        //   e3=fragmentation-bp, e4=wasted-bytes,
-        //   e5=compact-estimate-bytes (terminal int).
-        auto p4 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(wasted)),
-                             make_int(static_cast<std::int64_t>(compact_est))});
-        auto p3 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(frag_bp), make_pair(p4)});
-        auto p2 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(defrag_count), make_pair(p3)});
-        auto p1 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(compact_count)), make_pair(p2)});
-        return make_pair(p1);
-    });
+            std::int64_t frag_bp =
+                (cap > 0) ? static_cast<std::int64_t>(((cap - used) * 10000) / cap) : 0;
+            // Build 5-tuple via (e1 . (e2 . (e3 . (e4 . e5)))) pattern,
+            // matching the issue body contract. Cell order:
+            //   e1=compaction-count, e2=defrag-attempted-count,
+            //   e3=fragmentation-bp, e4=wasted-bytes,
+            //   e5=compact-estimate-bytes (terminal int).
+            auto p4 = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(wasted)),
+                                 make_int(static_cast<std::int64_t>(compact_est))});
+            auto p3 = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(frag_bp), make_pair(p4)});
+            auto p2 = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(defrag_count), make_pair(p3)});
+            auto p1 = ev.pairs_.size();
+            ev.pairs_.push_back(
+                {make_int(static_cast<std::int64_t>(compact_count)), make_pair(p2)});
+            return make_pair(p1);
+        });
     // (arena:stats-json) — Issue #187: JSON snapshot of all managed
     // arenas (capacity, used, fragmentation, compaction count). For
     // dashboards and auto-tuners. Returns the JSON as a string.
@@ -1509,7 +1514,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // Issue #1361 probes: (closure:free-stats) → hash of free/reuse/live/slots
-    add("closure:free-stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("closure:free-stats", [&ev](const auto&) -> EvalValue {
         auto* ht = FlatHashTable::create(16);
         if (!ht)
             return make_void();

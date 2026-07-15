@@ -49,7 +49,7 @@ bool test_default_wrap_epoch_is_zero() {
     // ast:generation-stats returns a hash; we can verify it
     // doesn't crash and is valid (truthy). The hash keys are
     // opaque to Aura-level introspection.
-    auto r = cs.eval("(ast:generation-stats)");
+    auto r = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(r.has_value(), "ast:generation-stats returns a value (truthy)");
     return true;
 }
@@ -64,7 +64,7 @@ bool test_normal_mutate_does_not_advance_wrap_epoch() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define x 1)\")");
     // Stats primitive should still work after set-code + eval.
-    auto r = cs.eval("(ast:generation-stats)");
+    auto r = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(r.has_value(), "ast:generation-stats returns a hash after set-code");
     return true;
 }
@@ -82,7 +82,7 @@ bool test_wrap_counter_increments_on_simulated_wrap() {
     for (int i = 0; i < 50; ++i) {
         cs.eval("(display (+ 1 2))");
     }
-    auto r = cs.eval("(ast:generation-stats)");
+    auto r = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(r.has_value(), "ast:generation-stats still works after 50 normal evals");
     return true;
 }

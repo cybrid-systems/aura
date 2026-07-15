@@ -74,7 +74,7 @@ int main() {
 
     // #1072 arena:adaptive-stats returns pair of ints (no crash)
     {
-        auto r = cs.eval("(arena:adaptive-stats)");
+        auto r = cs.eval("(stats:get \"arena:adaptive-stats\")");
         CHECK(r && (is_pair(*r) || is_void(*r) || is_int(*r)), "arena:adaptive-stats ok");
     }
 

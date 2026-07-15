@@ -57,13 +57,13 @@
       (list "validate-post-restore" v-post))))
 
 ; ── (ast:version-summary) ──
-; Combine (ast:version) + (ast:generation) + (ast:generation-stats)
+; Combine (ast:version) + (ast:generation) + (stats:get "ast:generation-stats")
 ; into a single alist summary.
 (define (ast:version-summary)
   (list
     (list "version"      (ast:version))
     (list "generation"   (ast:generation))
-    (list "gen-stats"    (ast:generation-stats))))
+    (list "gen-stats"    (stats:get "ast:generation-stats"))))
 
 ; ── (ast:ref-stats) ──
 ; Combine ref-related stats into a single alist.
@@ -76,10 +76,10 @@
 
 ; ── (ast:memory-pressure) ──
 ; Return one of "low" / "medium" / "high" based on
-; (ast:recycle-nodes) + (ast:node-lifecycle-stats) ratios.
+; (ast:recycle-nodes) + (stats:get "ast:node-lifecycle-stats") ratios.
 ; Pure stdlib (no engine state mutation).
 (define (ast:memory-pressure)
-  (let ((stats (ast:node-lifecycle-stats)))
+  (let ((stats (stats:get "ast:node-lifecycle-stats")))
     (cond
       ((null? stats) "low")
       ((> (length stats) 1000) "high")

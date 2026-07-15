@@ -32,7 +32,7 @@
 //    mutations".
 //
 // 4. New children_safe_view_count atomic counter in FlatAST
-//    + observability snapshot + (ast:generation-stats)
+//    + observability snapshot + (stats:get \"ast:generation-stats\")
 //    children-safe-view-count key.
 //
 // Test strategy: 4 layers (all via C++ API).
@@ -152,9 +152,10 @@ bool test_children_safe_counter() {
 // ═══════════════════════════════════════════════════════════
 
 bool test_ast_generation_stats_has_safe_view_key() {
-    std::println("\n--- AC4: (ast:generation-stats) includes children-safe-view-count ---");
+    std::println(
+        "\n--- AC4: (stats:get \"ast:generation-stats\") includes children-safe-view-count ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(ast:generation-stats)");
+    auto r = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(r.has_value(), "ast:generation-stats returns a value");
     return true;
 }

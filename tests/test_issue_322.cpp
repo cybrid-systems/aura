@@ -14,7 +14,7 @@
 //   - Scenario 2: (arena:compact) corrupts shared state
 //     for subsequent scenarios in the same process
 //     (segfault when scenario 5 runs after scenario 2).
-//   - Scenario 3: (arena:defrag-stats) segfaults — the
+//   - Scenario 3: (stats:get \"arena:defrag-stats\") segfaults — the
 //     inner double-loop reads `module_arena(name)` after
 //     the first loop consumed `s` references; bug is in
 //     src/compiler/evaluator_primitives_memory.cpp L440.

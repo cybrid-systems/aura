@@ -144,7 +144,7 @@ bool test_combined_task4_stats_bundle() {
         "(engine:metrics \"query:typed-mutation-stats\")",
         "(query:typed-mutation-stats-task1)",
         "(query:incremental-effectiveness)",
-        "(gc-arena-stats)",
+        "(stats:get \"gc-arena-stats\")",
     };
     for (const char* prim : stats) {
         auto r = cs.eval(prim);
@@ -218,8 +218,8 @@ bool test_arena_gc_integration() {
     }
     auto gc = cs.eval("(gc-heap)");
     CHECK(gc.has_value(), "(gc-heap) callable under arena pressure");
-    auto arena = cs.eval("(gc-arena-stats)");
-    CHECK(arena.has_value(), "(gc-arena-stats) callable");
+    auto arena = cs.eval("(stats:get \"gc-arena-stats\")");
+    CHECK(arena.has_value(), "(stats:get \"gc-arena-stats\") callable");
     return true;
 }
 

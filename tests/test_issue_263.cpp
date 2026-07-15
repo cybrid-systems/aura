@@ -50,7 +50,8 @@ bool test_snapshot_restore_post_restore_stats() {
     (void)cs.eval("(set-code \"(define x 99)\")");
     std::string restore = "(ast:restore " + std::to_string(snap) + ")";
     CHECK(run_bool(cs, restore), "restore succeeds");
-    auto violations = run_int(cs, "(hash-ref (ast:post-restore-stats) \"violations\")");
+    auto violations =
+        run_int(cs, "(hash-ref (stats:get \"ast:post-restore-stats\") \"violations\")");
     CHECK(violations == 0, "post-restore-stats violations == 0 after restore");
     return true;
 }

@@ -10,14 +10,14 @@
 // snapshot/restore helper, generation-stats primitive,
 // docs, uint16→uint32 migration). This scope-limited
 // slice ships the observability foundation: the
-// (ast:generation-stats) Aura primitive + 3 new
+// (stats:get \"ast:generation-stats\") Aura primitive + 3 new
 // snapshot fields + plumbing from the workspace FlatAST.
 //
 // Pre-#343, the 3 lifetime stable-ref counters
 // (bump_generation_count, generation_wrap_count,
 // node_gen_stale_access_count) were only accessible
 // via (engine:metrics \"query:stable-ref-stats\") which returns the
-// SUM. Post-#343 the (ast:generation-stats) primitive
+// SUM. Post-#343 the (stats:get \"ast:generation-stats\") primitive
 // exposes each category individually so the AI Agent
 // can react to each independently (e.g. checkpoint
 // when wrap-count > 0, investigate when
@@ -28,7 +28,7 @@
 //   AC2: snapshot has 3 new stable-ref fields
 //        (current_generation + generation_wrap_count
 //        + node_gen_stale_access_count)
-//   AC3: (ast:generation-stats) returns 5-key hash
+//   AC3: (stats:get \"ast:generation-stats\") returns 5-key hash
 //   AC4: eval-current + a mutation → bump-generation-total > 0
 //   AC5: existing eval still works (regression)
 
@@ -93,11 +93,11 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (ast:generation-stats) returns 5-key hash
+// ── AC3: (stats:get \"ast:generation-stats\") returns 5-key hash
 bool test_generation_stats_primitive() {
-    std::println("\n--- AC3: (ast:generation-stats) returns 5-key hash ---");
+    std::println("\n--- AC3: (stats:get \"ast:generation-stats\") returns 5-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define gss (ast:generation-stats))\")");
+    cs.eval("(set-code \"(define gss (stats:get \\\"ast:generation-stats\\\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"current-generation", "bump-generation-total", "generation-wrap-total",
                             "stable-ref-invalidations-total", "node-gen-stale-access-total"}) {

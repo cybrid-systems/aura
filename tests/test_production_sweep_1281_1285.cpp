@@ -91,7 +91,7 @@ int main() {
 
     // #1282: ast:generation-stats still works and exposes new keys
     {
-        auto r = cs.eval("(ast:generation-stats)");
+        auto r = cs.eval("(stats:get \"ast:generation-stats\")");
         CHECK(r && is_hash(*r), "ast:generation-stats is hash");
     }
 

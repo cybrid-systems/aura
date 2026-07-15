@@ -10,7 +10,7 @@
 
 (display "=== Multi-Session Module Load Test ===\n")
 
-(define initial-stats (gc-stats))
+(define initial-stats (stats:get "gc-stats"))
 (display "Initial: ")
 (display initial-stats)
 (newline)
@@ -30,7 +30,7 @@
 
 (load-iter 50)
 
-(define final-stats (gc-stats))
+(define final-stats (stats:get "gc-stats"))
 (display "Final:   ")
 (display final-stats)
 (newline)

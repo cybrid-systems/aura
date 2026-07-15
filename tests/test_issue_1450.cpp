@@ -1,14 +1,14 @@
 // @category: integration
-// @reason: CompilerService facade + deprecation marks (#1450 / epic #1449)
+// @reason: CompilerService facade + residual stats demotion (#1450 Phase 2)
 //
 // test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
-// Observability Facade reinforcement.
+// Observability Facade reinforcement + residual public *-stats removal.
 //
 // ACs:
 //   AC1: (stats:get name) routes catalog names without requiring std/stats
-//   AC2: residual public *-stats aliases ≤ 50 and marked PrimMeta.deprecated
-//   AC3: invoking residual alias bumps deprecated_prim_dispatch_total
-//   AC4: (engine:surface) exposes public/catalog counts + budget
+//   AC2: residual 10 names are NOT public Primitives (facade-only)
+//   AC3: deprecated alias dispatch still bumps counter (query:children)
+//   AC4: (engine:surface) public-stats-remaining == 0
 //   AC5: (stats:prefix "query:") returns a non-empty name list
 //   AC6: (stats:count) catalog still ≤ 420 target
 
@@ -37,6 +37,7 @@ namespace aura_issue_1450_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -52,73 +53,58 @@ std::int64_t hash_int(CompilerService& cs, std::string_view expr, std::string_vi
 void ac1_stats_get() {
     std::println("\n--- AC1: (stats:get) engine facade ---");
     CompilerService cs;
-    // Residual public alias still callable via stats:get
     auto r = cs.eval("(stats:get \"gc-stats\")");
-    CHECK(r.has_value(), "(stats:get \"gc-stats\") returns a value");
-    // Unknown name → void (not crash)
+    CHECK(r.has_value() && !is_void(*r), "(stats:get \"gc-stats\") returns non-void");
     auto u = cs.eval("(stats:get \"definitely-not-a-stats-name-zzz\")");
     CHECK(u.has_value() && is_void(*u), "unknown stats:get → void");
+    // Bidirectional / residual also via facade
+    auto b = cs.eval("(stats:get \"compile:bidirectional-stats\")");
+    CHECK(b.has_value(), "(stats:get \"compile:bidirectional-stats\") callable");
 }
 
-void ac2_residual_deprecated_and_budget() {
-    std::println("\n--- AC2: residual public stats deprecated + count <50 ---");
+void ac2_residual_not_public() {
+    std::println("\n--- AC2: residual *-stats not on public Primitives ---");
     CompilerService cs;
     auto& prims = cs.evaluator().primitives();
     static constexpr const char* kResidual[] = {
-        "arena:adaptive-stats",
-        "gc-stats",
+        "arena:adaptive-stats",        "arena:defrag-stats",     "ast:generation-stats",
+        "ast:node-lifecycle-stats",    "ast:post-restore-stats", "closure:free-stats",
+        "compile:bidirectional-stats", "gc-arena-stats",         "gc-stats",
         "type-registry-stats",
-        "compile:bidirectional-stats",
     };
-    std::size_t deprecated_hits = 0;
+    std::size_t still_public = 0;
     for (const char* name : kResidual) {
-        const auto slot = prims.slot_for_name(name);
-        if (slot >= prims.slot_count())
-            continue;
-        if (prims.meta_for_slot(slot).deprecated)
-            ++deprecated_hits;
+        if (prims.slot_for_name(name) < prims.slot_count())
+            ++still_public;
     }
-    CHECK(deprecated_hits >= 2,
-          std::format("at least 2 residual aliases marked deprecated (got {})", deprecated_hits));
-    // AC2 global: residual set size is 10 << 50 (compile-time static_assert in engine).
-    CHECK(true, "residual public stats set size < 50 (engine static_assert)");
+    CHECK(still_public == 0,
+          std::format("0 residual public *-stats (got {} still public)", still_public));
+    // Bare name is no longer a public primitive — eval may be nullopt/error/void.
+    // Must not crash the process.
+    try {
+        auto bare = cs.eval("(gc-stats)");
+        CHECK(true, "bare (gc-stats) does not crash process");
+        if (bare.has_value() && !is_void(*bare) && !is_error(*bare)) {
+            // If it returns a normal value, something re-registered it.
+            CHECK(false, "bare (gc-stats) must not resolve as a live stats prim");
+        } else {
+            CHECK(true, "bare (gc-stats) unbound/void/error (expected)");
+        }
+    } catch (...) {
+        CHECK(false, "bare (gc-stats) must not throw");
+    }
 }
 
 void ac3_dispatch_telemetry() {
-    std::println("\n--- AC3: residual alias dispatch bumps deprecation counter ---");
+    std::println("\n--- AC3: deprecated alias dispatch bumps counter ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
-    auto& prims = ev.primitives();
-    // Prefer a residual that is actually marked on this build (registration order
-    // may leave a name unregistered in s0-like configs).
-    // Prefer query:children (#1435 alias) — known to hit invoke_prim_with_telemetry
-    // on the CompilerService eval path (see test_primitives_surface_convergence).
-    // Residual arena/gc stats may be IR-folded or name-empty on some paths.
-    const char* call = nullptr;
-    for (const char* name : {"query:children", "mutate:rebind", "workspace:create",
-                             "arena:adaptive-stats", "gc-stats"}) {
-        const auto slot = prims.slot_for_name(name);
-        if (slot < prims.slot_count() && prims.meta_for_slot(slot).deprecated) {
-            call = name;
-            break;
-        }
-    }
-    CHECK(call != nullptr, "found a deprecated residual/alias to invoke");
-    if (!call)
-        return;
-    const auto before = ev.deprecated_prim_dispatch_total();
-    // query:children needs a workspace; set-code first for structural queries.
     (void)cs.eval("(set-code \"(define (f x) (+ x 1))\")");
-    std::string expr;
-    if (std::string_view(call) == "query:children")
-        expr = "(query:children (query:root))";
-    else
-        expr = std::format("({})", call);
-    auto r = cs.eval(expr);
-    CHECK(r.has_value(), std::format("{} still executes (compat)", expr));
+    const auto before = ev.deprecated_prim_dispatch_total();
+    auto r = cs.eval("(query:children (query:root))");
+    CHECK(r.has_value(), "(query:children …) still executes (compat)");
     const auto after = ev.deprecated_prim_dispatch_total();
-    CHECK(after > before,
-          std::format("deprecated_prim_dispatch_total {} → {} via {}", before, after, expr));
+    CHECK(after > before, std::format("deprecated_prim_dispatch_total {} → {}", before, after));
 }
 
 void ac4_engine_surface() {
@@ -131,8 +117,8 @@ void ac4_engine_surface() {
     CHECK(hash_int(cs, "(engine:surface)", "interim-ceiling") == 700, "interim-ceiling == 700");
     const auto cat = hash_int(cs, "(engine:surface)", "stats-catalog-count");
     CHECK(cat > 0 && cat <= 420, std::format("stats-catalog-count={} in (0,420]", cat));
-    const auto pub = hash_int(cs, "(engine:surface)", "public-count");
-    CHECK(pub > 0, std::format("public-count={} > 0", pub));
+    const auto pub_stats = hash_int(cs, "(engine:surface)", "public-stats-remaining");
+    CHECK(pub_stats == 0, std::format("public-stats-remaining={} (all facade-only)", pub_stats));
 }
 
 void ac5_stats_prefix() {
@@ -159,9 +145,9 @@ void ac6_stats_count() {
 
 int main() {
     using namespace aura_issue_1450_detail;
-    std::println("=== Issue #1450 / Epic #1449 Phase 1: Observability Facade ===");
+    std::println("=== Issue #1450 Phase 2: residual public *-stats → facade ===");
     ac1_stats_get();
-    ac2_residual_deprecated_and_budget();
+    ac2_residual_not_public();
     ac3_dispatch_telemetry();
     ac4_engine_surface();
     ac5_stats_prefix();

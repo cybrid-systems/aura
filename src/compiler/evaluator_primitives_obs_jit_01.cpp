@@ -280,7 +280,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
-    add("gc-arena-stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("gc-arena-stats", [&ev](const auto&) -> EvalValue {
         std::string out;
         auto fmt_arena = [&](const char* label, std::size_t used, std::size_t cap) {
             auto s = std::format("{}{}:{:.1f}MB/{:.1f}MB", out.empty() ? "" : ";", label,
@@ -842,9 +842,17 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
     add("engine:surface", [&ev](const auto&) -> EvalValue {
         const auto& stats = ObservabilityPrims::stats_primitives();
         const auto public_slots = static_cast<std::int64_t>(ev.primitives_.slot_count());
-        // Count residual public *-stats still on the registry (not private impl).
+        // Count residual public *stats-like* names still on Primitives
+        // (not private register_stats_impl-only). Non-stats catalog entries
+        // (e.g. query:dirty-impact) are out of scope for this counter.
+        auto is_stats_like = [](std::string_view n) {
+            return n.ends_with("-stats") || n.ends_with("-stats-hash") ||
+                   n.find("-stats-") != std::string_view::npos;
+        };
         std::int64_t public_stats = 0;
         for (const auto& n : stats) {
+            if (!is_stats_like(n))
+                continue;
             if (ev.primitives_.slot_for_name(n) < ev.primitives_.slot_count())
                 ++public_stats;
         }

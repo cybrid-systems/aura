@@ -1,5 +1,5 @@
 // tests/test_bidirectional_stats.cpp — Issue #1420 AC3:
-// (compile:bidirectional-stats) EDSL primitive. Surfaces
+// (stats:get \"compile:bidirectional-stats\") EDSL primitive. Surfaces
 // InferenceEngine::check_flat_call annotation contract counters
 // (compile_bidirectional_check_call_total +
 //  compile_bidirectional_annotation_pass_total +
@@ -24,11 +24,11 @@
 //     metrics_; CompilerService::bidirectional_mode() accessor
 //     exposes the persistent flag.
 //   - src/compiler/evaluator_primitives_compile_07.cpp (p63):
-//     (compile:bidirectional-stats) primitive — default tier
+//     (stats:get \"compile:bidirectional-stats\") primitive — default tier
 //     (kPrimSecSafe), read-only.
 //
 // ACs:
-//   AC1: (compile:bidirectional-stats) on a fresh service returns
+//   AC1: (stats:get \"compile:bidirectional-stats\") on a fresh service returns
 //        :mode = "full" and all 4 counters = 0 (no eval yet).
 //   AC2: After evaluating a matched annotation
 //        (let ((x : Integer 1)) (+ x 2)), check-calls >= 1
@@ -100,7 +100,7 @@ bool hash_str_eq(aura::compiler::CompilerService& cs, std::string_view expr, std
 
 int aura_issue_1420_run() {
     using namespace test_bidirectional_stats_detail;
-    std::println("=== Issue #1420 AC3: (compile:bidirectional-stats) primitive ===");
+    std::println("=== Issue #1420 AC3: (stats:get \"compile:bidirectional-stats\") primitive ===");
 
     // ── AC1: default state on fresh CompilerService ──
     //
@@ -110,15 +110,15 @@ int aura_issue_1420_run() {
         std::println("\n--- AC1: default state ---");
         aura::compiler::CompilerService cs;
 
-        CHECK(hash_str_eq(cs, "(compile:bidirectional-stats)", "mode", "full"),
+        CHECK(hash_str_eq(cs, "(stats:get \"compile:bidirectional-stats\")", "mode", "full"),
               "AC1a: :mode defaults to 'full' (persistent CompilerService flag)");
-        CHECK(hash_int(cs, "(compile:bidirectional-stats)", "check-calls") == 0,
+        CHECK(hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "check-calls") == 0,
               "AC1b: :check-calls starts at 0");
-        CHECK(hash_int(cs, "(compile:bidirectional-stats)", "annotation-passes") == 0,
+        CHECK(hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "annotation-passes") == 0,
               "AC1c: :annotation-passes starts at 0");
-        CHECK(hash_int(cs, "(compile:bidirectional-stats)", "annotation-fails") == 0,
+        CHECK(hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "annotation-fails") == 0,
               "AC1d: :annotation-fails starts at 0");
-        CHECK(hash_int(cs, "(compile:bidirectional-stats)", "coercion-deferred") == 0,
+        CHECK(hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "coercion-deferred") == 0,
               "AC1e: :coercion-deferred starts at 0");
     }
 
@@ -135,8 +135,10 @@ int aura_issue_1420_run() {
         const bool ok = run_eval(cs, "(let ((x : Integer 1)) (+ x 2))");
         CHECK(ok, "AC2a: matched annotation typechecks OK");
 
-        const auto check_calls = hash_int(cs, "(compile:bidirectional-stats)", "check-calls");
-        const auto passes = hash_int(cs, "(compile:bidirectional-stats)", "annotation-passes");
+        const auto check_calls =
+            hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "check-calls");
+        const auto passes =
+            hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "annotation-passes");
         CHECK(check_calls >= 1,
               std::format("AC2b: :check-calls >= 1 after matched eval (got {})", check_calls));
         CHECK(passes >= 1,
@@ -156,8 +158,10 @@ int aura_issue_1420_run() {
         const bool ok = run_eval(cs, "(let ((x : Integer \"hello\")) (+ x 2))");
         CHECK(!ok, "AC3a: mismatched annotation rejected (TypeError)");
 
-        const auto fails = hash_int(cs, "(compile:bidirectional-stats)", "annotation-fails");
-        const auto check_calls = hash_int(cs, "(compile:bidirectional-stats)", "check-calls");
+        const auto fails =
+            hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "annotation-fails");
+        const auto check_calls =
+            hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "check-calls");
         CHECK(fails >= 1,
               std::format("AC3b: :annotation-fails >= 1 after mismatched eval (got {})", fails));
         CHECK(check_calls >= 1,

@@ -8,7 +8,7 @@
 // the arena module).
 //
 // Ship scope (Issue #324 AC #2 + #3):
-//   - Compaction observable: (arena:defrag-stats) 5-tuple
+//   - Compaction observable: (stats:get \"arena:defrag-stats\") 5-tuple
 //     returns compaction-count + related fields
 //   - Compaction safe under mutations: workspace remains
 //     queryable after compact cycles

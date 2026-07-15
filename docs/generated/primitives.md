@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**618** registrations scanned from `src/**/*.cpp` (28 marked **deprecated** — Issue #1438).
+**608** registrations scanned from `src/**/*.cpp` (18 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 123 primitives (20%)
-- **core**: 406 primitives (66%)
+- **mutation-safety**: 119 primitives (20%)
+- **core**: 400 primitives (66%)
 - **internal-observable**: 81 primitives (13%)
 - **convenience**: 8 primitives (1%)
 
@@ -107,17 +107,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 
-## Ast: (25)
+## Ast: (22)
 
 - `ast:compact-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:defs` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `ast:list-snapshots` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:node-lifecycle-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:post-restore-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-deserialize` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -183,9 +180,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (39)
+## Compile: (38)
 
-- `compile:bidirectional-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:cache-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
@@ -240,7 +236,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (277)
+## Core builtins (274)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -330,12 +326,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `gap-buffer-structural-mutate-demo` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `gc` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-arena-info` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `gc-arena-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-freeze` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module-count` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `gc-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gcd` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `generate-type-sigs` *[core]* — `src/compiler/evaluator_primitives_types.cpp`
@@ -496,7 +490,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `tcp-send` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `type-of` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `type-registry-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -533,10 +526,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `aot:set-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `aot:set-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 
-## Arena: (19)
+## Arena: (17)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:adaptive-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -544,7 +536,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-requested?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:safepoint-registered?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -567,10 +558,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `channel:send` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `channel:try-recv` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Closure: (3)
+## Closure: (2)
 
 - `closure:free!` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `closure:free-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:stats` *[core]* — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 
 ## Compiler: (1)
@@ -782,18 +772,15 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (123)
+### Mutation safety (must remain primitive) (119)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:node-lifecycle-stats` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:post-restore-stats` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -822,7 +809,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
-- `compile:bidirectional-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:cache-size` — `src/compiler/evaluator_primitives_compile_02.cpp`
@@ -908,7 +894,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (406)
+### Core builtins (must remain primitive) (400)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -928,7 +914,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:adaptive-compact` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:adaptive-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -936,7 +921,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-requested?` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:safepoint-registered?` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -991,7 +975,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `check-success` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `closure:free!` — `src/compiler/evaluator_primitives_memory.cpp`
-- `closure:free-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `closure:stats` — `src/compiler/evaluator_primitives_obs_eval_12.cpp`
 - `command-line` — `src/compiler/evaluator_primitives_file.cpp`
 - `command-output` — `src/compiler/evaluator_primitives_file.cpp`
@@ -1052,12 +1035,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `gap-buffer-structural-mutate-demo` — `src/compiler/evaluator_primitives_io.cpp`
 - `gc` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-arena-info` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `gc-arena-stats` **deprecated** — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module-count` — `src/compiler/evaluator_primitives_memory.cpp`
-- `gc-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gcd` — `src/compiler/evaluator_primitives_math.cpp`
 - `generate-type-sigs` — `src/compiler/evaluator_primitives_types.cpp`
@@ -1288,7 +1269,6 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `tui:terminal-size` — `src/compiler/evaluator_primitives_tui.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
-- `type-registry-stats` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1414,18 +1394,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **28** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **18** names:
 
-- `arena:adaptive-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
-- `closure:free-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `compile:bidirectional-stats` — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
-- `gc-arena-stats` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `gc-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1436,7 +1407,6 @@ Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(wo
 - `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`

@@ -64,7 +64,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats2b > stats2a, "mutate bumps generation epoch stats");
 
     std::println("\n--- AC3: ast:generation-stats integration ---");
-    auto ags = cs.eval("(ast:generation-stats)");
+    auto ags = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(ags.has_value(), "ast:generation-stats returns value");
 
     std::println("\n--- AC4: eval-current mutation epoch path ---");

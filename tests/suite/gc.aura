@@ -5,7 +5,7 @@
 (require "std/list" all:)
 
 ; ── 1. gc-stats returns a string ──
-(assert (string? (gc-stats)))
+(assert (string? (stats:get "gc-stats")))
 
 ; ── 2. gc-heap cleanly runs ──
 (assert (gc-heap))
@@ -80,9 +80,9 @@
 (check= 42 (+ 40 2))
 
 ; ── 11. gc-stats called many times ──
-(gc-stats) (gc-stats) (gc-stats)
-(gc-heap) (gc-stats) (gc-stats)
-(assert (string? (gc-stats)))
+(stats:get "gc-stats") (stats:get "gc-stats") (stats:get "gc-stats")
+(gc-heap) (stats:get "gc-stats") (stats:get "gc-stats")
+(assert (string? (stats:get "gc-stats")))
 
 ; ── 12. require still works after gc-heap ──
 (gc-heap)
@@ -111,7 +111,7 @@
 ; ── 16. gc-heap is idempotent ──
 (gc-heap) (gc-heap) (gc-heap)
 (gc-heap) (gc-heap)
-(assert (string? (gc-stats)))
+(assert (string? (stats:get "gc-stats")))
 
 ; ── 17. Many gc-heap calls ──
 (define j 0)
@@ -141,13 +141,13 @@
 (define (my-ver c) "#t")
 (intend "gc-test" my-gen my-ver 1)
 (gc-temp)
-(assert (string? (gc-stats)))
+(assert (string? (stats:get "gc-stats")))
 (check= 3 (+ 1 2))
 
 ; ── 22. gc-heap still works after gc-temp ──
 (gc-temp)
 (gc-heap)
-(gc-stats)
+(stats:get "gc-stats")
 (check= 3 (+ 1 2))
 
 ; ════════════════════════════════════════════════════════
@@ -181,7 +181,7 @@
 (define (gen-returns-code g) "(display 42)")
 (intend "inner-closure" gen-returns-code ver-creates-closure 1)
 (gc-temp)
-(assert (string? (gc-stats)))
+(assert (string? (stats:get "gc-stats")))
 
 ; ── 26. Multiple intends with gc-temp between (no closures growth) ──
 (define (gen-simple g) "(display 1)")
@@ -230,8 +230,8 @@
 (check= 30 (+ 15 15))
 
 ; ── 31. gc-temp doesn't break gc-stats ──
-(gc-temp) (gc-stats) (gc-temp) (gc-stats) (gc-temp)
-(assert (string? (gc-stats)))
+(gc-temp) (stats:get "gc-stats") (gc-temp) (stats:get "gc-stats") (gc-temp)
+(assert (string? (stats:get "gc-stats")))
 
 ; ── 32. Stress: 10 intends with gc-temp each, closures stable ──
 (define n 0)
