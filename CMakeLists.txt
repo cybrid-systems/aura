@@ -4881,6 +4881,11 @@ aura_issue_test_link_llvm_jit(test_capability_gating)
 # tests/test_primitive_surface_gate.py (./build.py gate).
 aura_add_issue_test(test_primitives_surface_convergence)
 aura_issue_test_link_llvm_jit(test_primitives_surface_convergence)
+# Issue #1450 / Epic #1449 Phase 1: Observability Facade —
+# stats:get / stats:prefix / engine:surface + residual public
+# *-stats deprecation marks.
+aura_add_issue_test(test_issue_1450)
+aura_issue_test_link_llvm_jit(test_issue_1450)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash

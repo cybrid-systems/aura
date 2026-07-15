@@ -22,6 +22,8 @@ module;
 #include "security_capabilities.h"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
 #include "runtime_shared.h"
+// Issue #1443/#1445: aura_invoke_long_mutation_scheduler_hook (C ABI)
+#include "aura_jit_bridge.h"
 #include <algorithm>
 #include <array>
 #include <atomic>

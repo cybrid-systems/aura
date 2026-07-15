@@ -71,7 +71,9 @@ These four issues do **not** duplicate any current open engine/Guard/SlimSurface
 
 1. **Land SlimSurface infrastructure** — **#1448 done**  
    Registry gate + `scripts/check_primitive_surface.py --strict` + `PrimMeta.deprecated` dispatch counter + `docs/design/primitives-slim-surface-v2.md` + gate CI + `test_primitives_surface_convergence`.  
-   Remaining: real demotion to public ≤420; force remaining public stats through facade.
+2. **Observability facade Phase 1** — **#1450 done** (epic #1449)  
+   Engine `(stats:get)` / `(stats:prefix)` / `(engine:surface)`; residual 10 public `*-stats` marked deprecated + catalogued.  
+   Remaining: real demotion to public ≤420; hard-remove residual aliases.
 
 2. **MutationBoundary contract + first-class atomic-batch**  
    - Every mutate:* entry must go through outermost Guard (runtime contract + metric).  

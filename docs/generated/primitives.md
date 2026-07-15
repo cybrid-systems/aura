@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**615** registrations scanned from `src/**/*.cpp` (28 marked **deprecated** — Issue #1438).
+**618** registrations scanned from `src/**/*.cpp` (28 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 123 primitives (20%)
-- **core**: 403 primitives (66%)
+- **core**: 406 primitives (66%)
 - **internal-observable**: 81 primitives (13%)
 - **convenience**: 8 primitives (1%)
 
@@ -610,9 +610,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 
-## Engine: (1)
+## Engine: (2)
 
 - `engine:metrics` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `engine:surface` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 
 ## Eval: (1)
 
@@ -701,10 +702,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
 - `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
 
-## Stats: (2)
+## Stats: (4)
 
 - `stats:count` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:get` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `stats:list` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:prefix` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 
 ## Strategy: (4)
 
@@ -905,7 +908,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (403)
+### Core builtins (must remain primitive) (406)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1027,6 +1030,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eda:waveform-snapshot` — `src/compiler/evaluator_primitives_eda.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `engine:surface` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`
 - `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -1206,7 +1210,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
 - `stats:count` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:get` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `stats:list` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:prefix` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
 - `strategy-field` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy-inspect` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy-set-field!` — `src/compiler/evaluator_primitives_agent.cpp`

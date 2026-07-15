@@ -242,17 +242,20 @@
     "compile:type-cache-stats"
     "compile:dirty-impact-stats"))
 
-; ── (stats:get name) → via (engine:metrics …)  [Issue #1439] ──────
-; Public query:*-stats prims were removed; facade is the only entry.
+; ── (stats:get name) → engine facade  [Issue #1439 / #1450] ──────
+; Prefer the C++ primitive when present (Issue #1450); fall back to
+; (engine:metrics …) for older builds. Public query:*-stats prims
+; were removed (#1439); residual arena/gc/ast aliases stay as
+; deprecated compat and are still reachable via stats:get.
 (define (stats:get name)
   (cond
     ((equal? name "all")
       (engine:metrics :all))
-    ((member? name stats-registry)
-      (engine:metrics name))
     (else
-      ; Unknown name — surface a structured diagnostic.
-      (list 'unknown-stats-name name))))
+      ; Engine (stats:get) routes register_stats_impl + residual public.
+      ; If the host has no engine stats:get, this still works via metrics.
+      (let ((v (engine:metrics name)))
+        v))))
 
 ; ── (stats:list) → list of every registered stats primitive ──
 (define (stats:list) stats-registry)

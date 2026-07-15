@@ -232,7 +232,11 @@ struct ObservabilityPrims {
     static void register_eval_all(PrimRegistrar add, Evaluator& ev);
     static void register_jit_all(PrimRegistrar add, Evaluator& ev);
     // P2b: stats:list + stats:count + engine:metrics only (s0 facade).
+    // Issue #1450: also stats:get / stats:prefix / engine:surface.
     static void register_metrics_facade(PrimRegistrar add, Evaluator& ev);
     // Issue #1434: mark top-20 query:*-stats PrimMeta.deprecated after reg.
     static void mark_p1b_top_stats_deprecated(Evaluator& ev);
+    // Issue #1450: residual public *-stats (non query:/compile:) → deprecated
+    // aliases; prefer (stats:get) / (engine:metrics). Count kept <50.
+    static void mark_residual_public_stats_deprecated(Evaluator& ev);
 };
