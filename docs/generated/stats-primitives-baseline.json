@@ -1,5 +1,5 @@
 {
-  "count": 528,
+  "count": 529,
   "names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -16,6 +16,7 @@
     "compile:and-or-precision-stats",
     "compile:arena-stats",
     "compile:ast-ops-stats",
+    "compile:bidirectional-stats",
     "compile:compiler-cache-stats",
     "compile:compiler-incremental-stats",
     "compile:constraint-dep-stats",
@@ -532,5 +533,5 @@
   ],
   "note": "Frozen set of blocked-pattern primitive names (Issue #1432 / P0b). No new *-stats, string-*/json-*/math-*/vector-*/path-*/time-* (or : forms), or ast:ref-* without --update-baseline + PR justification. Prefer stdlib (lib/std/surface) and (engine:metrics).",
   "schema": 2,
-  "stats_count": 504
+  "stats_count": 505
 }

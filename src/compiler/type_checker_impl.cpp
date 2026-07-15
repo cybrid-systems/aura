@@ -4661,10 +4661,21 @@ void InferenceEngine::check_flat_if_narrowing(FlatAST& flat, StringPool& pool, N
 
 void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView v,
                                       TypeId expected) {
+    // Issue #1420 AC3: bump entry counter for
+    // (compile:bidirectional-stats) observability.
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->compile_bidirectional_check_call_total.fetch_add(1, std::memory_order_relaxed);
+    }
     // Synthesize the call's type normally, then check against expected
     TypeId inferred = synthesize_flat_call(flat, pool, v);
     if (!cs_.consistent_unify(inferred, expected)) {
         if (is_coercible(inferred, expected)) {
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->compile_bidirectional_coercion_deferred_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
             auto msg = "call return type: coercion from " +
                        std::string(reg_.format_type(inferred)) + " to " +
                        std::string(reg_.format_type(expected));
@@ -4685,12 +4696,20 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
                                       v.line, v.col);
             }
         } else {
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->compile_bidirectional_annotation_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
             auto msg = "call return type mismatch: expected " +
                        std::string(reg_.format_type(expected)) + ", got " +
                        std::string(reg_.format_type(inferred));
             diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
                              .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
         }
+    } else if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->compile_bidirectional_annotation_pass_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

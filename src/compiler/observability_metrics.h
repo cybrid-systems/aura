@@ -4847,6 +4847,32 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> synthesize_check_switch_count_total{0};
     std::atomic<std::uint64_t> post_mutate_narrow_consistency_total{0};
     std::atomic<std::uint64_t> stale_check_narrow_prevented_total{0};
+    // Issue #1420 AC3: bidirectional annotation stats (4
+    // counters for the (compile:bidirectional-stats) EDSL
+    // primitive). The existing check_mode_narrow_hits_total
+    // covers narrowing records; the new fields cover
+    // annotation contract enforcement at check_flat_call
+    // sites. Prefix `compile_bidirectional_` lands them in
+    // the `compile` group of the engine:metrics facade
+    // (#1433) via metrics_group_for_field.
+    //   - compile_bidirectional_check_call_total: every
+    //     entry into InferenceEngine::check_flat_call.
+    //   - compile_bidirectional_annotation_pass_total:
+    //     cs_.consistent_unify(inferred, expected) returned
+    //     true (synth ⊆ annotation contract).
+    //   - compile_bidirectional_annotation_fail_total:
+    //     consistent_unify returned false AND is_coercible
+    //     returned false (gradual typing can't bridge the
+    //     gap; TypeError reported via diag_.).
+    //   - compile_bidirectional_coercion_deferred_total:
+    //     consistent_unify returned false BUT is_coercible
+    //     returned true (Gradual Typing path — Issue #116
+    //     deferred CoercionNode insertion; #384 first slice
+    //     for annotations).
+    std::atomic<std::uint64_t> compile_bidirectional_check_call_total{0};
+    std::atomic<std::uint64_t> compile_bidirectional_annotation_pass_total{0};
+    std::atomic<std::uint64_t> compile_bidirectional_annotation_fail_total{0};
+    std::atomic<std::uint64_t> compile_bidirectional_coercion_deferred_total{0};
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. 3 lifetime counters:
     //   - consistent_unify_total: every call to
