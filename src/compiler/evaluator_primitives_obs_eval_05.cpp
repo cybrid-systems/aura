@@ -1077,6 +1077,87 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+
+    // Issue #1444: (query:mutation-boundary-coverage-stats) —
+    // surface the cross-fiber Guard-coverage telemetry: naked-mutate
+    // attempts, current boundary depth, outermost-flag, latest long-hold
+    // event, and the strict-mode / threshold knobs (so callers can verify
+    // policy is engaged without re-reading CompilerMetrics directly).
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-coverage-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(64);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+            };
+            const std::int64_t naked = m ? load(m->naked_mutate_attempt) : 0;
+            const std::int64_t boundary_depth =
+                static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
+            const std::int64_t boundary_held =
+                ev.mutation_boundary_held_.load(std::memory_order_relaxed) ? 1 : 0;
+            const std::int64_t threshold_us = m ? load(m->long_mutation_threshold_us) : 500'000;
+            const std::int64_t strict_mode = m ? load(m->long_mutation_strict_mode) : 0;
+            const std::int64_t starvation_prevented = m ? load(m->starvation_prevented_count) : 0;
+            const std::int64_t last_fiber = m ? load(m->last_long_mutation_fiber_id) : 0;
+            const std::int64_t last_dur_us = m ? load(m->last_long_mutation_duration_us) : 0;
+            const std::int64_t max_extreme_us = m ? load(m->max_extreme_mutation_us) : 30'000'000;
+            const std::int64_t extreme_total = m ? load(m->long_mutation_extreme_total) : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"naked-mutate-attempt", make_int(naked)},
+                {"boundary-depth", make_int(boundary_depth)},
+                {"boundary-held", make_int(boundary_held)},
+                {"threshold-us", make_int(threshold_us)},
+                {"strict-mode", make_int(strict_mode)},
+                {"starvation-prevented", make_int(starvation_prevented)},
+                {"last-long-mutation-fiber-id", make_int(last_fiber)},
+                {"last-long-mutation-duration-us", make_int(last_dur_us)},
+                {"max-extreme-mutation-us", make_int(max_extreme_us)},
+                {"long-mutation-extreme-total", make_int(extreme_total)},
+                {"schema", make_int(1444)},
+            };
+            return build_hash(kv);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

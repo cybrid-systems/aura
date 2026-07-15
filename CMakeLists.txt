@@ -1972,6 +1972,9 @@ aura_issue_test_link_llvm_jit(test_ast_column_compaction_closed_loop_416)
 # Issue #417: MutationBoundary cross-TU invariant closed loop.
 aura_add_issue_test(test_mutation_boundary_invariant_closed_loop_417)
 aura_issue_test_link_llvm_jit(test_mutation_boundary_invariant_closed_loop_417)
+# Issue #1444: MutationBoundary full coverage audit + new coverage primitive.
+aura_add_issue_test(test_mutation_boundary_full_coverage)
+aura_issue_test_link_llvm_jit(test_mutation_boundary_full_coverage)
 # Issue #418: EnvFrame dual-path + stale policy closed loop.
 aura_add_issue_test(test_envframe_dualpath_stale_closed_loop_418)
 aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)
