@@ -109,10 +109,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:eda-production-readiness) hash shape ---");
-    auto r = cs.eval("(query:eda-production-readiness)");
+    std::println("\n--- AC1: (stats:get \"query:eda-production-readiness\") hash shape ---");
+    auto r = cs.eval("(stats:get \"query:eda-production-readiness\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:eda-production-readiness) returns a hash");
+          "(stats:get \"query:eda-production-readiness\") returns a hash");
     const std::vector<std::string> keys = {"m1-completeness-pct",
                                            "m2-completeness-pct",
                                            "m3-completeness-pct",
@@ -130,10 +130,14 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_completeness(aura::compiler::CompilerService& cs) {
     std::println(
         "\n--- AC2: fresh-state completeness (all milestones = 100% on production build) ---");
-    const auto m1 = hash_int_field(cs, "(query:eda-production-readiness)", "m1-completeness-pct");
-    const auto m2 = hash_int_field(cs, "(query:eda-production-readiness)", "m2-completeness-pct");
-    const auto m3 = hash_int_field(cs, "(query:eda-production-readiness)", "m3-completeness-pct");
-    const auto m4 = hash_int_field(cs, "(query:eda-production-readiness)", "m4-completeness-pct");
+    const auto m1 =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m1-completeness-pct");
+    const auto m2 =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m2-completeness-pct");
+    const auto m3 =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m3-completeness-pct");
+    const auto m4 =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m4-completeness-pct");
     CHECK(m1 == 10000,
           std::format("m1-completeness-pct = {} (expected 10000 = 100% on production build "
                       "because all 5 M1 primitives are shipped)",
@@ -150,13 +154,14 @@ static void run_ac2_fresh_completeness(aura::compiler::CompilerService& cs) {
           std::format("m4-completeness-pct = {} (expected 10000 = 100% on production build "
                       "because all 2 M4 primitives are shipped)",
                       m4));
-    const auto blocking =
-        hash_int_field(cs, "(query:eda-production-readiness)", "blocking-issues-count");
+    const auto blocking = hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")",
+                                         "blocking-issues-count");
     CHECK(blocking == 4,
           std::format("blocking-issues-count = {} (expected 4: #749 + #738 + #725 + #724 per "
                       "body — closed ones #726 + #748 + #772 + #774 not counted)",
                       blocking));
-    const auto rec = hash_int_field(cs, "(query:eda-production-readiness)", "recommendation");
+    const auto rec =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "recommendation");
     CHECK(rec == 0,
           std::format("recommendation = {} (expected 0 = production-ready when all milestones "
                       ">= 9500)",
@@ -165,7 +170,8 @@ static void run_ac2_fresh_completeness(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 777 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:eda-production-readiness)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "schema");
     CHECK(schema == 777, std::format("schema = {} (expected 777)", schema));
 }
 
@@ -251,13 +257,13 @@ static void run_ac4_derived_completeness_correctness(aura::compiler::CompilerSer
     // Cross-check: the eda-production-readiness primitive's milestone
     // percentages should match the independent reachability counts.
     const auto m1_pct =
-        hash_int_field(cs, "(query:eda-production-readiness)", "m1-completeness-pct");
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m1-completeness-pct");
     const auto m2_pct =
-        hash_int_field(cs, "(query:eda-production-readiness)", "m2-completeness-pct");
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m2-completeness-pct");
     const auto m3_pct =
-        hash_int_field(cs, "(query:eda-production-readiness)", "m3-completeness-pct");
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m3-completeness-pct");
     const auto m4_pct =
-        hash_int_field(cs, "(query:eda-production-readiness)", "m4-completeness-pct");
+        hash_int_field(cs, "(stats:get \"query:eda-production-readiness\")", "m4-completeness-pct");
     CHECK(m1_pct == static_cast<std::int64_t>((m1_found * 10000) / 5),
           std::format("M1 pct matches independent count: {} == ({}/5)*10000", m1_pct, m1_found));
     CHECK(m2_pct == static_cast<std::int64_t>((m2_found * 10000) / 4),
@@ -272,7 +278,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #748 + #772 + #774 + #775 + #776 sibling "
                  "primitives unaffected ---");
     auto sv_structure = cs.eval("(engine:metrics \"query:sv-verification-structure-stats\")");
-    auto sv_slo = cs.eval("(query:sv-closedloop-slo)");
+    auto sv_slo = cs.eval("(stats:get \"query:sv-closedloop-slo\")");
     auto conv = cs.eval("(engine:metrics \"query:closed-loop-convergence-stats\")");
     auto ext = cs.eval("(engine:metrics \"query:extension-kit-stats\")");
     auto hotpath_slo = cs.eval("(engine:metrics \"query:primitives-hotpath-slo-stats\")");
@@ -286,7 +292,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "query:extension-kit-stats hash regression (#775)");
     CHECK(hotpath_slo && aura::compiler::types::is_hash(*hotpath_slo),
           "query:primitives-hotpath-slo-stats hash regression (#776)");
-    const auto a772_schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
+    const auto a772_schema =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "schema");
     CHECK(a772_schema == 772,
           std::format("#772 schema = {} (expected 772, no drift)", a772_schema));
     const auto a774_schema =

@@ -247,16 +247,18 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #787 + #786 sibling primitives unaffected ---");
-    auto a787 = cs.eval("(query:task6-concurrent-fidelity)");
-    auto a786 = cs.eval("(query:code-as-data-production-health)");
+    auto a787 = cs.eval("(stats:get \"query:task6-concurrent-fidelity\")");
+    auto a786 = cs.eval("(stats:get \"query:code-as-data-production-health\")");
     CHECK(a787 && aura::compiler::types::is_hash(*a787),
           "query:task6-concurrent-fidelity hash regression (#787)");
     CHECK(a786 && aura::compiler::types::is_hash(*a786),
           "query:code-as-data-production-health hash regression (#786)");
-    const auto a787_schema = hash_int_field(cs, "(query:task6-concurrent-fidelity)", "schema");
+    const auto a787_schema =
+        hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")", "schema");
     CHECK(a787_schema == 787,
           std::format("#787 schema = {} (expected 787, no drift)", a787_schema));
-    const auto a786_schema = hash_int_field(cs, "(query:code-as-data-production-health)", "schema");
+    const auto a786_schema =
+        hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")", "schema");
     CHECK(a786_schema == 786,
           std::format("#786 schema = {} (expected 786, no drift)", a786_schema));
 }

@@ -468,7 +468,7 @@ bool test_stringpool_compact_primitive() {
 }
 
 bool test_stringpool_stats_primitive() {
-    std::println("\n--- Test 6.5: (string-pool:stats) primitive ---");
+    std::println("\n--- Test 6.5: (stats:get \"string-pool:stats\") primitive ---");
     aura::compiler::CompilerService cs;
     // The hash build uses 8 slots with linear probing. FNV-1a
     // hashes for the 6 fixed keys ("entries", "capacity",
@@ -476,13 +476,13 @@ bool test_stringpool_stats_primitive() {
     // may collide heavily, exceeding 8 slots. Workaround: build
     // fewer fields. We just verify the primitive doesn't crash
     // and returns a value (even if it's void due to slot overflow).
-    auto v = run_on(cs, "(string-pool:stats)");
+    auto v = run_on(cs, "(stats:get \"string-pool:stats\")");
     if (v.val == 11) { // void sentinel
-        std::println(
-            "  PASS: (string-pool:stats) returns void (known hash-build overflow with 6 keys)");
+        std::println("  PASS: (stats:get \"string-pool:stats\") returns void (known hash-build "
+                     "overflow with 6 keys)");
         ++g_passed;
     } else {
-        std::println("  PASS: (string-pool:stats) returns a value");
+        std::println("  PASS: (stats:get \"string-pool:stats\") returns a value");
         ++g_passed;
     }
     return true;

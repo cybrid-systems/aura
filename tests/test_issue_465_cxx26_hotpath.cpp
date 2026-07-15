@@ -21,13 +21,13 @@
 //   4. 4 new consteval/static_assert invariants in
 //      value_tags.h: tag values 0/1/2/3/4 +
 //      Unknown >= 5 (out of low-2-bit space)
-//   5. (query:cxx26-hotpath-invariants) Aura primitive
+//   5. (stats:get "query:cxx26-hotpath-invariants") Aura primitive
 //      — 5-field hash reporting the compile-time
 //      invariants baked into the binary
 //   6. (stats:count) 54 → 55
 //
 // Test cases:
-//   AC1:  (query:cxx26-hotpath-invariants) returns a hash
+//   AC1:  (stats:get "query:cxx26-hotpath-invariants") returns a hash
 //   AC2:  5 fields present
 //   AC3:  fixnum-tag-encoding == 0
 //   AC4:  ref-tag-encoding == 1
@@ -77,17 +77,18 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
     return aura::compiler::types::as_int(*r);
 }
 
-// ── AC1: (query:cxx26-hotpath-invariants) returns a hash
+// ── AC1: (stats:get "query:cxx26-hotpath-invariants") returns a hash
 bool test_primitive_returns_hash() {
     std::println("\n--- AC1: primitive returns hash ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:cxx26-hotpath-invariants)");
+    auto r = cs.eval("(stats:get \"query:cxx26-hotpath-invariants\")");
     if (!r) {
         CHECK(false, "eval returned error");
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v), "(query:cxx26-hotpath-invariants) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v),
+          "(stats:get \"query:cxx26-hotpath-invariants\") returns a hash");
     return true;
 }
 

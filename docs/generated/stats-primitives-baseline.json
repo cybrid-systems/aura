@@ -1,5 +1,5 @@
 {
-  "count": 414,
+  "count": 413,
   "names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -408,7 +408,6 @@
     "string-join",
     "string-length",
     "string-pool:compact",
-    "string-pool:stats",
     "string-ref",
     "type-registry-stats",
     "vector->list",

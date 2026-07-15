@@ -122,68 +122,70 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
     // grep-and-sum. If a future issue adds Contracts
     // to value.ixx or ir_soa.ixx, this number will
     // jump. The AI Agent monitors the count.
-    add("query:cxx26-invariants", [&ev](const auto&) -> EvalValue {
-        // Reuse the same build_hash pattern as the
-        // closure:stats / soa-dirty-stats primitives.
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(32);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:cxx26-invariants", [&ev](const auto&) -> EvalValue {
+            // Reuse the same build_hash pattern as the
+            // closure:stats / soa-dirty-stats primitives.
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        // Compile-time constants — the file paths are
-        // recorded in the comment; the literal numbers
-        // are the live counts at the time of writing.
-        // The AI Agent detects drift by re-reading the
-        // file and comparing the count delta.
-        constexpr std::int64_t kConstevalInvariants =
-            24; // Issue #1143: match static_assert count in cxx26_invariants.ixx
-        constexpr std::int64_t kConceptCount = 13;
-        constexpr std::int64_t kContractHotPaths = 26;
-        constexpr std::int64_t kConceptSelfChecks = 1;
-        constexpr std::int64_t kConceptTargetsDoc = 9;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"consteval-invariants", make_int(kConstevalInvariants)},
-            {"concept-count", make_int(kConceptCount)},
-            {"contract-hot-paths", make_int(kContractHotPaths)},
-            {"concept-self-checks", make_int(kConceptSelfChecks)},
-            {"concept-targets-documented", make_int(kConceptTargetsDoc)},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            // Compile-time constants — the file paths are
+            // recorded in the comment; the literal numbers
+            // are the live counts at the time of writing.
+            // The AI Agent detects drift by re-reading the
+            // file and comparing the count delta.
+            constexpr std::int64_t kConstevalInvariants =
+                24; // Issue #1143: match static_assert count in cxx26_invariants.ixx
+            constexpr std::int64_t kConceptCount = 13;
+            constexpr std::int64_t kContractHotPaths = 26;
+            constexpr std::int64_t kConceptSelfChecks = 1;
+            constexpr std::int64_t kConceptTargetsDoc = 9;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"consteval-invariants", make_int(kConstevalInvariants)},
+                {"concept-count", make_int(kConceptCount)},
+                {"contract-hot-paths", make_int(kContractHotPaths)},
+                {"concept-self-checks", make_int(kConceptSelfChecks)},
+                {"concept-targets-documented", make_int(kConceptTargetsDoc)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 9 (orig lines 12481-12583)
@@ -201,77 +203,80 @@ void ObservabilityPrims::register_jit_p9(PrimRegistrar add, Evaluator& ev) {
     //
     // Comment/code name alignment fixed in #1142 (was mismatched
     // "6 total" header listing 8 differently-named fields).
-    add("query:edsl-readiness", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(32);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:edsl-readiness", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::uint64_t closure_stale = 0, linear_pass = 0;
+            std::uint64_t atomic_commits = 0;
+            std::uint64_t stable_ref_invalidates = 0;
+            std::uint64_t occurrence_stale_refreshes = 0;
+            std::int64_t dirty_pct = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+                closure_stale = m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
+                linear_pass = m->linear_check_pass_count_.load(std::memory_order_relaxed);
+                atomic_commits = m->atomic_batch_commits.load(std::memory_order_relaxed);
+                stable_ref_invalidates =
+                    m->stable_ref_invalidations.load(std::memory_order_relaxed);
+                occurrence_stale_refreshes =
+                    m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::uint64_t closure_stale = 0, linear_pass = 0;
-        std::uint64_t atomic_commits = 0;
-        std::uint64_t stable_ref_invalidates = 0;
-        std::uint64_t occurrence_stale_refreshes = 0;
-        std::int64_t dirty_pct = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            closure_stale = m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
-            linear_pass = m->linear_check_pass_count_.load(std::memory_order_relaxed);
-            atomic_commits = m->atomic_batch_commits.load(std::memory_order_relaxed);
-            stable_ref_invalidates = m->stable_ref_invalidations.load(std::memory_order_relaxed);
-            occurrence_stale_refreshes =
-                m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
-        }
-        // dirty-block-rate from #429's get_soa_dirty_stats.
-        if (ev.get_soa_dirty_stats_fn_) {
-            const auto s = ev.get_soa_dirty_stats_fn_();
-            dirty_pct = static_cast<std::int64_t>(s.dirty_block_pct);
-        }
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"closure-stale-refresh", make_int(static_cast<std::int64_t>(closure_stale))},
-            {"linear-check-pass", make_int(static_cast<std::int64_t>(linear_pass))},
-            {"atomic-batch-commits", make_int(static_cast<std::int64_t>(atomic_commits))},
-            {"stable-ref-invalidations",
-             make_int(static_cast<std::int64_t>(stable_ref_invalidates))},
-            {"occurrence-stale-refreshes",
-             make_int(static_cast<std::int64_t>(occurrence_stale_refreshes))},
-            {"dirty-block-rate", make_int(dirty_pct)},
-        };
-        return build_hash(kv);
-    });
+            // dirty-block-rate from #429's get_soa_dirty_stats.
+            if (ev.get_soa_dirty_stats_fn_) {
+                const auto s = ev.get_soa_dirty_stats_fn_();
+                dirty_pct = static_cast<std::int64_t>(s.dirty_block_pct);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"closure-stale-refresh", make_int(static_cast<std::int64_t>(closure_stale))},
+                {"linear-check-pass", make_int(static_cast<std::int64_t>(linear_pass))},
+                {"atomic-batch-commits", make_int(static_cast<std::int64_t>(atomic_commits))},
+                {"stable-ref-invalidations",
+                 make_int(static_cast<std::int64_t>(stable_ref_invalidates))},
+                {"occurrence-stale-refreshes",
+                 make_int(static_cast<std::int64_t>(occurrence_stale_refreshes))},
+                {"dirty-block-rate", make_int(dirty_pct)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 10 (orig lines 12584-12725)

@@ -512,123 +512,125 @@ void ObservabilityPrims::register_eval_p61(PrimRegistrar add, Evaluator& ev) {
     //                             when convergence seen but not
     //                             yet SLO; 3 = early-stage)
     //   - schema == 803          drift sentinel
-    add("query:seva-longrunning-concurrent-slo", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #802 atomics for convergence derivation.
-        const std::int64_t closed_loop_rounds =
-            m ? static_cast<std::int64_t>(
-                    m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t convergence_hits =
-            m ? static_cast<std::int64_t>(
-                    m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        // Reused #759 + #632 for hygiene-safe rollback derivation.
-        const std::int64_t hygiene_safe_total =
-            m ? static_cast<std::int64_t>(
-                    m->code_as_data_rollback_hygiene_safe_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t sv_rollback_total =
-            m ? static_cast<std::int64_t>(
-                    m->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed))
-              : 0;
-        // NEW #803 atomics.
-        const std::int64_t ref_drift_prevented =
-            m ? static_cast<std::int64_t>(
-                    m->seva_concurrent_ref_drift_prevented_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t steal_during_v_mutate =
-            m ? static_cast<std::int64_t>(
-                    m->seva_concurrent_steal_during_verification_mutate_total.load(
+    ObservabilityPrims::register_stats_impl(
+        "query:seva-longrunning-concurrent-slo", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #802 atomics for convergence derivation.
+            const std::int64_t closed_loop_rounds =
+                m ? static_cast<std::int64_t>(
+                        m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t convergence_hits =
+                m ? static_cast<std::int64_t>(
+                        m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Reused #759 + #632 for hygiene-safe rollback derivation.
+            const std::int64_t hygiene_safe_total =
+                m ? static_cast<std::int64_t>(
+                        m->code_as_data_rollback_hygiene_safe_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t sv_rollback_total =
+                m ? static_cast<std::int64_t>(
+                        m->atomic_batch_sv_rollback_total.load(std::memory_order_relaxed))
+                  : 0;
+            // NEW #803 atomics.
+            const std::int64_t ref_drift_prevented =
+                m ? static_cast<std::int64_t>(m->seva_concurrent_ref_drift_prevented_total.load(
                         std::memory_order_relaxed))
-              : 0;
-        const std::int64_t dirty_consistency_hits =
-            m ? static_cast<std::int64_t>(
-                    m->seva_concurrent_dirty_propagation_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        // Derived convergence_rate: vacuous-true 10000 baseline when
-        // closed_loop_rounds == 0; otherwise integer division.
-        std::int64_t convergence_rate = 10000;
-        if (closed_loop_rounds > 0) {
-            convergence_rate = static_cast<std::int64_t>(
-                (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds);
-        }
-        // Derived hygiene_safe_rollback_pct: 10000 baseline when no
-        // rollbacks have happened; otherwise (hygiene_safe / total) ×
-        // 10000. The +1 in denominator ensures vacuous-true semantics
-        // when only hygiene_safe was observed (0 rollback round).
-        std::int64_t hygiene_safe_rollback_pct = 10000;
-        const std::int64_t total_rollbacks = sv_rollback_total;
-        if (hygiene_safe_total + total_rollbacks > 0) {
-            hygiene_safe_rollback_pct = static_cast<std::int64_t>(
-                (hygiene_safe_total * ::aura::compiler::kBasisPointScale) / (total_rollbacks + 1));
-        }
-        // Derived avg_rounds_to_target: 0 baseline when no convergence
-        // hits; otherwise rounds / (hits + 1).
-        std::int64_t avg_rounds_to_target = 0;
-        if (convergence_hits > 0) {
-            avg_rounds_to_target =
-                static_cast<std::int64_t>(closed_loop_rounds / (convergence_hits + 1));
-        }
-        // Hardcoded "not yet" — Phase 2+ deferred.
-        const std::int64_t longrunning_harness_active = 0;
-        // Recommendation derivation:
-        //   0 = production-ready (SLO met + harness active)
-        //   1 = near-production (SLO met but harness not yet active)
-        //   2 = partial Phase 1 (convergence seen but not yet SLO)
-        //   3 = early-stage (no activity yet)
-        std::int64_t recommendation = 3;
-        if (convergence_hits + closed_loop_rounds + ref_drift_prevented + steal_during_v_mutate +
-                dirty_consistency_hits >
-            0) {
-            if (convergence_rate >= 9800 && hygiene_safe_rollback_pct >= 10000) {
-                recommendation = longrunning_harness_active ? 0 : 1;
-            } else {
-                recommendation = 2;
+                  : 0;
+            const std::int64_t steal_during_v_mutate =
+                m ? static_cast<std::int64_t>(
+                        m->seva_concurrent_steal_during_verification_mutate_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dirty_consistency_hits =
+                m ? static_cast<std::int64_t>(m->seva_concurrent_dirty_propagation_hits_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            // Derived convergence_rate: vacuous-true 10000 baseline when
+            // closed_loop_rounds == 0; otherwise integer division.
+            std::int64_t convergence_rate = 10000;
+            if (closed_loop_rounds > 0) {
+                convergence_rate = static_cast<std::int64_t>(
+                    (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds);
             }
-        }
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+            // Derived hygiene_safe_rollback_pct: 10000 baseline when no
+            // rollbacks have happened; otherwise (hygiene_safe / total) ×
+            // 10000. The +1 in denominator ensures vacuous-true semantics
+            // when only hygiene_safe was observed (0 rollback round).
+            std::int64_t hygiene_safe_rollback_pct = 10000;
+            const std::int64_t total_rollbacks = sv_rollback_total;
+            if (hygiene_safe_total + total_rollbacks > 0) {
+                hygiene_safe_rollback_pct = static_cast<std::int64_t>(
+                    (hygiene_safe_total * ::aura::compiler::kBasisPointScale) /
+                    (total_rollbacks + 1));
+            }
+            // Derived avg_rounds_to_target: 0 baseline when no convergence
+            // hits; otherwise rounds / (hits + 1).
+            std::int64_t avg_rounds_to_target = 0;
+            if (convergence_hits > 0) {
+                avg_rounds_to_target =
+                    static_cast<std::int64_t>(closed_loop_rounds / (convergence_hits + 1));
+            }
+            // Hardcoded "not yet" — Phase 2+ deferred.
+            const std::int64_t longrunning_harness_active = 0;
+            // Recommendation derivation:
+            //   0 = production-ready (SLO met + harness active)
+            //   1 = near-production (SLO met but harness not yet active)
+            //   2 = partial Phase 1 (convergence seen but not yet SLO)
+            //   3 = early-stage (no activity yet)
+            std::int64_t recommendation = 3;
+            if (convergence_hits + closed_loop_rounds + ref_drift_prevented +
+                    steal_during_v_mutate + dirty_consistency_hits >
+                0) {
+                if (convergence_rate >= 9800 && hygiene_safe_rollback_pct >= 10000) {
+                    recommendation = longrunning_harness_active ? 0 : 1;
+                } else {
+                    recommendation = 2;
                 }
             }
-        };
-        insert_kv("convergence-rate", convergence_rate);
-        insert_kv("ref-drift-prevented", ref_drift_prevented);
-        insert_kv("hygiene-safe-rollback-pct", hygiene_safe_rollback_pct);
-        insert_kv("steal-during-verification-mutate", steal_during_v_mutate);
-        insert_kv("dirty-consistency-hits", dirty_consistency_hits);
-        insert_kv("avg-rounds-to-target", avg_rounds_to_target);
-        insert_kv("longrunning-harness-active", longrunning_harness_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 803);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("convergence-rate", convergence_rate);
+            insert_kv("ref-drift-prevented", ref_drift_prevented);
+            insert_kv("hygiene-safe-rollback-pct", hygiene_safe_rollback_pct);
+            insert_kv("steal-during-verification-mutate", steal_during_v_mutate);
+            insert_kv("dirty-consistency-hits", dirty_consistency_hits);
+            insert_kv("avg-rounds-to-target", avg_rounds_to_target);
+            insert_kv("longrunning-harness-active", longrunning_harness_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 803);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 62 (orig lines 7416-7492)

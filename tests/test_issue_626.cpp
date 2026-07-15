@@ -12,7 +12,7 @@
 // via counters in shape::namespace + CompilerMetrics +
 // passes_skipped_dirty_pipeline (added by #406 / #508 / #605 /
 // #686 / #494 / #606). Pre-existing primitives:
-//   - (query:task4-hotpath-contracts) — 10-field structured hash
+//   - (stats:get "query:task4-hotpath-contracts") — 10-field structured hash
 //     with per-site constants + consteval-hits +
 //     task4-contracts-total + task4-contracts-recommendation
 //   - (engine:metrics \"query:pass-pipeline-incremental-stats-hash\") from #625
@@ -113,9 +113,9 @@ int aura_issue_626_run() {
     // (back-compat — #626 doesn't disturb the existing surface).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_task4 = cs.eval("(query:task4-hotpath-contracts)");
+        auto s_task4 = cs.eval("(stats:get \"query:task4-hotpath-contracts\")");
         CHECK(s_task4 && aura::compiler::types::is_hash(*s_task4),
-              "(query:task4-hotpath-contracts) returns a hash (existing)");
+              "(stats:get \"query:task4-hotpath-contracts\") returns a hash (existing)");
         auto s_pipe = cs.eval("(engine:metrics \"query:pass-pipeline-incremental-stats-hash\")");
         CHECK(s_pipe && aura::compiler::types::is_hash(*s_pipe),
               "(engine:metrics \"query:pass-pipeline-incremental-stats-hash\") returns a hash "

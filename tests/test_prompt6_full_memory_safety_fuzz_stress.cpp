@@ -8,8 +8,8 @@
 // #597 (macro+reflect+self-evo). This binary exercises the
 // **unified** Prompt6 production-review matrix:
 //
-//   - AC1:  (query:prompt6-violation-count) starts at 0
-//   - AC2:  (query:prompt6-safety-score) reachable + monotonic
+//   - AC1:  (stats:get "query:prompt6-violation-count") starts at 0
+//   - AC2:  (stats:get "query:prompt6-safety-score") reachable + monotonic
 //   - AC3:  Combined Prompt6 stats bundle callable
 //   - AC4:  Closure + invalidate + bridge_epoch path (no crash)
 //   - AC5:  EnvFrame dualpath + stale refresh under mutate
@@ -70,7 +70,7 @@ static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
 }
 
 static std::uint64_t violation_count(CompilerService& cs) {
-    const auto v = eval_int(cs, "(query:prompt6-violation-count)");
+    const auto v = eval_int(cs, "(stats:get \"query:prompt6-violation-count\")");
     return v < 0 ? 0 : static_cast<std::uint64_t>(v);
 }
 
@@ -86,7 +86,7 @@ static bool setup_closure_workspace(CompilerService& cs) {
 
 // ── AC1: violation-count starts at 0 ─────────────────────
 bool test_violation_count_starts_zero() {
-    std::println("\n--- AC1: (query:prompt6-violation-count) starts at 0 ---");
+    std::println("\n--- AC1: (stats:get \"query:prompt6-violation-count\") starts at 0 ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
@@ -98,15 +98,15 @@ bool test_violation_count_starts_zero() {
 
 // ── AC2: safety-score reachable + monotonic ───────────────
 bool test_safety_score_monotonic() {
-    std::println("\n--- AC2: (query:prompt6-safety-score) monotonic ---");
+    std::println("\n--- AC2: (stats:get \"query:prompt6-safety-score\") monotonic ---");
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "closure workspace setup");
-    const auto s0 = eval_int(cs, "(query:prompt6-safety-score)");
+    const auto s0 = eval_int(cs, "(stats:get \"query:prompt6-safety-score\")");
     CHECK(s0 >= 0, "prompt6-safety-score starts >= 0");
     cs.bump_bridge_epoch_hit_count();
     cs.bump_linear_check_pass_count();
     cs.bump_gc_envframe_stale_skipped();
-    const auto s1 = eval_int(cs, "(query:prompt6-safety-score)");
+    const auto s1 = eval_int(cs, "(stats:get \"query:prompt6-safety-score\")");
     std::println("  prompt6-safety-score: {} -> {}", s0, s1);
     CHECK(s1 > s0, "prompt6-safety-score grew after safety bumps");
     return true;
@@ -119,8 +119,8 @@ bool test_combined_prompt6_stats_bundle() {
     CHECK(setup_closure_workspace(cs), "workspace for stats bundle");
     (void)cs.eval("(mutate:rebind \"base\" \"42\")");
     const char* stats[] = {
-        "(query:prompt6-violation-count)",
-        "(query:prompt6-safety-score)",
+        "(stats:get \"query:prompt6-violation-count\")",
+        "(stats:get \"query:prompt6-safety-score\")",
         "(query:closure-env-safety-stats)",
         "(engine:metrics \"query:envframe-dualpath-stats\")",
         "(engine:metrics \"query:gc-safepoint-stats\")",
@@ -271,7 +271,7 @@ bool test_eight_thread_concurrent_mutate_gc() {
                 (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(i) +
                               ") (define acc " + std::to_string(tid + i) + "))");
             }
-            if (!cs.eval("(query:prompt6-violation-count)")) {
+            if (!cs.eval("(stats:get \"query:prompt6-violation-count\")")) {
                 errors.fetch_add(1);
             }
             completed.fetch_add(1);
@@ -333,7 +333,7 @@ bool test_long_running_memory_safety_stress() {
     std::println("\n--- AC11: {} iters long-running stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for stress");
-    const auto s0 = eval_int(cs, "(query:prompt6-safety-score)");
+    const auto s0 = eval_int(cs, "(stats:get \"query:prompt6-safety-score\")");
     std::mt19937 rng(6021u);
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
@@ -346,7 +346,7 @@ bool test_long_running_memory_safety_stress() {
         if ((i & 31) == 0)
             (void)cs.eval("(gc-heap)");
     }
-    const auto s1 = eval_int(cs, "(query:prompt6-safety-score)");
+    const auto s1 = eval_int(cs, "(stats:get \"query:prompt6-safety-score\")");
     const auto v = violation_count(cs);
     std::println("  safety-score: {} -> {} violations: {}", s0, s1, v);
     CHECK(s1 >= s0, "prompt6-safety-score monotonic under stress");

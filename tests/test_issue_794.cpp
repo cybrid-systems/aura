@@ -269,7 +269,7 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #793 + #787 sibling primitives unaffected ---");
     auto a793 = cs.eval("(engine:metrics \"query:jit-aot-hotswap-fidelity-stats\")");
-    auto a787 = cs.eval("(query:task6-concurrent-fidelity)");
+    auto a787 = cs.eval("(stats:get \"query:task6-concurrent-fidelity\")");
     CHECK(a793 && aura::compiler::types::is_hash(*a793),
           "query:jit-aot-hotswap-fidelity-stats hash regression (#793)");
     CHECK(a787 && aura::compiler::types::is_hash(*a787),
@@ -278,7 +278,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         hash_int_field(cs, "(engine:metrics \"query:jit-aot-hotswap-fidelity-stats\")", "schema");
     CHECK(a793_schema == 793,
           std::format("#793 schema = {} (expected 793, no drift)", a793_schema));
-    const auto a787_schema = hash_int_field(cs, "(query:task6-concurrent-fidelity)", "schema");
+    const auto a787_schema =
+        hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")", "schema");
     CHECK(a787_schema == 787,
           std::format("#787 schema = {} (expected 787, no drift)", a787_schema));
 }

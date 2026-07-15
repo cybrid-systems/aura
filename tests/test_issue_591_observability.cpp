@@ -111,7 +111,7 @@ int main() {
         auto multi = cs.eval("(engine:metrics \"query:multi-fiber-orchestration-stats\")");
         auto stealbudget =
             cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
-        auto legacy = cs.eval("(query:orchestration-metrics)");
+        auto legacy = cs.eval("(stats:get \"query:orchestration-metrics\")");
         CHECK(work_steal && aura::compiler::types::is_hash(*work_steal),
               "query:work-steal-stats hash regression (#500)");
         CHECK(multi && aura::compiler::types::is_hash(*multi),

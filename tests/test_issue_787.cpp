@@ -100,10 +100,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:task6-concurrent-fidelity) hash shape ---");
-    auto r = cs.eval("(query:task6-concurrent-fidelity)");
+    std::println("\n--- AC1: (stats:get \"query:task6-concurrent-fidelity\") hash shape ---");
+    auto r = cs.eval("(stats:get \"query:task6-concurrent-fidelity\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:task6-concurrent-fidelity) returns a hash");
+          "(stats:get \"query:task6-concurrent-fidelity\") returns a hash");
     const std::vector<std::string> keys = {
         "sub-primitive-coverage",         "found-sub-primitive-count",
         "hygiene-drift-prevented",        "schema-violation-caught-post-rollback",
@@ -118,8 +118,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service state (4 fidelity signals hardcoded 0) ---");
-    const auto found =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "found-sub-primitive-count");
+    const auto found = hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                                      "found-sub-primitive-count");
     CHECK(found >= 0, std::format("found-sub-primitive-count = {} (expected >= 0 — live count of 6 "
                                   "expected sub-primitives registered)",
                                   found));
@@ -127,42 +127,43 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
           std::format("found-sub-primitive-count = {} (expected <= 6 — bounded by total "
                       "expected count)",
                       found));
-    const auto coverage =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "sub-primitive-coverage");
+    const auto coverage = hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                                         "sub-primitive-coverage");
     CHECK(coverage >= 0 && coverage <= 10000,
           std::format("sub-primitive-coverage = {} (expected 0..10000 fixed-point)", coverage));
     // 4 fidelity signals hardcoded 0 in Phase 1.
-    const auto hygiene =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "hygiene-drift-prevented");
+    const auto hygiene = hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                                        "hygiene-drift-prevented");
     CHECK(hygiene == 0,
           std::format("hygiene-drift-prevented = {} (expected 0 — Phase 2+ deferred to wire to "
                       "post-rollback hygiene validation hook per body \"In Guard rollback + "
                       "steal resume + AOT swap success paths, force re-validate macro "
                       "provenance/hygiene\")",
                       hygiene));
-    const auto schema_violation = hash_int_field(cs, "(query:task6-concurrent-fidelity)",
-                                                 "schema-violation-caught-post-rollback");
+    const auto schema_violation =
+        hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                       "schema-violation-caught-post-rollback");
     CHECK(
         schema_violation == 0,
         std::format("schema-violation-caught-post-rollback = {} (expected 0 — Phase 2+ deferred to "
                     "wire to runtime reflect validate hook)",
                     schema_violation));
-    const auto linear_safe =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "linear-safe-after-steal-reload");
+    const auto linear_safe = hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                                            "linear-safe-after-steal-reload");
     CHECK(linear_safe == 0,
           std::format("linear-safe-after-steal-reload = {} (expected 0 — Phase 2+ deferred to "
                       "wire to linear_ownership_state consistency check)",
                       linear_safe));
-    const auto epoch =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "epoch-consistent-hits");
+    const auto epoch = hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                                      "epoch-consistent-hits");
     CHECK(epoch == 0,
           std::format("epoch-consistent-hits = {} (expected 0 — Phase 2+ deferred to wire to "
                       "StableNodeRef/EnvFrame/bridge_epoch/linear_state consistency check)",
                       epoch));
     // Composite fidelity status derived from coverage
     // + fidelity signals.
-    const auto comp =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "composite-fidelity-status");
+    const auto comp = hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")",
+                                     "composite-fidelity-status");
     if (found == 6) {
         CHECK(comp == 0,
               std::format("composite-fidelity-status = {} (expected 0 = production-ready when "
@@ -188,7 +189,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 787 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:task6-concurrent-fidelity)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(stats:get \"query:task6-concurrent-fidelity\")", "schema");
     CHECK(schema == 787, std::format("schema = {} (expected 787)", schema));
 }
 
@@ -226,8 +228,8 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
             std::println("  [info] sub-stats '{}' threw (not registered)", name);
         }
     }
-    const auto primitive_count =
-        hash_int_field(cs, "(query:task6-concurrent-fidelity)", "found-sub-primitive-count");
+    const auto primitive_count = hash_int_field(
+        cs, "(stats:get \"query:task6-concurrent-fidelity\")", "found-sub-primitive-count");
     CHECK(static_cast<std::size_t>(primitive_count) == edsl_reachable_count,
           std::format("found-sub-primitive-count matches independent EDSL check: {} == {}",
                       primitive_count, edsl_reachable_count));
@@ -236,13 +238,14 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #786 + #785 sibling primitives unaffected ---");
-    auto a786 = cs.eval("(query:code-as-data-production-health)");
+    auto a786 = cs.eval("(stats:get \"query:code-as-data-production-health\")");
     auto a785 = cs.eval("(engine:metrics \"query:aot-concurrent-hotupdate-stats\")");
     CHECK(a786 && aura::compiler::types::is_hash(*a786),
           "query:code-as-data-production-health hash regression (#786)");
     CHECK(a785 && aura::compiler::types::is_hash(*a785),
           "query:aot-concurrent-hotupdate-stats hash regression (#785)");
-    const auto a786_schema = hash_int_field(cs, "(query:code-as-data-production-health)", "schema");
+    const auto a786_schema =
+        hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")", "schema");
     CHECK(a786_schema == 786,
           std::format("#786 schema = {} (expected 786, no drift)", a786_schema));
     const auto a785_schema =

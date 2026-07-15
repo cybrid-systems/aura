@@ -1,12 +1,12 @@
 // @category: integration
 // @reason: compile-time test for the 3 new Concepts in Issue #431
-//          + runtime test for (query:cxx26-invariants) primitive
+//          + runtime test for (stats:get "query:cxx26-invariants") primitive
 
 // test_issue_431_cxx26.cpp — Issue #431: deepen C++26 Contracts
 // + Concepts + consteval invariants in hot paths.
 //
 // This test verifies the 3 new Concepts added to
-// src/core/concepts.ixx and the (query:cxx26-invariants)
+// src/core/concepts.ixx and the (stats:get "query:cxx26-invariants")
 // Aura primitive that exposes the codebase's invariant
 // density.
 //
@@ -16,7 +16,7 @@
 //   3. ShapeDispatchable<S> — shape profiler (inline_shape_of/name/is_specialized)
 //
 // All assertions are static_assert — pure compile-time. The
-// runtime side verifies the (query:cxx26-invariants)
+// runtime side verifies the (stats:get "query:cxx26-invariants")
 // primitive returns the expected counts.
 //
 // Test cases:
@@ -28,7 +28,7 @@
 //   AC5:  ShapeDispatchable accepts a minimal mock with the 3 APIs
 //   AC6:  consteval invariants in cxx26_invariants.ixx compile
 //         (the file fails to compile if any static_assert fires)
-//   AC7:  (query:cxx26-invariants) returns a hash with 5 fields
+//   AC7:  (stats:get "query:cxx26-invariants") returns a hash with 5 fields
 //   AC8:  consteval-invariants == 24 (matches the actual
 //         static_assert count in cxx26_invariants.ixx)
 //   AC9:  concept-count == 13 (10 pre-#431 + 3 new)
@@ -116,10 +116,10 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
     } while (0)
 
 // ═══════════════════════════════════════════════════════════
-// AC7-AC10: (query:cxx26-invariants) returns 5 fields
+// AC7-AC10: (stats:get "query:cxx26-invariants") returns 5 fields
 // ═══════════════════════════════════════════════════════════
 bool test_query_cxx26_invariants() {
-    std::println("\n--- AC7-AC10: (query:cxx26-invariants) fields ---");
+    std::println("\n--- AC7-AC10: (stats:get \"query:cxx26-invariants\") fields ---");
     aura::compiler::CompilerService cs;
     auto consteval_count = hash_int(cs, "consteval-invariants");
     auto concept_count = hash_int(cs, "concept-count");

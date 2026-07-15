@@ -88,7 +88,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto roadmap = cs.eval("(engine:metrics \"query:production-roadmap-stats\")");
-    auto p6 = cs.eval("(query:prompt6-safety-score)");
+    auto p6 = cs.eval("(stats:get \"query:prompt6-safety-score\")");
     CHECK(roadmap && is_int(*roadmap), "production-roadmap-stats regression");
     CHECK(p6 && is_int(*p6), "prompt6-safety-score regression");
 }

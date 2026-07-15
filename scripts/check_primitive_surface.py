@@ -59,9 +59,10 @@ ALLOWLIST: frozenset[str] = frozenset()
 TARGET_BUDGET = 420
 # Interim hard ceiling until surface shrinks to TARGET_BUDGET.
 # Raised only with --update-baseline after explicit PR justification.
-# Current public add() surface is ~616; keep a soft ceiling above that
-# so --strict still catches *growth* while progress-reports toward 420.
-INTERIM_HARD_CEILING = 700
+# Interim hard ceiling ratchets down as demotion batches land (#1449).
+# After dashboard facade batch + Tier-1 query:siblings (~587 public).
+# Still above TARGET_BUDGET 420; fail only on *growth* past this.
+INTERIM_HARD_CEILING = 600
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
 BLOCKED_PREFIXES: tuple[str, ...] = (

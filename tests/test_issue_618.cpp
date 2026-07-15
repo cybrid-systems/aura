@@ -21,7 +21,7 @@
 //   - steal_deferred_mutation_boundary_count per-fiber counter
 //   - YieldReason enum: BlockingIO / MutationBoundary / Explicit /
 //     SchedulerSteal / OperationBoundary / PassPipeline
-//   - (query:orchestration-metrics) returns JSON string (kept for
+//   - (stats:get "query:orchestration-metrics") returns JSON string (kept for
 //     back-compat with test_issue_451)
 //   - (scheduler:pin) + (orch:reset-metrics) mutation coords already
 //     exposed
@@ -94,9 +94,10 @@ int aura_issue_618_run() {
               std::format("gc-frequency-tune-ratio in [0,100] (got {})", ratio));
         CHECK(schema == 618, std::format("schema == 618 (got {})", schema));
         // Backward compat: legacy JSON-string primitive still works.
-        auto legacy = cs.eval("(query:orchestration-metrics)");
+        auto legacy = cs.eval("(stats:get \"query:orchestration-metrics\")");
         CHECK(legacy && aura::compiler::types::is_string(*legacy),
-              "legacy (query:orchestration-metrics) returns a string (#451 back-compat)");
+              "legacy (stats:get \"query:orchestration-metrics\") returns a string (#451 "
+              "back-compat)");
     }
 
     // AC2: (orchestration:tune-gc-frequency) with no arg reads
@@ -197,11 +198,12 @@ int aura_issue_618_run() {
         (void)cs.eval("(orchestration:tune-gc-frequency 50)");
     }
 
-    // AC6: (query:orchestration-metrics) legacy JSON string still
+    // AC6: (stats:get "query:orchestration-metrics") legacy JSON string still
     // works (back-compat regression — Issue #451 string contract).
     {
-        std::println("\n--- AC6: legacy (query:orchestration-metrics) regression ---");
-        auto legacy = cs.eval("(query:orchestration-metrics)");
+        std::println(
+            "\n--- AC6: legacy (stats:get \"query:orchestration-metrics\") regression ---");
+        auto legacy = cs.eval("(stats:get \"query:orchestration-metrics\")");
         CHECK(legacy && aura::compiler::types::is_string(*legacy),
               "legacy primitive returns a string (no regression from #618)");
         // The string should contain a JSON-shape key we recognize.

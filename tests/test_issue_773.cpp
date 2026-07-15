@@ -173,7 +173,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
                  "unaffected ---");
     auto workspace_closedloop =
         cs.eval("(engine:metrics \"query:workspace-closedloop-orchestration-stats\")");
-    auto sv_closedloop_slo = cs.eval("(query:sv-closedloop-slo)");
+    auto sv_closedloop_slo = cs.eval("(stats:get \"query:sv-closedloop-slo\")");
     auto type_incremental_fidelity =
         cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
     auto linear_occurrence_mutate =
@@ -190,7 +190,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")", "schema");
     CHECK(a762_schema == 762,
           std::format("#762 schema = {} (expected 762, no drift)", a762_schema));
-    const auto a772_schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
+    const auto a772_schema =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "schema");
     CHECK(a772_schema == 772,
           std::format("#772 schema = {} (expected 772, no drift)", a772_schema));
     const auto a798_schema =

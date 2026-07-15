@@ -82,7 +82,7 @@ static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
 }
 
 static std::uint64_t prompt6_violations(CompilerService& cs) {
-    const auto v = eval_int(cs, "(query:prompt6-violation-count)");
+    const auto v = eval_int(cs, "(stats:get \"query:prompt6-violation-count\")");
     return v < 0 ? 0 : static_cast<std::uint64_t>(v);
 }
 
@@ -330,10 +330,12 @@ bool test_dispatch_hit_rate_healthy() {
 bool test_regression_related_primitives() {
     std::println("\n--- AC12: regression primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:prompt6-violation-count)");
-    CHECK(r1.has_value() && is_int(*r1), "(query:prompt6-violation-count) regression");
-    auto r2 = cs.eval("(query:task4-hotpath-safety-score)");
-    CHECK(r2.has_value() && is_int(*r2), "(query:task4-hotpath-safety-score) regression");
+    auto r1 = cs.eval("(stats:get \"query:prompt6-violation-count\")");
+    CHECK(r1.has_value() && is_int(*r1),
+          "(stats:get \"query:prompt6-violation-count\") regression");
+    auto r2 = cs.eval("(stats:get \"query:task4-hotpath-safety-score\")");
+    CHECK(r2.has_value() && is_int(*r2),
+          "(stats:get \"query:task4-hotpath-safety-score\") regression");
     auto r3 = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     CHECK(r3.has_value() && is_int(*r3),
           "(engine:metrics \"query:macro-reflect-self-evo-stats\") regression");

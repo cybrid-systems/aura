@@ -93,8 +93,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "adoption stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto ths = cs.eval("(query:task4-hotpath-safety-score)");
-    auto clw = cs.eval("(query:task4-cache-locality-win)");
+    auto ths = cs.eval("(stats:get \"query:task4-hotpath-safety-score\")");
+    auto clw = cs.eval("(stats:get \"query:task4-cache-locality-win\")");
     auto irs = cs.eval("(engine:metrics \"compile:ir-soa-stats\")");
     CHECK(ths && is_int(*ths), "task4-hotpath-safety-score regression");
     CHECK(clw && is_int(*clw), "task4-cache-locality-win regression");

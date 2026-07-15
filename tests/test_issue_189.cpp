@@ -22,7 +22,7 @@
 //      every version increment for observability.
 //
 //   4. Three new Aura observability primitives:
-//      (concurrency:stats) — hash with defuse-version, total-mutations,
+//      (stats:get "concurrency:stats") — hash with defuse-version, total-mutations,
 //                              boundary-depth, at-wait-version
 //      (concurrency:version-snapshot) — capture current version
 //      (concurrency:version-current? snap) — check if version unchanged
@@ -195,36 +195,36 @@ bool test_total_mutations_increases() {
     std::println("\n--- Test 3.1: total_mutations increases after rebind ---");
     aura::compiler::CompilerService cs;
     // Run on a fresh CS; can't directly read internal counter,
-    // but we can verify the (concurrency:stats) hash has a
+    // but we can verify the (stats:get "concurrency:stats") hash has a
     // non-zero total-mutations after at least one rebind.
     auto v = run_on(cs, "(begin "
                         "  (set-code \"(define (f x) (* x 2))\") "
                         "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
                         "  (mutate:rebind \"f\" \"(lambda (x) (* x 4))\" \"test\") "
-                        "  (concurrency:stats))");
+                        "  (stats:get \"concurrency:stats\"))");
     if (v.val == 11) {
-        std::println("  PASS: (concurrency:stats) returns hash after 2 rebinds");
+        std::println("  PASS: (stats:get \"concurrency:stats\") returns hash after 2 rebinds");
         ++g_passed;
     } else {
-        std::println("  PASS: (concurrency:stats) returns value (val={})", v.val);
+        std::println("  PASS: (stats:get \"concurrency:stats\") returns value (val={})", v.val);
         ++g_passed;
     }
     return true;
 }
 
 // ═════════════════════════════════════════════════════════════
-// AC4: (concurrency:stats) primitive
+// AC4: (stats:get "concurrency:stats") primitive
 // ═════════════════════════════════════════════════════════════
 
 bool test_concurrency_stats_primitive() {
-    std::println("\n--- Test 4.1: (concurrency:stats) primitive ---");
+    std::println("\n--- Test 4.1: (stats:get \"concurrency:stats\") primitive ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(concurrency:stats)");
+    auto v = run_on(cs, "(stats:get \"concurrency:stats\")");
     if (v.val == 11) {
         std::println("    [expected hash, got void]");
         ++g_failed;
     } else {
-        std::println("  PASS: (concurrency:stats) returns a hash");
+        std::println("  PASS: (stats:get \"concurrency:stats\") returns a hash");
         ++g_passed;
     }
     return true;

@@ -199,7 +199,7 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
                  "unaffected ---");
     auto closed726 = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
     auto self_evo802 = cs.eval("(engine:metrics \"query:sv-verification-self-evolution-stats\")");
-    auto sv_closedloop_slo772 = cs.eval("(query:sv-closedloop-slo)");
+    auto sv_closedloop_slo772 = cs.eval("(stats:get \"query:sv-closedloop-slo\")");
     auto workspace_closedloop773 =
         cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")");
     CHECK(closed726 && aura::compiler::types::is_hash(*closed726),
@@ -218,7 +218,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
         cs, "(engine:metrics \"query:sv-verification-self-evolution-stats\")", "schema");
     CHECK(a802_schema == 802,
           std::format("#802 schema = {} (expected 802, no drift)", a802_schema));
-    const auto a772_schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
+    const auto a772_schema =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "schema");
     CHECK(a772_schema == 772,
           std::format("#772 schema = {} (expected 772, no drift)", a772_schema));
     const auto a773_schema = hash_int_field(

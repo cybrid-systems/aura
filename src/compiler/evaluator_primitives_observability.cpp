@@ -1240,14 +1240,57 @@ namespace {
 } // namespace
 
 bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
-    // Issue #1439 scope: only query:*-stats and compile:*-stats leave the
-    // public registry. Other *-stats (gc-stats, arena:*, ast:*, …) stay public.
-    if (!(name.starts_with("query:") || name.starts_with("compile:")))
-        return false;
+    // Issue #1439 / #1449 / #1450: ALL *-stats are facade-only (register_stats_impl).
+    // Public add() surface must not grow observability dashboards.
     if (name.ends_with("-stats") || name.ends_with("-stats-hash"))
         return true;
     if (name.find("-stats-") != std::string_view::npos)
         return true;
+
+    // Issue #1449 demotion batch: zero-arity query:* SLO / health / score
+    // dashboards are agent-facing via (stats:get) / (engine:metrics), not
+    // as public primitives. Keeps SlimSurface moving toward ≤420.
+    if (name.starts_with("query:")) {
+        const auto rest = name.substr(6);
+        // Explicit high-traffic dashboard names (not covered by suffix rules).
+        static constexpr std::string_view kExplicit[] = {
+            "orchestration-metrics",
+            "primitive-fastpath-per-prim",
+            "primitive-metadata",
+            "primitive-list-with-meta",
+            "primitives-meta",
+            "primitives-meta-catalog",
+            "primitives-by-category",
+            "narrowings-at-mutation",
+            "cxx26-invariants",
+            "cxx26-hotpath-invariants",
+            "prompt6-violation-count",
+            "prompt6-safety-score",
+            "task4-hotpath-safety-score",
+            "task4-cache-locality-win",
+            "task4-mutation-stability",
+            "task4-hotpath-contracts",
+            "task6-concurrent-fidelity",
+            "seva-longrunning-concurrent-slo",
+            "sv-closedloop-slo",
+            "edsl-readiness",
+            "eda-production-readiness",
+            "code-as-data-production-health",
+            "runtime-production-health",
+            "production-health",
+            "serve-health",
+        };
+        for (auto e : kExplicit) {
+            if (rest == e)
+                return true;
+        }
+        // Suffix patterns for future dashboards.
+        if (rest.ends_with("-health") || rest.ends_with("-readiness") || rest.ends_with("-slo") ||
+            rest.ends_with("-score") || rest.ends_with("-fidelity") ||
+            rest.ends_with("-invariants") || rest.ends_with("-win") ||
+            rest.ends_with("-contracts") || rest.ends_with("-stability"))
+            return true;
+    }
     return false;
 }
 

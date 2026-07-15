@@ -16,7 +16,7 @@
 //   4. StableNodeRef/SafePCVSpan validity across mutate
 //   5. tests/test_sv_verification_edsl_emit_fidelity_closedloop.cpp
 //      + extended SEVA with full class/constraint/covergroup/SVA self-evo
-//   6. Prometheus exposure with (query:sv-closedloop-slo) thresholds +
+//   6. Prometheus exposure with (stats:get "query:sv-closedloop-slo") thresholds +
 //      SEVA tutorial update + CI gate + docs
 //
 // For this PR we ship:
@@ -91,9 +91,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:sv-closedloop-slo) hash shape ---");
-    auto r = cs.eval("(query:sv-closedloop-slo)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:sv-closedloop-slo) returns a hash");
+    std::println("\n--- AC1: (stats:get \"query:sv-closedloop-slo\") hash shape ---");
+    auto r = cs.eval("(stats:get \"query:sv-closedloop-slo\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(stats:get \"query:sv-closedloop-slo\") returns a hash");
     const std::vector<std::string> keys = {"slo-status",
                                            "emit-parse-success",
                                            "emit-parse-failure",
@@ -110,21 +111,25 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto eps = hash_int_field(cs, "(query:sv-closedloop-slo)", "emit-parse-success");
+    const auto eps =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "emit-parse-success");
     CHECK(eps == 0, std::format("emit-parse-success = {} (expected 0 on fresh service)", eps));
-    const auto epf = hash_int_field(cs, "(query:sv-closedloop-slo)", "emit-parse-failure");
+    const auto epf =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "emit-parse-failure");
     CHECK(epf == 0, std::format("emit-parse-failure = {} (expected 0 on fresh service)", epf));
-    const auto rlm = hash_int_field(cs, "(query:sv-closedloop-slo)", "reemit-latency-max-us");
+    const auto rlm =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "reemit-latency-max-us");
     CHECK(rlm == 0, std::format("reemit-latency-max-us = {} (expected 0 on fresh service)", rlm));
-    const auto rh = hash_int_field(cs, "(query:sv-closedloop-slo)", "reemit-hits");
+    const auto rh = hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "reemit-hits");
     CHECK(rh == 0, std::format("reemit-hits = {} (expected 0 on fresh service)", rh));
-    const auto sbt = hash_int_field(cs, "(query:sv-closedloop-slo)", "slo-breach-total");
+    const auto sbt =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "slo-breach-total");
     CHECK(sbt == 0, std::format("slo-breach-total = {} (expected 0 on fresh service)", sbt));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 772 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
+    const auto schema = hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "schema");
     CHECK(schema == 772, std::format("schema = {} (expected 772)", schema));
 }
 
@@ -137,37 +142,43 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_sv_slo_emit_parse_failure(1);        // 99% fidelity
     ev.bump_sv_slo_reemit_latency_max_us(30000); // 30ms < 50ms
     ev.bump_sv_slo_reemit_hits(50);
-    const auto slo_ok = hash_int_field(cs, "(query:sv-closedloop-slo)", "slo-status");
+    const auto slo_ok = hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "slo-status");
     CHECK(slo_ok == 0,
           std::format("SLO status = {} (expected 0 = ok: 99% fidelity + 30ms latency)", slo_ok));
 
     // Scenario 2: warn — drop fidelity to 97%
     ev.bump_sv_slo_emit_parse_failure(2); // 99/(99+3) = 97.06%
-    const auto slo_warn_fid = hash_int_field(cs, "(query:sv-closedloop-slo)", "slo-status");
+    const auto slo_warn_fid =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "slo-status");
     CHECK(slo_warn_fid == 1,
           std::format("SLO status = {} (expected 1 = warn: 97% fidelity)", slo_warn_fid));
 
     // Scenario 3: breach — high latency
     ev.bump_sv_slo_reemit_latency_max_us(150000); // 150ms > 100ms
-    const auto slo_breach_lat = hash_int_field(cs, "(query:sv-closedloop-slo)", "slo-status");
+    const auto slo_breach_lat =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "slo-status");
     CHECK(slo_breach_lat == 2,
           std::format("SLO status = {} (expected 2 = breach: 150ms latency)", slo_breach_lat));
 
     // Scenario 4: breach — explicit bump_sv_slo_breach (always wins)
     ev.bump_sv_slo_breach(1);
-    const auto slo_breach_explicit = hash_int_field(cs, "(query:sv-closedloop-slo)", "slo-status");
+    const auto slo_breach_explicit =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "slo-status");
     CHECK(slo_breach_explicit == 2,
           std::format("SLO status = {} (expected 2 = breach: explicit breach bump fires)",
                       slo_breach_explicit));
 
     // Verify atomic values are reflected
-    const auto eps_after = hash_int_field(cs, "(query:sv-closedloop-slo)", "emit-parse-success");
+    const auto eps_after =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "emit-parse-success");
     CHECK(eps_after == 99,
           std::format("emit-parse-success = {} (expected 99 after 1 bump of n=99)", eps_after));
-    const auto rlm_after = hash_int_field(cs, "(query:sv-closedloop-slo)", "reemit-latency-max-us");
+    const auto rlm_after =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "reemit-latency-max-us");
     CHECK(rlm_after == 150000,
           std::format("reemit-latency-max-us = {} (expected 150000 = high-water mark)", rlm_after));
-    const auto sbt_after = hash_int_field(cs, "(query:sv-closedloop-slo)", "slo-breach-total");
+    const auto sbt_after =
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "slo-breach-total");
     CHECK(
         sbt_after == 1,
         std::format("slo-breach-total = {} (expected 1 after 1 explicit breach bump)", sbt_after));
@@ -175,7 +186,7 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     // Scenario 5: latency high-water mark only goes up (compare-exchange)
     ev.bump_sv_slo_reemit_latency_max_us(50000); // 50ms < 150ms — should NOT update
     const auto rlm_compare =
-        hash_int_field(cs, "(query:sv-closedloop-slo)", "reemit-latency-max-us");
+        hash_int_field(cs, "(stats:get \"query:sv-closedloop-slo\")", "reemit-latency-max-us");
     CHECK(rlm_compare == 150000,
           std::format("reemit-latency-max-us = {} (expected 150000 still — compare-exchange "
                       "only goes up)",

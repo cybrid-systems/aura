@@ -88,7 +88,9 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_slim_surface_budgets(self):
         self.assertEqual(self.m.TARGET_BUDGET, 420)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, self.m.TARGET_BUDGET)
-        self.assertEqual(self.m.INTERIM_HARD_CEILING, 700)
+        # Ratchets down with demotion batches (#1449); keep ≥ target.
+        self.assertLessEqual(self.m.INTERIM_HARD_CEILING, 700)
+        self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 500)
 
 
 class TestSyntheticInjection(unittest.TestCase):

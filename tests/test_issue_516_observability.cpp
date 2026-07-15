@@ -111,8 +111,8 @@ int aura_issue_516_observability_run() {
     // AC5: legacy Prompt6 int-sum primitives regression
     {
         std::println("\n--- AC5: Prompt6 int-sum regression ---");
-        auto viol = cs.eval("(query:prompt6-violation-count)");
-        auto score = cs.eval("(query:prompt6-safety-score)");
+        auto viol = cs.eval("(stats:get \"query:prompt6-violation-count\")");
+        auto score = cs.eval("(stats:get \"query:prompt6-safety-score\")");
         CHECK(viol && aura::compiler::types::is_int(*viol),
               "query:prompt6-violation-count int regression");
         CHECK(score && aura::compiler::types::is_int(*score),

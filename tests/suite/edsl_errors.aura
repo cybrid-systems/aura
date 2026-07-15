@@ -24,7 +24,6 @@
   (check (pair? (query:children)))
   (check (pair? (query:node)))
   (check (pair? (query:parent)))
-  (check (pair? (query:siblings)))
   (check (pair? (query:node-type)))
   (check (pair? (query:pattern)))
   (check (pair? (query:def-use)))
@@ -38,8 +37,7 @@
   (check (pair? (mutate:move-node 999 0 0)))
   (check (pair? (query:node 999)))
   (check (pair? (query:children 999)))
-  (check (pair? (query:parent 999)))
-  (check (pair? (query:siblings 999))))
+  (check (pair? (query:parent 999))))
 
 (test-suite "err:not-found"
   (check (pair? (mutate:rebind "nonexistent" "(lambda (y) y)")))

@@ -41,7 +41,7 @@ static bool setup_workspace(CompilerService& cs) {
 bool test_primitive_returns_hash() {
     std::println("\n--- AC1: query:task4-hotpath-contracts returns hash ---");
     CompilerService cs;
-    auto r = cs.eval("(query:task4-hotpath-contracts)");
+    auto r = cs.eval("(stats:get \"query:task4-hotpath-contracts\")");
     CHECK(r.has_value(), "primitive eval succeeds");
     CHECK(is_hash(*r), "query:task4-hotpath-contracts returns hash");
     return true;
@@ -97,7 +97,7 @@ bool test_eval_cycle() {
     CHECK(setup_workspace(cs), "workspace setup");
     CHECK(cs.eval("(mutate:rebind \"a\" \"10\")").has_value(), "mutate under Guard");
     (void)cs.eval("(eval-current)");
-    auto stats = cs.eval("(query:task4-hotpath-contracts)");
+    auto stats = cs.eval("(stats:get \"query:task4-hotpath-contracts\")");
     CHECK(stats && is_hash(*stats), "task4-hotpath-contracts hash after cycle");
     return true;
 }
@@ -105,7 +105,7 @@ bool test_eval_cycle() {
 bool test_regression_primitives() {
     std::println("\n--- AC8: related primitive regression ---");
     CompilerService cs;
-    auto cxx = cs.eval("(query:cxx26-hotpath-invariants)");
+    auto cxx = cs.eval("(stats:get \"query:cxx26-hotpath-invariants\")");
     auto pcs = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
     CHECK(cxx && is_hash(*cxx), "cxx26-hotpath-invariants regression");
     CHECK(pcs && is_int(*pcs), "pass-contracts-stats regression");

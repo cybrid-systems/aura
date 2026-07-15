@@ -321,9 +321,9 @@ bool test_fiber_migration_stats_monotonic() {
 bool test_regression_orchestration_primitives() {
     std::println("\n--- AC8: regression orchestration primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:orchestration-metrics)");
+    auto r1 = cs.eval("(stats:get \"query:orchestration-metrics\")");
     CHECK(r1.has_value() && aura::compiler::types::is_string(*r1),
-          "(query:orchestration-metrics) regression (JSON string)");
+          "(stats:get \"query:orchestration-metrics\") regression (JSON string)");
     auto r2 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:mutation-coordination-stats\") regression for #438");

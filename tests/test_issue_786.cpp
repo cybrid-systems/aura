@@ -97,10 +97,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:code-as-data-production-health) hash shape ---");
-    auto r = cs.eval("(query:code-as-data-production-health)");
+    std::println("\n--- AC1: (stats:get \"query:code-as-data-production-health\") hash shape ---");
+    auto r = cs.eval("(stats:get \"query:code-as-data-production-health\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:code-as-data-production-health) returns a hash");
+          "(stats:get \"query:code-as-data-production-health\") returns a hash");
     const std::vector<std::string> keys = {"sub-primitive-coverage",
                                            "found-sub-primitive-count",
                                            "fidelity-pct",
@@ -118,8 +118,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service state (live sub-primitive coverage) ---");
-    const auto found =
-        hash_int_field(cs, "(query:code-as-data-production-health)", "found-sub-primitive-count");
+    const auto found = hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")",
+                                      "found-sub-primitive-count");
     CHECK(found >= 0, std::format("found-sub-primitive-count = {} (expected >= 0 — live count of 8 "
                                   "expected sub-primitives registered)",
                                   found));
@@ -127,31 +127,31 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
           std::format("found-sub-primitive-count = {} (expected <= 8 — bounded by total "
                       "expected count)",
                       found));
-    const auto coverage =
-        hash_int_field(cs, "(query:code-as-data-production-health)", "sub-primitive-coverage");
+    const auto coverage = hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")",
+                                         "sub-primitive-coverage");
     CHECK(coverage >= 0 && coverage <= 10000,
           std::format("sub-primitive-coverage = {} (expected 0..10000 fixed-point)", coverage));
     const auto fidelity =
-        hash_int_field(cs, "(query:code-as-data-production-health)", "fidelity-pct");
+        hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")", "fidelity-pct");
     CHECK(fidelity == 10000,
           std::format("fidelity-pct = {} (expected 10000 = vacuously true — Phase 2+ to derive "
                       "from #759 fidelity-samples - fidelity-drift)",
                       fidelity));
-    const auto guard =
-        hash_int_field(cs, "(query:code-as-data-production-health)", "guard-rollback-hygiene-pct");
+    const auto guard = hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")",
+                                      "guard-rollback-hygiene-pct");
     CHECK(guard == 10000,
           std::format("guard-rollback-hygiene-pct = {} (expected 10000 — Phase 2+ to wire to "
                       "guard rollback path)",
                       guard));
-    const auto stress = hash_int_field(cs, "(query:code-as-data-production-health)",
+    const auto stress = hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")",
                                        "concurrent-stress-success-pct");
     CHECK(stress == 10000,
           std::format("concurrent-stress-success-pct = {} (expected 10000 — Phase 2+ to wire to "
                       "#755 or new stress harness)",
                       stress));
     // Composite SLO status derived from coverage.
-    const auto slo =
-        hash_int_field(cs, "(query:code-as-data-production-health)", "composite-slo-status");
+    const auto slo = hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")",
+                                    "composite-slo-status");
     if (found == 8) {
         CHECK(slo == 0,
               std::format("composite-slo-status = {} (expected 0 = production-ready when all 8 "
@@ -173,13 +173,15 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                           slo));
     }
     // Recommendation: derived from composite status + fidelity.
-    const auto rec = hash_int_field(cs, "(query:code-as-data-production-health)", "recommendation");
+    const auto rec = hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")",
+                                    "recommendation");
     CHECK(rec >= 0 && rec <= 3, std::format("recommendation = {} (expected 0..3)", rec));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 786 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:code-as-data-production-health)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(stats:get \"query:code-as-data-production-health\")", "schema");
     CHECK(schema == 786, std::format("schema = {} (expected 786)", schema));
 }
 
@@ -218,8 +220,8 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
             std::println("  [info] sub-primitive '{}' threw (not registered)", name);
         }
     }
-    const auto primitive_count =
-        hash_int_field(cs, "(query:code-as-data-production-health)", "found-sub-primitive-count");
+    const auto primitive_count = hash_int_field(
+        cs, "(stats:get \"query:code-as-data-production-health\")", "found-sub-primitive-count");
     CHECK(static_cast<std::size_t>(primitive_count) == edsl_reachable_count,
           std::format("found-sub-primitive-count matches independent EDSL check: {} == {}",
                       primitive_count, edsl_reachable_count));

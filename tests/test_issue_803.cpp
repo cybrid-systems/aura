@@ -126,10 +126,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:seva-longrunning-concurrent-slo) hash shape ---");
-    auto r = cs.eval("(query:seva-longrunning-concurrent-slo)");
+    std::println("\n--- AC1: (stats:get \"query:seva-longrunning-concurrent-slo\") hash shape ---");
+    auto r = cs.eval("(stats:get \"query:seva-longrunning-concurrent-slo\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:seva-longrunning-concurrent-slo) returns a hash");
+          "(stats:get \"query:seva-longrunning-concurrent-slo\") returns a hash");
     const std::vector<std::string> keys = {
         "convergence-rate",
         "ref-drift-prevented",
@@ -151,8 +151,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state ---");
     // 3 NEW #803 atomics — strict == 0 (Phase 2+ harness).
-    const auto ref_drift =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "ref-drift-prevented");
+    const auto ref_drift = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "ref-drift-prevented");
     CHECK(ref_drift == 0,
           std::format("ref-drift-prevented = {} (expected == 0 on fresh service — NEW atomic "
                       "#803 seva_concurrent_ref_drift_prevented_total; bumped by "
@@ -160,16 +160,17 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "if_stale + auto re-resolve succeeds during long-running concurrent "
                       "SEVA round; no harness yet — Phase 2+)",
                       ref_drift));
-    const auto steal_dv_mutate = hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)",
-                                                "steal-during-verification-mutate");
+    const auto steal_dv_mutate =
+        hash_int_field(cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")",
+                       "steal-during-verification-mutate");
     CHECK(steal_dv_mutate == 0,
           std::format("steal-during-verification-mutate = {} (expected == 0 on fresh service — "
                       "NEW atomic #803 seva_concurrent_steal_during_verification_mutate_total; "
                       "bumped when fiber steal fires during a verification mutate inside the "
                       "long-running harness; no harness yet — Phase 2+)",
                       steal_dv_mutate));
-    const auto dirty_hits =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "dirty-consistency-hits");
+    const auto dirty_hits = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "dirty-consistency-hits");
     CHECK(dirty_hits == 0,
           std::format("dirty-consistency-hits = {} (expected == 0 on fresh service — NEW "
                       "atomic #803 seva_concurrent_dirty_propagation_hits_total; bumped at "
@@ -178,23 +179,23 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       dirty_hits));
     // Derived pct fields — vacuous-true 10000 baselines when their
     // respective denominators are 0.
-    const auto conv_rate =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "convergence-rate");
+    const auto conv_rate = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "convergence-rate");
     CHECK(conv_rate >= 0 && conv_rate <= 10000,
           std::format("convergence-rate = {} (expected in [0, 10000] range — derived 0-10000 "
                       "fixed-point percent × 100; 10000 = 100.00% baseline when closed_loop_"
                       "rounds == 0 = vacuous-true default; SLO target >98% = >= 9800)",
                       conv_rate));
-    const auto hygiene_pct =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "hygiene-safe-rollback-pct");
+    const auto hygiene_pct = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "hygiene-safe-rollback-pct");
     CHECK(hygiene_pct >= 0 && hygiene_pct <= 10000,
           std::format("hygiene-safe-rollback-pct = {} (expected in [0, 10000] range — derived "
                       "0-10000 fixed-point percent × 100; 10000 = 100.00% baseline when no "
                       "rollbacks or hygiene events observed = vacuous-true default; SLO target "
                       "100% = 10000 per body hygiene_safe_rollback 100% SLO)",
                       hygiene_pct));
-    const auto avg_rounds =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "avg-rounds-to-target");
+    const auto avg_rounds = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "avg-rounds-to-target");
     CHECK(avg_rounds >= 0,
           std::format("avg-rounds-to-target = {} (expected >= 0 — derived from closed_loop_"
                       "rounds / (convergence_hits + 1); 0 baseline when no convergence hits "
@@ -203,16 +204,16 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "part of the convergence >98% SLO)",
                       avg_rounds));
     // Hardcoded "not yet" flag — strict == 0.
-    const auto harness_active =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "longrunning-harness-active");
+    const auto harness_active = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "longrunning-harness-active");
     CHECK(harness_active == 0,
           std::format("longrunning-harness-active = {} (expected == 0 — Phase 2+; the actual "
                       "tests/test_seva_longrunning_concurrent_verification_evolution.cpp + CI "
                       "gate step + SLO dashboard + self-heal hooks + SEVA tutorial extension "
                       "all remain follow-up work per body Actionable 1+3+4+6)",
                       harness_active));
-    const auto rec =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "recommendation");
+    const auto rec = hash_int_field(cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")",
+                                    "recommendation");
     CHECK(rec >= 0 && rec <= 3,
           std::format("recommendation = {} (expected in [0, 3] ordinal range — 0 = production-"
                       "ready, 1 = near-production, 2 = partial Phase 1, 3 = early-stage)",
@@ -221,7 +222,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 803 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "schema");
     CHECK(schema == 803, std::format("schema = {} (expected 803 — drift sentinel)", schema));
 }
 
@@ -229,12 +231,13 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto ref_drift_before =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "ref-drift-prevented");
-    const auto steal_before = hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)",
-                                             "steal-during-verification-mutate");
-    const auto dirty_before =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "dirty-consistency-hits");
+    const auto ref_drift_before = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "ref-drift-prevented");
+    const auto steal_before =
+        hash_int_field(cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")",
+                       "steal-during-verification-mutate");
+    const auto dirty_before = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "dirty-consistency-hits");
 
     // Exercise the 3 NEW #803 per-Evaluator bump helpers via the
     // service's evaluator instance.
@@ -252,12 +255,13 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_seva_concurrent_dirty_propagation_hits();
     }
 
-    const auto ref_drift_after =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "ref-drift-prevented");
-    const auto steal_after = hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)",
-                                            "steal-during-verification-mutate");
-    const auto dirty_after =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "dirty-consistency-hits");
+    const auto ref_drift_after = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "ref-drift-prevented");
+    const auto steal_after =
+        hash_int_field(cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")",
+                       "steal-during-verification-mutate");
+    const auto dirty_after = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "dirty-consistency-hits");
 
     std::println("  counts after AC4 bumps: ref-drift {} -> {}, steal-dv-mutate {} -> {}, "
                  "dirty-consistency-hits {} -> {}",
@@ -284,10 +288,10 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     // Derived convergence-rate + hygiene-safe-rollback-pct are still
     // in valid range after bumps (no convergence rounds or hygiene
     // activity was driven by the test — only observability counters).
-    const auto conv_rate_after =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "convergence-rate");
-    const auto hygiene_pct_after =
-        hash_int_field(cs, "(query:seva-longrunning-concurrent-slo)", "hygiene-safe-rollback-pct");
+    const auto conv_rate_after = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "convergence-rate");
+    const auto hygiene_pct_after = hash_int_field(
+        cs, "(stats:get \"query:seva-longrunning-concurrent-slo\")", "hygiene-safe-rollback-pct");
     CHECK(conv_rate_after >= 0 && conv_rate_after <= 10000,
           std::format("convergence-rate still in [0, 10000] range after bumps ({})",
                       conv_rate_after));

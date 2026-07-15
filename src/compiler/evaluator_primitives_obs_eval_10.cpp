@@ -403,89 +403,91 @@ void ObservabilityPrims::register_eval_p84(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #498: query:primitive-metadata — structured AI-native primitive
     // registry introspection for Agent development workflows.
-    add("query:primitive-metadata", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:primitive-metadata", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t slots = ev.primitives_.slot_count();
+            const std::uint64_t documented = ev.primitives_.documented_meta_count();
+            const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
+            const std::uint64_t describes = ev.get_primitive_describe_count();
+            const std::uint64_t list_meta = ev.get_primitive_list_meta_count();
+            const std::uint64_t skeletons =
+                m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
+            std::uint64_t pure_count = 0;
+            std::uint64_t mutate_count = 0;
+            for (std::size_t si = 0; si < slots; ++si) {
+                const auto& pm = ev.primitives_.meta_for_slot(si);
+                if (pm.pure)
+                    ++pure_count;
+                if ((pm.safety_flags & kPrimSafetyMutates) != 0)
+                    ++mutate_count;
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t slots = ev.primitives_.slot_count();
-        const std::uint64_t documented = ev.primitives_.documented_meta_count();
-        const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
-        const std::uint64_t describes = ev.get_primitive_describe_count();
-        const std::uint64_t list_meta = ev.get_primitive_list_meta_count();
-        const std::uint64_t skeletons =
-            m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
-        std::uint64_t pure_count = 0;
-        std::uint64_t mutate_count = 0;
-        for (std::size_t si = 0; si < slots; ++si) {
-            const auto& pm = ev.primitives_.meta_for_slot(si);
-            if (pm.pure)
-                ++pure_count;
-            if ((pm.safety_flags & kPrimSafetyMutates) != 0)
-                ++mutate_count;
-        }
-        const std::uint64_t coverage_bp =
-            slots > 0 ? (10000 * documented / slots) : (documented > 0 ? 10000 : 0);
-        std::int64_t recommendation = 0;
-        if (coverage_bp < 5000)
-            recommendation = 1;
-        else if (schema_doc < documented / 2)
-            recommendation = 2;
-        const std::uint64_t metadata_total = slots + documented + schema_doc + describes +
-                                             list_meta + skeletons + pure_count + mutate_count;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
-            {"documented-meta", make_int(static_cast<std::int64_t>(documented))},
-            {"schema-documented", make_int(static_cast<std::int64_t>(schema_doc))},
-            {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
-            {"list-meta-calls", make_int(static_cast<std::int64_t>(list_meta))},
-            {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
-            {"pure-primitives", make_int(static_cast<std::int64_t>(pure_count))},
-            {"mutate-primitives", make_int(static_cast<std::int64_t>(mutate_count))},
-            {"meta-coverage-bp", make_int(static_cast<std::int64_t>(coverage_bp))},
-            {"extension-kit-version",
-             make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
-            {"metadata-recommendation", make_int(recommendation)},
-            {"metadata-total", make_int(static_cast<std::int64_t>(metadata_total))},
-        };
-        return build_hash(kv);
-    });
+            const std::uint64_t coverage_bp =
+                slots > 0 ? (10000 * documented / slots) : (documented > 0 ? 10000 : 0);
+            std::int64_t recommendation = 0;
+            if (coverage_bp < 5000)
+                recommendation = 1;
+            else if (schema_doc < documented / 2)
+                recommendation = 2;
+            const std::uint64_t metadata_total = slots + documented + schema_doc + describes +
+                                                 list_meta + skeletons + pure_count + mutate_count;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
+                {"documented-meta", make_int(static_cast<std::int64_t>(documented))},
+                {"schema-documented", make_int(static_cast<std::int64_t>(schema_doc))},
+                {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
+                {"list-meta-calls", make_int(static_cast<std::int64_t>(list_meta))},
+                {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
+                {"pure-primitives", make_int(static_cast<std::int64_t>(pure_count))},
+                {"mutate-primitives", make_int(static_cast<std::int64_t>(mutate_count))},
+                {"meta-coverage-bp", make_int(static_cast<std::int64_t>(coverage_bp))},
+                {"extension-kit-version",
+                 make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
+                {"metadata-recommendation", make_int(recommendation)},
+                {"metadata-total", make_int(static_cast<std::int64_t>(metadata_total))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 85 (orig lines 9935-10010)

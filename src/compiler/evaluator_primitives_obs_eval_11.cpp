@@ -275,115 +275,117 @@ void ObservabilityPrims::register_eval_p88(PrimRegistrar add, Evaluator& ev) {
 void ObservabilityPrims::register_eval_p89(PrimRegistrar add, Evaluator& ev) {
 
     // (query:primitive-fastpath-per-prim) — Issue #479:
-    add("query:primitive-fastpath-per-prim", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        constexpr std::size_t kDefaultTopN = 10;
-        std::size_t top_n = kDefaultTopN;
-        // Optional arg: top-N override (clamped to [1, 1000]).
-        if (!a.empty() && is_int(a[0])) {
-            auto v = as_int(a[0]);
-            if (v < 1)
-                v = 1;
-            if (v > 1000)
-                v = 1000;
-            top_n = static_cast<std::size_t>(v);
-        }
-
-        std::uint64_t total = 0;
-        std::uint64_t distinct = 0;
-        std::vector<std::pair<std::string, std::uint64_t>> rows;
-        std::size_t cap = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            total = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
-            cap = m->primitive_fastpath_per_prim_capacity_;
-            const auto slot_count = ev.primitives_.slot_count();
-            const std::size_t limit = std::min(slot_count, cap);
-            rows.reserve(limit);
-            for (std::size_t slot = 0; slot < limit; ++slot) {
-                auto cnt =
-                    m->primitive_fastpath_hits_per_prim_[slot].load(std::memory_order_relaxed);
-                if (cnt > 0) {
-                    ++distinct;
-                    rows.emplace_back(ev.primitives_.name_for_slot(slot), cnt);
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:primitive-fastpath-per-prim", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            constexpr std::size_t kDefaultTopN = 10;
+            std::size_t top_n = kDefaultTopN;
+            // Optional arg: top-N override (clamped to [1, 1000]).
+            if (!a.empty() && is_int(a[0])) {
+                auto v = as_int(a[0]);
+                if (v < 1)
+                    v = 1;
+                if (v > 1000)
+                    v = 1000;
+                top_n = static_cast<std::size_t>(v);
             }
-        }
-        // Sort desc by count, ties broken by name asc for stability.
-        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
-            if (a.second != b.second)
-                return a.second > b.second;
-            return a.first < b.first;
-        });
-        if (rows.size() > top_n)
-            rows.resize(top_n);
 
-        // Build top-N as a proper list of (name . count) dotted pairs.
-        // Build in reverse so the head of the list is the last
-        // pushed pair (Aura list primitive uses pair-chain with
-        // void terminator; building in reverse is the natural form).
-        EvalValue top_list = make_void();
-        for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
-            auto name_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(it->first);
-            auto name_ev = make_string(name_idx);
-            auto count_ev = make_int(static_cast<std::int64_t>(it->second));
-            auto idx = ev.pairs_.size();
-            ev.pairs_.push_back({name_ev, count_ev});
-            auto pair_ev = make_pair(idx);
-            auto cell_idx = ev.pairs_.size();
-            ev.pairs_.push_back({pair_ev, top_list});
-            top_list = make_pair(cell_idx);
-        }
-
-        // Inline build_hash (small hash, 4 fields; matches the
-        // pattern used by query:primitive-perf-stats below).
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+            std::uint64_t total = 0;
+            std::uint64_t distinct = 0;
+            std::vector<std::pair<std::string, std::uint64_t>> rows;
+            std::size_t cap = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                total = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
+                cap = m->primitive_fastpath_per_prim_capacity_;
+                const auto slot_count = ev.primitives_.slot_count();
+                const std::size_t limit = std::min(slot_count, cap);
+                rows.reserve(limit);
+                for (std::size_t slot = 0; slot < limit; ++slot) {
+                    auto cnt =
+                        m->primitive_fastpath_hits_per_prim_[slot].load(std::memory_order_relaxed);
+                    if (cnt > 0) {
+                        ++distinct;
+                        rows.emplace_back(ev.primitives_.name_for_slot(slot), cnt);
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"total", make_int(static_cast<std::int64_t>(total))},
-            {"distinct-prims", make_int(static_cast<std::int64_t>(distinct))},
-            {"top", top_list},
-            {"capacity", make_int(static_cast<std::int64_t>(cap))},
-        };
-        return build_hash(kv);
-    });
+            // Sort desc by count, ties broken by name asc for stability.
+            std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+                if (a.second != b.second)
+                    return a.second > b.second;
+                return a.first < b.first;
+            });
+            if (rows.size() > top_n)
+                rows.resize(top_n);
+
+            // Build top-N as a proper list of (name . count) dotted pairs.
+            // Build in reverse so the head of the list is the last
+            // pushed pair (Aura list primitive uses pair-chain with
+            // void terminator; building in reverse is the natural form).
+            EvalValue top_list = make_void();
+            for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+                auto name_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(it->first);
+                auto name_ev = make_string(name_idx);
+                auto count_ev = make_int(static_cast<std::int64_t>(it->second));
+                auto idx = ev.pairs_.size();
+                ev.pairs_.push_back({name_ev, count_ev});
+                auto pair_ev = make_pair(idx);
+                auto cell_idx = ev.pairs_.size();
+                ev.pairs_.push_back({pair_ev, top_list});
+                top_list = make_pair(cell_idx);
+            }
+
+            // Inline build_hash (small hash, 4 fields; matches the
+            // pattern used by query:primitive-perf-stats below).
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"total", make_int(static_cast<std::int64_t>(total))},
+                {"distinct-prims", make_int(static_cast<std::int64_t>(distinct))},
+                {"top", top_list},
+                {"capacity", make_int(static_cast<std::int64_t>(cap))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 90 (orig lines 10470-10542)
