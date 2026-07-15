@@ -2122,16 +2122,21 @@ public:
             tc_pass.last_narrowing_evidence()); // Issue #280
 
         // Run passes (silent in default path — use eval_ir for debug)
+        // Issue #1457: TypePropagationPass before DCE so CastOp
+        // type_id / narrow_evidence reach zero-overhead elision.
         TypeSpecializationWrap ts(&type_registry_);
+        TypePropagationPass tprop(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
         DeadCoercionEliminationPass dce(&type_registry_);
         ts.run(ir_mod);
+        tprop.run(ir_mod);
         ck.run(ir_mod);
         ar.run(ir_mod);
         cf.run(ir_mod);
         dce.run(ir_mod);
+        accumulate_type_propagation_metrics(tprop);
         // Issue #253: accumulate linear-move elision count
         // into the shared metrics so snapshot() + the Aura
         // primitive (compile:linear-elide-count) read a single
@@ -2469,26 +2474,31 @@ public:
             nullptr, cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
         TypeSpecializationWrap ts(&type_registry_);
+        TypePropagationPass tprop(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
         // Issue #1418: DeadCoercionEliminationPass was wired on the
         // default eval() path but missing from eval_ir's run_pipeline
         // pack — dead CastOps accumulated on --inspect / IR-direct.
+        // Issue #1457: TypePropagation before DCE for CastOp elision.
         DeadCoercionEliminationPass dce(&type_registry_);
         const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
+        tprop.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
         cf.set_pipeline_epoch(pipeline_epoch);
         dce.set_pipeline_epoch(pipeline_epoch);
 
-        std::println(std::cerr, "PM: running {}->{}->{}->{}->{}", ts.name(), ck.name(), ar.name(),
-                     cf.name(), dce.name());
+        std::println(std::cerr, "PM: running {}->{}->{}->{}->{}->{}", ts.name(), tprop.name(),
+                     ck.name(), ar.name(), cf.name(), dce.name());
 
         // Issue #163: use run_pipeline (Pass concept fold) instead of
         // individual *.run() calls. Short-circuits on has_error().
         // Issue #1418: include DCE after ConstantFolding.
-        aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf, dce);
+        // Issue #1457: type-propagation between TypeSpec and DCE.
+        aura::compiler::run_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
+        accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
 
         if (ar.has_error()) {
@@ -2668,6 +2678,7 @@ public:
         // Run passes
         {
             aura::compiler::TypeSpecializationWrap ts(&type_registry_);
+            aura::compiler::TypePropagationPass tprop(&type_registry_);
             aura::compiler::ComputeKindWrap ck;
             aura::compiler::ArityWrap ar;
             aura::compiler::ConstantFoldingWrap cf;
@@ -2675,15 +2686,18 @@ public:
             // run_pipeline pack (only default eval + post-mutate
             // re-lower ran it). Wire after ConstantFolding so JIT
             // never compiles dead CastOps.
+            // Issue #1457: TypePropagation before DCE.
             aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
             const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
             ts.set_pipeline_epoch(pipeline_epoch);
+            tprop.set_pipeline_epoch(pipeline_epoch);
             ar.set_pipeline_epoch(pipeline_epoch);
             cf.set_pipeline_epoch(pipeline_epoch);
             dce.set_pipeline_epoch(pipeline_epoch);
             // Issue #163: run_pipeline (Pass concept fold) replaces
             // the individual *.run() calls. Issue #1418: include DCE.
-            aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf, dce);
+            aura::compiler::run_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
+            accumulate_type_propagation_metrics(tprop);
             accumulate_coercion_pass_metrics(ts, dce);
             // Issue #253: accumulate linear-move elision count.
             if (ts.linear_elide_count() > 0) {
@@ -5115,21 +5129,25 @@ public:
 
         // Re-run passes on the hot-swapped module
         TypeSpecializationWrap ts(&type_registry_);
+        TypePropagationPass tprop(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
         // Issue #1418: DCE on hot-swap re-lower so evolve! /
         // cache_define paths don't leave dead CastOps in the
         // live IR module.
+        // Issue #1457: TypePropagation before DCE.
         DeadCoercionEliminationPass dce(&type_registry_);
         const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
+        tprop.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
         cf.set_pipeline_epoch(pipeline_epoch);
         dce.set_pipeline_epoch(pipeline_epoch);
         // Issue #163: run_pipeline (Pass concept fold) replaces
         // the individual *.run() calls. Issue #1418: include DCE.
-        aura::compiler::run_pipeline(*last_ir_mod_, ts, ck, ar, cf, dce);
+        aura::compiler::run_pipeline(*last_ir_mod_, ts, tprop, ck, ar, cf, dce);
+        accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
 
         if (ar.has_error()) {
@@ -7485,6 +7503,16 @@ public:
     const aura::ir::IRStatsSnapshot& last_ir_stats() const noexcept { return last_ir_stats_; }
 
 private:
+    // Issue #1457: surface TypePropagationPass work into metrics.
+    void accumulate_type_propagation_metrics(const aura::compiler::TypePropagationPass& tp) {
+        metrics_.type_propagation_runs_.fetch_add(1, std::memory_order_relaxed);
+        const auto total =
+            tp.propagated_count() + tp.cast_result_stamped() + tp.narrow_propagated();
+        if (total > 0) {
+            metrics_.type_propagation_total_.fetch_add(total, std::memory_order_relaxed);
+        }
+    }
+
     // Issue #538: accumulate coercion zero-overhead metrics from a
     // TypeSpecializationWrap + DeadCoercionEliminationPass run.
     void accumulate_coercion_pass_metrics(const aura::compiler::TypeSpecializationWrap& ts,
@@ -7547,11 +7575,16 @@ private:
         aura::ir::IRModule mod;
         mod.functions.push_back(func);
         aura::compiler::TypeSpecializationWrap ts(&type_registry_);
+        aura::compiler::TypePropagationPass tprop(&type_registry_);
         aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
         const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
         ts.set_pipeline_epoch(pipeline_epoch);
+        tprop.set_pipeline_epoch(pipeline_epoch);
         dce.set_pipeline_epoch(pipeline_epoch);
         ts.run(mod);
+        // Issue #1457: propagate type_id / narrow_evidence before DCE.
+        tprop.run(mod);
+        accumulate_type_propagation_metrics(tprop);
         const bool dirty_dce =
             !dirty_blocks.empty() && dirty_blocks.size() == mod.functions[0].blocks.size();
         if (dirty_dce) {
