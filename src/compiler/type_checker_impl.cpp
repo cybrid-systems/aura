@@ -3518,6 +3518,9 @@ InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
 
         flat.clear_dirty_for(id, kOccurrenceBit);
         flat.clear_occurrence_stale(id);
+        // Issue #1455: clear historical NarrowingRecord.stale for
+        // this if so has_stale_narrowing_for_if trusts the refresh.
+        (void)flat.clear_stale_narrowings_for_if(id, cache_epoch_);
 
         // Issue #537 Phase 2: refresh narrowing provenance log.
         std::uint32_t narrow_ev = 0;
@@ -3659,7 +3662,11 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
     if (out.stale_narrowing)
         predicate_memo_.erase(cond_id);
 
+    // Issue #1455: stale NarrowingRecords OR occ_stale_/kOccurrenceDirty
+    // OR dirty cond always force a fresh predicate walk — never trust
+    // memoized OccurrenceInfoFlat across a predicate-affecting mutate.
     const bool force_reanalyze =
+        out.stale_narrowing ||
         (if_id < flat.size() &&
          (flat.is_dirty_for(if_id, kOccurrenceBit) || flat.is_occurrence_stale(if_id) != 0)) ||
         (cond_id < flat.size() && flat.is_dirty(cond_id));
@@ -3676,7 +3683,9 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
         } else {
             ++predicate_memo_misses_;
             ++stats_.narrowing_reanalyzed;
-            if (if_id < flat.size() && flat.is_dirty(if_id))
+            if (if_id < flat.size() &&
+                (flat.is_dirty(if_id) || flat.is_occurrence_stale(if_id) != 0 ||
+                 out.stale_narrowing))
                 ++stats_.narrowing_dirty_recovery;
             bool meet_used = false;
             bool join_used = false;
@@ -3688,10 +3697,22 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
                 ++predicate_memo_evictions_;
                 predicate_memo_.clear();
             }
+            // Issue #1455: after a forced re-walk from stale
+            // provenance, clear historical stale flags so the next
+            // resolve trusts the fresh analysis (and blame chain
+            // still has the old rows with stale cleared).
+            if (out.stale_narrowing && if_id < flat.size()) {
+                (void)flat.clear_stale_narrowings_for_if(if_id, cache_epoch_);
+                out.stale_narrowing = false;
+            }
         }
     }
 
-    if (out.stale_narrowing && flat.is_occurrence_stale(if_id) && occ) {
+    // Safe fallback only when still stale after analysis (e.g.
+    // analyze_predicate_flat failed while records remain stale).
+    // #1455: do not require is_occurrence_stale alone — rec.stale
+    // + failed re-walk is enough to refuse applying occ.
+    if (out.stale_narrowing && occ) {
         occ = std::nullopt;
         last_if_narrowing_ = 0;
         if (cs_.metrics_) {
