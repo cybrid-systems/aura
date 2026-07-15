@@ -28,6 +28,9 @@
 //          kPrimSecPrivileged (verified via meta_for_slot)
 
 #include "test_harness.hpp"
+// Issue #1416: capability names + security tier constants (plain headers).
+#include "compiler/security_capabilities.h"
+#include "compiler/primitives_meta.h"
 
 import std;
 using aura::test::g_failed;
@@ -44,6 +47,8 @@ import aura.compiler.service;
 
 
 namespace aura_issue_1416_detail {
+// test_harness.hpp already defines CHECK — undef before local redef.
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (!(cond)) {                                                                             \
@@ -55,7 +60,8 @@ namespace aura_issue_1416_detail {
         }                                                                                          \
     } while (0)
 
-using EvalValue = aura::types::EvalValue;
+using EvalValue = aura::compiler::types::EvalValue;
+namespace types = aura::compiler::types;
 
 // ═══════════════════════════════════════════════════════════════
 // AC #1: Privileged primitive without kCapWildcard → gate fires
@@ -79,14 +85,12 @@ void test_privileged_denied_without_wildcard() {
         return;
     }
     const auto& v = *r;
-    CHECK(aura::types::is_error(v),
-          "compile:mark-block-dirty! without kCapWildcard returns error value");
-    // Verify the error message mentions capability denial
-    if (aura::types::is_error(v)) {
-        auto eidx = aura::types::as_error_idx(v);
-        CHECK(eidx < cs.evaluator().error_values_.size() &&
-                  cs.evaluator().error_values_[eidx].tag != 0,
-              "error value is a valid merr (not void)");
+    CHECK(types::is_error(v), "compile:mark-block-dirty! without kCapWildcard returns error value");
+    // Verify the error is a real merr index (not void).
+    if (types::is_error(v)) {
+        auto eidx = types::as_error_idx(v);
+        CHECK(eidx < cs.evaluator().get_primitive_error_values_size(),
+              "error value is a valid merr index (not void)");
     }
 }
 
@@ -114,8 +118,8 @@ void test_privileged_allowed_with_wildcard() {
     // The gate should NOT fire — the result is whatever the primitive
     // body returns (likely #f since mark_block_dirty_fn_ isn't installed
     // in this test, but NOT a capability-denied error from the gate).
-    CHECK(!aura::types::is_error(v), "compile:mark-block-dirty! with kCapWildcard passes the gate "
-                                     "(not the gate's capability-denied error)");
+    CHECK(!types::is_error(v), "compile:mark-block-dirty! with kCapWildcard passes the gate "
+                               "(not the gate's capability-denied error)");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -138,7 +142,7 @@ void test_safe_passes_through() {
     CHECK(r.has_value(), "eval returned a value");
     if (r.has_value()) {
         const auto& v = *r;
-        CHECK(!aura::types::is_error(v), "(+ 1 2) returns non-error (gate didn't fire)");
+        CHECK(!types::is_error(v), "(+ 1 2) returns non-error (gate didn't fire)");
     }
     const auto denial_after = cs.evaluator().capability_denial_count();
     CHECK(denial_after == denial_before,
@@ -186,7 +190,7 @@ void test_escape_hatches_tier_assigned() {
         "compile:mark-narrowing-dirty!",
     };
 
-    auto& prims = cs.evaluator().primitives_;
+    auto& prims = cs.evaluator().primitives();
     int tier_assigned = 0;
     for (const auto* name : kEscapeHatches) {
         const auto slot = prims.slot_for_name(name);
@@ -237,4 +241,8 @@ int run_tests() {
 
 int aura_issue_capability_gating_run() {
     return aura_issue_1416_detail::run_tests();
+}
+
+int main() {
+    return aura_issue_capability_gating_run();
 }

@@ -3317,6 +3317,8 @@ private:
     std::atomic<std::uint64_t> mutation_audit_seq_{0};
     std::atomic<std::uint64_t> mutation_audit_total_{0};
     std::atomic<std::uint64_t> capability_denial_count_{0};
+    // Issue #1448: PrimMeta.deprecated dispatch-site hits (compat still runs).
+    std::atomic<std::uint64_t> deprecated_prim_dispatch_total_{0};
 
     // ── Concurrent Channels (fiber-safe message passing) ─────
     struct Channel {
@@ -3378,6 +3380,10 @@ public:
     }
     [[nodiscard]] std::uint64_t capability_denial_count() const noexcept {
         return capability_denial_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1448: how many times a PrimMeta.deprecated primitive was invoked.
+    [[nodiscard]] std::uint64_t deprecated_prim_dispatch_total() const noexcept {
+        return deprecated_prim_dispatch_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_audit_total() const noexcept {
         return mutation_audit_total_.load(std::memory_order_relaxed);
@@ -3506,6 +3512,16 @@ public:
             const auto slot = primitives_.slot_for_name(name);
             if (slot < primitives_.slot_count()) {
                 const auto& meta = primitives_.meta_for_slot(slot);
+                // Issue #1448: PrimMeta.deprecated → dispatch-site warning.
+                // Still executes (compat), but bumps a counter so agents
+                // and (engine:metrics) can see remaining debt. Prefer
+                // op-dispatch / engine:metrics / stdlib over deprecated names.
+                if (meta.deprecated) {
+                    deprecated_prim_dispatch_total_.fetch_add(1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->prim_write_side_deprecation_hits.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
                 if (meta.security_level == kPrimSecPrivileged &&
                     !has_capability(security::kCapWildcard)) {
                     bump_capability_denial();

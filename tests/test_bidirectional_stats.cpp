@@ -56,6 +56,7 @@ import aura.core.arena;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.compiler.service;
+import aura.compiler.value;
 import aura.diag;
 
 namespace test_bidirectional_stats_detail {
