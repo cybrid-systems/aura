@@ -1984,6 +1984,9 @@ aura_issue_test_link_llvm_jit(test_fiber_steal_panic_checkpoint_nested_gc)
 # Follow-up smoke: #1446 AC3 primitive expose + #1445 priority-degrade counters.
 aura_add_issue_test(test_followup_smoke)
 aura_issue_test_link_llvm_jit(test_followup_smoke)
+# Issue #1465: AST-level dirty short-circuit API surface (#1465 AC2).
+aura_add_issue_test(test_dirty_short_circuit_api)
+aura_issue_test_link_llvm_jit(test_dirty_short_circuit_api)
 # Issue #418: EnvFrame dual-path + stale policy closed loop.
 aura_add_issue_test(test_envframe_dualpath_stale_closed_loop_418)
 aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)
