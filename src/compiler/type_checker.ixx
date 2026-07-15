@@ -1585,6 +1585,10 @@ export std::vector<std::string> analyze_match_exhaustiveness(const aura::ast::Fl
 //
 // Returns an empty vector if walk_root is NULL or out-of-range
 // (the caller can then fall back to a full infer_flat).
+//
+// Issue #1456: prefers target_node over parent_id and stops
+// dirty-upward at Define/Let/Module boundaries so multi-form
+// workspaces do not re-infer sibling bindings.
 export std::vector<aura::ast::NodeId>
 affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
                                const aura::ast::MutationRecord& rec);

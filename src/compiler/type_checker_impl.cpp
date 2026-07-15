@@ -5201,10 +5201,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
     }
     if (affected.empty()) {
-        // 3) ancestor walk fallback (pre-#411-follow-up-1
-        // path). Used when the mutation record doesn't
-        // carry a binding sym_id (sub-expression mutation
-        // like replace-type) or when the per-symbol path
+        // 3) localized subtree fallback (#1456). Used when
+        // the mutation record doesn't carry a binding
+        // sym_id (sub-expression mutation like
+        // replace-type) or when the per-symbol path
         // returns empty (no use-sites of the changed
         // binding in the workspace).
         affected = affected_subtree_from_mutation(flat, rec);
@@ -5224,6 +5224,24 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // user can use this to track index coverage).
         if (per_defuse_index_tracker)
             ++stats_.per_defuse_index_walk_fallback_total;
+    } else {
+        // Issue #1456: per-symbol / DefUse paths return
+        // use-sites only. Always union the localized
+        // mutation primary (define body / replaced
+        // subtree) so rebind body nodes are re-inferred
+        // without falling back to a Begin-wide cascade.
+        auto local = affected_subtree_from_mutation(flat, rec);
+        if (!local.empty()) {
+            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            for (auto id : local) {
+                if (seen.insert(id).second)
+                    affected.push_back(id);
+            }
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->affected_subtree_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
     }
     if (affected.empty()) {
         // No affected nodes — the mutation was a no-op (or
@@ -6367,50 +6385,99 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     return aura::ast::InvariantStatus::Warnings;
 }
 
-// Issue #148 Phase 3: identify the affected node set for a
-// mutation. Walks the FlatAST similarly to
-// post_mutation_invariant_check but returns the NodeId set
-// instead of running invariant checks. Used by
-// InferenceEngine::infer_flat in Phase 4 to scope partial
-// re-inference.
+// Issue #148 Phase 3 / #1456: identify the affected node set
+// for a mutation. Used by TypeChecker::infer_flat_partial to
+// scope partial re-inference.
 //
-// Walk strategy:
-//   1. Pick walk_root = rec.parent_id (subtree-level mutation)
-//      or rec.target_node (typed mutation on existing node).
-//   2. collect_descendants(walk_root) — the entire dirty subtree.
-//   3. Climb from rec.target_node via FlatAST::parent_of to add
-//      the dirty-upward ancestor chain. Safety-bounded by
-//      flat.size() to defend against parent_ cycles.
+// #1456 locality strategy (production self-modify loops):
+//   1. Prefer rec.target_node as the primary dirty root. The
+//      old path preferred parent_id, which for rebind/replace
+//      is often a Begin/Module sequence — collect_descendants
+//      then re-inferred EVERY sibling form (cascade).
+//   2. Collect descendants of the primary only.
+//   3. If parent_id is set and differs from primary, ADD the
+//      parent node alone (structural attachment context) —
+//      never the parent's full descendant set when primary is
+//      already known.
+//   4. Climb ancestors from primary with a locality boundary
+//      stop at Define/Let/LetRec/Module/Interface (include the
+//      boundary once, then stop). Prevents dirty-upward from
+//      flooding the whole workspace.
 //
-// Returns empty vector if walk_root is NULL/out-of-range so the
-// caller can fall back to a full infer_flat.
+// Returns empty vector if no usable root so the caller can
+// fall back to a full infer_flat.
 std::vector<aura::ast::NodeId>
 affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
                                const aura::ast::MutationRecord& rec) {
     using namespace aura::ast;
 
-    NodeId walk_root = NULL_NODE;
-    if (rec.parent_id != NULL_NODE)
-        walk_root = rec.parent_id;
-    else if (rec.target_node != NULL_NODE)
-        walk_root = rec.target_node;
+    auto is_locality_boundary = [](NodeTag t) noexcept {
+        // Stop dirty-upward at binding / module-ish roots so a
+        // rebind inside one Define does not re-infer siblings
+        // under a shared Begin (Issue #1456).
+        return t == NodeTag::Define || t == NodeTag::Let || t == NodeTag::LetRec ||
+               t == NodeTag::DefineModule || t == NodeTag::Interface || t == NodeTag::Begin;
+    };
 
-    if (walk_root == NULL_NODE || walk_root >= flat.size())
+    // #1456: target first (precise), parent only as fallback.
+    NodeId primary = NULL_NODE;
+    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
+        primary = rec.target_node;
+    else if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
+        primary = rec.parent_id;
+
+    if (primary == NULL_NODE)
         return {};
 
     std::vector<NodeId> affected;
-    // Descendants of walk_root
-    collect_descendants(flat, walk_root, affected);
-    // Ancestors of rec.target_node (dirty-upward chain)
-    if (rec.target_node != NULL_NODE && rec.target_node < flat.size()) {
-        NodeId cur = rec.target_node;
+    std::unordered_set<NodeId> seen;
+    auto add = [&](NodeId id) {
+        if (id == NULL_NODE || id >= flat.size())
+            return;
+        if (seen.insert(id).second)
+            affected.push_back(id);
+    };
+
+    // Primary subtree (includes primary via collect_descendants).
+    {
+        std::vector<NodeId> sub;
+        collect_descendants(flat, primary, sub);
+        for (auto id : sub)
+            add(id);
+    }
+
+    // Parent as attachment context only (no sibling flood).
+    if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size() && rec.parent_id != primary)
+        add(rec.parent_id);
+
+    // Bounded dirty-upward climb from primary.
+    {
+        NodeId cur = flat.parent_of(primary);
         std::size_t safety = 0;
         while (cur != NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
-            if (std::find(affected.begin(), affected.end(), cur) == affected.end())
-                affected.push_back(cur);
+            add(cur);
+            const auto t = flat.get(cur).tag;
+            if (is_locality_boundary(t))
+                break;
             cur = flat.parent_of(cur);
         }
     }
+
+    // Also climb from parent when parent was set but primary is a
+    // new subtree root not yet linked (replace-subtree) — still
+    // stop at the first locality boundary.
+    if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size() && rec.parent_id != primary) {
+        NodeId cur = flat.parent_of(rec.parent_id);
+        std::size_t safety = 0;
+        while (cur != NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+            add(cur);
+            const auto t = flat.get(cur).tag;
+            if (is_locality_boundary(t))
+                break;
+            cur = flat.parent_of(cur);
+        }
+    }
+
     return affected;
 }
 
