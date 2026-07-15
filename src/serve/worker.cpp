@@ -265,6 +265,9 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                     1, std::memory_order_relaxed);
                 metrics::adaptive_steal_stats().starvation_priority_boosts.fetch_add(
                     1, std::memory_order_relaxed);
+                // Issue #1445 AC2: dedicated counter for telemetry dashboard.
+                metrics::adaptive_steal_stats().steal_priority_boost_triggered.fetch_add(
+                    1, std::memory_order_relaxed);
             }
         }
 

@@ -123,6 +123,33 @@ extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
         g_aot_metrics->max_extreme_mutation_us.store(us, std::memory_order_relaxed);
 }
 
+// ── Issue #1443 AC3 follow-up + #1445 AC6: long-mutation scheduler hook ──
+//
+// When the outermost MutationBoundaryGuard dtor fires with hold duration
+// > long_mutation_threshold_us, the evaluator calls this hook (if set) so
+// the scheduler can react: bump starvation_mitigated_count, boost waiter
+// priorities, etc. Default = nullptr (no notification; existing telemetry
+// only). Set via aura_set_long_mutation_scheduler_hook().
+typedef void (*aura_long_mutation_scheduler_hook_fn)(std::uint64_t fiber_id,
+                                                     std::uint64_t duration_us);
+static aura_long_mutation_scheduler_hook_fn g_long_mutation_scheduler_hook = nullptr;
+static std::atomic<std::uint64_t> g_long_mutation_scheduler_hook_calls{0};
+
+extern "C" void aura_set_long_mutation_scheduler_hook(aura_long_mutation_scheduler_hook_fn fn) {
+    g_long_mutation_scheduler_hook = fn;
+}
+
+extern "C" void aura_invoke_long_mutation_scheduler_hook(std::uint64_t fiber_id,
+                                                         std::uint64_t duration_us) {
+    g_long_mutation_scheduler_hook_calls.fetch_add(1, std::memory_order_relaxed);
+    if (g_long_mutation_scheduler_hook)
+        g_long_mutation_scheduler_hook(fiber_id, duration_us);
+}
+
+extern "C" std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void) {
+    return g_long_mutation_scheduler_hook_calls.load(std::memory_order_relaxed);
+}
+
 // Lazy: only binds when global is still null (does not overwrite host wire-up).
 extern "C" void aura_ensure_aot_metrics(void* metrics) {
     if (!metrics)

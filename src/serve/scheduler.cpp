@@ -334,6 +334,17 @@ Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
 
 // ── has_waiting_fibers — check epoll wait map ─────────
 
+void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t duration_us) {
+    (void)fiber_id;
+    (void)duration_us;
+    // Issue #1445 AC6: bump starvation_mitigated_count so observability
+    // surfaces the long-holder event. Default impl is telemetry-only;
+    // production deployments may override via Scheduler subclass or
+    // by calling AdaptiveStealStats counters directly.
+    metrics::adaptive_steal_stats().starvation_mitigated_count.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+}
+
 bool Scheduler::has_waiting_fibers() const {
     std::lock_guard<std::mutex> lock(wait_map_mutex_);
     // Issue #63723: skip entries whose Fiber* is not currently

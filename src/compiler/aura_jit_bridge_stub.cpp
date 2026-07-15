@@ -152,6 +152,19 @@ extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
     (void)us;
 }
 
+// Issue #1443 AC3 follow-up + #1445 AC6: scheduler hook stubs.
+extern "C" void aura_set_long_mutation_scheduler_hook(void* fn) {
+    (void)fn;
+}
+extern "C" void aura_invoke_long_mutation_scheduler_hook(std::uint64_t fiber_id,
+                                                         std::uint64_t duration_us) {
+    (void)fiber_id;
+    (void)duration_us;
+}
+extern "C" std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void) {
+    return 0;
+}
+
 extern "C" void aura_ensure_aot_metrics(void* metrics) {
     if (metrics && !g_aot_metrics_stub) {
         g_aot_metrics_stub = metrics;

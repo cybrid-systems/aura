@@ -9731,6 +9731,12 @@ public:
                         m->mutation_too_long_total.fetch_add(1, std::memory_order_relaxed);
                         // Issue #1443: bump starvation prevention counter + capture telemetry.
                         m->starvation_prevented_count.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #1443 AC3 follow-up + #1445 AC6: notify scheduler
+                        // (if hook set) so waiters can be priority-boosted.
+                        ::aura_invoke_long_mutation_scheduler_hook(
+                            static_cast<std::uint64_t>(
+                                reinterpret_cast<std::uintptr_t>(Evaluator::get_current_fiber())),
+                            uus);
                         m->last_long_mutation_fiber_id.store(
                             static_cast<std::uint64_t>(
                                 reinterpret_cast<std::uintptr_t>(Evaluator::get_current_fiber())),
